@@ -18,6 +18,8 @@ class Position:
     take_profit: float
     target_hold_days: int
     rationale: str = ""
+    # Thesis tracking: used daily to detect if the original buy reason is still valid
+    entry_catalysts: List[str] = field(default_factory=list)
 
     @property
     def entry_value(self) -> float:
@@ -52,6 +54,9 @@ class Portfolio:
         if os.path.exists(DATA_FILE):
             with open(DATA_FILE) as f:
                 data = json.load(f)
+            # Backward-compat: add entry_catalysts if missing
+            for pos in data.get("positions", {}).values():
+                pos.setdefault("entry_catalysts", [])
             return PortfolioState(**data)
         return PortfolioState(cash=initial_capital)
 
@@ -75,7 +80,9 @@ class Portfolio:
     def open_position(self, position: Position):
         cost = position.entry_value
         if cost > self._state.cash:
-            raise ValueError(f"Nicht genug Cash: benötigt ${cost:.2f}, verfügbar ${self._state.cash:.2f}")
+            raise ValueError(
+                f"Nicht genug Cash: benötigt ${cost:.2f}, verfügbar ${self._state.cash:.2f}"
+            )
         self._state.cash -= cost
         self._state.positions[position.ticker] = asdict(position)
         self._record_trade(Trade(

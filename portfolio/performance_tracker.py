@@ -16,31 +16,33 @@ class PerformanceTracker:
     def _init_db(self):
         self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS predictions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ticker TEXT NOT NULL,
-                entry_date TEXT NOT NULL,
-                entry_price REAL NOT NULL,
+                id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker                TEXT NOT NULL,
+                entry_date            TEXT NOT NULL,
+                entry_price           REAL NOT NULL,
                 predicted_target_price REAL,
-                predicted_hold_days INTEGER,
-                predicted_direction TEXT,
-                sentiment_score REAL,
-                confidence TEXT,
-                sources_used INTEGER,
-                sell_date TEXT,
-                sell_price REAL,
-                sell_reason TEXT,
-                actual_hold_days INTEGER,
-                actual_return_pct REAL,
-                direction_correct INTEGER,
-                target_hit INTEGER
+                predicted_hold_days   INTEGER,
+                predicted_direction   TEXT,
+                sentiment_score       REAL,
+                confidence            TEXT,
+                sources_used          INTEGER,
+                sources_breakdown     TEXT,     -- JSON: {"reddit":3,"yahoo":2,"newsapi":1}
+                sell_date             TEXT,
+                sell_price            REAL,
+                sell_reason           TEXT,
+                sell_reason_category  TEXT,     -- "stop_loss"|"take_profit"|"thesis_broken"|"hold_expired"|"sentiment_sell"
+                actual_hold_days      INTEGER,
+                actual_return_pct     REAL,
+                direction_correct     INTEGER,
+                target_hit            INTEGER
             );
             CREATE TABLE IF NOT EXISTS portfolio_snapshots (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                snapshot_date TEXT NOT NULL,
-                total_value REAL NOT NULL,
-                cash REAL NOT NULL,
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_date   TEXT NOT NULL,
+                total_value     REAL NOT NULL,
+                cash            REAL NOT NULL,
                 positions_value REAL NOT NULL,
-                phase TEXT NOT NULL
+                phase           TEXT NOT NULL
             );
         """)
         self._conn.commit()
@@ -55,13 +57,15 @@ class PerformanceTracker:
         sentiment_score: float,
         confidence: str,
         sources_used: int,
+        sources_breakdown: Optional[Dict[str, int]] = None,
     ) -> int:
+        import json as _json
         cursor = self._conn.execute(
             """INSERT INTO predictions
                (ticker, entry_date, entry_price, predicted_target_price,
                 predicted_hold_days, predicted_direction, sentiment_score,
-                confidence, sources_used)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                confidence, sources_used, sources_breakdown)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 ticker,
                 datetime.utcnow().isoformat(),
@@ -72,6 +76,7 @@ class PerformanceTracker:
                 sentiment_score,
                 confidence,
                 sources_used,
+                _json.dumps(sources_breakdown or {}),
             ),
         )
         self._conn.commit()
@@ -114,10 +119,11 @@ class PerformanceTracker:
             else 0
         )
         target_hit = 1 if (pred_target and sell_price >= pred_target) else 0
+        category = _categorize_exit(sell_reason)
 
         self._conn.execute(
             """UPDATE predictions SET
-               sell_date=?, sell_price=?, sell_reason=?,
+               sell_date=?, sell_price=?, sell_reason=?, sell_reason_category=?,
                actual_hold_days=?, actual_return_pct=?,
                direction_correct=?, target_hit=?
                WHERE id=?""",
@@ -125,6 +131,7 @@ class PerformanceTracker:
                 sell_dt.isoformat(),
                 sell_price,
                 sell_reason,
+                category,
                 actual_hold_days,
                 actual_return_pct,
                 direction_correct,
@@ -141,6 +148,8 @@ class PerformanceTracker:
             (datetime.utcnow().isoformat(), total_value, cash, positions_value, phase),
         )
         self._conn.commit()
+
+    # ── Accuracy reports ───────────────────────────────────────────────────────
 
     def get_accuracy_report(self) -> Dict:
         cursor = self._conn.execute(
@@ -169,8 +178,120 @@ class PerformanceTracker:
             "avg_hold_days_predicted": round(row["avg_predicted_hold"] or 0, 1),
         }
 
+    def get_source_accuracy(self) -> List[Dict]:
+        """
+        Win rate per news source per ticker, derived from sources_breakdown JSON.
+        Returns rows: {source, ticker, trades, wins, win_rate_pct, avg_return_pct}
+        """
+        import json as _json
+        cursor = self._conn.execute(
+            """SELECT ticker, sources_breakdown, actual_return_pct
+               FROM predictions
+               WHERE sell_date IS NOT NULL AND sources_breakdown IS NOT NULL"""
+        )
+        rows = cursor.fetchall()
+
+        # Aggregate: source → ticker → [returns]
+        data: Dict[str, Dict[str, List[float]]] = {}
+        for row in rows:
+            try:
+                breakdown = _json.loads(row["sources_breakdown"] or "{}")
+            except Exception:
+                continue
+            ret = row["actual_return_pct"] or 0
+            for source, count in breakdown.items():
+                if count and count > 0:
+                    data.setdefault(source, {}).setdefault(row["ticker"], []).append(ret)
+
+        results = []
+        for source, tickers in data.items():
+            for ticker, returns in tickers.items():
+                wins = sum(1 for r in returns if r > 0)
+                results.append({
+                    "source": source,
+                    "ticker": ticker,
+                    "trades": len(returns),
+                    "wins": wins,
+                    "win_rate_pct": round(wins / len(returns) * 100, 1),
+                    "avg_return_pct": round(sum(returns) / len(returns), 2),
+                })
+        results.sort(key=lambda x: x["win_rate_pct"], reverse=True)
+        return results
+
+    def get_sentiment_score_buckets(self) -> List[Dict]:
+        """
+        Groups closed trades by sentiment score bucket and shows win rate per bucket.
+        Helps identify which score ranges are actually predictive.
+        """
+        cursor = self._conn.execute(
+            """SELECT sentiment_score, actual_return_pct
+               FROM predictions WHERE sell_date IS NOT NULL"""
+        )
+        rows = cursor.fetchall()
+
+        buckets: Dict[str, List[float]] = {
+            "0.65–0.70": [], "0.70–0.75": [], "0.75–0.80": [],
+            "0.80–0.85": [], "0.85–1.00": [],
+        }
+
+        def _bucket(score: float) -> Optional[str]:
+            if score < 0.65:
+                return None
+            if score < 0.70:
+                return "0.65–0.70"
+            if score < 0.75:
+                return "0.70–0.75"
+            if score < 0.80:
+                return "0.75–0.80"
+            if score < 0.85:
+                return "0.80–0.85"
+            return "0.85–1.00"
+
+        for row in rows:
+            b = _bucket(row["sentiment_score"] or 0)
+            if b:
+                buckets[b].append(row["actual_return_pct"] or 0)
+
+        results = []
+        for label, returns in buckets.items():
+            if not returns:
+                continue
+            wins = sum(1 for r in returns if r > 0)
+            results.append({
+                "score_range": label,
+                "trades": len(returns),
+                "win_rate_pct": round(wins / len(returns) * 100, 1),
+                "avg_return_pct": round(sum(returns) / len(returns), 2),
+            })
+        return results
+
+    def get_exit_reason_stats(self) -> List[Dict]:
+        """
+        Average P&L and count per exit reason category.
+        Reveals which exit mechanisms are most reliable.
+        """
+        cursor = self._conn.execute(
+            """SELECT sell_reason_category,
+                      COUNT(*) as trades,
+                      AVG(actual_return_pct) as avg_return,
+                      SUM(CASE WHEN actual_return_pct > 0 THEN 1 ELSE 0 END) as wins
+               FROM predictions
+               WHERE sell_date IS NOT NULL AND sell_reason_category IS NOT NULL
+               GROUP BY sell_reason_category
+               ORDER BY avg_return DESC"""
+        )
+        results = []
+        for row in cursor.fetchall():
+            trades = row["trades"]
+            results.append({
+                "category": row["sell_reason_category"],
+                "trades": trades,
+                "avg_return_pct": round(row["avg_return"] or 0, 2),
+                "win_rate_pct": round((row["wins"] or 0) / trades * 100, 1),
+            })
+        return results
+
     def get_adaptive_threshold(self, default: float = 0.65) -> float:
-        """Raises buy threshold when predictions are poor, lowers it when accurate."""
         report = self.get_accuracy_report()
         if report.get("total_closed", 0) < 5:
             return default
@@ -187,7 +308,8 @@ class PerformanceTracker:
         cursor = self._conn.execute(
             """SELECT ticker, entry_date, entry_price, sell_price,
                       actual_return_pct, actual_hold_days, predicted_hold_days,
-                      predicted_target_price, direction_correct, target_hit, sell_reason
+                      predicted_target_price, direction_correct, target_hit,
+                      sell_reason, sell_reason_category
                FROM predictions
                WHERE sell_date IS NOT NULL
                ORDER BY sell_date DESC LIMIT ?""",
@@ -203,3 +325,18 @@ class PerformanceTracker:
             (days,),
         )
         return [dict(row) for row in cursor.fetchall()]
+
+
+def _categorize_exit(reason: str) -> str:
+    r = reason.lower()
+    if "stop-loss" in r or "stop_loss" in r:
+        return "stop_loss"
+    if "take-profit" in r or "take_profit" in r:
+        return "take_profit"
+    if "these" in r or "thesis" in r or "gebrochen" in r:
+        return "thesis_broken"
+    if "haltedauer" in r or "max" in r:
+        return "hold_expired"
+    if "sentiment" in r or "sell" in r:
+        return "sentiment_sell"
+    return "other"
