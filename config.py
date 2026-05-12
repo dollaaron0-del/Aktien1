@@ -45,5 +45,16 @@ class Config:
     # Claude model
     claude_model: str = "claude-opus-4-7"
 
+    # Portfolio phase settings
+    growth_target_multiple: float = field(
+        default_factory=lambda: float(os.getenv("GROWTH_TARGET_MULTIPLE", "3.0"))
+    )  # Switch to distribution when portfolio = initial_capital × this
+    monthly_distribution_eur: float = field(
+        default_factory=lambda: float(os.getenv("MONTHLY_DISTRIBUTION_EUR", "500.0"))
+    )  # Monthly withdrawal goal once in DISTRIBUTION phase
+    distribution_buffer_months: int = field(
+        default_factory=lambda: int(os.getenv("DISTRIBUTION_BUFFER_MONTHS", "6"))
+    )  # Months of distributions kept as safety reserve
+
 
 config = Config()

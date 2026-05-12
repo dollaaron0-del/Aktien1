@@ -16,6 +16,8 @@ class AnalysisResult:
     risk_factors: List[str]
     key_catalysts: List[str]
     suggested_hold_days: int        # Geschätzter Haltezeitraum in Tagen
+    target_price: Optional[float]   # Analysierter Zielkurs (oder None)
+    target_price_rationale: str     # Begründung für den Zielkurs
     sources_used: int
     raw_summary: str
 
@@ -48,10 +50,13 @@ Antworte mit folgendem JSON (keine anderen Texte):
   "risk_factors": ["<Risiko 1>", "<Risiko 2>"],
   "key_catalysts": ["<Katalysator 1>", "<Katalysator 2>"],
   "suggested_hold_days": <integer 3–30>,
+  "target_price": <float: realistischer Zielkurs in USD basierend auf Fundamentaldaten und Momentum, oder null wenn nicht bestimmbar>,
+  "target_price_rationale": "<1 Satz: Warum dieser Zielkurs?>",
   "summary": "<3–5 Sätze Gesamtbewertung>"
 }}
 
 Vergib BUY nur bei starker, konsistenter Nachrichtenlage. Vergib SKIP wenn zu wenige oder widersprüchliche Informationen vorliegen.
+Der target_price soll ein realistisches 3–30 Tage Kursziel sein. Setze ihn auf null wenn zu wenig Datenbasis vorhanden.
 """
 
 
@@ -114,6 +119,8 @@ class ClaudeAnalyzer:
     def _parse_response(self, ticker: str, raw: str, sources: int) -> AnalysisResult:
         try:
             data = json.loads(raw)
+            raw_target = data.get("target_price")
+            target_price = float(raw_target) if raw_target is not None else None
             return AnalysisResult(
                 ticker=ticker,
                 sentiment_score=float(data.get("sentiment_score", 0.5)),
@@ -124,6 +131,8 @@ class ClaudeAnalyzer:
                 risk_factors=data.get("risk_factors", []),
                 key_catalysts=data.get("key_catalysts", []),
                 suggested_hold_days=int(data.get("suggested_hold_days", 7)),
+                target_price=target_price,
+                target_price_rationale=data.get("target_price_rationale", ""),
                 sources_used=sources,
                 raw_summary=data.get("summary", ""),
             )
@@ -141,6 +150,8 @@ class ClaudeAnalyzer:
             risk_factors=[],
             key_catalysts=[],
             suggested_hold_days=0,
+            target_price=None,
+            target_price_rationale="",
             sources_used=0,
             raw_summary=reason,
         )

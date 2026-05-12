@@ -3,12 +3,15 @@ Stock Sentiment Trading Bot
 Sammelt Nachrichten & Reddit-Posts, analysiert per Claude API,
 und handelt Aktien automatisch (Paper-Trading).
 
-Starten: python main.py
-         python main.py --once   (einmalige Analyse, dann beenden)
-         python main.py --status (Portfolioübersicht)
+Starten:  python main.py
+          python main.py --once      (einmalige Analyse, dann beenden)
+          python main.py --status    (Portfolioübersicht)
+          python main.py --report    (Lernbericht + Phaseninfo)
+          python main.py --dashboard (Startet Streamlit-Dashboard)
 """
 
 import argparse
+import subprocess
 import sys
 import schedule
 import time
@@ -19,15 +22,28 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich import box
+from rich.columns import Columns
+from rich.text import Text
 
 from config import config
 from collectors import RedditCollector, YahooCollector, NewsAPICollector
 from analyzers import ClaudeAnalyzer, AnalysisResult
 from broker.paper_broker import PaperBroker
 from portfolio import Portfolio
+from portfolio.performance_tracker import PerformanceTracker
+from portfolio.phase_controller import PhaseController
 from strategy import SwingStrategy
 
 console = Console()
+
+
+def _make_phase_ctrl() -> PhaseController:
+    return PhaseController(
+        initial_capital=config.initial_capital,
+        growth_target_multiple=config.growth_target_multiple,
+        monthly_target_eur=config.monthly_distribution_eur,
+        buffer_months=config.distribution_buffer_months,
+    )
 
 
 def collect_news(ticker: str) -> List[Dict]:
@@ -35,31 +51,34 @@ def collect_news(ticker: str) -> List[Dict]:
     reddit = RedditCollector()
     newsapi = NewsAPICollector()
 
-    items = []
+    items: List[Dict] = []
     items += yahoo.collect(ticker)
     items += reddit.collect(ticker)
     items += newsapi.collect(ticker)
 
-    # Deduplicate by title
-    seen = set()
-    unique = []
+    seen: set = set()
+    unique: List[Dict] = []
     for item in items:
         key = item.get("title", "").lower()[:80]
         if key and key not in seen:
             seen.add(key)
             unique.append(item)
-
     return unique
 
 
-def run_analysis_cycle(portfolio: Portfolio, broker: PaperBroker, strategy: SwingStrategy):
+def run_analysis_cycle(
+    portfolio: Portfolio,
+    broker: PaperBroker,
+    strategy: SwingStrategy,
+    tracker: PerformanceTracker,
+    phase_ctrl: PhaseController,
+):
     console.rule(f"[bold blue]Analyse-Zyklus – {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
     analyzer = ClaudeAnalyzer()
     yahoo = YahooCollector()
     results: List[AnalysisResult] = []
 
-    # First, check stop-loss / take-profit on open positions
     exit_actions = strategy.check_open_positions()
     for action in exit_actions:
         console.print(f"  [yellow]{action}[/yellow]")
@@ -68,10 +87,12 @@ def run_analysis_cycle(portfolio: Portfolio, broker: PaperBroker, strategy: Swin
         console.print(f"\n[cyan]Sammle Daten für {ticker}...[/cyan]")
         news = collect_news(ticker)
         price_data = yahoo.get_price_data(ticker)
-        console.print(f"  {len(news)} Artikel gefunden | Kurs: ${price_data.get('current_price', 'N/A')}")
+        console.print(
+            f"  {len(news)} Artikel gefunden | Kurs: ${price_data.get('current_price', 'N/A')}"
+        )
 
         if not news:
-            console.print(f"  [dim]Keine Nachrichten – übersprungen[/dim]")
+            console.print("  [dim]Keine Nachrichten – übersprungen[/dim]")
             continue
 
         console.print(f"  [cyan]Analysiere mit Claude ({config.claude_model})...[/cyan]")
@@ -84,13 +105,21 @@ def run_analysis_cycle(portfolio: Portfolio, broker: PaperBroker, strategy: Swin
         if action:
             console.print(f"  [bold green]{action}[/bold green]")
 
-    _print_portfolio_summary(portfolio, broker)
+    prices = broker.get_prices(list(portfolio.all_positions().keys()))
+    total_value = portfolio.total_value(prices)
+    positions_value = total_value - portfolio.cash
+    phase = phase_ctrl.current_phase(total_value)
+    tracker.record_snapshot(total_value, portfolio.cash, positions_value, phase)
+
+    _print_portfolio_summary(portfolio, broker, phase_ctrl)
 
 
 def _print_analysis(a: AnalysisResult):
     color = {"BULLISH": "green", "BEARISH": "red", "NEUTRAL": "yellow"}.get(a.direction, "white")
     conf_color = {"HIGH": "green", "MEDIUM": "yellow", "LOW": "red"}.get(a.confidence, "white")
-    rec_color = {"BUY": "bold green", "SELL": "bold red", "HOLD": "yellow", "SKIP": "dim"}.get(a.recommendation, "white")
+    rec_color = {"BUY": "bold green", "SELL": "bold red", "HOLD": "yellow", "SKIP": "dim"}.get(
+        a.recommendation, "white"
+    )
 
     console.print(
         f"  Sentiment: [{color}]{a.direction}[/{color}] "
@@ -100,16 +129,23 @@ def _print_analysis(a: AnalysisResult):
     )
     if a.entry_rationale:
         console.print(f"  Begründung: [italic]{a.entry_rationale}[/italic]")
+    if a.target_price:
+        console.print(
+            f"  [bold]Zielkurs: ${a.target_price:.2f}[/bold] – {a.target_price_rationale}"
+        )
     if a.key_catalysts:
         console.print(f"  Katalysatoren: {', '.join(a.key_catalysts[:3])}")
     if a.risk_factors:
         console.print(f"  Risiken: {', '.join(a.risk_factors[:3])}")
 
 
-def _print_portfolio_summary(portfolio: Portfolio, broker: PaperBroker):
+def _print_portfolio_summary(
+    portfolio: Portfolio, broker: PaperBroker, phase_ctrl: PhaseController
+):
     positions = portfolio.all_positions()
     prices = broker.get_prices(list(positions.keys())) if positions else {}
     total = portfolio.total_value(prices)
+    phase_info = phase_ctrl.get_info(total)
 
     table = Table(title="Portfolio-Übersicht", box=box.ROUNDED)
     table.add_column("Ticker", style="cyan")
@@ -125,7 +161,9 @@ def _print_portfolio_summary(portfolio: Portfolio, broker: PaperBroker):
         price = prices.get(ticker, pos.entry_price)
         pnl = (price - pos.entry_price) * pos.shares
         days = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
-        pnl_str = f"[green]+${pnl:.2f}[/green]" if pnl >= 0 else f"[red]-${abs(pnl):.2f}[/red]"
+        pnl_str = (
+            f"[green]+${pnl:.2f}[/green]" if pnl >= 0 else f"[red]-${abs(pnl):.2f}[/red]"
+        )
         table.add_row(
             ticker,
             f"{pos.shares:.2f}",
@@ -139,24 +177,44 @@ def _print_portfolio_summary(portfolio: Portfolio, broker: PaperBroker):
 
     console.print()
     console.print(table)
+
+    phase_color = "green" if phase_info["phase"] == "GROWTH" else "magenta"
+    progress_bar = _progress_bar(phase_info["progress_pct"])
+    summary_lines = [
+        f"Cash: [bold]${portfolio.cash:,.2f}[/bold]  |  Gesamtwert: [bold]${total:,.2f}[/bold]",
+        f"Phase: [{phase_color}]{phase_info['phase']}[/{phase_color}]  |  "
+        f"Ziel: ${phase_info['growth_target']:,.0f}  |  "
+        f"Fortschritt: {progress_bar} {phase_info['progress_pct']:.1f}%",
+    ]
+    if phase_info["phase"] == "DISTRIBUTION" and "monthly_distribution" in phase_info:
+        summary_lines.append(
+            f"[bold magenta]Monatliche Ausschüttung: ${phase_info['monthly_distribution']:,.2f} "
+            f"(Ziel: ${phase_info['monthly_target']:,.2f})[/bold magenta]"
+        )
+    elif phase_info["phase"] == "GROWTH":
+        remaining = phase_info["remaining_to_goal"]
+        summary_lines.append(f"Noch ${remaining:,.2f} bis zur Ausschüttungsphase")
+
     console.print(
         Panel(
-            f"Cash: [bold]${portfolio.cash:,.2f}[/bold]  |  "
-            f"Gesamtwert: [bold]${total:,.2f}[/bold]",
-            title="Kapital",
-            border_style="blue",
+            "\n".join(summary_lines),
+            title="Kapital & Phase",
+            border_style=phase_color,
         )
     )
 
 
-def show_status():
-    broker = PaperBroker()
-    portfolio = Portfolio(config.initial_capital)
-    _print_portfolio_summary(portfolio, broker)
+def _progress_bar(pct: float, width: int = 20) -> str:
+    filled = int(pct / 100 * width)
+    return f"[{'█' * filled}{'░' * (width - filled)}]"
+
+
+def show_status(portfolio: Portfolio, broker: PaperBroker, phase_ctrl: PhaseController):
+    _print_portfolio_summary(portfolio, broker, phase_ctrl)
 
     trades = portfolio.trade_history()
     if trades:
-        trade_table = Table(title="Trade-History", box=box.ROUNDED)
+        trade_table = Table(title="Trade-History (letzte 20)", box=box.ROUNDED)
         trade_table.add_column("Datum", style="dim")
         trade_table.add_column("Ticker", style="cyan")
         trade_table.add_column("Aktion")
@@ -167,7 +225,11 @@ def show_status():
 
         for t in trades[-20:]:
             pnl = t.pnl
-            pnl_str = f"[green]+${pnl:.2f}[/green]" if pnl > 0 else (f"[red]-${abs(pnl):.2f}[/red]" if pnl < 0 else "")
+            pnl_str = (
+                f"[green]+${pnl:.2f}[/green]"
+                if pnl > 0
+                else (f"[red]-${abs(pnl):.2f}[/red]" if pnl < 0 else "")
+            )
             action_color = "bold green" if t.action == "BUY" else "bold red"
             trade_table.add_row(
                 t.timestamp[:10],
@@ -181,41 +243,134 @@ def show_status():
         console.print(trade_table)
 
 
+def show_report(tracker: PerformanceTracker, phase_ctrl: PhaseController, portfolio: Portfolio, broker: PaperBroker):
+    console.rule("[bold blue]Lern- und Phasenbericht")
+
+    # Accuracy report
+    acc = tracker.get_accuracy_report()
+    if acc.get("total_closed", 0) == 0:
+        console.print(Panel("[dim]Noch keine abgeschlossenen Trades – Bericht wird nach ersten Verkäufen verfügbar.[/dim]", title="Vorhersage-Genauigkeit"))
+    else:
+        adaptive_threshold = tracker.get_adaptive_threshold(config.buy_threshold)
+        acc_lines = [
+            f"Abgeschlossene Trades: [bold]{acc['total_closed']}[/bold]",
+            f"Win-Rate:              [bold]{acc['win_rate_pct']}%[/bold]",
+            f"Richtungs-Genauigkeit: [bold]{acc['direction_accuracy_pct']}%[/bold]",
+            f"Zielkurs-Trefferquote: [bold]{acc['target_hit_pct']}%[/bold]",
+            f"Ø Rendite pro Trade:   [bold]{acc['avg_return_pct']:+.2f}%[/bold]",
+            f"Ø Haltedauer (Ist):    [bold]{acc['avg_hold_days_actual']}d[/bold]  "
+            f"(Prognose: {acc['avg_hold_days_predicted']}d)",
+            f"Adaptiver Kauf-Threshold: [bold]{adaptive_threshold:.2f}[/bold] "
+            f"(Basis: {config.buy_threshold:.2f})",
+        ]
+        console.print(Panel("\n".join(acc_lines), title="Vorhersage-Genauigkeit", border_style="cyan"))
+
+        recent = tracker.get_recent_trades(5)
+        if recent:
+            rt_table = Table(title="Letzte 5 geschlossene Trades", box=box.SIMPLE)
+            rt_table.add_column("Ticker")
+            rt_table.add_column("Rendite", justify="right")
+            rt_table.add_column("Haltedauer", justify="right")
+            rt_table.add_column("Zielkurs erreicht?")
+            rt_table.add_column("Richtung korrekt?")
+            rt_table.add_column("Grund")
+            for t in recent:
+                ret = t.get("actual_return_pct") or 0
+                ret_str = f"[green]{ret:+.1f}%[/green]" if ret >= 0 else f"[red]{ret:+.1f}%[/red]"
+                rt_table.add_row(
+                    t["ticker"],
+                    ret_str,
+                    f"{t.get('actual_hold_days', '?')}d",
+                    "✓" if t.get("target_hit") else "✗",
+                    "✓" if t.get("direction_correct") else "✗",
+                    (t.get("sell_reason") or "")[:35],
+                )
+            console.print(rt_table)
+
+    # Phase report
+    prices = broker.get_prices(list(portfolio.all_positions().keys()))
+    total = portfolio.total_value(prices)
+    phase_info = phase_ctrl.get_info(total)
+    phase_color = "green" if phase_info["phase"] == "GROWTH" else "magenta"
+    phase_lines = [
+        f"Phase: [{phase_color}]{phase_info['phase']}[/{phase_color}]",
+        f"Starkapital:   ${phase_info['initial_capital']:,.2f}",
+        f"Aktuell:       ${phase_info['portfolio_value']:,.2f}",
+        f"Wachstumsziel: ${phase_info['growth_target']:,.2f}  ({config.growth_target_multiple:.1f}×)",
+        f"Fortschritt:   {_progress_bar(phase_info['progress_pct'])} {phase_info['progress_pct']:.1f}%",
+    ]
+    if phase_info["phase"] == "GROWTH":
+        phase_lines.append(f"Noch ${phase_info['remaining_to_goal']:,.2f} bis zur Ausschüttungsphase")
+    else:
+        phase_lines += [
+            "",
+            f"[bold magenta]Monatliche Ausschüttung:  ${phase_info['monthly_distribution']:,.2f}[/bold magenta]",
+            f"Ziel-Ausschüttung:        ${phase_info['monthly_target']:,.2f}",
+            f"Sicherheitspuffer:        ${phase_info['buffer_reserve']:,.2f} ({config.distribution_buffer_months} Monate)",
+        ]
+    console.print(Panel("\n".join(phase_lines), title="Portfolio-Phase", border_style=phase_color))
+
+
 def main():
     parser = argparse.ArgumentParser(description="Stock Sentiment Trading Bot")
     parser.add_argument("--once", action="store_true", help="Einmalige Analyse ausführen")
     parser.add_argument("--status", action="store_true", help="Portfolioübersicht anzeigen")
+    parser.add_argument("--report", action="store_true", help="Lernbericht + Phaseninfo anzeigen")
+    parser.add_argument("--dashboard", action="store_true", help="Streamlit-Dashboard starten")
     args = parser.parse_args()
 
-    if args.status:
-        show_status()
+    if args.dashboard:
+        dashboard_path = __file__.replace("main.py", "dashboard/app.py")
+        console.print("[cyan]Starte Streamlit-Dashboard...[/cyan]")
+        subprocess.run(["streamlit", "run", dashboard_path])
         return
-
-    if not config.anthropic_api_key:
-        console.print("[bold red]Fehler: ANTHROPIC_API_KEY nicht gesetzt. Bitte .env Datei konfigurieren.[/bold red]")
-        sys.exit(1)
 
     broker = PaperBroker()
     portfolio = Portfolio(config.initial_capital)
-    strategy = SwingStrategy(portfolio, broker)
+    tracker = PerformanceTracker()
+    phase_ctrl = _make_phase_ctrl()
 
-    console.print(Panel(
-        f"[bold]Stock Sentiment Bot gestartet[/bold]\n"
-        f"Broker: [cyan]{config.broker_mode.upper()}[/cyan] | "
-        f"Watchlist: [cyan]{', '.join(config.watchlist)}[/cyan]\n"
-        f"Analyse täglich um [cyan]{config.analysis_hour:02d}:{config.analysis_minute:02d} Uhr[/cyan]",
-        border_style="green",
-    ))
-
-    if args.once:
-        run_analysis_cycle(portfolio, broker, strategy)
+    if args.status:
+        show_status(portfolio, broker, phase_ctrl)
         return
 
-    # Schedule daily analysis
-    schedule_time = f"{config.analysis_hour:02d}:{config.analysis_minute:02d}"
-    schedule.every().day.at(schedule_time).do(run_analysis_cycle, portfolio, broker, strategy)
+    if args.report:
+        show_report(tracker, phase_ctrl, portfolio, broker)
+        return
 
-    # Also check stop-loss every hour during trading hours
+    if not config.anthropic_api_key:
+        console.print(
+            "[bold red]Fehler: ANTHROPIC_API_KEY nicht gesetzt. Bitte .env Datei konfigurieren.[/bold red]"
+        )
+        sys.exit(1)
+
+    strategy = SwingStrategy(portfolio, broker, tracker, phase_ctrl)
+
+    prices = broker.get_prices(list(portfolio.all_positions().keys()))
+    total = portfolio.total_value(prices)
+    phase_info = phase_ctrl.get_info(total)
+    phase_color = "green" if phase_info["phase"] == "GROWTH" else "magenta"
+
+    console.print(
+        Panel(
+            f"[bold]Stock Sentiment Bot gestartet[/bold]\n"
+            f"Broker: [cyan]{config.broker_mode.upper()}[/cyan] | "
+            f"Watchlist: [cyan]{', '.join(config.watchlist)}[/cyan]\n"
+            f"Analyse täglich um [cyan]{config.analysis_hour:02d}:{config.analysis_minute:02d} Uhr[/cyan]\n"
+            f"Phase: [{phase_color}]{phase_info['phase']}[/{phase_color}] | "
+            f"Kapital: ${total:,.2f} | Ziel: ${phase_info['growth_target']:,.0f}",
+            border_style="green",
+        )
+    )
+
+    if args.once:
+        run_analysis_cycle(portfolio, broker, strategy, tracker, phase_ctrl)
+        return
+
+    schedule_time = f"{config.analysis_hour:02d}:{config.analysis_minute:02d}"
+    schedule.every().day.at(schedule_time).do(
+        run_analysis_cycle, portfolio, broker, strategy, tracker, phase_ctrl
+    )
     schedule.every().hour.do(strategy.check_open_positions)
 
     console.print(f"[dim]Nächste Analyse um {schedule_time} Uhr. Ctrl+C zum Beenden.[/dim]")
