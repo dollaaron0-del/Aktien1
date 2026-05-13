@@ -6,6 +6,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _parse_times(raw: str) -> List[str]:
+    """Parses comma-separated HH:MM strings, falls back to ['08:30']."""
+    times = [t.strip() for t in raw.split(",") if t.strip()]
+    valid = []
+    for t in times:
+        parts = t.split(":")
+        if len(parts) == 2 and all(p.isdigit() for p in parts):
+            valid.append(f"{int(parts[0]):02d}:{int(parts[1]):02d}")
+    return valid or ["08:30"]
+
+
 @dataclass
 class Config:
     # API Keys
@@ -23,24 +34,38 @@ class Config:
     broker_mode: str = field(default_factory=lambda: os.getenv("BROKER_MODE", "paper"))
     initial_capital: float = field(default_factory=lambda: float(os.getenv("INITIAL_CAPITAL", "10000.0")))
 
-    # Watchlist (US-Ticker-Symbole für yfinance/Alpaca; für XETRA ".DE" anhängen z.B. "SAP.DE")
+    # Watchlist
     watchlist: List[str] = field(default_factory=lambda: [
         "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META"
     ])
 
     # Risk management
-    max_position_pct: float = 0.20   # Max 20 % des Portfolios pro Position
-    stop_loss_pct: float = 0.07      # 7 % Stop-Loss
-    take_profit_pct: float = 0.20    # 20 % Take-Profit
+    max_position_pct: float = 0.20
+    stop_loss_pct: float = 0.07
+    take_profit_pct: float = 0.20
 
     # Sentiment thresholds (0–1)
     buy_threshold: float = 0.65
     sell_threshold: float = 0.35
-    min_sources: int = 2             # Mindestanzahl Quellen vor Entscheidung
+    min_sources: int = 2
 
-    # Schedule
-    analysis_hour: int = 8           # Uhrzeit der täglichen Analyse (Lokalzeit)
+    # ── Analyse-Zeitplan ──────────────────────────────────────────────────────
+    # Vollanalyse (Claude + alle Quellen) mehrmals täglich, z.B. "08:30,12:00,16:00"
+    analysis_times: List[str] = field(
+        default_factory=lambda: _parse_times(os.getenv("ANALYSIS_TIMES", "08:30,12:00,16:00"))
+    )
+    # Legacy single-time fallback (wird ignoriert wenn ANALYSIS_TIMES gesetzt)
+    analysis_hour: int = 8
     analysis_minute: int = 30
+
+    # Stündlicher Social-Scan aktivieren (Reddit + StockTwits, ohne Claude)
+    enable_social_scan: bool = field(
+        default_factory=lambda: os.getenv("ENABLE_SOCIAL_SCAN", "true").lower() in ("1", "true", "yes")
+    )
+    # Signale in der Warteschlange: Ablauf nach N Stunden
+    signal_queue_max_age_hours: int = field(
+        default_factory=lambda: int(os.getenv("SIGNAL_QUEUE_MAX_AGE_HOURS", "48"))
+    )
 
     # Claude model
     claude_model: str = "claude-opus-4-7"
@@ -59,13 +84,13 @@ class Config:
     # Portfolio phase settings
     growth_target_multiple: float = field(
         default_factory=lambda: float(os.getenv("GROWTH_TARGET_MULTIPLE", "3.0"))
-    )  # Switch to distribution when portfolio = initial_capital × this
+    )
     monthly_distribution_eur: float = field(
         default_factory=lambda: float(os.getenv("MONTHLY_DISTRIBUTION_EUR", "500.0"))
-    )  # Monthly withdrawal goal once in DISTRIBUTION phase
+    )
     distribution_buffer_months: int = field(
         default_factory=lambda: int(os.getenv("DISTRIBUTION_BUFFER_MONTHS", "6"))
-    )  # Months of distributions kept as safety reserve
+    )
 
     # Risk filters
     block_earnings_days: int = field(
@@ -75,7 +100,7 @@ class Config:
         default_factory=lambda: float(os.getenv("MAX_SECTOR_PCT", "0.40"))
     )
 
-    # Kelly criterion sizing (falls back if insufficient data)
+    # Kelly criterion sizing
     use_kelly_sizing: bool = field(
         default_factory=lambda: os.getenv("USE_KELLY_SIZING", "false").lower() in ("1", "true", "yes")
     )

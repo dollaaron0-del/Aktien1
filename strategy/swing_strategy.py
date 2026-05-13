@@ -1,12 +1,13 @@
 import math
 from datetime import datetime
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 from analyzers.claude_analyzer import AnalysisResult
 from portfolio.portfolio import Portfolio, Position
 from portfolio.performance_tracker import PerformanceTracker
 from portfolio.phase_controller import PhaseController
 from portfolio.focus_mode import FocusController
 from portfolio.trade_journal import TradeJournal
+from portfolio.signal_queue import SignalQueue
 from broker.paper_broker import PaperBroker
 from notifier.telegram_notifier import TelegramNotifier
 from analyzers.earnings_filter import EarningsFilter
@@ -24,6 +25,7 @@ class SwingStrategy:
         phase_ctrl: PhaseController,
         focus_ctrl: FocusController,
         journal: TradeJournal,
+        signal_queue: Optional[SignalQueue] = None,
         earnings_filter: Optional[EarningsFilter] = None,
         correlation_checker: Optional[CorrelationChecker] = None,
         kelly_sizer: Optional[KellySizer] = None,
@@ -34,6 +36,7 @@ class SwingStrategy:
         self.phase_ctrl = phase_ctrl
         self.focus = focus_ctrl
         self.journal = journal
+        self.signal_queue = signal_queue
         self._notifier = TelegramNotifier()
         self.earnings_filter = earnings_filter
         self.correlation = correlation_checker
@@ -60,7 +63,6 @@ class SwingStrategy:
         portfolio_value = self.portfolio.total_value(
             self.broker.get_prices(list(self.portfolio.all_positions().keys()) + [ticker])
         )
-        # Effective buy threshold: combines adaptive learning + phase + focus mode
         adaptive_threshold = self.tracker.get_adaptive_threshold(config.buy_threshold)
         phase_modifier = self.phase_ctrl.get_entry_threshold_modifier(portfolio_value)
         effective_threshold = self.focus.get_effective_threshold(
@@ -95,13 +97,37 @@ class SwingStrategy:
             if not sec_check["allowed"]:
                 return f"[{ticker}] {sec_check['reason']} – übersprungen."
 
-        return self._open_position(ticker, current_price, analysis, portfolio_value, sources_breakdown or {})
+        result = self._open_position(ticker, current_price, analysis, portfolio_value, sources_breakdown or {})
+
+        # If capital was insufficient, save signal for later execution
+        if result and "Nicht genug freies Kapital" in result and self.signal_queue:
+            sig_id = self.signal_queue.enqueue(
+                ticker=ticker,
+                sentiment_score=analysis.sentiment_score,
+                confidence=analysis.confidence,
+                target_price=analysis.target_price,
+                direction=analysis.direction,
+                entry_rationale=analysis.entry_rationale,
+                key_catalysts=analysis.key_catalysts,
+                risk_factors=analysis.risk_factors,
+                sources_used=analysis.sources_used,
+                sources_breakdown=sources_breakdown or {},
+                suggested_hold_days=analysis.suggested_hold_days,
+            )
+            return (
+                f"[{ticker}] 📋 Signal in Warteschlange gespeichert "
+                f"(Score: {analysis.sentiment_score:.2f}, ID #{sig_id}) – "
+                f"wird ausgeführt sobald Kapital frei ist."
+            )
+        return result
 
     def check_open_positions(self) -> List[str]:
         actions = []
         positions = self.portfolio.all_positions()
         if not positions:
-            return actions
+            # No open positions → try queued signals directly
+            queued = self.process_signal_queue()
+            return queued
 
         prices = self.broker.get_prices(list(positions.keys()))
         for ticker, pos in positions.items():
@@ -126,18 +152,126 @@ class SwingStrategy:
                     f"[{ticker}] VERKAUFT – {reason} | P&L: {'+' if pnl_approx >= 0 else ''}{pnl_approx:.2f} USD"
                 )
 
+        # After closes, try to execute queued signals with freed capital
+        if actions:
+            queued = self.process_signal_queue()
+            actions.extend(queued)
+
         return actions
+
+    def process_signal_queue(self) -> List[str]:
+        """Tries to execute pending BUY signals with currently available capital."""
+        if not self.signal_queue:
+            return []
+
+        results = []
+        for signal in self.signal_queue.get_pending():
+            ticker = signal["ticker"]
+
+            # Skip if we now have a position in this ticker
+            if self.portfolio.get_position(ticker):
+                self.signal_queue.mark_expired(signal["id"])
+                continue
+
+            current_price = self.broker.get_price(ticker)
+            if not current_price:
+                continue
+
+            portfolio_value = self.portfolio.total_value(
+                self.broker.get_prices(list(self.portfolio.all_positions().keys()) + [ticker])
+            )
+            max_pos_pct = self.focus.get_max_position_pct(portfolio_value)
+            if self.kelly:
+                kelly_pct = self.kelly.compute(fallback_pct=max_pos_pct)
+                max_pos_pct = min(max_pos_pct, kelly_pct)
+
+            invest = min(portfolio_value * max_pos_pct, self.portfolio.cash * 0.95)
+            if invest < 50:
+                continue  # Still not enough capital, keep in queue
+
+            # Execute the queued signal
+            created_at = signal["created_at"][:10]
+            result = self._open_position_from_signal(ticker, current_price, signal, portfolio_value, invest)
+            self.signal_queue.mark_executed(signal["id"])
+            results.append(
+                f"[{ticker}] 📋 Warteschlangen-Signal ausgeführt (Signal vom {created_at}) "
+                f"| {result}"
+            )
+            self._notifier.notify_buy(
+                ticker=ticker,
+                shares=invest / current_price,
+                price=current_price,
+                stop_loss=round(current_price * (1 - self.focus.get_stop_loss_pct()), 2),
+                take_profit=round(current_price * (1 + self.focus.get_take_profit_pct()), 2),
+                hold_days=self.focus.cap_hold_days(signal["suggested_hold_days"]),
+                rationale=f"[Warteschlange vom {created_at}] {signal.get('entry_rationale', '')}",
+                sentiment_score=signal["sentiment_score"],
+            )
+        return results
+
+    def _open_position_from_signal(
+        self, ticker: str, price: float, signal: Dict, portfolio_value: float, invest: float
+    ) -> str:
+        """Opens a position from a queued signal (no AnalysisResult needed)."""
+        shares = math.floor(invest / price * 100) / 100
+        sl_pct = self.focus.get_stop_loss_pct()
+        tp_pct = self.focus.get_take_profit_pct()
+        stop_loss = round(price * (1 - sl_pct), 2)
+        fixed_tp = round(price * (1 + tp_pct), 2)
+        tp = signal.get("target_price")
+        take_profit = min(tp, fixed_tp) if (tp and tp > price) else fixed_tp
+        capped_hold = self.focus.cap_hold_days(signal.get("suggested_hold_days") or 14)
+
+        position = Position(
+            ticker=ticker,
+            shares=shares,
+            entry_price=price,
+            entry_date=datetime.utcnow().isoformat(),
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            target_hold_days=capped_hold,
+            rationale=signal.get("entry_rationale"),
+            entry_catalysts=signal.get("key_catalysts", []),
+        )
+        self.broker.buy(ticker, shares, price)
+        self.portfolio.open_position(position)
+        self.tracker.record_prediction(
+            ticker=ticker,
+            entry_price=price,
+            predicted_target_price=signal.get("target_price"),
+            predicted_hold_days=capped_hold,
+            predicted_direction=signal.get("direction", "BULLISH"),
+            sentiment_score=signal["sentiment_score"],
+            confidence=signal["confidence"],
+            sources_used=signal.get("sources_used", 0),
+            sources_breakdown=signal.get("sources_breakdown", {}),
+        )
+        self.journal.log_entry(
+            ticker=ticker,
+            price=price,
+            sentiment=signal["sentiment_score"],
+            confidence=signal["confidence"],
+            direction=signal.get("direction", "BULLISH"),
+            rationale=signal.get("entry_rationale"),
+            catalysts=signal.get("key_catalysts", []),
+            risks=signal.get("risk_factors", []),
+            sources=signal.get("sources_breakdown", {}),
+            target_price=signal.get("target_price"),
+            hold_days=capped_hold,
+        )
+        return (
+            f"{shares} Stück @ ${price:.2f} "
+            f"| SL: ${stop_loss} | TP: ${take_profit} "
+            f"| Investiert: ${shares * price:.2f}"
+        )
 
     def _check_exit(self, pos: Position, price: float, analysis: AnalysisResult) -> Optional[str]:
         ticker = pos.ticker
         days_held = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
         reason = None
 
-        # 1. These gebrochen – höchste Priorität
         if analysis.thesis_valid is False and analysis.confidence != "LOW":
             reason = f"These gebrochen: {analysis.thesis_break_reason or 'Ursprüngliche Kaufkatalysatoren nicht mehr gültig'}"
-
-        # 2. Technische Exit-Bedingungen
         elif price <= pos.stop_loss:
             reason = f"Stop-Loss bei ${price:.2f}"
         elif price >= pos.take_profit:
@@ -159,7 +293,6 @@ class SwingStrategy:
             )
             return f"[{ticker}] VERKAUFT{thesis_tag} – {reason} | P&L: {sign}{pnl:.2f} USD"
 
-        # Log daily check (no exit triggered)
         self.journal.log_daily_check(
             ticker=ticker, price=price,
             sentiment=analysis.sentiment_score,
@@ -169,7 +302,6 @@ class SwingStrategy:
             recommendation=analysis.recommendation,
         )
         if analysis.thesis_valid is False:
-            # Thesis weakened but confidence low → warning only
             self.journal.log_warning(
                 ticker=ticker, price=price,
                 reason=analysis.thesis_break_reason or "These angeschlagen",
@@ -192,7 +324,6 @@ class SwingStrategy:
         portfolio_value: float,
         sources_breakdown: Dict[str, int],
     ) -> str:
-        # Apply focus-mode position sizing, optionally overridden by Kelly criterion
         max_pos_pct = self.focus.get_max_position_pct(portfolio_value)
         if self.kelly:
             kelly_pct = self.kelly.compute(fallback_pct=max_pos_pct)
@@ -204,8 +335,6 @@ class SwingStrategy:
             return f"[{ticker}] Nicht genug freies Kapital für neuen Trade."
 
         shares = math.floor(invest / price * 100) / 100
-
-        # Apply focus-mode SL/TP percentages
         sl_pct = self.focus.get_stop_loss_pct()
         tp_pct = self.focus.get_take_profit_pct()
         stop_loss = round(price * (1 - sl_pct), 2)
@@ -217,7 +346,6 @@ class SwingStrategy:
             take_profit = fixed_tp
             tp_source = f"Fix {tp_pct*100:.0f}% → TP ${take_profit:.2f}"
 
-        # Cap hold days by focus mode preference
         capped_hold = self.focus.cap_hold_days(analysis.suggested_hold_days)
 
         position = Position(
@@ -242,7 +370,6 @@ class SwingStrategy:
             rationale=analysis.entry_rationale,
             sentiment_score=analysis.sentiment_score,
         )
-
         self.tracker.record_prediction(
             ticker=ticker,
             entry_price=price,
@@ -254,8 +381,6 @@ class SwingStrategy:
             sources_used=analysis.sources_used,
             sources_breakdown=sources_breakdown,
         )
-
-        # Log full entry context to trade journal
         self.journal.log_entry(
             ticker=ticker,
             price=price,
@@ -286,7 +411,6 @@ class SwingStrategy:
             sell_reason=reason,
         )
         pnl = self.portfolio.close_position(ticker, price, reason)
-        # Log exit to journal
         self.journal.log_exit(
             ticker=ticker, price=price,
             entry_price=pos.entry_price,
@@ -296,7 +420,6 @@ class SwingStrategy:
         return pnl
 
     def build_open_position_context(self, ticker: str) -> Optional[Dict]:
-        """Returns position context dict for Claude's thesis-check prompt."""
         pos = self.portfolio.get_position(ticker)
         if not pos:
             return None

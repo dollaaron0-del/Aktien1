@@ -18,6 +18,13 @@ Starten:  python main.py
           python main.py --export-csv    (Trades als CSV exportieren)
           python main.py --export-pdf    (PDF-Report)
           python main.py --kelly-info    (Kelly-Criterion-Statistik)
+          python main.py --pulse         (Social-Marktpuls der letzten 6h anzeigen)
+          python main.py --queue         (Warteschlange ausstehender Signale)
+
+Analyse-Zeiten konfigurieren (.env):
+  ANALYSIS_TIMES=08:30,12:00,16:00   # Vollanalyse mit Claude 3× täglich
+  ENABLE_SOCIAL_SCAN=true            # Stündlicher Social-Scan (Reddit+StockTwits)
+  SIGNAL_QUEUE_MAX_AGE_HOURS=48      # Signale verfallen nach 48h
 """
 
 import argparse
@@ -58,6 +65,10 @@ from portfolio.trade_journal import TradeJournal
 from strategy import SwingStrategy
 from notifier.telegram_notifier import TelegramNotifier
 from reporting.exporter import Exporter
+from portfolio.signal_queue import SignalQueue
+from collectors.social_scan import SocialPulseDB
+from collectors.reddit_collector import RedditCollector as _RedditColl
+from collectors.stocktwits_collector import StockTwitsCollector as _TwitsColl
 
 console = Console()
 
@@ -561,6 +572,117 @@ def show_focus_info(focus_ctrl: FocusController, portfolio: Portfolio, broker: P
     console.print(Panel("\n".join(lines), title="Aktiver Fokus", border_style="cyan"))
 
 
+def run_social_scan(pulse_db: SocialPulseDB, strategy: Optional[SwingStrategy] = None):
+    """Collects Reddit + StockTwits for all watchlist tickers and stores pulse snapshot."""
+    reddit = _RedditColl()
+    twits = _TwitsColl(lookback_hours=2)
+    spikes = []
+    for ticker in config.watchlist:
+        try:
+            r_items = reddit.collect(ticker)
+            t_items = twits.collect(ticker)
+            if r_items:
+                pulse_db.record(ticker, "reddit", r_items)
+            if t_items:
+                pulse_db.record(ticker, "stocktwits", t_items)
+        except Exception:
+            continue
+    pulse_db.cleanup(keep_days=7)
+    spikes = pulse_db.get_spikes(hours=2, min_mentions=3)
+    if spikes:
+        console.print(f"\n[bold yellow]📡 Social-Spike erkannt:[/bold yellow]")
+        for s in spikes:
+            score_label = "🟢 Bullisch" if s["avg_score"] > 0.1 else ("🔴 Bärisch" if s["avg_score"] < -0.1 else "⚪ Neutral")
+            console.print(
+                f"  [cyan]{s['ticker']}[/cyan]: {s['total_mentions']} Erwähnungen "
+                f"(+{s['spike_ratio']}× normal) | {score_label} ({s['avg_score']:+.2f})"
+            )
+        # If strategy is provided, try to process signal queue after a spike
+        if strategy:
+            queued = strategy.process_signal_queue()
+            for q in queued:
+                console.print(f"  [bold green]{q}[/bold green]")
+    return spikes
+
+
+def show_pulse(pulse_db: SocialPulseDB):
+    """Displays aggregated social pulse for the last 6 hours."""
+    console.rule("[bold blue]Social-Marktpuls (letzte 6h)")
+    summary = pulse_db.get_pulse_summary(hours=6)
+    if not summary:
+        console.print("[dim]Noch keine Social-Scan-Daten.[/dim]")
+        return
+    table = Table(title="Marktpuls per Ticker", box=box.ROUNDED)
+    table.add_column("Ticker", style="cyan")
+    table.add_column("Erwähnungen", justify="right")
+    table.add_column("Bullisch", justify="right")
+    table.add_column("Bärisch", justify="right")
+    table.add_column("Score", justify="right")
+    table.add_column("Trend")
+    for row in summary:
+        score = row["avg_score"]
+        score_str = (
+            f"[green]{score:+.2f}[/green]" if score > 0.1
+            else (f"[red]{score:+.2f}[/red]" if score < -0.1 else f"{score:+.2f}")
+        )
+        trend = "🟢 Bullisch" if score > 0.1 else ("🔴 Bärisch" if score < -0.1 else "⚪ Neutral")
+        table.add_row(
+            row["ticker"],
+            str(row["total_mentions"]),
+            str(row["bull"]),
+            str(row["bear"]),
+            score_str,
+            trend,
+        )
+    console.print(table)
+    spikes = pulse_db.get_spikes(hours=2)
+    if spikes:
+        console.print("\n[bold yellow]Aktuelle Spikes (2h-Fenster):[/bold yellow]")
+        for s in spikes:
+            console.print(f"  {s['ticker']}: {s['spike_ratio']}× normales Volumen")
+
+
+def show_signal_queue(signal_queue: SignalQueue):
+    """Displays all pending signals in the queue."""
+    console.rule("[bold blue]Signal-Warteschlange")
+    pending = signal_queue.get_pending()
+    history = signal_queue.get_history(limit=10)
+    if not pending:
+        console.print("[dim]Keine ausstehenden Signale.[/dim]")
+    else:
+        table = Table(title=f"{len(pending)} ausstehende Signale", box=box.ROUNDED)
+        table.add_column("ID", justify="right")
+        table.add_column("Ticker", style="cyan")
+        table.add_column("Score", justify="right")
+        table.add_column("Konfidenz")
+        table.add_column("Erstellt")
+        table.add_column("Läuft ab")
+        table.add_column("Begründung")
+        for s in pending:
+            table.add_row(
+                str(s["id"]), s["ticker"],
+                f"{s['sentiment_score']:.2f}", s["confidence"],
+                s["created_at"][:16], s["expires_at"][:16],
+                (s.get("entry_rationale") or "")[:60],
+            )
+        console.print(table)
+    if history:
+        ht = Table(title="Historie (letzte 10)", box=box.SIMPLE)
+        ht.add_column("Ticker", style="cyan")
+        ht.add_column("Score", justify="right")
+        ht.add_column("Status")
+        ht.add_column("Erstellt")
+        status_color = {"pending": "yellow", "executed": "green", "expired": "dim", "superseded": "dim"}
+        for s in history:
+            color = status_color.get(s["status"], "white")
+            ht.add_row(
+                s["ticker"], f"{s['sentiment_score']:.2f}",
+                f"[{color}]{s['status']}[/{color}]",
+                s["created_at"][:16],
+            )
+        console.print(ht)
+
+
 def run_backtest(period: str = "2y"):
     console.rule(f"[bold blue]Backtest – {period}")
     bt = Backtester(
@@ -637,6 +759,8 @@ def main():
     parser.add_argument("--export-csv", action="store_true", help="Trades als CSV exportieren")
     parser.add_argument("--export-pdf", action="store_true", help="Monatsbericht als PDF exportieren")
     parser.add_argument("--kelly-info", action="store_true", help="Kelly-Criterion-Statistik anzeigen")
+    parser.add_argument("--pulse", action="store_true", help="Social-Marktpuls anzeigen")
+    parser.add_argument("--queue", action="store_true", help="Signal-Warteschlange anzeigen")
     args = parser.parse_args()
 
     if args.dashboard:
@@ -663,6 +787,8 @@ def main():
     journal = TradeJournal()
     archive = NewsArchive()
     reflection = ReflectionEngine(tracker, journal)
+    signal_queue = SignalQueue(max_age_hours=config.signal_queue_max_age_hours)
+    pulse_db = SocialPulseDB()
 
     if args.status:
         show_status(portfolio, broker, phase_ctrl)
@@ -713,6 +839,14 @@ def main():
         ))
         return
 
+    if args.pulse:
+        show_pulse(pulse_db)
+        return
+
+    if args.queue:
+        show_signal_queue(signal_queue)
+        return
+
     if not config.anthropic_api_key:
         console.print("[bold red]Fehler: ANTHROPIC_API_KEY nicht gesetzt.[/bold red]")
         sys.exit(1)
@@ -724,6 +858,7 @@ def main():
 
     strategy = SwingStrategy(
         portfolio, broker, tracker, phase_ctrl, focus_ctrl, journal,
+        signal_queue=signal_queue,
         earnings_filter=earnings_filter,
         correlation_checker=correlation_checker,
         kelly_sizer=kelly_sizer,
@@ -734,37 +869,68 @@ def main():
     phase_info = phase_ctrl.get_info(total)
     phase_color = "green" if phase_info["phase"] == "GROWTH" else "magenta"
 
+    analysis_times_display = ", ".join(config.analysis_times)
+    social_label = "[green]aktiv[/green]" if config.enable_social_scan else "[dim]deaktiviert[/dim]"
+    queue_label = f"{signal_queue.count_pending()} Signal(e) ausstehend"
+
     console.print(Panel(
         f"[bold]Stock Sentiment Bot gestartet[/bold]\n"
         f"Broker: [cyan]{config.broker_mode.upper()}[/cyan] | "
         f"Watchlist: [cyan]{', '.join(config.watchlist)}[/cyan]\n"
         f"Fokus: [magenta]{focus_ctrl.profile.label}[/magenta] | "
-        f"Analyse täglich um [cyan]{config.analysis_hour:02d}:{config.analysis_minute:02d} Uhr[/cyan]\n"
+        f"Vollanalyse um: [cyan]{analysis_times_display}[/cyan]\n"
+        f"Social-Scan: {social_label} (stündlich) | "
+        f"Signal-Queue: [yellow]{queue_label}[/yellow]\n"
         f"Phase: [{phase_color}]{phase_info['phase']}[/{phase_color}] | "
         f"Kapital: ${total:,.2f} | Ziel: ${phase_info['growth_target']:,.0f}",
         border_style="green",
     ))
 
     def _monthly_review_check():
-        """Generates monthly review on the 1st of each month at analysis time."""
         if datetime.utcnow().day == 1:
             console.print("[bold magenta]📋 Erstelle monatliche Selbsteinschätzung...[/bold magenta]")
             content = reflection.generate_monthly_review()
             if content:
                 console.print(Panel(content[:800] + "...", title="Monatsreview erstellt", border_style="magenta"))
 
+    def _social_scan_job():
+        spikes = run_social_scan(pulse_db, strategy)
+        if spikes:
+            notifier = TelegramNotifier()
+            spike_lines = [
+                f"{s['ticker']}: {s['spike_ratio']}× Volumen, Score {s['avg_score']:+.2f}"
+                for s in spikes[:5]
+            ]
+            notifier.notify_daily_summary(
+                total_value=portfolio.total_value(broker.get_prices(list(portfolio.all_positions().keys()))),
+                cash=portfolio.cash,
+                open_positions=len(portfolio.all_positions()),
+                phase=phase_ctrl.current_phase(portfolio.total_value({})),
+                progress_pct=phase_ctrl.progress_pct(portfolio.total_value({})),
+                actions_today=[f"📡 Social-Spike: {l}" for l in spike_lines],
+            )
+
     if args.once:
         run_analysis_cycle(portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection)
         return
 
-    schedule_time = f"{config.analysis_hour:02d}:{config.analysis_minute:02d}"
-    schedule.every().day.at(schedule_time).do(
-        run_analysis_cycle, portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection
-    )
-    schedule.every().day.at(schedule_time).do(_monthly_review_check)
-    schedule.every().hour.do(strategy.check_open_positions)
+    # Schedule full analysis at each configured time
+    for t in config.analysis_times:
+        schedule.every().day.at(t).do(
+            run_analysis_cycle, portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection
+        )
+        schedule.every().day.at(t).do(_monthly_review_check)
 
-    console.print(f"[dim]Nächste Analyse um {schedule_time} Uhr. Ctrl+C zum Beenden.[/dim]")
+    # Hourly tasks
+    schedule.every().hour.do(strategy.check_open_positions)
+    if config.enable_social_scan:
+        schedule.every().hour.do(_social_scan_job)
+        console.print(f"[dim]Social-Scan läuft stündlich.[/dim]")
+
+    console.print(
+        f"[dim]Vollanalysen um: {analysis_times_display}. "
+        f"Stop-Loss-Check stündlich. Ctrl+C zum Beenden.[/dim]"
+    )
 
     try:
         while True:
