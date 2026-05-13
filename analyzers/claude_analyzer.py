@@ -32,6 +32,14 @@ Du berücksichtigst sowohl aktuelle als auch historische Nachrichtenentwicklunge
 Antworte IMMER ausschließlich mit einem validen JSON-Objekt ohne Markdown-Fences oder zusätzlichen Text.
 """
 
+_LESSONS_PREFIX = """
+
+=== AKTUELLE LESSONS-LEARNED (aus eigenen Trades) ===
+{memo}
+=== ENDE LESSONS ===
+Berücksichtige diese Erfahrungen aktiv bei deiner Empfehlung.
+"""
+
 # Used when there is NO open position – standard buy/skip evaluation
 _USER_TEMPLATE_STANDARD = """Analysiere folgende Informationen zur Aktie {ticker}:
 
@@ -120,6 +128,7 @@ class ClaudeAnalyzer:
         price_data: Optional[Dict] = None,
         historical_news: Optional[List[Dict]] = None,
         open_position: Optional[Dict] = None,  # dict with entry_price, entry_date, hold_days, thesis, catalysts
+        lessons_memo: Optional[str] = None,    # active reflection memo to inject
     ) -> AnalysisResult:
         if not news_items:
             return self._empty_result(ticker, "Keine Nachrichtenartikel verfügbar")
@@ -150,10 +159,14 @@ class ClaudeAnalyzer:
                 historical_block=historical_block,
             )
 
+        system_prompt = _SYSTEM_PROMPT
+        if lessons_memo:
+            system_prompt = system_prompt + _LESSONS_PREFIX.format(memo=lessons_memo)
+
         message = self._client.messages.create(
             model=config.claude_model,
             max_tokens=1200,
-            system=_SYSTEM_PROMPT,
+            system=system_prompt,
             messages=[{"role": "user", "content": prompt}],
         )
 

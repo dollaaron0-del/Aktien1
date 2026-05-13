@@ -4,10 +4,15 @@ Sammelt Nachrichten & Reddit-Posts, analysiert per Claude API,
 und handelt Aktien automatisch (Paper-Trading).
 
 Starten:  python main.py
-          python main.py --once      (einmalige Analyse, dann beenden)
-          python main.py --status    (Portfolioübersicht)
-          python main.py --report    (Lernbericht + Phaseninfo)
-          python main.py --dashboard (Startet Streamlit-Dashboard)
+          python main.py --once          (einmalige Analyse, dann beenden)
+          python main.py --status        (Portfolioübersicht)
+          python main.py --report        (Lernbericht + Phaseninfo)
+          python main.py --dashboard     (Startet Streamlit-Dashboard)
+          python main.py --focus         (Aktiven Fokus-Modus anzeigen)
+          python main.py --journal       (Trade-Tagebuch alle Trades)
+          python main.py --journal AAPL  (Trade-Tagebuch für einen Ticker)
+          python main.py --reflect       (Monats-Selbsteinschätzung)
+          python main.py --reflect 2026-04 (Selbsteinschätzung für Monat YYYY-MM)
 """
 
 import argparse
@@ -31,10 +36,13 @@ from collectors import (
 )
 from collectors.news_archive import NewsArchive
 from analyzers import ClaudeAnalyzer, AnalysisResult
+from analyzers.reflection_engine import ReflectionEngine
 from broker.paper_broker import PaperBroker
 from portfolio import Portfolio
 from portfolio.performance_tracker import PerformanceTracker
 from portfolio.phase_controller import PhaseController
+from portfolio.focus_mode import FocusController, FocusMode
+from portfolio.trade_journal import TradeJournal
 from strategy import SwingStrategy
 from notifier.telegram_notifier import TelegramNotifier
 
@@ -47,6 +55,15 @@ def _make_phase_ctrl() -> PhaseController:
         growth_target_multiple=config.growth_target_multiple,
         monthly_target_eur=config.monthly_distribution_eur,
         buffer_months=config.distribution_buffer_months,
+    )
+
+
+def _make_focus_ctrl() -> FocusController:
+    return FocusController(
+        mode=config.focus_mode,
+        target_amount=config.target_goal_amount or None,
+        target_date=config.target_goal_date or None,
+        initial_capital=config.initial_capital,
     )
 
 
@@ -111,11 +128,17 @@ def run_analysis_cycle(
     tracker: PerformanceTracker,
     phase_ctrl: PhaseController,
     archive: NewsArchive,
+    reflection: Optional[ReflectionEngine] = None,
 ):
     console.rule(f"[bold blue]Analyse-Zyklus – {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
     analyzer = ClaudeAnalyzer()
     yahoo = YahooCollector()
+
+    # Inject continuous learning memo into Claude's system prompt
+    lessons_memo = reflection.get_active_memo() if reflection else None
+    if lessons_memo:
+        console.print(f"  [dim]📚 Lessons-Memo aktiv ({len(lessons_memo)} Zeichen)[/dim]")
 
     # Track all material trade actions for the daily summary
     cycle_actions: List[str] = []
@@ -162,6 +185,7 @@ def run_analysis_cycle(
             price_data=price_data,
             historical_news=historical if historical else None,
             open_position=open_position_ctx,
+            lessons_memo=lessons_memo,
         )
 
         _print_analysis(analysis)
@@ -173,6 +197,12 @@ def run_analysis_cycle(
             # Only material trades go into the Telegram summary, not skip/hold notices
             if "GEKAUFT" in action or "VERKAUFT" in action:
                 cycle_actions.append(action)
+                # Refresh continuous learning memo after each closed trade
+                if reflection and "VERKAUFT" in action:
+                    new_memo = reflection.generate_memo()
+                    if new_memo:
+                        console.print("  [dim]📚 Lessons-Memo aktualisiert[/dim]")
+                        lessons_memo = new_memo
 
     # Record portfolio snapshot
     prices = broker.get_prices(list(portfolio.all_positions().keys()))
@@ -438,12 +468,89 @@ def show_report(
     console.print(Panel("\n".join(phase_lines), title="Portfolio-Phase", border_style=phase_color))
 
 
+def show_monthly_review(reflection: ReflectionEngine, year_month: Optional[str] = None):
+    console.rule("[bold blue]Monatliche Selbsteinschätzung")
+    content = reflection.generate_monthly_review(year_month)
+    if not content:
+        console.print("[dim]Nicht genug abgeschlossene Trades im Zeitraum oder API-Fehler.[/dim]")
+        return
+    console.print(Panel(content, title=f"Self-Assessment {year_month or 'letzter Monat'}", border_style="magenta"))
+
+
+def show_trade_journal(journal: TradeJournal, ticker: Optional[str] = None):
+    console.rule(f"[bold blue]Trade-Tagebuch{' – ' + ticker if ticker else ''}")
+    if ticker:
+        stories = journal.get_trade_story(ticker, limit_trades=5)
+    else:
+        stories = journal.get_all_trade_summaries(limit=20)
+    if not stories:
+        console.print("[dim]Noch keine Trade-Events gespeichert.[/dim]")
+        return
+    for s in stories[:10]:
+        status = "🟢 OFFEN" if s.get("is_open") else (
+            "🟩 GEWINN" if (s.get("pnl") or 0) >= 0 else "🔴 VERLUST"
+        )
+        lines = [
+            f"[bold]{s['ticker']}[/bold]  {status}",
+            f"  Eingestiegen: {s.get('entry_date', '?')[:10]} @ ${s.get('entry_price', 0):.2f}",
+            f"  Sentiment: {s.get('entry_sentiment', 0):.2f}  |  These: [italic]{(s.get('entry_rationale') or '')[:120]}[/italic]",
+        ]
+        if s.get("catalysts"):
+            lines.append(f"  Katalysatoren: {', '.join(s['catalysts'][:3])}")
+        if s.get("risks"):
+            lines.append(f"  Risiken: {', '.join(s['risks'][:3])}")
+        lines.append(f"  Tagesprüfungen: {s.get('n_daily_checks', 0)}  |  Warnungen: {s.get('n_warnings', 0)}")
+        if not s.get("is_open"):
+            pnl = s.get("pnl", 0)
+            color = "green" if pnl >= 0 else "red"
+            lines += [
+                f"  Verkauft: {s.get('exit_date', '?')[:10]} @ ${s.get('exit_price', 0):.2f}",
+                f"  P&L: [{color}]{pnl:+.2f} USD ({s.get('pnl_pct', 0):+.1f}%)[/{color}]  |  "
+                f"Haltedauer: {s.get('actual_hold_days', '?')}d",
+                f"  Grund: {(s.get('exit_reason') or '')[:120]}",
+            ]
+        console.print(Panel("\n".join(lines), border_style="cyan" if s.get("is_open") else "dim"))
+
+
+def show_focus_info(focus_ctrl: FocusController, portfolio: Portfolio, broker: PaperBroker):
+    console.rule("[bold blue]Fokus-Modus")
+    prices = broker.get_prices(list(portfolio.all_positions().keys()))
+    total = portfolio.total_value(prices)
+    info = focus_ctrl.get_info(total)
+    lines = [
+        f"Modus:               [bold]{info['label']}[/bold]",
+        f"Beschreibung:        [italic]{info['description']}[/italic]",
+        "",
+        f"Stop-Loss:           {info['stop_loss_pct']*100:.0f}%",
+        f"Take-Profit:         {info['take_profit_pct']*100:.0f}%",
+        f"Max. Positionsgröße: {info['max_position_pct']*100:.0f}%",
+        f"Min. Sentiment:      {info['min_sentiment']:.2f}",
+        f"Bevorzugte Haltedauer: {info['preferred_hold_days']}d",
+    ]
+    if info["mode"] == FocusMode.TARGET_GOAL and info.get("target_amount"):
+        status = "✓ Im Plan" if info["on_track"] else ("⚠ Hinter Plan" if info["behind_plan"] else "✓ Voraus")
+        lines += [
+            "",
+            f"Zielbetrag:    ${info['target_amount']:,.2f}",
+            f"Zieldatum:     {info['target_date']}",
+            f"Tage übrig:    {info['days_remaining']}",
+            f"Fortschritt:   {info['progress_pct']:.1f}%",
+            f"Status:        [bold]{status}[/bold]  (Urgency {info['urgency']:.2f})",
+        ]
+    console.print(Panel("\n".join(lines), title="Aktiver Fokus", border_style="cyan"))
+
+
 def main():
     parser = argparse.ArgumentParser(description="Stock Sentiment Trading Bot")
-    parser.add_argument("--once", action="store_true")
-    parser.add_argument("--status", action="store_true")
-    parser.add_argument("--report", action="store_true")
-    parser.add_argument("--dashboard", action="store_true")
+    parser.add_argument("--once", action="store_true", help="Einmaliger Analysezyklus")
+    parser.add_argument("--status", action="store_true", help="Portfolio-Übersicht")
+    parser.add_argument("--report", action="store_true", help="Lernbericht")
+    parser.add_argument("--dashboard", action="store_true", help="Streamlit-Dashboard")
+    parser.add_argument("--reflect", nargs="?", const="latest",
+                        help="Monatliche Selbsteinschätzung (optional: YYYY-MM)")
+    parser.add_argument("--journal", nargs="?", const="all",
+                        help="Trade-Tagebuch anzeigen (optional: Ticker)")
+    parser.add_argument("--focus", action="store_true", help="Aktuellen Fokus-Modus anzeigen")
     args = parser.parse_args()
 
     if args.dashboard:
@@ -456,7 +563,10 @@ def main():
     portfolio = Portfolio(config.initial_capital)
     tracker = PerformanceTracker()
     phase_ctrl = _make_phase_ctrl()
+    focus_ctrl = _make_focus_ctrl()
+    journal = TradeJournal()
     archive = NewsArchive()
+    reflection = ReflectionEngine(tracker, journal)
 
     if args.status:
         show_status(portfolio, broker, phase_ctrl)
@@ -466,11 +576,25 @@ def main():
         show_report(tracker, phase_ctrl, portfolio, broker)
         return
 
+    if args.focus:
+        show_focus_info(focus_ctrl, portfolio, broker)
+        return
+
+    if args.reflect is not None:
+        year_month = None if args.reflect == "latest" else args.reflect
+        show_monthly_review(reflection, year_month)
+        return
+
+    if args.journal is not None:
+        ticker = None if args.journal == "all" else args.journal.upper()
+        show_trade_journal(journal, ticker)
+        return
+
     if not config.anthropic_api_key:
         console.print("[bold red]Fehler: ANTHROPIC_API_KEY nicht gesetzt.[/bold red]")
         sys.exit(1)
 
-    strategy = SwingStrategy(portfolio, broker, tracker, phase_ctrl)
+    strategy = SwingStrategy(portfolio, broker, tracker, phase_ctrl, focus_ctrl, journal)
 
     prices = broker.get_prices(list(portfolio.all_positions().keys()))
     total = portfolio.total_value(prices)
@@ -481,21 +605,30 @@ def main():
         f"[bold]Stock Sentiment Bot gestartet[/bold]\n"
         f"Broker: [cyan]{config.broker_mode.upper()}[/cyan] | "
         f"Watchlist: [cyan]{', '.join(config.watchlist)}[/cyan]\n"
-        f"Analyse täglich um [cyan]{config.analysis_hour:02d}:{config.analysis_minute:02d} Uhr[/cyan] | "
-        f"Nachrichtenarchiv: [cyan]30 Tage[/cyan]\n"
+        f"Fokus: [magenta]{focus_ctrl.profile.label}[/magenta] | "
+        f"Analyse täglich um [cyan]{config.analysis_hour:02d}:{config.analysis_minute:02d} Uhr[/cyan]\n"
         f"Phase: [{phase_color}]{phase_info['phase']}[/{phase_color}] | "
         f"Kapital: ${total:,.2f} | Ziel: ${phase_info['growth_target']:,.0f}",
         border_style="green",
     ))
 
+    def _monthly_review_check():
+        """Generates monthly review on the 1st of each month at analysis time."""
+        if datetime.utcnow().day == 1:
+            console.print("[bold magenta]📋 Erstelle monatliche Selbsteinschätzung...[/bold magenta]")
+            content = reflection.generate_monthly_review()
+            if content:
+                console.print(Panel(content[:800] + "...", title="Monatsreview erstellt", border_style="magenta"))
+
     if args.once:
-        run_analysis_cycle(portfolio, broker, strategy, tracker, phase_ctrl, archive)
+        run_analysis_cycle(portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection)
         return
 
     schedule_time = f"{config.analysis_hour:02d}:{config.analysis_minute:02d}"
     schedule.every().day.at(schedule_time).do(
-        run_analysis_cycle, portfolio, broker, strategy, tracker, phase_ctrl, archive
+        run_analysis_cycle, portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection
     )
+    schedule.every().day.at(schedule_time).do(_monthly_review_check)
     schedule.every().hour.do(strategy.check_open_positions)
 
     console.print(f"[dim]Nächste Analyse um {schedule_time} Uhr. Ctrl+C zum Beenden.[/dim]")

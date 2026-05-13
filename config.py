@@ -49,6 +49,13 @@ class Config:
     telegram_bot_token: str = field(default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", ""))
     telegram_chat_id: str = field(default_factory=lambda: os.getenv("TELEGRAM_CHAT_ID", ""))
 
+    # Focus mode: WEALTH_BUILDING | INCOME | TARGET_GOAL
+    focus_mode: str = field(default_factory=lambda: os.getenv("FOCUS_MODE", "WEALTH_BUILDING"))
+    target_goal_amount: float = field(
+        default_factory=lambda: float(os.getenv("TARGET_GOAL_AMOUNT", "0") or 0)
+    )
+    target_goal_date: str = field(default_factory=lambda: os.getenv("TARGET_GOAL_DATE", ""))
+
     # Portfolio phase settings
     growth_target_multiple: float = field(
         default_factory=lambda: float(os.getenv("GROWTH_TARGET_MULTIPLE", "3.0"))

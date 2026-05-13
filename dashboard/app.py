@@ -18,6 +18,9 @@ from broker.paper_broker import PaperBroker
 from portfolio.portfolio import Portfolio
 from portfolio.performance_tracker import PerformanceTracker
 from portfolio.phase_controller import PhaseController
+from portfolio.focus_mode import FocusController, FocusMode
+from portfolio.trade_journal import TradeJournal
+from analyzers.reflection_engine import ReflectionEngine
 
 st.set_page_config(
     page_title="Stock Sentiment Bot",
@@ -40,10 +43,18 @@ def load_resources():
         monthly_target_eur=config.monthly_distribution_eur,
         buffer_months=config.distribution_buffer_months,
     )
-    return broker, portfolio, tracker, phase_ctrl
+    focus_ctrl = FocusController(
+        mode=config.focus_mode,
+        target_amount=config.target_goal_amount or None,
+        target_date=config.target_goal_date or None,
+        initial_capital=config.initial_capital,
+    )
+    journal = TradeJournal()
+    reflection = ReflectionEngine(tracker, journal)
+    return broker, portfolio, tracker, phase_ctrl, focus_ctrl, journal, reflection
 
 
-broker, portfolio, tracker, phase_ctrl = load_resources()
+broker, portfolio, tracker, phase_ctrl, focus_ctrl, journal, reflection = load_resources()
 
 prices = broker.get_prices(list(portfolio.all_positions().keys()))
 total_value = portfolio.total_value(prices)
@@ -251,6 +262,107 @@ else:
 
 st.divider()
 
+# ─── Trade Journal (per-trade story) ─────────────────────────────────────────
+st.subheader("📖 Trade-Tagebuch – Warum wurde gekauft / verkauft?")
+st.caption("Jeder Trade mit voller Entscheidungs-Historie: Sentiment, Katalysatoren, Risiken, Tagesprüfungen, Verkaufsgrund.")
+
+journal_stories = journal.get_all_trade_summaries(limit=30)
+if not journal_stories:
+    st.info("Noch keine Trades. Sobald der Bot kauft/verkauft, erscheinen hier die Geschichten.")
+else:
+    # Filter selector
+    tickers_with_trades = sorted({s["ticker"] for s in journal_stories})
+    selected_ticker = st.selectbox(
+        "Ticker filtern:", ["Alle"] + tickers_with_trades, key="journal_filter"
+    )
+    filtered = journal_stories if selected_ticker == "Alle" else [
+        s for s in journal_stories if s["ticker"] == selected_ticker
+    ]
+
+    for s in filtered[:15]:
+        status_icon = "🟢" if s.get("is_open") else ("🟩" if (s.get("pnl") or 0) >= 0 else "🔴")
+        pnl = s.get("pnl") or 0
+        pnl_str = (
+            f"OFFEN seit {s.get('entry_date','?')[:10]}"
+            if s.get("is_open") else
+            f"P&L {pnl:+.2f} USD ({s.get('pnl_pct',0):+.1f}%)"
+        )
+        with st.expander(f"{status_icon} {s['ticker']}  ·  {pnl_str}"):
+            colA, colB = st.columns(2)
+            with colA:
+                st.markdown("**Einstieg**")
+                st.write(f"📅 {s.get('entry_date','?')[:10]} · ${s.get('entry_price',0):.2f}")
+                st.write(f"🧠 Sentiment: {s.get('entry_sentiment',0):.2f}")
+                st.write(f"⏱️ Geplante Haltedauer: {s.get('planned_hold_days','?')}d")
+                if s.get("target_price"):
+                    st.write(f"🎯 Zielkurs: ${s['target_price']:.2f}")
+                st.markdown("**Kauflogik**")
+                st.info(s.get("entry_rationale") or "–")
+                if s.get("catalysts"):
+                    st.markdown("**Katalysatoren:** " + ", ".join(s["catalysts"]))
+                if s.get("risks"):
+                    st.markdown("**Bekannte Risiken:** " + ", ".join(s["risks"]))
+                if s.get("sources"):
+                    src_str = ", ".join(f"{k}:{v}" for k, v in s["sources"].items() if v)
+                    st.markdown(f"**Quellen:** {src_str}")
+            with colB:
+                st.markdown("**Verlauf**")
+                st.metric("Tagesprüfungen", s.get("n_daily_checks", 0))
+                st.metric("Warnungen", s.get("n_warnings", 0))
+                if not s.get("is_open"):
+                    st.markdown("**Verkauf**")
+                    st.write(f"📅 {s.get('exit_date','?')[:10]} · ${s.get('exit_price',0):.2f}")
+                    st.write(f"⏱️ Tatsächl. Haltedauer: {s.get('actual_hold_days','?')}d")
+                    color = "green" if pnl >= 0 else "red"
+                    st.markdown(f"**Ergebnis:** :{color}[{pnl:+.2f} USD ({s.get('pnl_pct',0):+.1f}%)]")
+                    st.warning(f"**Verkaufsgrund:** {s.get('exit_reason','–')}")
+            # Detailed event timeline
+            with st.expander("🔍 Vollständige Event-Zeitleiste"):
+                for ev in s["events"]:
+                    icon = {"ENTRY":"🟢","DAILY_CHECK":"👁","WARNING":"⚠️","EXIT":"🔚"}.get(ev["event_type"], "•")
+                    st.text(
+                        f"{icon} {ev['event_date'][:16]}  {ev['event_type']}  "
+                        f"${ev.get('price',0):.2f}  "
+                        f"{(ev.get('rationale') or ev.get('reason') or '')[:120]}"
+                    )
+
+st.divider()
+
+# ─── Monthly Self-Assessment ─────────────────────────────────────────────────
+st.subheader("📋 Monatliche Selbsteinschätzung")
+st.caption("Claude reflektiert am Monatsanfang: Was lief gut, was schlecht, was wird angepasst.")
+
+reviews = reflection.get_monthly_reviews(limit=12)
+left_r, right_r = st.columns([3, 1])
+with right_r:
+    if st.button("🔄 Jetzt neu generieren"):
+        with st.spinner("Claude reflektiert…"):
+            new_content = reflection.generate_monthly_review()
+        if new_content:
+            st.success("Neue Einschätzung generiert.")
+            st.rerun()
+        else:
+            st.warning("Nicht genug Trades oder API-Fehler.")
+
+with left_r:
+    if reviews:
+        # Tabs per month
+        tabs = st.tabs([r["period"] or "Aktuell" for r in reviews])
+        for tab, review in zip(tabs, reviews):
+            with tab:
+                st.caption(f"Erstellt: {review['created_at'][:16]} · {review['trades_used']} Trades")
+                st.markdown(review["content"])
+    else:
+        st.info("Noch keine monatlichen Reviews. Wird am 1. jedes Monats automatisch generiert oder über `--reflect` manuell.")
+
+# Continuous learning memo display
+memo = reflection.get_active_memo()
+if memo:
+    with st.expander("📚 Aktuelles Lessons-Learned-Memo (wird in jede Analyse eingespeist)"):
+        st.info(memo)
+
+st.divider()
+
 # ─── All Trades ───────────────────────────────────────────────────────────────
 st.subheader("Alle Transaktionen")
 trades = portfolio.trade_history()
@@ -267,12 +379,33 @@ else:
 
 # ─── Sidebar ─────────────────────────────────────────────────────────────────
 with st.sidebar:
+    # Focus mode display + selector
+    st.header("🎯 Fokus-Modus")
+    fm_info = focus_ctrl.get_info(total_value)
+    st.markdown(f"### {fm_info['label']}")
+    st.caption(fm_info["description"])
+    st.write(f"Stop-Loss: **{fm_info['stop_loss_pct']*100:.0f}%**  ·  Take-Profit: **{fm_info['take_profit_pct']*100:.0f}%**")
+    st.write(f"Max. Position: **{fm_info['max_position_pct']*100:.0f}%**  ·  Haltedauer: **{fm_info['preferred_hold_days']}d**")
+    st.write(f"Min. Sentiment: **{fm_info['min_sentiment']:.2f}**")
+
+    if fm_info["mode"] == FocusMode.TARGET_GOAL and fm_info.get("target_amount"):
+        st.divider()
+        st.markdown("**🎯 Zielfortschritt**")
+        st.progress(fm_info["progress_pct"] / 100,
+                    text=f"{fm_info['progress_pct']:.1f}% · noch {fm_info['days_remaining']} Tage")
+        if fm_info["on_track"]:
+            st.success(f"Im Plan (Urgency {fm_info['urgency']:.2f})")
+        elif fm_info["behind_plan"]:
+            st.warning(f"Hinter Plan – Bot wird aggressiver (Urgency {fm_info['urgency']:.2f})")
+        else:
+            st.info(f"Voraus – Bot wird defensiver (Urgency {fm_info['urgency']:.2f})")
+
+    st.caption("Modus per `FOCUS_MODE` in `.env` umschalten (WEALTH_BUILDING / INCOME / TARGET_GOAL)")
+    st.divider()
+
     st.header("⚙️ Konfiguration")
     st.write(f"**Modell:** {config.claude_model}")
     st.write(f"**Watchlist:** {', '.join(config.watchlist)}")
-    st.write(f"**Stop-Loss:** {config.stop_loss_pct*100:.0f}%")
-    st.write(f"**Take-Profit:** {config.take_profit_pct*100:.0f}%")
-    st.write(f"**Max. Position:** {config.max_position_pct*100:.0f}%")
     st.write(f"**Kauf-Threshold:** {config.buy_threshold:.2f}")
     st.write(f"**Min. Quellen:** {config.min_sources}")
     st.divider()

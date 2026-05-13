@@ -5,6 +5,8 @@ from analyzers.claude_analyzer import AnalysisResult
 from portfolio.portfolio import Portfolio, Position
 from portfolio.performance_tracker import PerformanceTracker
 from portfolio.phase_controller import PhaseController
+from portfolio.focus_mode import FocusController
+from portfolio.trade_journal import TradeJournal
 from broker.paper_broker import PaperBroker
 from notifier.telegram_notifier import TelegramNotifier
 from config import config
@@ -17,11 +19,15 @@ class SwingStrategy:
         broker: PaperBroker,
         tracker: PerformanceTracker,
         phase_ctrl: PhaseController,
+        focus_ctrl: FocusController,
+        journal: TradeJournal,
     ):
         self.portfolio = portfolio
         self.broker = broker
         self.tracker = tracker
         self.phase_ctrl = phase_ctrl
+        self.focus = focus_ctrl
+        self.journal = journal
         self._notifier = TelegramNotifier()
 
     def evaluate(self, analysis: AnalysisResult, sources_breakdown: Optional[Dict[str, int]] = None) -> Optional[str]:
@@ -45,14 +51,17 @@ class SwingStrategy:
         portfolio_value = self.portfolio.total_value(
             self.broker.get_prices(list(self.portfolio.all_positions().keys()) + [ticker])
         )
+        # Effective buy threshold: combines adaptive learning + phase + focus mode
         adaptive_threshold = self.tracker.get_adaptive_threshold(config.buy_threshold)
         phase_modifier = self.phase_ctrl.get_entry_threshold_modifier(portfolio_value)
-        effective_threshold = adaptive_threshold + phase_modifier
+        effective_threshold = self.focus.get_effective_threshold(
+            adaptive_threshold + phase_modifier, portfolio_value
+        )
 
         if analysis.sentiment_score < effective_threshold:
             return (
                 f"[{ticker}] Sentiment {analysis.sentiment_score:.2f} unter Schwelle "
-                f"{effective_threshold:.2f} – übersprungen."
+                f"{effective_threshold:.2f} ({self.focus.profile.label}) – übersprungen."
             )
 
         return self._open_position(ticker, current_price, analysis, portfolio_value, sources_breakdown or {})
@@ -80,7 +89,7 @@ class SwingStrategy:
                 reason = f"Max. Haltedauer ({pos.target_hold_days}d) erreicht"
 
             if reason:
-                self._do_close(ticker, pos, price, reason)
+                pnl = self._do_close(ticker, pos, price, reason, days_held)
                 pnl_approx = (price - pos.entry_price) * pos.shares
                 actions.append(
                     f"[{ticker}] VERKAUFT – {reason} | P&L: {'+' if pnl_approx >= 0 else ''}{pnl_approx:.2f} USD"
@@ -109,7 +118,7 @@ class SwingStrategy:
 
         if reason:
             thesis_broken = "gebrochen" in reason.lower()
-            pnl = self._do_close(ticker, pos, price, reason)
+            pnl = self._do_close(ticker, pos, price, reason, days_held)
             sign = "+" if pnl >= 0 else ""
             thesis_tag = " ⚠️ THESE GEBROCHEN" if thesis_broken else ""
             self._notifier.notify_sell(
@@ -118,6 +127,23 @@ class SwingStrategy:
                 reason=reason, thesis_broken=thesis_broken,
             )
             return f"[{ticker}] VERKAUFT{thesis_tag} – {reason} | P&L: {sign}{pnl:.2f} USD"
+
+        # Log daily check (no exit triggered)
+        self.journal.log_daily_check(
+            ticker=ticker, price=price,
+            sentiment=analysis.sentiment_score,
+            confidence=analysis.confidence,
+            thesis_valid=analysis.thesis_valid,
+            rationale=analysis.entry_rationale or analysis.raw_summary,
+            recommendation=analysis.recommendation,
+        )
+        if analysis.thesis_valid is False:
+            # Thesis weakened but confidence low → warning only
+            self.journal.log_warning(
+                ticker=ticker, price=price,
+                reason=analysis.thesis_break_reason or "These angeschlagen",
+                confidence=analysis.confidence,
+            )
 
         thesis_note = ""
         if analysis.thesis_valid is True:
@@ -135,7 +161,9 @@ class SwingStrategy:
         portfolio_value: float,
         sources_breakdown: Dict[str, int],
     ) -> str:
-        max_invest = portfolio_value * config.max_position_pct
+        # Apply focus-mode position sizing
+        max_pos_pct = self.focus.get_max_position_pct(portfolio_value)
+        max_invest = portfolio_value * max_pos_pct
         invest = min(max_invest, self.portfolio.cash * 0.95)
 
         if invest < 50:
@@ -143,14 +171,20 @@ class SwingStrategy:
 
         shares = math.floor(invest / price * 100) / 100
 
-        stop_loss = round(price * (1 - config.stop_loss_pct), 2)
-        fixed_tp = round(price * (1 + config.take_profit_pct), 2)
+        # Apply focus-mode SL/TP percentages
+        sl_pct = self.focus.get_stop_loss_pct()
+        tp_pct = self.focus.get_take_profit_pct()
+        stop_loss = round(price * (1 - sl_pct), 2)
+        fixed_tp = round(price * (1 + tp_pct), 2)
         if analysis.target_price and analysis.target_price > price:
             take_profit = min(analysis.target_price, fixed_tp)
             tp_source = f"Claude ${analysis.target_price:.2f} → TP ${take_profit:.2f}"
         else:
             take_profit = fixed_tp
-            tp_source = f"Fix {config.take_profit_pct*100:.0f}% → TP ${take_profit:.2f}"
+            tp_source = f"Fix {tp_pct*100:.0f}% → TP ${take_profit:.2f}"
+
+        # Cap hold days by focus mode preference
+        capped_hold = self.focus.cap_hold_days(analysis.suggested_hold_days)
 
         position = Position(
             ticker=ticker,
@@ -159,7 +193,7 @@ class SwingStrategy:
             entry_date=datetime.utcnow().isoformat(),
             stop_loss=stop_loss,
             take_profit=take_profit,
-            target_hold_days=analysis.suggested_hold_days,
+            target_hold_days=capped_hold,
             rationale=analysis.entry_rationale,
             entry_catalysts=analysis.key_catalysts[:5],
         )
@@ -170,7 +204,7 @@ class SwingStrategy:
         self._notifier.notify_buy(
             ticker=ticker, shares=shares, price=price,
             stop_loss=stop_loss, take_profit=take_profit,
-            hold_days=analysis.suggested_hold_days,
+            hold_days=capped_hold,
             rationale=analysis.entry_rationale,
             sentiment_score=analysis.sentiment_score,
         )
@@ -179,7 +213,7 @@ class SwingStrategy:
             ticker=ticker,
             entry_price=price,
             predicted_target_price=analysis.target_price,
-            predicted_hold_days=analysis.suggested_hold_days,
+            predicted_hold_days=capped_hold,
             predicted_direction=analysis.direction,
             sentiment_score=analysis.sentiment_score,
             confidence=analysis.confidence,
@@ -187,14 +221,29 @@ class SwingStrategy:
             sources_breakdown=sources_breakdown,
         )
 
+        # Log full entry context to trade journal
+        self.journal.log_entry(
+            ticker=ticker,
+            price=price,
+            sentiment=analysis.sentiment_score,
+            confidence=analysis.confidence,
+            direction=analysis.direction,
+            rationale=analysis.entry_rationale,
+            catalysts=analysis.key_catalysts[:5],
+            risks=analysis.risk_factors[:5],
+            sources=sources_breakdown,
+            target_price=analysis.target_price,
+            hold_days=capped_hold,
+        )
+
         return (
             f"[{ticker}] GEKAUFT – {shares} Stück @ ${price:.2f} "
             f"| SL: ${stop_loss} | {tp_source} "
-            f"| Haltedauer: {analysis.suggested_hold_days}d "
+            f"| Haltedauer: {capped_hold}d "
             f"| Investiert: ${shares * price:.2f}"
         )
 
-    def _do_close(self, ticker: str, pos: Position, price: float, reason: str) -> float:
+    def _do_close(self, ticker: str, pos: Position, price: float, reason: str, days_held: int = 0) -> float:
         self.tracker.record_outcome(
             ticker=ticker,
             entry_price=pos.entry_price,
@@ -202,7 +251,15 @@ class SwingStrategy:
             sell_price=price,
             sell_reason=reason,
         )
-        return self.portfolio.close_position(ticker, price, reason)
+        pnl = self.portfolio.close_position(ticker, price, reason)
+        # Log exit to journal
+        self.journal.log_exit(
+            ticker=ticker, price=price,
+            entry_price=pos.entry_price,
+            pnl=pnl, reason=reason,
+            days_held=days_held,
+        )
+        return pnl
 
     def build_open_position_context(self, ticker: str) -> Optional[Dict]:
         """Returns position context dict for Claude's thesis-check prompt."""
