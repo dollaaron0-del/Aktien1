@@ -24,7 +24,11 @@ from rich.panel import Panel
 from rich import box
 
 from config import config
-from collectors import RedditCollector, YahooCollector, NewsAPICollector, InsiderCollector, USASpendingCollector
+from collectors import (
+    RedditCollector, YahooCollector, NewsAPICollector,
+    InsiderCollector, USASpendingCollector,
+    SECEdgarCollector, StockTwitsCollector, WireCollector,
+)
 from collectors.news_archive import NewsArchive
 from analyzers import ClaudeAnalyzer, AnalysisResult
 from broker.paper_broker import PaperBroker
@@ -51,27 +55,39 @@ def collect_news(ticker: str, archive: NewsArchive) -> tuple[List[Dict], Dict[st
     Collects fresh news from all sources (incl. Congressional + SEC insider trades),
     stores them in the 30-day archive, and returns (deduplicated_items, sources_breakdown).
     """
-    yahoo = YahooCollector()
-    reddit = RedditCollector()
-    newsapi = NewsAPICollector()
-    insider = InsiderCollector(lookback_days=90)
-    usaspending = USASpendingCollector(lookback_days=180, min_award_usd=1_000_000)
+    yahoo        = YahooCollector()
+    reddit       = RedditCollector()
+    newsapi      = NewsAPICollector()
+    insider      = InsiderCollector(lookback_days=90)
+    usaspending  = USASpendingCollector(lookback_days=180, min_award_usd=1_000_000)
+    sec_edgar    = SECEdgarCollector(lookback_days=30)
+    stocktwits   = StockTwitsCollector(lookback_hours=48)
+    wire         = WireCollector(lookback_days=7)
 
-    yahoo_items = yahoo.collect(ticker)
-    reddit_items = reddit.collect(ticker)
-    newsapi_items = newsapi.collect(ticker)
-    insider_items = insider.collect(ticker)
-    contract_items = usaspending.collect(ticker)
+    yahoo_items     = yahoo.collect(ticker)
+    reddit_items    = reddit.collect(ticker)
+    newsapi_items   = newsapi.collect(ticker)
+    insider_items   = insider.collect(ticker)
+    contract_items  = usaspending.collect(ticker)
+    edgar_items     = sec_edgar.collect(ticker)
+    twits_items     = stocktwits.collect(ticker)
+    wire_items      = wire.collect(ticker)
 
     sources_breakdown = {
-        "yahoo": len(yahoo_items),
-        "reddit": len(reddit_items),
-        "newsapi": len(newsapi_items),
-        "insider": len(insider_items),
+        "yahoo":       len(yahoo_items),
+        "reddit":      len(reddit_items),
+        "newsapi":     len(newsapi_items),
+        "insider":     len(insider_items),
         "usaspending": len(contract_items),
+        "sec_edgar":   len(edgar_items),
+        "stocktwits":  len(twits_items),
+        "wire":        len(wire_items),
     }
 
-    all_items = yahoo_items + reddit_items + newsapi_items + insider_items + contract_items
+    all_items = (
+        yahoo_items + reddit_items + newsapi_items + insider_items
+        + contract_items + edgar_items + twits_items + wire_items
+    )
 
     # Archive everything before deduplication (archive handles its own dedup)
     archive.store(ticker, all_items)
@@ -120,11 +136,13 @@ def run_analysis_cycle(
         current_titles = {item.get("title") or "" for item in news}
         historical = archive.get_history(ticker, days=30, exclude_titles=current_titles)
 
-        insider_count = sources_breakdown.get("insider", 0)
-        contract_count = sources_breakdown.get("usaspending", 0)
+        src = sources_breakdown
         console.print(
-            f"  {len(news)} aktuelle Artikel | {len(historical)} historische | "
-            f"{insider_count} Insider-Trades | {contract_count} Bundesaufträge | "
+            f"  [bold]{len(news)}[/bold] Artikel total | {len(historical)} historisch | "
+            f"Yahoo:{src['yahoo']} Reddit:{src['reddit']} NewsAPI:{src['newsapi']} "
+            f"SEC:{src['sec_edgar']} Wire:{src['wire']} "
+            f"Twits:{src['stocktwits']} Insider:{src['insider']} "
+            f"Contracts:{src['usaspending']} | "
             f"Kurs: ${price_data.get('current_price', 'N/A')}"
         )
 

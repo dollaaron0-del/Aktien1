@@ -286,6 +286,9 @@ with st.sidebar:
     st.write("✓ Congressional Insider-Trades")
     st.write("✓ SEC Form 4 Insider-Trades")
     st.write("✓ US-Bundesaufträge (usaspending.gov)")
+    st.write("✓ SEC EDGAR 8-K Pflichtmeldungen")
+    st.write("✓ StockTwits Trader-Sentiment")
+    st.write("✓ Pressemitteilungen (PRNewswire / BusinessWire / GlobeNewswire)")
     if st.button("🔄 Daten neu laden"):
         st.cache_resource.clear()
         st.rerun()
