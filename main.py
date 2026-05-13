@@ -24,7 +24,7 @@ from rich.panel import Panel
 from rich import box
 
 from config import config
-from collectors import RedditCollector, YahooCollector, NewsAPICollector, InsiderCollector
+from collectors import RedditCollector, YahooCollector, NewsAPICollector, InsiderCollector, USASpendingCollector
 from collectors.news_archive import NewsArchive
 from analyzers import ClaudeAnalyzer, AnalysisResult
 from broker.paper_broker import PaperBroker
@@ -54,20 +54,23 @@ def collect_news(ticker: str, archive: NewsArchive) -> tuple[List[Dict], Dict[st
     reddit = RedditCollector()
     newsapi = NewsAPICollector()
     insider = InsiderCollector(lookback_days=90)
+    usaspending = USASpendingCollector(lookback_days=180, min_award_usd=1_000_000)
 
     yahoo_items = yahoo.collect(ticker)
     reddit_items = reddit.collect(ticker)
     newsapi_items = newsapi.collect(ticker)
     insider_items = insider.collect(ticker)
+    contract_items = usaspending.collect(ticker)
 
     sources_breakdown = {
         "yahoo": len(yahoo_items),
         "reddit": len(reddit_items),
         "newsapi": len(newsapi_items),
         "insider": len(insider_items),
+        "usaspending": len(contract_items),
     }
 
-    all_items = yahoo_items + reddit_items + newsapi_items + insider_items
+    all_items = yahoo_items + reddit_items + newsapi_items + insider_items + contract_items
 
     # Archive everything before deduplication (archive handles its own dedup)
     archive.store(ticker, all_items)
@@ -113,9 +116,10 @@ def run_analysis_cycle(
         historical = archive.get_history(ticker, days=30, exclude_titles=current_titles)
 
         insider_count = sources_breakdown.get("insider", 0)
+        contract_count = sources_breakdown.get("usaspending", 0)
         console.print(
             f"  {len(news)} aktuelle Artikel | {len(historical)} historische | "
-            f"{insider_count} Insider-Trades | "
+            f"{insider_count} Insider-Trades | {contract_count} Bundesaufträge | "
             f"Kurs: ${price_data.get('current_price', 'N/A')}"
         )
 

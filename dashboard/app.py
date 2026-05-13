@@ -285,6 +285,7 @@ with st.sidebar:
     st.write("✓ Kaufthesen-Überprüfung")
     st.write("✓ Congressional Insider-Trades")
     st.write("✓ SEC Form 4 Insider-Trades")
+    st.write("✓ US-Bundesaufträge (usaspending.gov)")
     if st.button("🔄 Daten neu laden"):
         st.cache_resource.clear()
         st.rerun()
