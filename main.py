@@ -75,6 +75,8 @@ from collectors.reddit_collector import RedditCollector as _RedditColl
 from collectors.stocktwits_collector import StockTwitsCollector as _TwitsColl
 from analyzers.market_schedule import MarketSchedule
 from analyzers.weekend_prep import WeekendPrep
+from analyzers.recession_detector import RecessionDetector, BULL, NEUTRAL, BEAR, CRISIS
+from strategy.hedge_strategy import HedgeStrategy
 
 console = Console()
 
@@ -167,6 +169,7 @@ def run_analysis_cycle(
     archive: NewsArchive,
     reflection: Optional[ReflectionEngine] = None,
     weekend_prep: Optional["WeekendPrep"] = None,
+    hedge_strategy: Optional["HedgeStrategy"] = None,
 ):
     console.rule(f"[bold blue]Analyse-Zyklus – {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
@@ -185,6 +188,23 @@ def run_analysis_cycle(
 
     # Track all material trade actions for the daily summary
     cycle_actions: List[str] = []
+
+    # ── Regime check + hedge evaluation ──────────────────────────────────────
+    if hedge_strategy:
+        macro_news_for_regime = []
+        try:
+            from collectors.news_api_collector import NewsAPICollector as _NAPI
+            macro_news_for_regime = _NAPI().collect_general("market recession economy", max_results=10)
+        except Exception:
+            pass
+        regime, hedge_actions = hedge_strategy.evaluate_regime(macro_news_for_regime or None)
+        regime_color = {"BULL": "green", "NEUTRAL": "yellow", "BEAR": "red", "CRISIS": "bold red"}.get(regime, "white")
+        latest = hedge_strategy.regime_summary()
+        score_str = f" (Score: {latest['recession_score']:.2f})" if latest else ""
+        console.print(f"  Marktregime: [{regime_color}]{regime}[/{regime_color}]{score_str}")
+        for action in hedge_actions:
+            console.print(f"  [magenta]{action}[/magenta]")
+            cycle_actions.append(action)
 
     # Check stop-loss / take-profit first (no Claude needed)
     exit_actions = strategy.check_open_positions()
@@ -767,6 +787,58 @@ def show_briefing(wp: WeekendPrep):
         ))
 
 
+def show_regime(detector: RecessionDetector):
+    console.rule("[bold blue]Marktregime-Analyse")
+    console.print("[cyan]Analysiere VIX, Zinskurve, Sektorbreite, Credit-Spreads...[/cyan]")
+    result = detector.analyze()
+
+    regime = result["regime"]
+    score  = result["recession_score"]
+    regime_color = {"BULL": "green", "NEUTRAL": "yellow", "BEAR": "red", "CRISIS": "bold red"}.get(regime, "white")
+    score_bar = _progress_bar(score * 100)
+
+    lines = [
+        f"Regime: [{regime_color}]{regime}[/{regime_color}]  |  Score: {score:.3f}",
+        f"Rezessions-Risiko: {score_bar} {score*100:.1f}%",
+        "",
+    ]
+    comp = result.get("components", {})
+    if "vix" in comp:
+        v = comp["vix"]
+        lines.append(f"VIX:            {v['value']}  →  {v['label']}")
+    if "yield_curve" in comp:
+        yc = comp["yield_curve"]
+        spread = f"{yc['spread_pct']:+.2f}%" if yc['spread_pct'] is not None else "N/A"
+        lines.append(f"Zinskurve:      Spread {spread}  →  {yc['label']}")
+    if "sp500_ma200" in comp:
+        sp = comp["sp500_ma200"]
+        gap = f"{sp['gap_pct']:+.1f}%" if sp['gap_pct'] is not None else "N/A"
+        lines.append(f"S&P vs 200-MA:  {gap}  →  {sp['label']}")
+    if "sector_breadth" in comp:
+        sb = comp["sector_breadth"]
+        lines.append(f"Sektoren bear:  {sb['bear_sectors_pct']}%  →  {sb['label']}")
+    if result.get("macro_summary"):
+        lines += ["", f"Makro-Signal: [italic]{result['macro_summary'][:200]}[/italic]"]
+
+    console.print(Panel("\n".join(lines), title="Aktuelles Marktregime", border_style=regime_color))
+
+    hedges = result.get("recommended_hedges", [])
+    if hedges:
+        ht = Table(title=f"Empfohlene Hedges ({result['hedge_intensity']})", box=box.ROUNDED)
+        ht.add_column("ETF", style="cyan")
+        ht.add_column("Thema")
+        ht.add_column("Allokation", justify="right")
+        ht.add_column("Grund")
+        for h in hedges:
+            ht.add_row(
+                h["ticker"], h["description"],
+                f"{h['allocation_pct']*100:.0f}%", h["reason"][:60],
+            )
+        console.print(ht)
+    else:
+        console.print("[dim]Keine Hedges empfohlen – Regime zu gut.[/dim]")
+
+
 def run_backtest(period: str = "2y"):
     console.rule(f"[bold blue]Backtest – {period}")
     bt = Backtester(
@@ -847,6 +919,7 @@ def main():
     parser.add_argument("--queue", action="store_true", help="Signal-Warteschlange anzeigen")
     parser.add_argument("--weekend", action="store_true", help="Wochenvorbereitung jetzt ausführen")
     parser.add_argument("--briefing", action="store_true", help="Letztes Wochenbriefing anzeigen")
+    parser.add_argument("--regime", action="store_true", help="Aktuelles Marktregime analysieren")
     args = parser.parse_args()
 
     if args.dashboard:
@@ -945,6 +1018,10 @@ def main():
         show_briefing(weekend_prep_inst)
         return
 
+    if args.regime:
+        show_regime(recession_detector)
+        return
+
     if not config.anthropic_api_key:
         console.print("[bold red]Fehler: ANTHROPIC_API_KEY nicht gesetzt.[/bold red]")
         sys.exit(1)
@@ -961,6 +1038,18 @@ def main():
         correlation_checker=correlation_checker,
         kelly_sizer=kelly_sizer,
     )
+
+    # Recession detector + hedge strategy
+    recession_detector = RecessionDetector(anthropic_api_key=config.anthropic_api_key)
+    hedge_strategy_inst = HedgeStrategy(
+        portfolio=portfolio,
+        broker=broker,
+        tracker=tracker,
+        journal=journal,
+        detector=recession_detector,
+        max_hedge_pct=config.max_hedge_pct,
+        min_regime_for_hedge=config.hedge_from_regime,
+    ) if config.enable_hedging else None
 
     prices = broker.get_prices(list(portfolio.all_positions().keys()))
     total = portfolio.total_value(prices)
@@ -1049,7 +1138,7 @@ def main():
             job = schedule.every().day.at(slot["hhmm"]).do(
                 run_analysis_cycle,
                 portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
-                weekend_prep_inst,
+                weekend_prep_inst, hedge_strategy_inst,
             )
             job._is_analysis_job = True
             review_job = schedule.every().day.at(slot["hhmm"]).do(_monthly_review_check)
@@ -1064,7 +1153,8 @@ def main():
 
     if args.once:
         run_analysis_cycle(
-            portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection, weekend_prep_inst
+            portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
+            weekend_prep_inst, hedge_strategy_inst,
         )
         return
 
@@ -1087,6 +1177,32 @@ def main():
     schedule.every().hour.do(strategy.check_open_positions)
     if config.enable_social_scan:
         schedule.every().hour.do(_social_scan_job)
+
+    # Periodic regime check + hedge exit monitoring
+    if hedge_strategy_inst:
+        schedule.every(config.regime_check_interval_hours).hours.do(
+            lambda: _run_regime_check()
+        )
+        schedule.every().hour.do(
+            lambda: [
+                console.print(f"  [magenta]{a}[/magenta]")
+                for a in hedge_strategy_inst.check_hedge_exits()
+            ]
+        )
+
+    def _run_regime_check():
+        regime, actions = hedge_strategy_inst.evaluate_regime()
+        if actions:
+            for a in actions:
+                console.print(f"\n  [magenta]{a}[/magenta]")
+            TelegramNotifier().notify_daily_summary(
+                total_value=portfolio.total_value(broker.get_prices(list(portfolio.all_positions().keys()))),
+                cash=portfolio.cash,
+                open_positions=len(portfolio.all_positions()),
+                phase=phase_ctrl.current_phase(portfolio.total_value({})),
+                progress_pct=phase_ctrl.progress_pct(portfolio.total_value({})),
+                actions_today=actions,
+            )
 
     console.print(f"[dim]Stop-Loss-Check stündlich. Wochenvorbereitung Sa 09:00 + So 14:00. Ctrl+C zum Beenden.[/dim]")
 

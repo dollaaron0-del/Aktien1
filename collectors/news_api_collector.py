@@ -47,3 +47,32 @@ class NewsAPICollector:
             pass
 
         return results
+
+    def collect_general(self, query: str, max_results: int = 10, days_back: int = 3) -> List[Dict]:
+        """Fetches general (non-ticker) news for macro/regime analysis."""
+        if not config.newsapi_key:
+            return []
+        client = self._get_client()
+        cutoff = (datetime.utcnow() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        results = []
+        try:
+            response = client.get_everything(
+                q=query,
+                from_param=cutoff,
+                language="en",
+                sort_by="relevancy",
+                page_size=max_results,
+            )
+            for article in response.get("articles", []):
+                if article.get("title") == "[Removed]":
+                    continue
+                results.append({
+                    "source": f"NewsAPI / {article.get('source', {}).get('name', '')}",
+                    "title": article.get("title", ""),
+                    "summary": article.get("description", "") or "",
+                    "url": article.get("url", ""),
+                    "published": article.get("publishedAt", ""),
+                })
+        except Exception:
+            pass
+        return results

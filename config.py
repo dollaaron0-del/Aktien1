@@ -112,5 +112,23 @@ class Config:
         default_factory=lambda: int(os.getenv("SCAN_MAX_PICKS", "3"))
     )
 
+    # ── Hedge / Rezessions-Absicherung ───────────────────────────────────────
+    # Inverse ETFs kaufen wenn Marktregime BEAR oder CRISIS erreicht
+    enable_hedging: bool = field(
+        default_factory=lambda: os.getenv("ENABLE_HEDGING", "true").lower() in ("1", "true", "yes")
+    )
+    # Ab welchem Regime hedgen: NEUTRAL | BEAR | CRISIS
+    hedge_from_regime: str = field(
+        default_factory=lambda: os.getenv("HEDGE_FROM_REGIME", "BEAR")
+    )
+    # Maximaler Portfolio-Anteil für Hedge-Positionen (0.20 = 20%)
+    max_hedge_pct: float = field(
+        default_factory=lambda: float(os.getenv("MAX_HEDGE_PCT", "0.20"))
+    )
+    # Wie oft Regime-Check läuft (in Stunden, zwischen den Vollanalysen)
+    regime_check_interval_hours: int = field(
+        default_factory=lambda: int(os.getenv("REGIME_CHECK_INTERVAL_HOURS", "6"))
+    )
+
 
 config = Config()
