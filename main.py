@@ -13,6 +13,11 @@ Starten:  python main.py
           python main.py --journal AAPL  (Trade-Tagebuch für einen Ticker)
           python main.py --reflect       (Monats-Selbsteinschätzung)
           python main.py --reflect 2026-04 (Selbsteinschätzung für Monat YYYY-MM)
+          python main.py --backtest      (Strategie auf historischen Daten testen)
+          python main.py --scan          (Watchlist-Scanner)
+          python main.py --export-csv    (Trades als CSV exportieren)
+          python main.py --export-pdf    (PDF-Report)
+          python main.py --kelly-info    (Kelly-Criterion-Statistik)
 """
 
 import argparse
@@ -33,11 +38,18 @@ from collectors import (
     RedditCollector, YahooCollector, NewsAPICollector,
     InsiderCollector, USASpendingCollector,
     SECEdgarCollector, StockTwitsCollector, WireCollector,
+    OptionsFlowCollector, EuropeanNewsCollector,
 )
 from collectors.news_archive import NewsArchive
 from analyzers import ClaudeAnalyzer, AnalysisResult
 from analyzers.reflection_engine import ReflectionEngine
+from analyzers.earnings_filter import EarningsFilter
+from analyzers.correlation_check import CorrelationChecker
+from analyzers.kelly_sizing import KellySizer
+from analyzers.watchlist_scanner import WatchlistScanner
+from analyzers.backtester import Backtester
 from broker.paper_broker import PaperBroker
+from broker.alpaca_broker import AlpacaBroker
 from portfolio import Portfolio
 from portfolio.performance_tracker import PerformanceTracker
 from portfolio.phase_controller import PhaseController
@@ -45,6 +57,7 @@ from portfolio.focus_mode import FocusController, FocusMode
 from portfolio.trade_journal import TradeJournal
 from strategy import SwingStrategy
 from notifier.telegram_notifier import TelegramNotifier
+from reporting.exporter import Exporter
 
 console = Console()
 
@@ -80,6 +93,8 @@ def collect_news(ticker: str, archive: NewsArchive) -> tuple[List[Dict], Dict[st
     sec_edgar    = SECEdgarCollector(lookback_days=30)
     stocktwits   = StockTwitsCollector(lookback_hours=48)
     wire         = WireCollector(lookback_days=7)
+    options_flow = OptionsFlowCollector()
+    euro_news    = EuropeanNewsCollector(lookback_hours=72)
 
     yahoo_items     = yahoo.collect(ticker)
     reddit_items    = reddit.collect(ticker)
@@ -89,21 +104,26 @@ def collect_news(ticker: str, archive: NewsArchive) -> tuple[List[Dict], Dict[st
     edgar_items     = sec_edgar.collect(ticker)
     twits_items     = stocktwits.collect(ticker)
     wire_items      = wire.collect(ticker)
+    options_items   = options_flow.collect(ticker)
+    euro_items      = euro_news.collect(ticker)
 
     sources_breakdown = {
-        "yahoo":       len(yahoo_items),
-        "reddit":      len(reddit_items),
-        "newsapi":     len(newsapi_items),
-        "insider":     len(insider_items),
-        "usaspending": len(contract_items),
-        "sec_edgar":   len(edgar_items),
-        "stocktwits":  len(twits_items),
-        "wire":        len(wire_items),
+        "yahoo":         len(yahoo_items),
+        "reddit":        len(reddit_items),
+        "newsapi":       len(newsapi_items),
+        "insider":       len(insider_items),
+        "usaspending":   len(contract_items),
+        "sec_edgar":     len(edgar_items),
+        "stocktwits":    len(twits_items),
+        "wire":          len(wire_items),
+        "options_flow":  len(options_items),
+        "european_news": len(euro_items),
     }
 
     all_items = (
         yahoo_items + reddit_items + newsapi_items + insider_items
         + contract_items + edgar_items + twits_items + wire_items
+        + options_items + euro_items
     )
 
     # Archive everything before deduplication (archive handles its own dedup)
@@ -165,7 +185,8 @@ def run_analysis_cycle(
             f"Yahoo:{src['yahoo']} Reddit:{src['reddit']} NewsAPI:{src['newsapi']} "
             f"SEC:{src['sec_edgar']} Wire:{src['wire']} "
             f"Twits:{src['stocktwits']} Insider:{src['insider']} "
-            f"Contracts:{src['usaspending']} | "
+            f"Contracts:{src['usaspending']} OptFlow:{src['options_flow']} "
+            f"EU:{src['european_news']} | "
             f"Kurs: ${price_data.get('current_price', 'N/A')}"
         )
 
@@ -540,6 +561,65 @@ def show_focus_info(focus_ctrl: FocusController, portfolio: Portfolio, broker: P
     console.print(Panel("\n".join(lines), title="Aktiver Fokus", border_style="cyan"))
 
 
+def run_backtest(period: str = "2y"):
+    console.rule(f"[bold blue]Backtest – {period}")
+    bt = Backtester(
+        tickers=config.watchlist,
+        initial_capital=config.initial_capital,
+        stop_loss_pct=config.stop_loss_pct,
+        take_profit_pct=config.take_profit_pct,
+        max_position_pct=config.max_position_pct,
+        sentiment_threshold=config.buy_threshold,
+    )
+    result = bt.run(period=period)
+    if "error" in result:
+        console.print(f"[red]{result['error']}[/red]")
+        return
+    summary_lines = [
+        f"Startkapital:       ${result['initial_capital']:,.2f}",
+        f"Endkapital:         ${result['final_capital']:,.2f}",
+        f"Gesamtrendite:      [bold]{result['total_return_pct']:+.2f}%[/bold]",
+        f"Anzahl Trades:      {result['num_trades']}",
+        f"Win-Rate:           {result['win_rate_pct']}%",
+        f"Ø Rendite/Trade:    {result['avg_return_pct']:+.2f}%",
+        f"Max. Drawdown:      {result['max_drawdown_pct']}%",
+    ]
+    if result.get("best_trade"):
+        bt_b = result["best_trade"]
+        summary_lines.append(f"Bester Trade:       {bt_b['ticker']} {bt_b['return_pct']:+.2f}% ({bt_b['entry_date']}→{bt_b['exit_date']})")
+    if result.get("worst_trade"):
+        wt = result["worst_trade"]
+        summary_lines.append(f"Schlechtester:      {wt['ticker']} {wt['return_pct']:+.2f}% ({wt['entry_date']}→{wt['exit_date']})")
+    console.print(Panel("\n".join(summary_lines), title="Backtest-Ergebnis", border_style="cyan"))
+    console.print(
+        "[dim]Hinweis: Sentiment-Proxy basiert auf Momentum+Volumen "
+        "(echte Claude-News-Signale historisch nicht verfügbar).[/dim]"
+    )
+
+
+def run_scan(portfolio: Portfolio):
+    console.rule("[bold blue]Watchlist-Scanner")
+    existing = list(portfolio.all_positions().keys())
+    scanner = WatchlistScanner(max_picks=config.scan_max_picks)
+    picks = scanner.scan(exclude=existing + list(config.watchlist))
+    if not picks:
+        console.print("[dim]Keine auffälligen Kandidaten gefunden.[/dim]")
+        return
+    table = Table(title="Auffällige Kandidaten", box=box.ROUNDED)
+    table.add_column("Ticker", style="cyan")
+    table.add_column("Kurs", justify="right")
+    table.add_column("Tageskursänderung", justify="right")
+    table.add_column("Volumen-Ratio", justify="right")
+    for p in picks:
+        change_str = (
+            f"[green]+{p['change_pct']}%[/green]"
+            if p['change_pct'] >= 0 else f"[red]{p['change_pct']}%[/red]"
+        )
+        table.add_row(p["ticker"], f"${p['price']}", change_str, f"{p['volume_ratio']}×")
+    console.print(table)
+    console.print("[dim]Tipp: Ticker in config.watchlist aufnehmen für tägliche Analyse.[/dim]")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Stock Sentiment Trading Bot")
     parser.add_argument("--once", action="store_true", help="Einmaliger Analysezyklus")
@@ -551,6 +631,12 @@ def main():
     parser.add_argument("--journal", nargs="?", const="all",
                         help="Trade-Tagebuch anzeigen (optional: Ticker)")
     parser.add_argument("--focus", action="store_true", help="Aktuellen Fokus-Modus anzeigen")
+    parser.add_argument("--backtest", action="store_true", help="Strategie auf historischen Daten testen")
+    parser.add_argument("--backtest-period", default="2y", help="Backtest-Zeitraum (z.B. 1y, 2y, 5y)")
+    parser.add_argument("--scan", action="store_true", help="Watchlist-Scanner ausführen")
+    parser.add_argument("--export-csv", action="store_true", help="Trades als CSV exportieren")
+    parser.add_argument("--export-pdf", action="store_true", help="Monatsbericht als PDF exportieren")
+    parser.add_argument("--kelly-info", action="store_true", help="Kelly-Criterion-Statistik anzeigen")
     args = parser.parse_args()
 
     if args.dashboard:
@@ -559,7 +645,17 @@ def main():
         subprocess.run(["streamlit", "run", dashboard_path])
         return
 
-    broker = PaperBroker()
+    # Select broker based on config
+    if config.broker_mode == "alpaca":
+        broker = AlpacaBroker()
+        if not broker._check_creds():
+            console.print("[yellow]⚠ Alpaca-Credentials fehlen – Fallback auf Paper-Broker.[/yellow]")
+            broker = PaperBroker()
+        else:
+            console.print("[green]✓ Alpaca-Broker aktiv[/green]")
+    else:
+        broker = PaperBroker()
+
     portfolio = Portfolio(config.initial_capital)
     tracker = PerformanceTracker()
     phase_ctrl = _make_phase_ctrl()
@@ -590,11 +686,48 @@ def main():
         show_trade_journal(journal, ticker)
         return
 
+    if args.backtest:
+        run_backtest(args.backtest_period)
+        return
+
+    if args.scan:
+        run_scan(portfolio)
+        return
+
+    if args.export_csv:
+        path = Exporter(tracker, journal).export_trades_csv()
+        console.print(f"[green]CSV exportiert:[/green] {path or '(keine geschlossenen Trades)'}")
+        return
+
+    if args.export_pdf:
+        path = Exporter(tracker, journal).export_pdf_report()
+        console.print(f"[green]Report exportiert:[/green] {path}")
+        return
+
+    if args.kelly_info:
+        kelly = KellySizer(tracker, fraction=config.kelly_fraction)
+        info = kelly.info()
+        console.print(Panel(
+            "\n".join(f"{k}: {v}" for k, v in info.items()),
+            title="Kelly-Criterion-Statistik", border_style="cyan",
+        ))
+        return
+
     if not config.anthropic_api_key:
         console.print("[bold red]Fehler: ANTHROPIC_API_KEY nicht gesetzt.[/bold red]")
         sys.exit(1)
 
-    strategy = SwingStrategy(portfolio, broker, tracker, phase_ctrl, focus_ctrl, journal)
+    # Initialize risk filters
+    earnings_filter = EarningsFilter(block_days=config.block_earnings_days)
+    correlation_checker = CorrelationChecker(max_sector_pct=config.max_sector_pct)
+    kelly_sizer = KellySizer(tracker, fraction=config.kelly_fraction) if config.use_kelly_sizing else None
+
+    strategy = SwingStrategy(
+        portfolio, broker, tracker, phase_ctrl, focus_ctrl, journal,
+        earnings_filter=earnings_filter,
+        correlation_checker=correlation_checker,
+        kelly_sizer=kelly_sizer,
+    )
 
     prices = broker.get_prices(list(portfolio.all_positions().keys()))
     total = portfolio.total_value(prices)

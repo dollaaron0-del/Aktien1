@@ -9,6 +9,9 @@ from portfolio.focus_mode import FocusController
 from portfolio.trade_journal import TradeJournal
 from broker.paper_broker import PaperBroker
 from notifier.telegram_notifier import TelegramNotifier
+from analyzers.earnings_filter import EarningsFilter
+from analyzers.correlation_check import CorrelationChecker
+from analyzers.kelly_sizing import KellySizer
 from config import config
 
 
@@ -21,6 +24,9 @@ class SwingStrategy:
         phase_ctrl: PhaseController,
         focus_ctrl: FocusController,
         journal: TradeJournal,
+        earnings_filter: Optional[EarningsFilter] = None,
+        correlation_checker: Optional[CorrelationChecker] = None,
+        kelly_sizer: Optional[KellySizer] = None,
     ):
         self.portfolio = portfolio
         self.broker = broker
@@ -29,6 +35,9 @@ class SwingStrategy:
         self.focus = focus_ctrl
         self.journal = journal
         self._notifier = TelegramNotifier()
+        self.earnings_filter = earnings_filter
+        self.correlation = correlation_checker
+        self.kelly = kelly_sizer
 
     def evaluate(self, analysis: AnalysisResult, sources_breakdown: Optional[Dict[str, int]] = None) -> Optional[str]:
         ticker = analysis.ticker
@@ -63,6 +72,28 @@ class SwingStrategy:
                 f"[{ticker}] Sentiment {analysis.sentiment_score:.2f} unter Schwelle "
                 f"{effective_threshold:.2f} ({self.focus.profile.label}) – übersprungen."
             )
+
+        # Earnings filter: skip buy if earnings imminent
+        if self.earnings_filter:
+            ec = self.earnings_filter.check(ticker)
+            if ec["block"]:
+                return (
+                    f"[{ticker}] Earnings in {ec['days_until']}d ({ec['date']}) – "
+                    f"Kauf übersprungen (Volatilitäts-Risiko)."
+                )
+
+        # Sector correlation: prevent over-concentration
+        if self.correlation:
+            existing_values = {
+                t: p.shares * (self.broker.get_price(t) or p.entry_price)
+                for t, p in self.portfolio.all_positions().items()
+            }
+            tentative_invest = portfolio_value * self.focus.get_max_position_pct(portfolio_value)
+            sec_check = self.correlation.can_open(
+                ticker, tentative_invest, portfolio_value, existing_values
+            )
+            if not sec_check["allowed"]:
+                return f"[{ticker}] {sec_check['reason']} – übersprungen."
 
         return self._open_position(ticker, current_price, analysis, portfolio_value, sources_breakdown or {})
 
@@ -161,8 +192,11 @@ class SwingStrategy:
         portfolio_value: float,
         sources_breakdown: Dict[str, int],
     ) -> str:
-        # Apply focus-mode position sizing
+        # Apply focus-mode position sizing, optionally overridden by Kelly criterion
         max_pos_pct = self.focus.get_max_position_pct(portfolio_value)
+        if self.kelly:
+            kelly_pct = self.kelly.compute(fallback_pct=max_pos_pct)
+            max_pos_pct = min(max_pos_pct, kelly_pct)
         max_invest = portfolio_value * max_pos_pct
         invest = min(max_invest, self.portfolio.cash * 0.95)
 

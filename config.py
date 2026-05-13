@@ -67,5 +67,29 @@ class Config:
         default_factory=lambda: int(os.getenv("DISTRIBUTION_BUFFER_MONTHS", "6"))
     )  # Months of distributions kept as safety reserve
 
+    # Risk filters
+    block_earnings_days: int = field(
+        default_factory=lambda: int(os.getenv("BLOCK_EARNINGS_DAYS", "5"))
+    )
+    max_sector_pct: float = field(
+        default_factory=lambda: float(os.getenv("MAX_SECTOR_PCT", "0.40"))
+    )
+
+    # Kelly criterion sizing (falls back if insufficient data)
+    use_kelly_sizing: bool = field(
+        default_factory=lambda: os.getenv("USE_KELLY_SIZING", "false").lower() in ("1", "true", "yes")
+    )
+    kelly_fraction: float = field(
+        default_factory=lambda: float(os.getenv("KELLY_FRACTION", "0.25"))
+    )
+
+    # Watchlist auto-scanner
+    auto_scan_watchlist: bool = field(
+        default_factory=lambda: os.getenv("AUTO_SCAN_WATCHLIST", "false").lower() in ("1", "true", "yes")
+    )
+    scan_max_picks: int = field(
+        default_factory=lambda: int(os.getenv("SCAN_MAX_PICKS", "3"))
+    )
+
 
 config = Config()
