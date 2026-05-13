@@ -49,7 +49,7 @@ from collectors import (
     RedditCollector, YahooCollector, NewsAPICollector,
     InsiderCollector, USASpendingCollector,
     SECEdgarCollector, StockTwitsCollector, WireCollector,
-    OptionsFlowCollector, EuropeanNewsCollector,
+    OptionsFlowCollector, EuropeanNewsCollector, TwitterCollector,
 )
 from collectors.news_archive import NewsArchive
 from analyzers import ClaudeAnalyzer, AnalysisResult
@@ -70,9 +70,11 @@ from strategy import SwingStrategy
 from notifier.telegram_notifier import TelegramNotifier
 from reporting.exporter import Exporter
 from portfolio.signal_queue import SignalQueue
+from portfolio.goal_risk_assessor import GoalRiskAssessor
 from collectors.social_scan import SocialPulseDB
 from collectors.reddit_collector import RedditCollector as _RedditColl
 from collectors.stocktwits_collector import StockTwitsCollector as _TwitsColl
+from collectors.twitter_collector import TwitterCollector as _TwitterColl
 from analyzers.market_schedule import MarketSchedule
 from analyzers.weekend_prep import WeekendPrep
 from analyzers.recession_detector import RecessionDetector, BULL, NEUTRAL, BEAR, CRISIS
@@ -114,6 +116,7 @@ def collect_news(ticker: str, archive: NewsArchive) -> tuple[List[Dict], Dict[st
     wire         = WireCollector(lookback_days=7)
     options_flow = OptionsFlowCollector()
     euro_news    = EuropeanNewsCollector(lookback_hours=72)
+    twitter      = TwitterCollector()
 
     yahoo_items     = yahoo.collect(ticker)
     reddit_items    = reddit.collect(ticker)
@@ -125,6 +128,7 @@ def collect_news(ticker: str, archive: NewsArchive) -> tuple[List[Dict], Dict[st
     wire_items      = wire.collect(ticker)
     options_items   = options_flow.collect(ticker)
     euro_items      = euro_news.collect(ticker)
+    twitter_items   = twitter.collect(ticker) if twitter.available else []
 
     sources_breakdown = {
         "yahoo":         len(yahoo_items),
@@ -137,12 +141,13 @@ def collect_news(ticker: str, archive: NewsArchive) -> tuple[List[Dict], Dict[st
         "wire":          len(wire_items),
         "options_flow":  len(options_items),
         "european_news": len(euro_items),
+        "twitter":       len(twitter_items),
     }
 
     all_items = (
         yahoo_items + reddit_items + newsapi_items + insider_items
         + contract_items + edgar_items + twits_items + wire_items
-        + options_items + euro_items
+        + options_items + euro_items + twitter_items
     )
 
     # Archive everything before deduplication (archive handles its own dedup)
@@ -227,7 +232,7 @@ def run_analysis_cycle(
             f"  [bold]{len(news)}[/bold] Artikel total | {len(historical)} historisch | "
             f"Yahoo:{src['yahoo']} Reddit:{src['reddit']} NewsAPI:{src['newsapi']} "
             f"SEC:{src['sec_edgar']} Wire:{src['wire']} "
-            f"Twits:{src['stocktwits']} Insider:{src['insider']} "
+            f"Twits:{src['stocktwits']} Twitter:{src.get('twitter', 0)} Insider:{src['insider']} "
             f"Contracts:{src['usaspending']} OptFlow:{src['options_flow']} "
             f"EU:{src['european_news']} | "
             f"Kurs: ${price_data.get('current_price', 'N/A')}"
@@ -606,18 +611,22 @@ def show_focus_info(focus_ctrl: FocusController, portfolio: Portfolio, broker: P
 
 
 def run_social_scan(pulse_db: SocialPulseDB, strategy: Optional[SwingStrategy] = None):
-    """Collects Reddit + StockTwits for all watchlist tickers and stores pulse snapshot."""
+    """Collects Reddit + StockTwits + Twitter for all watchlist tickers and stores pulse snapshot."""
     reddit = _RedditColl()
     twits = _TwitsColl(lookback_hours=2)
+    twitter = _TwitterColl()
     spikes = []
     for ticker in config.watchlist:
         try:
             r_items = reddit.collect(ticker)
             t_items = twits.collect(ticker)
+            tw_items = twitter.collect(ticker, max_results=20, hours_back=2) if twitter.available else []
             if r_items:
                 pulse_db.record(ticker, "reddit", r_items)
             if t_items:
                 pulse_db.record(ticker, "stocktwits", t_items)
+            if tw_items:
+                pulse_db.record(ticker, "twitter", tw_items)
         except Exception:
             continue
     pulse_db.cleanup(keep_days=7)
@@ -1031,12 +1040,19 @@ def main():
     correlation_checker = CorrelationChecker(max_sector_pct=config.max_sector_pct)
     kelly_sizer = KellySizer(tracker, fraction=config.kelly_fraction) if config.use_kelly_sizing else None
 
+    goal_risk = GoalRiskAssessor(
+        target_value=config.target_goal_amount,
+        target_date_str=config.target_goal_date,
+        initial_capital=config.initial_capital,
+    )
+
     strategy = SwingStrategy(
         portfolio, broker, tracker, phase_ctrl, focus_ctrl, journal,
         signal_queue=signal_queue,
         earnings_filter=earnings_filter,
         correlation_checker=correlation_checker,
         kelly_sizer=kelly_sizer,
+        goal_risk_assessor=goal_risk,
     )
 
     # Recession detector + hedge strategy

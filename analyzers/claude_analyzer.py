@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Optional
 import anthropic
 from config import config
+from analyzers.technical_indicators import TechnicalIndicators, TechnicalSnapshot
 
 
 @dataclass
@@ -46,6 +47,8 @@ _USER_TEMPLATE_STANDARD = """Analysiere folgende Informationen zur Aktie {ticker
 === MARKTDATEN ===
 {price_data}
 
+{tech_block}
+
 === AKTUELLE NACHRICHTEN ({current_count} Artikel, letzte 24–48h) ===
 {current_news}
 
@@ -54,6 +57,8 @@ _USER_TEMPLATE_STANDARD = """Analysiere folgende Informationen zur Aktie {ticker
 === AUFGABE ===
 Bewerte das Gesamt-Sentiment für einen Swing-Trade (3–30 Tage).
 Berücksichtige Kontinuität und Trendwenden zwischen historischen und aktuellen Nachrichten.
+Berücksichtige die technischen Indikatoren: RSI-Extremwerte (>70 überkauft, <30 überverkauft),
+MACD-Kreuzungen, Bollinger-Band-Position und den EMA-Trend als ergänzende Signalbestätigung.
 
 Antworte mit diesem JSON:
 {{
@@ -72,7 +77,8 @@ Antworte mit diesem JSON:
   "summary": "<3–5 Sätze Gesamtbewertung>"
 }}
 
-BUY nur bei starker, konsistenter Nachrichtenlage. SKIP wenn zu wenige oder widersprüchliche Informationen.
+BUY nur bei starker, konsistenter Nachrichtenlage UND bestätigenden technischen Signalen.
+SKIP wenn zu wenige/widersprüchliche Informationen oder technische Signale stark dagegen sprechen.
 """
 
 # Used when an open position EXISTS – Claude must validate the original thesis
@@ -80,6 +86,8 @@ _USER_TEMPLATE_THESIS_CHECK = """Analysiere folgende Informationen zur Aktie {ti
 
 === MARKTDATEN ===
 {price_data}
+
+{tech_block}
 
 === OFFENE POSITION ===
 Einstiegspreis: ${entry_price:.2f} | Einstieg: {entry_date} | Halteziel: {hold_days}d
@@ -96,6 +104,7 @@ Ursprüngliche Katalysatoren: {catalysts}
    → Sind die Katalysatoren noch intakt? Hat sich die Nachrichtenlage fundamental verändert?
    → Eine These gilt als GEBROCHEN wenn: die ursprünglichen Treiber weggefallen sind, neue stark negative
      Nachrichten den Kaufgrund widerlegen, oder das Sentiment sich stark umgekehrt hat.
+   → Berücksichtige auch technische Warnsignale: RSI >75, MACD-Negativkreuzung, Kurs unter EMA21.
 2. Gib eine aktuelle Handlungsempfehlung.
 
 Antworte mit diesem JSON:
@@ -130,18 +139,28 @@ class ClaudeAnalyzer:
         open_position: Optional[Dict] = None,
         lessons_memo: Optional[str] = None,
         weekly_briefing: Optional[str] = None,  # weekend prep briefing
+        technical: Optional[TechnicalSnapshot] = None,
     ) -> AnalysisResult:
         if not news_items:
             return self._empty_result(ticker, "Keine Nachrichtenartikel verfügbar")
 
+        # Auto-calculate technicals if not provided
+        if technical is None:
+            try:
+                technical = TechnicalIndicators().calculate(ticker)
+            except Exception:
+                technical = None
+
         current_news_text = self._format_news(news_items, label="aktuell")
         historical_block = self._format_historical_block(historical_news or [], news_items)
         price_text = self._format_price(price_data or {})
+        tech_block = technical.to_prompt_block() if technical else ""
 
         if open_position:
             prompt = _USER_TEMPLATE_THESIS_CHECK.format(
                 ticker=ticker,
                 price_data=price_text,
+                tech_block=tech_block,
                 entry_price=open_position.get("entry_price", 0),
                 entry_date=open_position.get("entry_date", "")[:10],
                 hold_days=open_position.get("hold_days", "?"),
@@ -155,6 +174,7 @@ class ClaudeAnalyzer:
             prompt = _USER_TEMPLATE_STANDARD.format(
                 ticker=ticker,
                 price_data=price_text,
+                tech_block=tech_block,
                 current_count=len(news_items),
                 current_news=current_news_text,
                 historical_block=historical_block,

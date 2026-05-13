@@ -24,8 +24,10 @@ from portfolio.trade_journal import TradeJournal
 from portfolio.signal_queue import SignalQueue
 from analyzers.reflection_engine import ReflectionEngine
 from analyzers.recession_detector import RecessionDetector, BULL, NEUTRAL, BEAR, CRISIS
+from analyzers.technical_indicators import TechnicalIndicators
 from collectors.social_scan import SocialPulseDB
 from analyzers.weekend_prep import WeekendPrep
+from portfolio.goal_risk_assessor import GoalRiskAssessor, OK, CAUTION, DANGER, UNREACHABLE
 
 # ─── Page config ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -165,13 +167,14 @@ st.divider()
 # ═══════════════════════════════════════════════════════════════════════════════
 # TABS
 # ═══════════════════════════════════════════════════════════════════════════════
-tab_portfolio, tab_regime, tab_queue, tab_social, tab_briefing, tab_trades = st.tabs([
+tab_portfolio, tab_regime, tab_queue, tab_social, tab_briefing, tab_trades, tab_tech = st.tabs([
     "📊 Portfolio",
     "🛡 Markt-Regime",
     f"📋 Signal-Queue ({pending_cnt})",
     "📡 Social Pulse",
     "📰 Wochenbriefing",
     "📈 Trades & Lernen",
+    "📉 Technicals",
 ])
 
 
@@ -206,6 +209,34 @@ with tab_portfolio:
         st.metric("Startkapital",    f"${config.initial_capital:,.2f}")
         st.metric("Wachstumsziel",   f"${phase_info['growth_target']:,.0f}")
         st.metric("Investiert",      f"${invested:,.2f}")
+
+    # Goal risk assessment (only shown when TARGET_GOAL_AMOUNT + TARGET_GOAL_DATE are set)
+    _goal_assessor = GoalRiskAssessor(
+        target_value=config.target_goal_amount,
+        target_date_str=config.target_goal_date,
+        initial_capital=config.initial_capital,
+    )
+    if _goal_assessor.active:
+        st.divider()
+        _ga = _goal_assessor.assess(total_value, acc)
+        if _ga:
+            _risk_colors = {OK: "success", CAUTION: "warning", DANGER: "error", UNREACHABLE: "error"}
+            _risk_icons  = {OK: "✅", CAUTION: "🟡", DANGER: "⚠️", UNREACHABLE: "🚨"}
+            _fn = getattr(st, _risk_colors.get(_ga.risk_level, "info"))
+            _fn(
+                f"{_risk_icons.get(_ga.risk_level, '')} **Ziel-Risikoanalyse** – "
+                f"Risiko-Level: **{_ga.risk_level}**  \n"
+                f"Ziel: ${_ga.target_value:,.0f} | "
+                f"Fehlend: {_ga.shortfall_pct:.1f}% | "
+                f"Noch {_ga.days_remaining} Tage | "
+                f"Benötigte Rendite p.a.: {_ga.required_annual_return*100:.1f}% | "
+                f"Realistisch: {_ga.realistic_annual_return*100:.1f}%  \n"
+                + (f"_{_ga.note}_" if _ga.note else "")
+            )
+            if _ga.actions:
+                with st.expander("Empfohlene Maßnahmen"):
+                    for _action in _ga.actions:
+                        st.write(f"→ {_action}")
 
     st.divider()
 
@@ -829,6 +860,99 @@ with tab_trades:
             st.info(memo)
 
 
+# ══════════════════════════════════════════════════════════
+# TAB 7 – TECHNICALS
+# ══════════════════════════════════════════════════════════
+with tab_tech:
+    st.subheader("Technische Indikatoren – Watchlist")
+    st.caption("RSI, MACD, Bollinger Bands, EMAs und ATR für alle beobachteten Aktien.")
+
+    _ti = TechnicalIndicators()
+
+    selected_ticker = st.selectbox(
+        "Ticker auswählen",
+        options=config.watchlist,
+        key="tech_ticker_select",
+    )
+
+    with st.spinner(f"Berechne Indikatoren für {selected_ticker}…"):
+        snap = _ti.calculate(selected_ticker)
+
+    if snap is None:
+        st.warning(f"Keine Kursdaten für {selected_ticker} verfügbar.")
+    else:
+        # Trend badge
+        trend_color = {"UPTREND": "green", "DOWNTREND": "red"}.get(snap.trend.split()[0], "gray")
+        st.markdown(
+            f"**Trend:** <span style='color:{trend_color};font-weight:700;'>{snap.trend}</span>  "
+            f"&nbsp;&nbsp;**Kurs:** ${snap.price}",
+            unsafe_allow_html=True,
+        )
+        st.divider()
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.markdown("#### Momentum")
+            if snap.rsi_14 is not None:
+                rsi_color = "red" if snap.rsi_14 > 70 else ("green" if snap.rsi_14 < 30 else "white")
+                rsi_label = "Überkauft" if snap.rsi_14 > 70 else ("Überverkauft" if snap.rsi_14 < 30 else "Neutral")
+                st.metric("RSI (14)", f"{snap.rsi_14:.1f}", rsi_label)
+            if snap.macd is not None:
+                hist_delta = f"{snap.macd_hist:+.4f}" if snap.macd_hist is not None else "–"
+                st.metric("MACD", f"{snap.macd:.4f}", f"Hist: {hist_delta}")
+                st.caption(f"Signal: {snap.macd_signal:.4f}")
+
+        with col2:
+            st.markdown("#### Volatilität")
+            if snap.bb_upper is not None:
+                st.metric("BB Oben", f"${snap.bb_upper:.2f}")
+                st.metric("BB Mitte", f"${snap.bb_middle:.2f}")
+                st.metric("BB Unten", f"${snap.bb_lower:.2f}")
+                if snap.bb_pct is not None:
+                    pct_label = "oben" if snap.bb_pct > 0.8 else ("unten" if snap.bb_pct < 0.2 else "mittig")
+                    st.caption(f"%B = {snap.bb_pct:.2f} ({pct_label})")
+            if snap.atr_14 is not None and snap.price:
+                atr_pct = snap.atr_14 / snap.price * 100
+                st.metric("ATR (14)", f"${snap.atr_14:.2f}", f"{atr_pct:.1f}% des Kurses")
+
+        with col3:
+            st.markdown("#### Trend / EMAs")
+            if snap.ema_9:
+                st.metric("EMA 9", f"${snap.ema_9:.2f}")
+            if snap.ema_21:
+                st.metric("EMA 21", f"${snap.ema_21:.2f}")
+            if snap.ema_50:
+                st.metric("EMA 50", f"${snap.ema_50:.2f}")
+            if snap.volume_ratio is not None:
+                vol_label = "hoch" if snap.volume_ratio > 1.5 else ("niedrig" if snap.volume_ratio < 0.5 else "normal")
+                st.metric("Volumen-Ratio", f"{snap.volume_ratio:.2f}×", vol_label)
+
+        st.divider()
+        st.markdown("**Rohdaten (alle Ticker)**")
+        all_snaps = []
+        for t in config.watchlist:
+            try:
+                s = _ti.calculate(t)
+                if s:
+                    all_snaps.append({
+                        "Ticker": t,
+                        "Kurs": s.price,
+                        "RSI": s.rsi_14,
+                        "MACD-Hist": s.macd_hist,
+                        "%B": s.bb_pct,
+                        "EMA9": s.ema_9,
+                        "EMA21": s.ema_21,
+                        "VolRatio": s.volume_ratio,
+                        "Trend": s.trend,
+                    })
+            except Exception:
+                pass
+        if all_snaps:
+            df_tech = pd.DataFrame(all_snaps).set_index("Ticker")
+            st.dataframe(df_tech, use_container_width=True)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -891,6 +1015,7 @@ with st.sidebar:
         "US-Bundesaufträge (usaspending)",
         "SEC EDGAR 8-K Meldungen",
         "StockTwits Sentiment",
+        "Twitter/X Sentiment",
         "PRNewswire / BusinessWire",
         "EU-Nachrichten (Google RSS)",
         "Options-Flow (C/P-Ratio)",
@@ -901,6 +1026,7 @@ with st.sidebar:
         "Inverse ETF Hedging",
         "Signal-Warteschlange",
         "Wochenbriefing (KI)",
+        "Technische Indikatoren (RSI, MACD, BB, EMA, ATR)",
     ]
     for f in features:
         st.write(f"✓ {f}")

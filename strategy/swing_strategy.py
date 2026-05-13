@@ -8,6 +8,7 @@ from portfolio.phase_controller import PhaseController
 from portfolio.focus_mode import FocusController
 from portfolio.trade_journal import TradeJournal
 from portfolio.signal_queue import SignalQueue
+from portfolio.goal_risk_assessor import GoalRiskAssessor, CAUTION, DANGER, UNREACHABLE
 from broker.paper_broker import PaperBroker
 from notifier.telegram_notifier import TelegramNotifier
 from analyzers.earnings_filter import EarningsFilter
@@ -29,6 +30,7 @@ class SwingStrategy:
         earnings_filter: Optional[EarningsFilter] = None,
         correlation_checker: Optional[CorrelationChecker] = None,
         kelly_sizer: Optional[KellySizer] = None,
+        goal_risk_assessor: Optional[GoalRiskAssessor] = None,
     ):
         self.portfolio = portfolio
         self.broker = broker
@@ -41,6 +43,7 @@ class SwingStrategy:
         self.earnings_filter = earnings_filter
         self.correlation = correlation_checker
         self.kelly = kelly_sizer
+        self.goal_risk = goal_risk_assessor
 
     def evaluate(self, analysis: AnalysisResult, sources_breakdown: Optional[Dict[str, int]] = None) -> Optional[str]:
         ticker = analysis.ticker
@@ -417,7 +420,39 @@ class SwingStrategy:
             pnl=pnl, reason=reason,
             days_held=days_held,
         )
+        self._run_goal_risk_check()
         return pnl
+
+    def _run_goal_risk_check(self) -> None:
+        """Nach jedem Trade: prüfe ob das Portfolio-Ziel noch erreichbar ist."""
+        if not self.goal_risk or not self.goal_risk.active:
+            return
+        try:
+            prices = self.broker.get_prices(list(self.portfolio.all_positions().keys()))
+            portfolio_value = self.portfolio.total_value(prices)
+            stats = self.tracker.get_stats()
+            assessment = self.goal_risk.assess(portfolio_value, stats)
+            if assessment is None:
+                return
+
+            risk = assessment.risk_level
+            if risk == UNREACHABLE:
+                icon = "🚨"
+            elif risk == DANGER:
+                icon = "⚠️"
+            elif risk == CAUTION:
+                icon = "🟡"
+            else:
+                return  # OK – kein Alarm nötig
+
+            # Telegram-Benachrichtigung
+            msg = (
+                f"{icon} *ZIEL-RISIKOANALYSE* nach Trade-Abschluss\n\n"
+                f"{assessment.to_text()}"
+            )
+            self._notifier.send(msg)
+        except Exception:
+            pass
 
     def build_open_position_context(self, ticker: str) -> Optional[Dict]:
         pos = self.portfolio.get_position(ticker)
