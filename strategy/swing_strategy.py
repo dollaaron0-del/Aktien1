@@ -6,6 +6,7 @@ from portfolio.portfolio import Portfolio, Position
 from portfolio.performance_tracker import PerformanceTracker
 from portfolio.phase_controller import PhaseController
 from broker.paper_broker import PaperBroker
+from notifier.telegram_notifier import TelegramNotifier
 from config import config
 
 
@@ -21,6 +22,7 @@ class SwingStrategy:
         self.broker = broker
         self.tracker = tracker
         self.phase_ctrl = phase_ctrl
+        self._notifier = TelegramNotifier()
 
     def evaluate(self, analysis: AnalysisResult, sources_breakdown: Optional[Dict[str, int]] = None) -> Optional[str]:
         ticker = analysis.ticker
@@ -106,9 +108,15 @@ class SwingStrategy:
             reason = f"Sentiment-Signal SELL (Score: {analysis.sentiment_score:.2f})"
 
         if reason:
+            thesis_broken = "gebrochen" in reason.lower()
             pnl = self._do_close(ticker, pos, price, reason)
             sign = "+" if pnl >= 0 else ""
-            thesis_tag = " ⚠️ THESE GEBROCHEN" if "gebrochen" in reason.lower() else ""
+            thesis_tag = " ⚠️ THESE GEBROCHEN" if thesis_broken else ""
+            self._notifier.notify_sell(
+                ticker=ticker, shares=pos.shares, price=price,
+                entry_price=pos.entry_price, pnl=pnl,
+                reason=reason, thesis_broken=thesis_broken,
+            )
             return f"[{ticker}] VERKAUFT{thesis_tag} – {reason} | P&L: {sign}{pnl:.2f} USD"
 
         thesis_note = ""
@@ -158,6 +166,14 @@ class SwingStrategy:
 
         self.broker.buy(ticker, shares, price)
         self.portfolio.open_position(position)
+
+        self._notifier.notify_buy(
+            ticker=ticker, shares=shares, price=price,
+            stop_loss=stop_loss, take_profit=take_profit,
+            hold_days=analysis.suggested_hold_days,
+            rationale=analysis.entry_rationale,
+            sentiment_score=analysis.sentiment_score,
+        )
 
         self.tracker.record_prediction(
             ticker=ticker,

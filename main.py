@@ -32,6 +32,7 @@ from portfolio import Portfolio
 from portfolio.performance_tracker import PerformanceTracker
 from portfolio.phase_controller import PhaseController
 from strategy import SwingStrategy
+from notifier.telegram_notifier import TelegramNotifier
 
 console = Console()
 
@@ -159,6 +160,18 @@ def run_analysis_cycle(
     archive.cleanup_old(keep_days=32)
 
     _print_portfolio_summary(portfolio, broker, phase_ctrl)
+
+    # Send Telegram daily summary
+    notifier = TelegramNotifier()
+    all_actions = exit_actions[:]
+    notifier.notify_daily_summary(
+        total_value=total_value,
+        cash=portfolio.cash,
+        open_positions=len(portfolio.all_positions()),
+        phase=phase,
+        progress_pct=phase_ctrl.progress_pct(total_value),
+        actions_today=all_actions,
+    )
 
 
 def _print_analysis(a: AnalysisResult):
