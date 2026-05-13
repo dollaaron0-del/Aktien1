@@ -272,7 +272,7 @@ with tab_portfolio:
             return ""
 
         st.dataframe(
-            df.style.applymap(_color_pnl, subset=["P&L $", "P&L %"]),
+            df.style.map(_color_pnl, subset=["P&L $", "P&L %"]),
             use_container_width=True, hide_index=True,
         )
     else:
@@ -712,7 +712,7 @@ with tab_trades:
                     "Win-Rate %":     r["win_rate_pct"],
                 } for r in exit_stats])
                 st.dataframe(
-                    df_exit.style.applymap(
+                    df_exit.style.map(
                         lambda v: ("color: #00e676" if isinstance(v, (int, float)) and v >= 0
                                    else ("color: #f44336" if isinstance(v, (int, float)) and v < 0 else "")),
                         subset=["Ø Rendite %"],
@@ -766,7 +766,7 @@ with tab_trades:
                        "Tage (Plan)", "Zielkurs $", "Richtung ✓", "Zielkurs ✓", "Exit-Typ", "Grund"]
             existing = [c for c in desired if c in df_tr.columns]
             st.dataframe(
-                df_tr[existing].style.applymap(
+                df_tr[existing].style.map(
                     lambda v: ("color: #00e676" if isinstance(v, (int, float)) and v >= 0
                                else ("color: #f44336" if isinstance(v, (int, float)) and v < 0 else "")),
                     subset=["Rendite %"],

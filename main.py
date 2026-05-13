@@ -1028,6 +1028,7 @@ def main():
         return
 
     if args.regime:
+        recession_detector = RecessionDetector(anthropic_api_key=config.anthropic_api_key)
         show_regime(recession_detector)
         return
 

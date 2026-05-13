@@ -10,7 +10,6 @@ Kostenlose Twitter API v2 erlaubt 500k Tweets/Monat (Essential access).
 
 from __future__ import annotations
 
-import time
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 import requests

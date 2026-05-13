@@ -173,13 +173,21 @@ class GoalRiskAssessor:
         """
         Schätzt die realistisch erreichbare Jahresrendite aus vergangenen Trades.
         Nutzt avg_return_pct (pro Trade) × estimated_trades_per_year.
+
+        Akzeptiert sowohl get_accuracy_report()-Keys (avg_return_pct, win_rate_pct)
+        als auch Kurzform (avg_return, win_rate).
         """
         if not stats or stats.get("total_closed", 0) < 3:
             # Zu wenig Datenpunkte – konservative Annahme 15% p.a.
             return 0.15
 
-        avg_return_pct = stats.get("avg_return", 0.0) or 0.0
-        win_rate = stats.get("win_rate", 0.5) or 0.5
+        # Support both key styles: get_accuracy_report() uses *_pct suffix
+        avg_return_pct = (
+            stats.get("avg_return_pct") or stats.get("avg_return") or 0.0
+        )
+        raw_win_rate = stats.get("win_rate_pct") or stats.get("win_rate") or 50.0
+        # Normalize: win_rate_pct is 0-100, win_rate is 0-1
+        win_rate = raw_win_rate / 100.0 if raw_win_rate > 1.0 else raw_win_rate
 
         # Expected return per trade (accounting for losers)
         # Conservative: assume ~20 trades / year, full-capital reuse
@@ -227,9 +235,9 @@ class GoalRiskAssessor:
                 "Aktuelle Strategie beibehalten, keine unnötigen Risiken eingehen",
                 "Verbesserungspotenzial: Signalqualität erhöhen, schwache Trades früher schließen",
             ]
-            if required > realistic * 1.5:
+            if realistic > 0 and required > realistic * 1.5:
                 actions.append(
-                    f"Achtung: Benötigte Rendite {required*100:.0f}% p.a. ist {required/realistic:.1f}× "
+                    f"Achtung: Benötigte Rendite {required*100:.0f}% p.a. ist {required/max(realistic, 0.001):.1f}× "
                     f"höher als bisher erzielt ({realistic*100:.0f}%) – Ziel überarbeiten empfohlen"
                 )
         else:
