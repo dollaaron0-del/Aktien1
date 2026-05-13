@@ -29,12 +29,12 @@ class PhaseController:
     def progress_pct(self, portfolio_value: float) -> float:
         if self.growth_target <= self.initial_capital:
             return 100.0
-        return min(
+        pct = (
             (portfolio_value - self.initial_capital)
             / (self.growth_target - self.initial_capital)
-            * 100,
-            100.0,
+            * 100
         )
+        return max(0.0, min(pct, 100.0))
 
     def safe_monthly_distribution(self, portfolio_value: float, avg_monthly_return_pct: float = 2.0) -> float:
         """

@@ -1,7 +1,4 @@
-.env
-.venv/
+data/
 __pycache__/
 *.pyc
-*.pyo
-data/portfolio.json
-.DS_Store
+.env

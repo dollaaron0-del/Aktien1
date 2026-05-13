@@ -101,10 +101,14 @@ def run_analysis_cycle(
     analyzer = ClaudeAnalyzer()
     yahoo = YahooCollector()
 
+    # Track all material trade actions for the daily summary
+    cycle_actions: List[str] = []
+
     # Check stop-loss / take-profit first (no Claude needed)
     exit_actions = strategy.check_open_positions()
     for action in exit_actions:
         console.print(f"  [yellow]{action}[/yellow]")
+    cycle_actions.extend(exit_actions)
 
     for ticker in config.watchlist:
         console.print(f"\n[cyan]Sammle Daten für {ticker}...[/cyan]")
@@ -113,7 +117,7 @@ def run_analysis_cycle(
         price_data = yahoo.get_price_data(ticker)
 
         # Load 30-day history, excluding articles already in current batch
-        current_titles = {(item.get("title") or "").lower()[:80] for item in news}
+        current_titles = {item.get("title") or "" for item in news}
         historical = archive.get_history(ticker, days=30, exclude_titles=current_titles)
 
         insider_count = sources_breakdown.get("insider", 0)
@@ -148,6 +152,9 @@ def run_analysis_cycle(
         if action:
             color = "bold red" if "VERKAUFT" in action else "bold green"
             console.print(f"  [{color}]{action}[/{color}]")
+            # Only material trades go into the Telegram summary, not skip/hold notices
+            if "GEKAUFT" in action or "VERKAUFT" in action:
+                cycle_actions.append(action)
 
     # Record portfolio snapshot
     prices = broker.get_prices(list(portfolio.all_positions().keys()))
@@ -163,14 +170,13 @@ def run_analysis_cycle(
 
     # Send Telegram daily summary
     notifier = TelegramNotifier()
-    all_actions = exit_actions[:]
     notifier.notify_daily_summary(
         total_value=total_value,
         cash=portfolio.cash,
         open_positions=len(portfolio.all_positions()),
         phase=phase,
         progress_pct=phase_ctrl.progress_pct(total_value),
-        actions_today=all_actions,
+        actions_today=cycle_actions,
     )
 
 
