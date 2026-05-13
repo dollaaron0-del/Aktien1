@@ -1,7 +1,7 @@
 """
-Streamlit Dashboard für den Stock Sentiment Trading Bot.
-Starten: python main.py --dashboard
-     oder: streamlit run dashboard/app.py
+Streamlit Dashboard – Stock Sentiment Trading Bot
+Starten: streamlit run dashboard/app.py
+     oder: python main.py --dashboard
 """
 
 import sys
@@ -9,6 +9,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import json
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -20,408 +21,891 @@ from portfolio.performance_tracker import PerformanceTracker
 from portfolio.phase_controller import PhaseController
 from portfolio.focus_mode import FocusController, FocusMode
 from portfolio.trade_journal import TradeJournal
+from portfolio.signal_queue import SignalQueue
 from analyzers.reflection_engine import ReflectionEngine
+from analyzers.recession_detector import RecessionDetector, BULL, NEUTRAL, BEAR, CRISIS
+from collectors.social_scan import SocialPulseDB
+from analyzers.weekend_prep import WeekendPrep
 
+# ─── Page config ─────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Stock Sentiment Bot",
     page_icon="📈",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-st.title("📈 Stock Sentiment Trading Bot")
-st.caption(f"Stand: {datetime.now().strftime('%d.%m.%Y %H:%M')} | Broker: {config.broker_mode.upper()}")
+# ─── Custom CSS ──────────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+/* Tighter metric cards */
+[data-testid="metric-container"] {
+    background: #1e2130;
+    border: 1px solid #2d3250;
+    border-radius: 10px;
+    padding: 12px 16px;
+}
+/* Tab font */
+button[data-baseweb="tab"] { font-size: 0.9rem; font-weight: 600; }
+/* Regime badge helpers */
+.regime-bull    { color: #00e676; font-weight: 700; font-size: 1.1rem; }
+.regime-neutral { color: #ffd740; font-weight: 700; font-size: 1.1rem; }
+.regime-bear    { color: #ff7043; font-weight: 700; font-size: 1.1rem; }
+.regime-crisis  { color: #f44336; font-weight: 700; font-size: 1.1rem; }
+.badge-pending  { color: #ffd740; }
+.badge-ok       { color: #00e676; }
+.badge-red      { color: #f44336; }
+</style>
+""", unsafe_allow_html=True)
 
 
+# ─── Resource loading ─────────────────────────────────────────────────────────
 @st.cache_resource
 def load_resources():
-    broker = PaperBroker()
-    portfolio = Portfolio(config.initial_capital)
-    tracker = PerformanceTracker()
-    phase_ctrl = PhaseController(
+    broker       = PaperBroker()
+    portfolio    = Portfolio(config.initial_capital)
+    tracker      = PerformanceTracker()
+    phase_ctrl   = PhaseController(
         initial_capital=config.initial_capital,
         growth_target_multiple=config.growth_target_multiple,
         monthly_target_eur=config.monthly_distribution_eur,
         buffer_months=config.distribution_buffer_months,
     )
-    focus_ctrl = FocusController(
+    focus_ctrl   = FocusController(
         mode=config.focus_mode,
         target_amount=config.target_goal_amount or None,
         target_date=config.target_goal_date or None,
         initial_capital=config.initial_capital,
     )
-    journal = TradeJournal()
-    reflection = ReflectionEngine(tracker, journal)
-    return broker, portfolio, tracker, phase_ctrl, focus_ctrl, journal, reflection
+    journal      = TradeJournal()
+    reflection   = ReflectionEngine(tracker, journal)
+    sig_queue    = SignalQueue(max_age_hours=config.signal_queue_max_age_hours)
+    detector     = RecessionDetector(anthropic_api_key=config.anthropic_api_key)
+    social_db    = SocialPulseDB()
+    weekend_prep = WeekendPrep(
+        anthropic_api_key=config.anthropic_api_key,
+        watchlist=config.watchlist,
+    )
+    return (broker, portfolio, tracker, phase_ctrl, focus_ctrl,
+            journal, reflection, sig_queue, detector, social_db, weekend_prep)
 
 
-broker, portfolio, tracker, phase_ctrl, focus_ctrl, journal, reflection = load_resources()
+(broker, portfolio, tracker, phase_ctrl, focus_ctrl,
+ journal, reflection, sig_queue, detector, social_db, weekend_prep) = load_resources()
 
-prices = broker.get_prices(list(portfolio.all_positions().keys()))
+# ─── Live data ────────────────────────────────────────────────────────────────
+prices      = broker.get_prices(list(portfolio.all_positions().keys()))
 total_value = portfolio.total_value(prices)
-phase_info = phase_ctrl.get_info(total_value)
-acc = tracker.get_accuracy_report()
+phase_info  = phase_ctrl.get_info(total_value)
+acc         = tracker.get_accuracy_report()
+regime_data = detector.get_latest()
+pending_cnt = sig_queue.count_pending()
 
-# ─── KPI Row ─────────────────────────────────────────────────────────────────
-col1, col2, col3, col4, col5 = st.columns(5)
+# ─── Helper: regime color / label ────────────────────────────────────────────
+_REGIME_COLOR = {BULL: "#00e676", NEUTRAL: "#ffd740", BEAR: "#ff7043", CRISIS: "#f44336"}
+_REGIME_ICON  = {BULL: "🟢", NEUTRAL: "🟡", BEAR: "🟠", CRISIS: "🔴"}
+_REGIME_CSS   = {BULL: "regime-bull", NEUTRAL: "regime-neutral", BEAR: "regime-bear", CRISIS: "regime-crisis"}
 
-with col1:
-    delta_pct = (total_value - config.initial_capital) / config.initial_capital * 100
-    st.metric("Gesamtwert", f"${total_value:,.2f}", f"{delta_pct:+.1f}%")
-with col2:
-    st.metric("Cash", f"${portfolio.cash:,.2f}")
-with col3:
-    st.metric("Offene Positionen", len(portfolio.all_positions()))
-with col4:
-    phase_label = "🌱 Wachstum" if phase_info["phase"] == "GROWTH" else "💸 Ausschüttung"
-    st.metric("Phase", phase_label, f"{phase_info['progress_pct']:.1f}% zum Ziel")
-with col5:
-    if acc.get("total_closed", 0) > 0:
-        st.metric("Win-Rate", f"{acc['win_rate_pct']}%", f"{acc['total_closed']} Trades")
-    else:
-        st.metric("Win-Rate", "–", "noch keine Trades")
 
-st.divider()
+def regime_badge(regime: str) -> str:
+    icon  = _REGIME_ICON.get(regime, "⚪")
+    css   = _REGIME_CSS.get(regime, "")
+    return f'<span class="{css}">{icon} {regime}</span>'
 
-# ─── Phase progress ───────────────────────────────────────────────────────────
-st.subheader("Portfolio-Phase & Wachstumsziel")
-left, right = st.columns([2, 1])
 
-with left:
-    progress = phase_info["progress_pct"] / 100
-    st.progress(
-        progress,
-        text=f"{phase_info['progress_pct']:.1f}% — ${total_value:,.2f} von ${phase_info['growth_target']:,.0f}",
+# ═══════════════════════════════════════════════════════════════════════════════
+# HEADER
+# ═══════════════════════════════════════════════════════════════════════════════
+c_logo, c_title, c_refresh = st.columns([1, 8, 2])
+with c_logo:
+    st.markdown("## 📈")
+with c_title:
+    st.markdown(
+        f"## Stock Sentiment Trading Bot  "
+        f"<small style='color:#888; font-size:0.65em;'>Stand: {datetime.now().strftime('%d.%m.%Y %H:%M')} "
+        f"· Broker: **{config.broker_mode.upper()}**</small>",
+        unsafe_allow_html=True,
     )
-    if phase_info["phase"] == "GROWTH":
-        st.info(
-            f"🌱 **Wachstumsphase** – Noch **${phase_info['remaining_to_goal']:,.2f}** bis zur Ausschüttungsphase.\n\n"
-            f"Ziel: ${phase_info['growth_target']:,.0f} ({config.growth_target_multiple:.1f}× Startkapital)"
-        )
-    else:
-        dist = phase_info.get("monthly_distribution", 0)
-        st.success(
-            f"💸 **Ausschüttungsphase erreicht!**\n\n"
-            f"Monatliche Auszahlung: **${dist:,.2f}** (Ziel: ${phase_info['monthly_target']:,.2f})\n"
-            f"Sicherheitspuffer: ${phase_info.get('buffer_reserve', 0):,.2f} ({config.distribution_buffer_months} Monate)"
-        )
+with c_refresh:
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("🔄 Aktualisieren", use_container_width=True):
+        st.cache_resource.clear()
+        st.rerun()
 
-with right:
-    st.metric("Startkapital", f"${config.initial_capital:,.2f}")
-    st.metric("Wachstumsziel", f"${phase_info['growth_target']:,.0f}")
-    if phase_info["phase"] == "DISTRIBUTION":
-        st.metric("Monatl. Ausschüttung", f"${phase_info.get('monthly_distribution', 0):,.2f}")
+# ─── KPI strip ───────────────────────────────────────────────────────────────
+delta_pct  = (total_value - config.initial_capital) / config.initial_capital * 100
+invested   = sum(pos.shares * prices.get(t, pos.entry_price) for t, pos in portfolio.all_positions().items())
+cash_pct   = portfolio.cash / total_value * 100 if total_value else 0
+regime_str = (regime_data["regime"] if regime_data else "–")
+regime_score = (regime_data["recession_score"] if regime_data else None)
 
-st.divider()
-
-# ─── Open Positions ───────────────────────────────────────────────────────────
-st.subheader("Offene Positionen")
-positions = portfolio.all_positions()
-if positions:
-    rows = []
-    for ticker, pos in positions.items():
-        price = prices.get(ticker, pos.entry_price)
-        pnl = (price - pos.entry_price) * pos.shares
-        pnl_pct = (price - pos.entry_price) / pos.entry_price * 100
-        days = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
-        rows.append({
-            "Ticker": ticker,
-            "Stück": pos.shares,
-            "Einstieg $": pos.entry_price,
-            "Aktuell $": price,
-            "P&L $": round(pnl, 2),
-            "P&L %": round(pnl_pct, 2),
-            "SL $": pos.stop_loss,
-            "TP $": pos.take_profit,
-            "Tage": days,
-            "Katalysatoren": ", ".join(pos.entry_catalysts[:2]) if pos.entry_catalysts else "–",
-        })
-    df = pd.DataFrame(rows)
-    st.dataframe(
-        df.style.applymap(lambda v: "color: green" if v >= 0 else "color: red", subset=["P&L $", "P&L %"]),
-        use_container_width=True, hide_index=True,
-    )
-else:
-    st.info("Keine offenen Positionen.")
+k1, k2, k3, k4, k5, k6 = st.columns(6)
+k1.metric("Gesamtwert",      f"${total_value:,.2f}", f"{delta_pct:+.1f}%")
+k2.metric("Cash",            f"${portfolio.cash:,.2f}", f"{cash_pct:.0f}% des Portfolios")
+k3.metric("Offene Positionen", len(portfolio.all_positions()))
+k4.metric(
+    "Marktregime",
+    regime_str,
+    f"Score {regime_score:.2f}" if regime_score is not None else "–",
+    delta_color="inverse",
+)
+k5.metric(
+    "Win-Rate",
+    f"{acc['win_rate_pct']}%" if acc.get("total_closed") else "–",
+    f"{acc.get('total_closed', 0)} Trades",
+)
+k6.metric(
+    "Signal-Warteschlange",
+    f"{pending_cnt} ausstehend",
+    delta_color="off",
+)
 
 st.divider()
 
-# ─── Portfolio Value Chart ────────────────────────────────────────────────────
-st.subheader("Portfoliowert über Zeit")
-history = tracker.get_value_history(180)
-if len(history) >= 2:
-    df_hist = pd.DataFrame(history[::-1])
-    df_hist["snapshot_date"] = pd.to_datetime(df_hist["snapshot_date"])
-    df_hist = df_hist.set_index("snapshot_date")
-    st.line_chart(df_hist["total_value"], use_container_width=True)
-else:
-    st.info("Noch zu wenige Datenpunkte (mindestens 2 Analysezyklen nötig).")
+# ═══════════════════════════════════════════════════════════════════════════════
+# TABS
+# ═══════════════════════════════════════════════════════════════════════════════
+tab_portfolio, tab_regime, tab_queue, tab_social, tab_briefing, tab_trades = st.tabs([
+    "📊 Portfolio",
+    "🛡 Markt-Regime",
+    f"📋 Signal-Queue ({pending_cnt})",
+    "📡 Social Pulse",
+    "📰 Wochenbriefing",
+    "📈 Trades & Lernen",
+])
 
-st.divider()
 
-# ─── Learning Report ──────────────────────────────────────────────────────────
-st.subheader("Selbstlernbericht")
-
-if acc.get("total_closed", 0) == 0:
-    st.info("Noch keine abgeschlossenen Trades. Der Bot lernt nach dem ersten Verkauf.")
-else:
-    mc1, mc2, mc3, mc4 = st.columns(4)
-    mc1.metric("Win-Rate", f"{acc['win_rate_pct']}%")
-    mc2.metric("Richtungs-Genauigkeit", f"{acc['direction_accuracy_pct']}%")
-    mc3.metric("Zielkurs-Trefferquote", f"{acc['target_hit_pct']}%")
-    mc4.metric("Ø Rendite / Trade", f"{acc['avg_return_pct']:+.2f}%")
-
-    adaptive_threshold = tracker.get_adaptive_threshold(config.buy_threshold)
-    threshold_delta = adaptive_threshold - config.buy_threshold
-    st.metric(
-        "Adaptiver Kauf-Threshold", f"{adaptive_threshold:.2f}",
-        f"{threshold_delta:+.2f} (Basis: {config.buy_threshold:.2f})",
-        delta_color="inverse",
-    )
-    if threshold_delta > 0:
-        st.warning("⚠️ Bot wurde konservativer: Win-Rate unter 50%. Strengere Kaufbedingungen aktiv.")
-    elif threshold_delta < 0:
-        st.success("✅ Bot hat gute Trefferquote: Kaufbedingungen leicht gelockert.")
-
-    # Exit reason stats
-    exit_stats = tracker.get_exit_reason_stats()
-    if exit_stats:
-        st.subheader("Exit-Grund vs. P&L")
-        labels = {
-            "stop_loss": "Stop-Loss",
-            "take_profit": "Take-Profit",
-            "thesis_broken": "⚠ These gebrochen",
-            "hold_expired": "Haltedauer abgelaufen",
-            "sentiment_sell": "Sentiment-SELL",
-            "other": "Sonstiges",
-        }
-        df_exit = pd.DataFrame([{
-            "Ausstiegsgrund": labels.get(r["category"], r["category"]),
-            "Trades": r["trades"],
-            "Ø Rendite %": r["avg_return_pct"],
-            "Win-Rate %": r["win_rate_pct"],
-        } for r in exit_stats])
-        st.dataframe(
-            df_exit.style.applymap(
-                lambda v: "color: green" if isinstance(v, (int, float)) and v >= 0 else ("color: red" if isinstance(v, (int, float)) and v < 0 else ""),
-                subset=["Ø Rendite %"],
-            ),
-            use_container_width=True, hide_index=True,
-        )
-
-    # Sentiment score buckets
-    buckets = tracker.get_sentiment_score_buckets()
-    if buckets:
-        st.subheader("Sentiment-Score-Bereich vs. Performance")
-        st.caption("Zeigt, welche Sentiment-Scores wirklich profitabel sind → hilft den Kauf-Threshold zu justieren.")
-        df_buckets = pd.DataFrame([{
-            "Score-Bereich": b["score_range"],
-            "Trades": b["trades"],
-            "Win-Rate %": b["win_rate_pct"],
-            "Ø Rendite %": b["avg_return_pct"],
-        } for b in buckets])
-        st.dataframe(df_buckets, use_container_width=True, hide_index=True)
-
-    # Source accuracy
-    source_acc = tracker.get_source_accuracy()
-    if source_acc:
-        st.subheader("Quellen-Trefferquote pro Ticker")
-        st.caption("Welche Nachrichtenquelle hat bei welcher Aktie die besten Signale geliefert?")
-        df_src = pd.DataFrame(source_acc[:15])
-        df_src = df_src.rename(columns={
-            "source": "Quelle", "ticker": "Ticker",
-            "trades": "Trades", "win_rate_pct": "Win-Rate %", "avg_return_pct": "Ø Rendite %",
-        })
-        st.dataframe(df_src[["Quelle", "Ticker", "Trades", "Win-Rate %", "Ø Rendite %"]],
-                     use_container_width=True, hide_index=True)
-
-    # Recent closed trades
-    st.subheader("Letzte abgeschlossene Trades")
-    recent = tracker.get_recent_trades(15)
-    if recent:
-        df_trades = pd.DataFrame(recent)
-        df_trades = df_trades.rename(columns={
-            "ticker": "Ticker", "entry_price": "Einstieg $", "sell_price": "Verkauf $",
-            "actual_return_pct": "Rendite %", "actual_hold_days": "Tage (Ist)",
-            "predicted_hold_days": "Tage (Plan)", "predicted_target_price": "Zielkurs $",
-            "direction_correct": "Richtung ✓", "target_hit": "Zielkurs ✓",
-            "sell_reason_category": "Exit-Typ", "sell_reason": "Grund",
-        })
-        for col in ["Richtung ✓", "Zielkurs ✓"]:
-            if col in df_trades.columns:
-                df_trades[col] = df_trades[col].apply(lambda v: "✓" if v == 1 else "✗")
-        cols = ["Ticker", "Einstieg $", "Verkauf $", "Rendite %", "Tage (Ist)",
-                "Tage (Plan)", "Zielkurs $", "Richtung ✓", "Zielkurs ✓", "Exit-Typ", "Grund"]
-        existing = [c for c in cols if c in df_trades.columns]
-        st.dataframe(
-            df_trades[existing].style.applymap(
-                lambda v: "color: green" if isinstance(v, (int, float)) and v >= 0 else ("color: red" if isinstance(v, (int, float)) and v < 0 else ""),
-                subset=["Rendite %"],
-            ),
-            use_container_width=True, hide_index=True,
-        )
-
-st.divider()
-
-# ─── Trade Journal (per-trade story) ─────────────────────────────────────────
-st.subheader("📖 Trade-Tagebuch – Warum wurde gekauft / verkauft?")
-st.caption("Jeder Trade mit voller Entscheidungs-Historie: Sentiment, Katalysatoren, Risiken, Tagesprüfungen, Verkaufsgrund.")
-
-journal_stories = journal.get_all_trade_summaries(limit=30)
-if not journal_stories:
-    st.info("Noch keine Trades. Sobald der Bot kauft/verkauft, erscheinen hier die Geschichten.")
-else:
-    # Filter selector
-    tickers_with_trades = sorted({s["ticker"] for s in journal_stories})
-    selected_ticker = st.selectbox(
-        "Ticker filtern:", ["Alle"] + tickers_with_trades, key="journal_filter"
-    )
-    filtered = journal_stories if selected_ticker == "Alle" else [
-        s for s in journal_stories if s["ticker"] == selected_ticker
-    ]
-
-    for s in filtered[:15]:
-        status_icon = "🟢" if s.get("is_open") else ("🟩" if (s.get("pnl") or 0) >= 0 else "🔴")
-        pnl = s.get("pnl") or 0
-        pnl_str = (
-            f"OFFEN seit {s.get('entry_date','?')[:10]}"
-            if s.get("is_open") else
-            f"P&L {pnl:+.2f} USD ({s.get('pnl_pct',0):+.1f}%)"
-        )
-        with st.expander(f"{status_icon} {s['ticker']}  ·  {pnl_str}"):
-            colA, colB = st.columns(2)
-            with colA:
-                st.markdown("**Einstieg**")
-                st.write(f"📅 {s.get('entry_date','?')[:10]} · ${s.get('entry_price',0):.2f}")
-                st.write(f"🧠 Sentiment: {s.get('entry_sentiment',0):.2f}")
-                st.write(f"⏱️ Geplante Haltedauer: {s.get('planned_hold_days','?')}d")
-                if s.get("target_price"):
-                    st.write(f"🎯 Zielkurs: ${s['target_price']:.2f}")
-                st.markdown("**Kauflogik**")
-                st.info(s.get("entry_rationale") or "–")
-                if s.get("catalysts"):
-                    st.markdown("**Katalysatoren:** " + ", ".join(s["catalysts"]))
-                if s.get("risks"):
-                    st.markdown("**Bekannte Risiken:** " + ", ".join(s["risks"]))
-                if s.get("sources"):
-                    src_str = ", ".join(f"{k}:{v}" for k, v in s["sources"].items() if v)
-                    st.markdown(f"**Quellen:** {src_str}")
-            with colB:
-                st.markdown("**Verlauf**")
-                st.metric("Tagesprüfungen", s.get("n_daily_checks", 0))
-                st.metric("Warnungen", s.get("n_warnings", 0))
-                if not s.get("is_open"):
-                    st.markdown("**Verkauf**")
-                    st.write(f"📅 {s.get('exit_date','?')[:10]} · ${s.get('exit_price',0):.2f}")
-                    st.write(f"⏱️ Tatsächl. Haltedauer: {s.get('actual_hold_days','?')}d")
-                    color = "green" if pnl >= 0 else "red"
-                    st.markdown(f"**Ergebnis:** :{color}[{pnl:+.2f} USD ({s.get('pnl_pct',0):+.1f}%)]")
-                    st.warning(f"**Verkaufsgrund:** {s.get('exit_reason','–')}")
-            # Detailed event timeline
-            with st.expander("🔍 Vollständige Event-Zeitleiste"):
-                for ev in s["events"]:
-                    icon = {"ENTRY":"🟢","DAILY_CHECK":"👁","WARNING":"⚠️","EXIT":"🔚"}.get(ev["event_type"], "•")
-                    st.text(
-                        f"{icon} {ev['event_date'][:16]}  {ev['event_type']}  "
-                        f"${ev.get('price',0):.2f}  "
-                        f"{(ev.get('rationale') or ev.get('reason') or '')[:120]}"
-                    )
-
-st.divider()
-
-# ─── Monthly Self-Assessment ─────────────────────────────────────────────────
-st.subheader("📋 Monatliche Selbsteinschätzung")
-st.caption("Claude reflektiert am Monatsanfang: Was lief gut, was schlecht, was wird angepasst.")
-
-reviews = reflection.get_monthly_reviews(limit=12)
-left_r, right_r = st.columns([3, 1])
-with right_r:
-    if st.button("🔄 Jetzt neu generieren"):
-        with st.spinner("Claude reflektiert…"):
-            new_content = reflection.generate_monthly_review()
-        if new_content:
-            st.success("Neue Einschätzung generiert.")
-            st.rerun()
+# ══════════════════════════════════════════════════════════
+# TAB 1 – PORTFOLIO
+# ══════════════════════════════════════════════════════════
+with tab_portfolio:
+    # Phase progress
+    col_prog, col_phase_kpi = st.columns([3, 1])
+    with col_prog:
+        st.subheader("Wachstumsphase")
+        progress = min(phase_info["progress_pct"] / 100, 1.0)
+        st.progress(progress,
+                    text=f"{phase_info['progress_pct']:.1f}% — ${total_value:,.2f} "
+                         f"von ${phase_info['growth_target']:,.0f}")
+        if phase_info["phase"] == "GROWTH":
+            st.info(
+                f"🌱 **Wachstumsphase** – noch "
+                f"**${phase_info['remaining_to_goal']:,.2f}** bis zur Ausschüttungsphase  \n"
+                f"Ziel: ${phase_info['growth_target']:,.0f} "
+                f"({config.growth_target_multiple:.1f}× Startkapital)"
+            )
         else:
-            st.warning("Nicht genug Trades oder API-Fehler.")
+            dist = phase_info.get("monthly_distribution", 0)
+            st.success(
+                f"💸 **Ausschüttungsphase!** Monatlich: **${dist:,.2f}** "
+                f"(Ziel ${phase_info['monthly_target']:,.2f})  \n"
+                f"Puffer: ${phase_info.get('buffer_reserve', 0):,.2f} "
+                f"({config.distribution_buffer_months} Monate)"
+            )
+    with col_phase_kpi:
+        st.metric("Startkapital",    f"${config.initial_capital:,.2f}")
+        st.metric("Wachstumsziel",   f"${phase_info['growth_target']:,.0f}")
+        st.metric("Investiert",      f"${invested:,.2f}")
 
-with left_r:
-    if reviews:
-        # Tabs per month
-        tabs = st.tabs([r["period"] or "Aktuell" for r in reviews])
-        for tab, review in zip(tabs, reviews):
-            with tab:
-                st.caption(f"Erstellt: {review['created_at'][:16]} · {review['trades_used']} Trades")
-                st.markdown(review["content"])
+    st.divider()
+
+    # Open positions
+    st.subheader("Offene Positionen")
+    positions = portfolio.all_positions()
+    if positions:
+        rows = []
+        for ticker, pos in positions.items():
+            price   = prices.get(ticker, pos.entry_price)
+            pnl     = (price - pos.entry_price) * pos.shares
+            pnl_pct = (price - pos.entry_price) / pos.entry_price * 100
+            days    = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
+            is_hedge = pos.rationale and pos.rationale.startswith("[HEDGE]")
+            rows.append({
+                "Typ":        "🛡 Hedge" if is_hedge else "📈 Long",
+                "Ticker":     ticker,
+                "Stück":      pos.shares,
+                "Einstieg $": pos.entry_price,
+                "Aktuell $":  round(price, 2),
+                "P&L $":      round(pnl, 2),
+                "P&L %":      round(pnl_pct, 2),
+                "SL $":       pos.stop_loss,
+                "TP $":       pos.take_profit,
+                "Tage":       days,
+                "Katalysatoren": ", ".join(pos.entry_catalysts[:2]) if pos.entry_catalysts else "–",
+            })
+        df = pd.DataFrame(rows)
+
+        def _color_pnl(val):
+            if isinstance(val, (int, float)):
+                return "color: #00e676" if val >= 0 else "color: #f44336"
+            return ""
+
+        st.dataframe(
+            df.style.applymap(_color_pnl, subset=["P&L $", "P&L %"]),
+            use_container_width=True, hide_index=True,
+        )
     else:
-        st.info("Noch keine monatlichen Reviews. Wird am 1. jedes Monats automatisch generiert oder über `--reflect` manuell.")
+        st.info("Keine offenen Positionen.")
 
-# Continuous learning memo display
-memo = reflection.get_active_memo()
-if memo:
-    with st.expander("📚 Aktuelles Lessons-Learned-Memo (wird in jede Analyse eingespeist)"):
-        st.info(memo)
+    st.divider()
 
-st.divider()
+    # Portfolio value chart
+    st.subheader("Portfoliowert – Verlauf (180 Tage)")
+    history = tracker.get_value_history(180)
+    if len(history) >= 2:
+        df_hist = pd.DataFrame(history[::-1])
+        df_hist["snapshot_date"] = pd.to_datetime(df_hist["snapshot_date"])
+        df_hist = df_hist.set_index("snapshot_date")
+        st.line_chart(df_hist["total_value"], use_container_width=True)
+    else:
+        st.info("Mindestens 2 Analysezyklen nötig.")
 
-# ─── All Trades ───────────────────────────────────────────────────────────────
-st.subheader("Alle Transaktionen")
-trades = portfolio.trade_history()
-if trades:
-    trade_rows = [{
-        "Datum": t.timestamp[:10], "Ticker": t.ticker, "Aktion": t.action,
-        "Stück": t.shares, "Kurs $": t.price,
-        "P&L $": round(t.pnl, 2) if t.pnl else 0,
-        "Grund": (t.reason or "")[:50],
-    } for t in reversed(trades)]
-    st.dataframe(pd.DataFrame(trade_rows), use_container_width=True, hide_index=True)
-else:
-    st.info("Noch keine Transaktionen.")
+    # All transactions
+    with st.expander("Alle Transaktionen"):
+        trades = portfolio.trade_history()
+        if trades:
+            trade_rows = [{
+                "Datum":   t.timestamp[:10],
+                "Ticker":  t.ticker,
+                "Aktion":  t.action,
+                "Stück":   t.shares,
+                "Kurs $":  t.price,
+                "P&L $":   round(t.pnl, 2) if t.pnl else 0,
+                "Grund":   (t.reason or "")[:60],
+            } for t in reversed(trades)]
+            st.dataframe(pd.DataFrame(trade_rows), use_container_width=True, hide_index=True)
+        else:
+            st.info("Noch keine Transaktionen.")
 
-# ─── Sidebar ─────────────────────────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════
+# TAB 2 – MARKT-REGIME
+# ══════════════════════════════════════════════════════════
+with tab_regime:
+    if not regime_data:
+        st.info("Noch kein Regime-Snapshot. Läuft beim nächsten Analyse-Zyklus.")
+    else:
+        regime  = regime_data["regime"]
+        score   = regime_data["recession_score"]
+        color   = _REGIME_COLOR.get(regime, "#888")
+
+        # Top row
+        r1, r2, r3, r4 = st.columns(4)
+        r1.markdown(
+            f"<div style='text-align:center;padding:10px;background:#1e2130;"
+            f"border:2px solid {color};border-radius:12px;'>"
+            f"<div style='font-size:2rem;font-weight:700;color:{color};'>{_REGIME_ICON[regime]} {regime}</div>"
+            f"<div style='font-size:0.75rem;color:#aaa;margin-top:4px;'>Marktregime</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        r2.metric("Rezessions-Score", f"{score:.3f}", help="0=BULL, 1=CRISIS")
+        vix_val = regime_data.get("vix")
+        r3.metric("VIX", f"{vix_val:.1f}" if vix_val else "–")
+        ys = regime_data.get("yield_spread")
+        r4.metric("Zinskurve (10y−2y)", f"{ys:.2f}%" if ys else "–",
+                  delta_color="inverse" if ys and ys < 0 else "normal")
+
+        st.divider()
+
+        # Score gauge (progress bar)
+        st.subheader("Rezessions-Score-Gauge")
+        score_pct = score
+        bar_color = color
+        st.markdown(
+            f"""<div style='background:#1e2130;border-radius:8px;padding:6px;'>
+            <div style='background:{bar_color};width:{score_pct*100:.1f}%;height:22px;
+                        border-radius:6px;transition:width 0.4s;'></div>
+            </div>
+            <div style='display:flex;justify-content:space-between;font-size:0.75rem;color:#888;margin-top:2px;'>
+            <span>0 – BULL</span><span>0.25 – NEUTRAL</span>
+            <span>0.45 – BEAR</span><span>0.65+ – CRISIS</span><span>1.0</span>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+        st.divider()
+
+        # Signal components
+        st.subheader("Signal-Komponenten")
+        components = regime_data.get("components") or {}
+        if isinstance(components, str):
+            components = json.loads(components)
+
+        comp_rows = []
+        labels = {
+            "vix":            ("VIX – Angst-Index",         "30%"),
+            "yield_curve":    ("Zinskurve (2y vs 10y)",      "25%"),
+            "sp500_ma200":    ("S&P 500 vs 200-Tage-MA",     "20%"),
+            "sector_breadth": ("Marktbreite (Sektor-Trends)","15%"),
+            "credit_spread":  ("Credit Spread (HYG/IEI)",    "10%"),
+            "claude_macro":   ("Claude Makro-Analyse",        "20%*"),
+        }
+        for key, (name, weight) in labels.items():
+            comp = components.get(key, {})
+            if not comp:
+                continue
+            score_c = comp.get("score", 0)
+            label_c = comp.get("label", "")
+            # Build detail string
+            detail = label_c
+            if key == "vix" and comp.get("value"):
+                detail = f"VIX={comp['value']:.1f} · {label_c}"
+            elif key == "yield_curve" and comp.get("spread_pct") is not None:
+                detail = f"Spread={comp['spread_pct']:.2f}% · {label_c}"
+            elif key == "sp500_ma200" and comp.get("gap_pct") is not None:
+                detail = f"Gap={comp['gap_pct']:+.1f}% · {label_c}"
+            elif key == "sector_breadth":
+                detail = comp.get("label", "")
+            elif key == "claude_macro":
+                detail = comp.get("summary", "")[:80]
+            comp_rows.append({
+                "Signal":   name,
+                "Gewicht":  weight,
+                "Score":    round(score_c, 3),
+                "Detail":   detail,
+            })
+
+        if comp_rows:
+            df_comp = pd.DataFrame(comp_rows)
+            st.dataframe(
+                df_comp.style.background_gradient(subset=["Score"], cmap="RdYlGn_r", vmin=0, vmax=1),
+                use_container_width=True, hide_index=True,
+            )
+
+        # Macro summary from Claude
+        macro_sum = regime_data.get("macro_summary", "")
+        if macro_sum:
+            st.info(f"**Claude Makro-Einschätzung:** {macro_sum}")
+
+        st.divider()
+
+        # Regime history chart
+        st.subheader("Regime-Verlauf (30 Tage)")
+        history_r = detector.get_history(30)
+        if len(history_r) >= 2:
+            df_r = pd.DataFrame(history_r[::-1])
+            df_r["recorded_at"] = pd.to_datetime(df_r["recorded_at"])
+            df_r = df_r.set_index("recorded_at")
+            st.line_chart(df_r["recession_score"], use_container_width=True)
+            # Regime breakdown table
+            with st.expander("Datentabelle"):
+                st.dataframe(
+                    df_r[["recession_score", "regime", "vix", "yield_spread"]].rename(columns={
+                        "recession_score": "Score", "regime": "Regime",
+                        "vix": "VIX", "yield_spread": "Zinskurve",
+                    }),
+                    use_container_width=True,
+                )
+        else:
+            st.info("Noch zu wenige Datenpunkte.")
+
+        st.divider()
+
+        # Hedge positions
+        st.subheader("Aktive Hedge-Positionen")
+        hedge_positions = [
+            (t, p) for t, p in portfolio.all_positions().items()
+            if p.rationale and p.rationale.startswith("[HEDGE]")
+        ]
+        if hedge_positions:
+            hrows = []
+            for ticker, pos in hedge_positions:
+                price   = prices.get(ticker, pos.entry_price)
+                pnl     = (price - pos.entry_price) * pos.shares
+                pnl_pct = (price - pos.entry_price) / pos.entry_price * 100
+                days    = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
+                hrows.append({
+                    "Ticker":     ticker,
+                    "Stück":      pos.shares,
+                    "Einstieg $": pos.entry_price,
+                    "Aktuell $":  round(price, 2),
+                    "P&L $":      round(pnl, 2),
+                    "P&L %":      round(pnl_pct, 2),
+                    "SL $":       pos.stop_loss,
+                    "TP $":       pos.take_profit,
+                    "Tage":       days,
+                    "Rationale":  (pos.rationale or "")[:60],
+                })
+            st.dataframe(pd.DataFrame(hrows), use_container_width=True, hide_index=True)
+        else:
+            enabled = config.enable_hedging
+            if not enabled:
+                st.warning("Hedging ist deaktiviert (ENABLE_HEDGING=false in .env)")
+            elif regime in (BULL, NEUTRAL):
+                st.success(f"Kein Hedge nötig – Regime ist {regime}.")
+            else:
+                st.info("Keine Hedge-Positionen offen (noch kein Kapital zugewiesen oder gerade geschlossen).")
+
+
+# ══════════════════════════════════════════════════════════
+# TAB 3 – SIGNAL-QUEUE
+# ══════════════════════════════════════════════════════════
+with tab_queue:
+    st.subheader("Ausstehende BUY-Signale")
+    st.caption(
+        "Wenn ein starkes BUY-Signal eintrifft aber kein Kapital frei ist, "
+        "landet es hier. Sobald ein Trade geschlossen wird, wird das Signal automatisch ausgeführt."
+    )
+
+    pending = sig_queue.get_pending()
+    if pending:
+        for sig in pending:
+            created  = sig["created_at"][:16]
+            expires  = sig["expires_at"][:16]
+            catalysts = sig.get("key_catalysts") or []
+            risks     = sig.get("risk_factors") or []
+            conf_color = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🔴"}.get(sig["confidence"], "⚪")
+            with st.expander(
+                f"{conf_color} **{sig['ticker']}** · Score {sig['sentiment_score']:.2f} "
+                f"· Erstellt {created} · Verfällt {expires}"
+            ):
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.metric("Sentiment-Score", f"{sig['sentiment_score']:.2f}")
+                    st.metric("Konfidenz",        sig["confidence"])
+                    if sig.get("target_price"):
+                        st.metric("Zielkurs",    f"${sig['target_price']:.2f}")
+                    st.metric("Geplante Haltedauer", f"{sig.get('suggested_hold_days', '?')}d")
+                with c2:
+                    st.markdown("**Begründung**")
+                    st.info(sig.get("entry_rationale") or "–")
+                    if catalysts:
+                        st.markdown("**Katalysatoren:** " + " · ".join(catalysts))
+                    if risks:
+                        st.markdown("**Risiken:** " + " · ".join(risks))
+    else:
+        st.success("Keine ausstehenden Signale – der Bot ist vollständig investiert oder wartet auf neue Signale.")
+
+    st.divider()
+    st.subheader("Signal-Historie (letzte 20)")
+    history_q = sig_queue.get_history(20)
+    if history_q:
+        status_icon = {
+            "pending":    "⏳",
+            "executed":   "✅",
+            "expired":    "⏰",
+            "superseded": "🔄",
+        }
+        df_q = pd.DataFrame([{
+            "Status":      status_icon.get(s["status"], "?") + " " + s["status"].capitalize(),
+            "Ticker":      s["ticker"],
+            "Score":       s["sentiment_score"],
+            "Konfidenz":   s["confidence"],
+            "Erstellt":    s["created_at"][:16],
+            "Verfällt":    s["expires_at"][:16],
+            "Begründung":  (s.get("entry_rationale") or "")[:70],
+        } for s in history_q])
+        st.dataframe(df_q, use_container_width=True, hide_index=True)
+    else:
+        st.info("Noch keine Signal-Historie.")
+
+
+# ══════════════════════════════════════════════════════════
+# TAB 4 – SOCIAL PULSE
+# ══════════════════════════════════════════════════════════
+with tab_social:
+    st.subheader("Social-Media Sentiment (letzte 6 Stunden)")
+    st.caption("Stündlicher Scan von Reddit & StockTwits – keyword-basiertes Sentiment ohne Claude-Kosten.")
+
+    # Time window selector
+    tw_col, _ = st.columns([2, 6])
+    with tw_col:
+        hours_sel = st.selectbox("Zeitraum", [2, 6, 12, 24], index=1,
+                                  format_func=lambda h: f"Letzte {h}h")
+
+    # Spikes
+    spikes = social_db.get_spikes(hours=2, min_mentions=3)
+    if spikes:
+        st.markdown("### 🚨 Aktivitäts-Spikes (2h vs. 12h Baseline)")
+        spike_cols = st.columns(min(len(spikes), 4))
+        for i, spike in enumerate(spikes[:4]):
+            pulse  = spike["avg_score"]
+            p_icon = "📈" if pulse > 0.1 else ("📉" if pulse < -0.1 else "➡️")
+            spike_cols[i].metric(
+                label=spike["ticker"],
+                value=f"{spike['spike_ratio']:.1f}× Spike",
+                delta=f"{p_icon} Pulse {pulse:+.2f}",
+                delta_color="normal" if pulse >= 0 else "inverse",
+            )
+        st.divider()
+
+    # Full pulse table
+    pulse_data = social_db.get_pulse_summary(hours=int(hours_sel))
+    if pulse_data:
+        st.subheader(f"Alle gescannten Ticker (letzte {hours_sel}h)")
+        p_rows = []
+        for p in pulse_data:
+            pulse  = p["avg_score"]
+            total  = p["total_mentions"]
+            bull   = p.get("bull", 0)
+            bear   = p.get("bear", 0)
+            p_rows.append({
+                "Ticker":        p["ticker"],
+                "Erwähnungen":   total,
+                "🟢 Bullish":    bull,
+                "🔴 Bearish":    bear,
+                "Pulse-Score":   round(pulse, 3),
+                "Letzte Messung": p["latest"][:16] if p.get("latest") else "–",
+            })
+        df_pulse = pd.DataFrame(p_rows)
+        st.dataframe(
+            df_pulse.style.background_gradient(
+                subset=["Pulse-Score"], cmap="RdYlGn", vmin=-1, vmax=1
+            ),
+            use_container_width=True, hide_index=True,
+        )
+
+        # Per-ticker detail
+        st.divider()
+        st.subheader("Ticker-Detail")
+        selected_ticker = st.selectbox("Ticker auswählen", [p["ticker"] for p in pulse_data])
+        if selected_ticker:
+            recent_scans = social_db.get_recent(selected_ticker, hours=24)
+            if recent_scans:
+                scan_rows = []
+                for r in recent_scans:
+                    top = json.loads(r.get("top_mentions") or "[]") if isinstance(r.get("top_mentions"), str) else (r.get("top_mentions") or [])
+                    scan_rows.append({
+                        "Zeit":       r["scanned_at"][:16],
+                        "Quelle":     r["source"],
+                        "Erwähnungen": r["mention_count"],
+                        "Bullish":    r["bullish_count"],
+                        "Bearish":    r["bearish_count"],
+                        "Pulse":      r["pulse_score"],
+                        "Top-Posts":  " | ".join(top[:2]),
+                    })
+                st.dataframe(pd.DataFrame(scan_rows), use_container_width=True, hide_index=True)
+            else:
+                st.info("Keine Scan-Daten für diesen Ticker im Zeitraum.")
+    else:
+        st.info(
+            "Noch keine Social-Pulse-Daten. "
+            "Der stündliche Scan schreibt Daten sobald der Bot läuft "
+            "(ENABLE_SOCIAL_SCAN=true in .env)."
+        )
+
+
+# ══════════════════════════════════════════════════════════
+# TAB 5 – WOCHENBRIEFING
+# ══════════════════════════════════════════════════════════
+with tab_briefing:
+    st.subheader("📰 Wochenbriefing")
+    st.caption(
+        "Claude analysiert jeden Samstag/Sonntag: Earnings-Kalender, Marktlage, "
+        "Makro-News. Das Briefing fließt in alle Analysen der Folgewoche ein."
+    )
+
+    briefings = weekend_prep.get_latest_briefing(limit=3)
+    current   = weekend_prep.get_current_briefing()
+
+    b_col1, b_col2 = st.columns([5, 2])
+    with b_col2:
+        if st.button("🔄 Neues Briefing generieren", use_container_width=True):
+            with st.spinner("Claude bereitet Wochenbriefing vor…"):
+                result = weekend_prep.generate_briefing(newsapi_key=config.newsapi_key)
+            if result:
+                st.success("Briefing generiert!")
+                st.rerun()
+            else:
+                st.error("Fehler beim Generieren (API-Key oder Daten fehlen).")
+
+    with b_col1:
+        if briefings:
+            tabs_brief = st.tabs([f"KW {b['week_start']}" for b in briefings])
+            for tab_b, brief in zip(tabs_brief, briefings):
+                with tab_b:
+                    generated = brief.get("generated_at", "")[:16]
+                    is_current = brief.get("week_start") == (current and brief.get("week_start"))
+                    if is_current:
+                        st.success(f"✅ Aktuelles Briefing · Erstellt: {generated}")
+                    else:
+                        st.caption(f"Erstellt: {generated}")
+                    st.markdown(brief["briefing"])
+        else:
+            st.info(
+                "Noch kein Briefing vorhanden.  \n"
+                "Wird automatisch am Wochenende generiert oder jetzt mit dem Button oben starten."
+            )
+
+
+# ══════════════════════════════════════════════════════════
+# TAB 6 – TRADES & LERNEN
+# ══════════════════════════════════════════════════════════
+with tab_trades:
+    # Learning KPIs
+    st.subheader("Performance-Kennzahlen")
+    if acc.get("total_closed", 0) == 0:
+        st.info("Noch keine abgeschlossenen Trades. Der Bot lernt nach dem ersten Verkauf.")
+    else:
+        lk1, lk2, lk3, lk4 = st.columns(4)
+        lk1.metric("Win-Rate",              f"{acc['win_rate_pct']}%")
+        lk2.metric("Richtungs-Genauigkeit", f"{acc['direction_accuracy_pct']}%")
+        lk3.metric("Zielkurs-Trefferquote", f"{acc['target_hit_pct']}%")
+        lk4.metric("Ø Rendite / Trade",     f"{acc['avg_return_pct']:+.2f}%")
+
+        adaptive_threshold = tracker.get_adaptive_threshold(config.buy_threshold)
+        threshold_delta    = adaptive_threshold - config.buy_threshold
+        st.metric(
+            "Adaptiver Kauf-Threshold",
+            f"{adaptive_threshold:.2f}",
+            f"{threshold_delta:+.2f} (Basis {config.buy_threshold:.2f})",
+            delta_color="inverse",
+        )
+        if threshold_delta > 0:
+            st.warning("⚠️ Bot wurde konservativer – Win-Rate unter 50%. Strengere Kaufbedingungen aktiv.")
+        elif threshold_delta < 0:
+            st.success("✅ Bot hat gute Trefferquote – Kaufbedingungen leicht gelockert.")
+
+        st.divider()
+
+        # Exit reasons + sentiment buckets in 2 columns
+        ex_col, bucket_col = st.columns(2)
+
+        with ex_col:
+            st.subheader("Exit-Grund vs. P&L")
+            exit_stats = tracker.get_exit_reason_stats()
+            if exit_stats:
+                labels_exit = {
+                    "stop_loss":      "Stop-Loss",
+                    "take_profit":    "Take-Profit",
+                    "thesis_broken":  "⚠ These gebrochen",
+                    "hold_expired":   "Haltedauer abgelaufen",
+                    "sentiment_sell": "Sentiment-SELL",
+                    "other":          "Sonstiges",
+                }
+                df_exit = pd.DataFrame([{
+                    "Ausstiegsgrund": labels_exit.get(r["category"], r["category"]),
+                    "Trades":         r["trades"],
+                    "Ø Rendite %":    r["avg_return_pct"],
+                    "Win-Rate %":     r["win_rate_pct"],
+                } for r in exit_stats])
+                st.dataframe(
+                    df_exit.style.applymap(
+                        lambda v: ("color: #00e676" if isinstance(v, (int, float)) and v >= 0
+                                   else ("color: #f44336" if isinstance(v, (int, float)) and v < 0 else "")),
+                        subset=["Ø Rendite %"],
+                    ),
+                    use_container_width=True, hide_index=True,
+                )
+
+        with bucket_col:
+            st.subheader("Sentiment-Score vs. Performance")
+            buckets = tracker.get_sentiment_score_buckets()
+            if buckets:
+                df_bkt = pd.DataFrame([{
+                    "Score-Bereich": b["score_range"],
+                    "Trades":        b["trades"],
+                    "Win-Rate %":    b["win_rate_pct"],
+                    "Ø Rendite %":   b["avg_return_pct"],
+                } for b in buckets])
+                st.dataframe(df_bkt, use_container_width=True, hide_index=True)
+
+        # Source accuracy
+        source_acc = tracker.get_source_accuracy()
+        if source_acc:
+            st.subheader("Quellen-Trefferquote pro Ticker")
+            st.caption("Welche Nachrichtenquelle lieferte bei welchem Ticker die besten Signale?")
+            df_src = pd.DataFrame(source_acc[:15]).rename(columns={
+                "source": "Quelle", "ticker": "Ticker",
+                "trades": "Trades", "win_rate_pct": "Win-Rate %", "avg_return_pct": "Ø Rendite %",
+            })
+            st.dataframe(
+                df_src[["Quelle", "Ticker", "Trades", "Win-Rate %", "Ø Rendite %"]],
+                use_container_width=True, hide_index=True,
+            )
+
+        st.divider()
+
+        # Recent closed trades
+        st.subheader("Letzte abgeschlossene Trades")
+        recent = tracker.get_recent_trades(15)
+        if recent:
+            df_tr = pd.DataFrame(recent).rename(columns={
+                "ticker": "Ticker", "entry_price": "Einstieg $", "sell_price": "Verkauf $",
+                "actual_return_pct": "Rendite %", "actual_hold_days": "Tage (Ist)",
+                "predicted_hold_days": "Tage (Plan)", "predicted_target_price": "Zielkurs $",
+                "direction_correct": "Richtung ✓", "target_hit": "Zielkurs ✓",
+                "sell_reason_category": "Exit-Typ", "sell_reason": "Grund",
+            })
+            for col in ["Richtung ✓", "Zielkurs ✓"]:
+                if col in df_tr.columns:
+                    df_tr[col] = df_tr[col].apply(lambda v: "✓" if v == 1 else "✗")
+            desired = ["Ticker", "Einstieg $", "Verkauf $", "Rendite %", "Tage (Ist)",
+                       "Tage (Plan)", "Zielkurs $", "Richtung ✓", "Zielkurs ✓", "Exit-Typ", "Grund"]
+            existing = [c for c in desired if c in df_tr.columns]
+            st.dataframe(
+                df_tr[existing].style.applymap(
+                    lambda v: ("color: #00e676" if isinstance(v, (int, float)) and v >= 0
+                               else ("color: #f44336" if isinstance(v, (int, float)) and v < 0 else "")),
+                    subset=["Rendite %"],
+                ),
+                use_container_width=True, hide_index=True,
+            )
+
+    st.divider()
+
+    # Trade Journal
+    st.subheader("📖 Trade-Tagebuch")
+    st.caption("Vollständige Entscheidungshistorie: Warum gekauft, wie überwacht, warum verkauft.")
+    journal_stories = journal.get_all_trade_summaries(limit=30)
+    if not journal_stories:
+        st.info("Noch keine Trades.")
+    else:
+        tickers_all = sorted({s["ticker"] for s in journal_stories})
+        j_col1, j_col2 = st.columns([2, 6])
+        with j_col1:
+            selected_j = st.selectbox("Ticker", ["Alle"] + tickers_all, key="jfilter")
+        filtered = journal_stories if selected_j == "Alle" else [
+            s for s in journal_stories if s["ticker"] == selected_j
+        ]
+        for s in filtered[:15]:
+            is_open = s.get("is_open")
+            pnl     = s.get("pnl") or 0
+            icon    = "🟢" if is_open else ("🟩" if pnl >= 0 else "🔴")
+            pnl_str = (f"OFFEN seit {s.get('entry_date','?')[:10]}" if is_open
+                       else f"P&L {pnl:+.2f} USD ({s.get('pnl_pct',0):+.1f}%)")
+            with st.expander(f"{icon} **{s['ticker']}** · {pnl_str}"):
+                jc1, jc2 = st.columns(2)
+                with jc1:
+                    st.markdown("**Einstieg**")
+                    st.write(f"📅 {s.get('entry_date','?')[:10]} · ${s.get('entry_price',0):.2f}")
+                    st.write(f"🧠 Sentiment: {s.get('entry_sentiment',0):.2f}")
+                    st.write(f"⏱️ Geplant: {s.get('planned_hold_days','?')}d")
+                    if s.get("target_price"):
+                        st.write(f"🎯 Zielkurs: ${s['target_price']:.2f}")
+                    st.info(s.get("entry_rationale") or "–")
+                    if s.get("catalysts"):
+                        st.markdown("**Katalysatoren:** " + ", ".join(s["catalysts"]))
+                    if s.get("risks"):
+                        st.markdown("**Risiken:** " + ", ".join(s["risks"]))
+                with jc2:
+                    st.metric("Tagesprüfungen", s.get("n_daily_checks", 0))
+                    st.metric("Warnungen",       s.get("n_warnings", 0))
+                    if not is_open:
+                        st.markdown("**Verkauf**")
+                        st.write(f"📅 {s.get('exit_date','?')[:10]} · ${s.get('exit_price',0):.2f}")
+                        st.write(f"⏱️ Tatsächl.: {s.get('actual_hold_days','?')}d")
+                        c = "green" if pnl >= 0 else "red"
+                        st.markdown(f":{c}[{pnl:+.2f} USD ({s.get('pnl_pct',0):+.1f}%)]")
+                        st.warning(f"**Grund:** {s.get('exit_reason','–')}")
+                with st.expander("🔍 Event-Zeitleiste"):
+                    for ev in s["events"]:
+                        icon_ev = {"ENTRY":"🟢","DAILY_CHECK":"👁","WARNING":"⚠️","EXIT":"🔚"}.get(ev["event_type"],"•")
+                        st.text(
+                            f"{icon_ev} {ev['event_date'][:16]}  {ev['event_type']:14}  "
+                            f"${ev.get('price',0):.2f}  "
+                            f"{(ev.get('rationale') or ev.get('reason') or '')[:100]}"
+                        )
+
+    st.divider()
+
+    # Monthly self-assessment
+    st.subheader("📋 Monatliche Selbsteinschätzung")
+    reviews = reflection.get_monthly_reviews(limit=12)
+    mr_col1, mr_col2 = st.columns([5, 2])
+    with mr_col2:
+        if st.button("🔄 Jetzt generieren", use_container_width=True):
+            with st.spinner("Claude reflektiert…"):
+                new_content = reflection.generate_monthly_review()
+            if new_content:
+                st.success("Neue Einschätzung generiert.")
+                st.rerun()
+            else:
+                st.warning("Nicht genug Trades oder API-Fehler.")
+    with mr_col1:
+        if reviews:
+            tabs_rev = st.tabs([r["period"] or "Aktuell" for r in reviews])
+            for tab_r, review in zip(tabs_rev, reviews):
+                with tab_r:
+                    st.caption(f"Erstellt: {review['created_at'][:16]} · {review['trades_used']} Trades")
+                    st.markdown(review["content"])
+        else:
+            st.info("Wird am 1. des Monats automatisch generiert oder über `--reflect` manuell.")
+
+    memo = reflection.get_active_memo()
+    if memo:
+        with st.expander("📚 Aktives Lessons-Learned-Memo"):
+            st.info(memo)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SIDEBAR
+# ═══════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    # Focus mode display + selector
-    st.header("🎯 Fokus-Modus")
+    st.markdown("## ⚙️ Bot-Status")
+    st.caption(f"Stand: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+
+    # Live regime badge
+    if regime_data:
+        r   = regime_data["regime"]
+        sc  = regime_data["recession_score"]
+        col = _REGIME_COLOR.get(r, "#888")
+        st.markdown(
+            f"**Regime:** <span style='color:{col};font-weight:700;'>"
+            f"{_REGIME_ICON[r]} {r}</span> (Score: {sc:.2f})",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown("**Regime:** – (noch kein Snapshot)")
+
+    st.markdown(f"**Offene Positions:** {len(portfolio.all_positions())}")
+    st.markdown(f"**Signal-Queue:** {pending_cnt} ausstehend")
+    st.divider()
+
+    # Focus mode
+    st.markdown("### 🎯 Fokus-Modus")
     fm_info = focus_ctrl.get_info(total_value)
-    st.markdown(f"### {fm_info['label']}")
+    st.markdown(f"**{fm_info['label']}**")
     st.caption(fm_info["description"])
-    st.write(f"Stop-Loss: **{fm_info['stop_loss_pct']*100:.0f}%**  ·  Take-Profit: **{fm_info['take_profit_pct']*100:.0f}%**")
-    st.write(f"Max. Position: **{fm_info['max_position_pct']*100:.0f}%**  ·  Haltedauer: **{fm_info['preferred_hold_days']}d**")
-    st.write(f"Min. Sentiment: **{fm_info['min_sentiment']:.2f}**")
+    st.write(f"SL: **{fm_info['stop_loss_pct']*100:.0f}%** · TP: **{fm_info['take_profit_pct']*100:.0f}%**")
+    st.write(f"Max Position: **{fm_info['max_position_pct']*100:.0f}%** · Halt: **{fm_info['preferred_hold_days']}d**")
+    st.write(f"Min Sentiment: **{fm_info['min_sentiment']:.2f}**")
 
     if fm_info["mode"] == FocusMode.TARGET_GOAL and fm_info.get("target_amount"):
-        st.divider()
-        st.markdown("**🎯 Zielfortschritt**")
-        st.progress(fm_info["progress_pct"] / 100,
-                    text=f"{fm_info['progress_pct']:.1f}% · noch {fm_info['days_remaining']} Tage")
-        if fm_info["on_track"]:
-            st.success(f"Im Plan (Urgency {fm_info['urgency']:.2f})")
-        elif fm_info["behind_plan"]:
-            st.warning(f"Hinter Plan – Bot wird aggressiver (Urgency {fm_info['urgency']:.2f})")
-        else:
-            st.info(f"Voraus – Bot wird defensiver (Urgency {fm_info['urgency']:.2f})")
-
-    st.caption("Modus per `FOCUS_MODE` in `.env` umschalten (WEALTH_BUILDING / INCOME / TARGET_GOAL)")
+        st.progress(
+            fm_info["progress_pct"] / 100,
+            text=f"{fm_info['progress_pct']:.1f}% · noch {fm_info['days_remaining']} Tage",
+        )
     st.divider()
 
-    st.header("⚙️ Konfiguration")
+    # Config summary
+    st.markdown("### ⚙️ Konfiguration")
     st.write(f"**Modell:** {config.claude_model}")
+    st.write(f"**Broker:** {config.broker_mode.upper()}")
     st.write(f"**Watchlist:** {', '.join(config.watchlist)}")
-    st.write(f"**Kauf-Threshold:** {config.buy_threshold:.2f}")
-    st.write(f"**Min. Quellen:** {config.min_sources}")
+    st.write(f"**Kauf-Schwelle:** {config.buy_threshold:.2f}")
+    st.write(f"**Hedge ab:** {config.hedge_from_regime}")
+    st.write(f"**Max Hedge:** {config.max_hedge_pct*100:.0f}%")
+    st.write(f"**Börsen:** {', '.join(config.market_exchanges)}")
+    st.write(f"**Social Scan:** {'✓' if config.enable_social_scan else '✗'}")
+    st.write(f"**Kelly Sizing:** {'✓' if config.use_kelly_sizing else '✗'}")
     st.divider()
-    st.write(f"**Wachstumsziel:** {config.growth_target_multiple:.1f}× Startkapital")
-    st.write(f"**Monatl. Ausschüttung:** ${config.monthly_distribution_eur:,.2f}")
-    st.write(f"**Puffermonate:** {config.distribution_buffer_months}")
+
+    st.markdown("### 🔧 Analyse-Features")
+    features = [
+        "30-Tage Nachrichtenarchiv",
+        "Thesis-Überprüfung",
+        "Congressional Insider-Trades",
+        "SEC Form 4 Insidermeldungen",
+        "US-Bundesaufträge (usaspending)",
+        "SEC EDGAR 8-K Meldungen",
+        "StockTwits Sentiment",
+        "PRNewswire / BusinessWire",
+        "EU-Nachrichten (Google RSS)",
+        "Options-Flow (C/P-Ratio)",
+        "Earnings-Filter",
+        "Sektor-Korrelationscheck",
+        "Kelly-Criterion Sizing",
+        "Rezessions-Detektor",
+        "Inverse ETF Hedging",
+        "Signal-Warteschlange",
+        "Wochenbriefing (KI)",
+    ]
+    for f in features:
+        st.write(f"✓ {f}")
+
     st.divider()
-    st.write("**Analyse-Features:**")
-    st.write("✓ 30-Tage Nachrichtenarchiv")
-    st.write("✓ Kaufthesen-Überprüfung")
-    st.write("✓ Congressional Insider-Trades")
-    st.write("✓ SEC Form 4 Insider-Trades")
-    st.write("✓ US-Bundesaufträge (usaspending.gov)")
-    st.write("✓ SEC EDGAR 8-K Pflichtmeldungen")
-    st.write("✓ StockTwits Trader-Sentiment")
-    st.write("✓ Pressemitteilungen (PRNewswire / BusinessWire / GlobeNewswire)")
-    if st.button("🔄 Daten neu laden"):
+    if st.button("🔄 Cache leeren & neu laden", use_container_width=True):
         st.cache_resource.clear()
         st.rerun()
