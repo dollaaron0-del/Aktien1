@@ -127,8 +127,9 @@ class ClaudeAnalyzer:
         news_items: List[Dict],
         price_data: Optional[Dict] = None,
         historical_news: Optional[List[Dict]] = None,
-        open_position: Optional[Dict] = None,  # dict with entry_price, entry_date, hold_days, thesis, catalysts
-        lessons_memo: Optional[str] = None,    # active reflection memo to inject
+        open_position: Optional[Dict] = None,
+        lessons_memo: Optional[str] = None,
+        weekly_briefing: Optional[str] = None,  # weekend prep briefing
     ) -> AnalysisResult:
         if not news_items:
             return self._empty_result(ticker, "Keine Nachrichtenartikel verfügbar")
@@ -162,6 +163,14 @@ class ClaudeAnalyzer:
         system_prompt = _SYSTEM_PROMPT
         if lessons_memo:
             system_prompt = system_prompt + _LESSONS_PREFIX.format(memo=lessons_memo)
+        if weekly_briefing:
+            system_prompt = system_prompt + (
+                "\n\n=== WOCHENBRIEFING (Marktkontext diese Woche) ===\n"
+                + weekly_briefing
+                + "\n=== ENDE WOCHENBRIEFING ===\n"
+                "Berücksichtige diesen Wochenkontext (Earnings-Risiken, Sektorstimmung, Makro) "
+                "bei deiner Analyse und Empfehlung.\n"
+            )
 
         message = self._client.messages.create(
             model=config.claude_model,

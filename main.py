@@ -20,6 +20,8 @@ Starten:  python main.py
           python main.py --kelly-info    (Kelly-Criterion-Statistik)
           python main.py --pulse         (Social-Marktpuls der letzten 6h anzeigen)
           python main.py --queue         (Warteschlange ausstehender Signale)
+          python main.py --weekend       (Wochenvorbereitung jetzt ausführen)
+          python main.py --briefing      (Letztes Wochenbriefing anzeigen)
 
 Analyse-Zeitplan (.env):
   MARKET_EXCHANGES=XETRA,NYSE,TSE    # Vollanalyse 30 Min vor Börseneröffnung
@@ -72,6 +74,7 @@ from collectors.social_scan import SocialPulseDB
 from collectors.reddit_collector import RedditCollector as _RedditColl
 from collectors.stocktwits_collector import StockTwitsCollector as _TwitsColl
 from analyzers.market_schedule import MarketSchedule
+from analyzers.weekend_prep import WeekendPrep
 
 console = Console()
 
@@ -163,6 +166,7 @@ def run_analysis_cycle(
     phase_ctrl: PhaseController,
     archive: NewsArchive,
     reflection: Optional[ReflectionEngine] = None,
+    weekend_prep: Optional["WeekendPrep"] = None,
 ):
     console.rule(f"[bold blue]Analyse-Zyklus – {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
@@ -173,6 +177,11 @@ def run_analysis_cycle(
     lessons_memo = reflection.get_active_memo() if reflection else None
     if lessons_memo:
         console.print(f"  [dim]📚 Lessons-Memo aktiv ({len(lessons_memo)} Zeichen)[/dim]")
+
+    # Inject weekly briefing as additional context
+    weekly_briefing = weekend_prep.get_current_briefing() if weekend_prep else None
+    if weekly_briefing:
+        console.print(f"  [dim]📋 Wochenbriefing aktiv ({len(weekly_briefing)} Zeichen)[/dim]")
 
     # Track all material trade actions for the daily summary
     cycle_actions: List[str] = []
@@ -221,6 +230,7 @@ def run_analysis_cycle(
             historical_news=historical if historical else None,
             open_position=open_position_ctx,
             lessons_memo=lessons_memo,
+            weekly_briefing=weekly_briefing,
         )
 
         _print_analysis(analysis)
@@ -686,6 +696,77 @@ def show_signal_queue(signal_queue: SignalQueue):
         console.print(ht)
 
 
+def run_weekend_prep(wp: WeekendPrep):
+    console.rule("[bold blue]Wochenvorbereitung")
+    console.print("[cyan]Sammle Earnings-Kalender, Marktdaten und Makro-News...[/cyan]")
+
+    # Show what we find before generating briefing
+    earnings = wp.collect_earnings_calendar()
+    sentiment = wp.collect_market_sentiment()
+
+    # Earnings table
+    wl_earn = earnings.get("watchlist_earnings", [])
+    brd_earn = earnings.get("broader_earnings", [])
+    if wl_earn or brd_earn:
+        et = Table(title=f"Quartalszahlen nächste Woche ({earnings['week']})", box=box.ROUNDED)
+        et.add_column("Ticker", style="cyan")
+        et.add_column("Wochentag")
+        et.add_column("Datum")
+        et.add_column("Watchlist?")
+        for e in wl_earn:
+            et.add_row(e["ticker"], e["weekday"], e["date"], "[bold yellow]⚠ JA[/bold yellow]")
+        for e in brd_earn[:8]:
+            et.add_row(e["ticker"], e["weekday"], e["date"], "[dim]nein[/dim]")
+        console.print(et)
+    else:
+        console.print("[dim]Keine bekannten Earnings für nächste Woche gefunden.[/dim]")
+
+    # Sector & index table
+    if sentiment.get("indices"):
+        it = Table(title="Markt letzte Woche", box=box.SIMPLE)
+        it.add_column("Index / Indikator")
+        it.add_column("Wert", justify="right")
+        it.add_column("Woche", justify="right")
+        for name, data in sentiment["indices"].items():
+            chg = data["week_change_pct"]
+            chg_str = f"[green]+{chg:.2f}%[/green]" if chg >= 0 else f"[red]{chg:.2f}%[/red]"
+            extra = ""
+            if name == "VIX (Angst-Index)":
+                extra = f"  {sentiment.get('vix_signal', '')}"
+            it.add_row(name + extra, str(data["value"]), chg_str)
+        console.print(it)
+
+    vix = sentiment.get("vix")
+    if vix:
+        vix_color = "green" if vix < 20 else ("yellow" if vix < 28 else "red")
+        console.print(f"\n  VIX: [{vix_color}]{vix}[/{vix_color}] – {sentiment.get('vix_signal', '')}")
+
+    # Generate Claude briefing
+    console.print("\n[cyan]Generiere Wochenbriefing mit Claude...[/cyan]")
+    briefing = wp.generate_briefing(newsapi_key=config.newsapi_key)
+    if briefing:
+        console.print(Panel(briefing, title="Wochenbriefing für die nächste Handelswoche", border_style="cyan"))
+        # Send via Telegram
+        notifier = TelegramNotifier()
+        notifier.send(f"📋 <b>Wochenbriefing</b>\n\n{briefing[:3000]}")
+    else:
+        console.print("[red]Briefing konnte nicht generiert werden (API-Fehler oder kein Key).[/red]")
+
+
+def show_briefing(wp: WeekendPrep):
+    console.rule("[bold blue]Wochenbriefings")
+    entries = wp.get_latest_briefing(limit=3)
+    if not entries:
+        console.print("[dim]Noch keine Briefings gespeichert. Starte mit: python main.py --weekend[/dim]")
+        return
+    for entry in entries:
+        console.print(Panel(
+            entry["briefing"],
+            title=f"Woche ab {entry['week_start']} (generiert {entry['generated_at'][:16]})",
+            border_style="cyan",
+        ))
+
+
 def run_backtest(period: str = "2y"):
     console.rule(f"[bold blue]Backtest – {period}")
     bt = Backtester(
@@ -764,6 +845,8 @@ def main():
     parser.add_argument("--kelly-info", action="store_true", help="Kelly-Criterion-Statistik anzeigen")
     parser.add_argument("--pulse", action="store_true", help="Social-Marktpuls anzeigen")
     parser.add_argument("--queue", action="store_true", help="Signal-Warteschlange anzeigen")
+    parser.add_argument("--weekend", action="store_true", help="Wochenvorbereitung jetzt ausführen")
+    parser.add_argument("--briefing", action="store_true", help="Letztes Wochenbriefing anzeigen")
     args = parser.parse_args()
 
     if args.dashboard:
@@ -792,6 +875,10 @@ def main():
     reflection = ReflectionEngine(tracker, journal)
     signal_queue = SignalQueue(max_age_hours=config.signal_queue_max_age_hours)
     pulse_db = SocialPulseDB()
+    weekend_prep_inst = WeekendPrep(
+        anthropic_api_key=config.anthropic_api_key,
+        watchlist=config.watchlist,
+    )
 
     if args.status:
         show_status(portfolio, broker, phase_ctrl)
@@ -848,6 +935,14 @@ def main():
 
     if args.queue:
         show_signal_queue(signal_queue)
+        return
+
+    if args.weekend:
+        run_weekend_prep(weekend_prep_inst)
+        return
+
+    if args.briefing:
+        show_briefing(weekend_prep_inst)
         return
 
     if not config.anthropic_api_key:
@@ -943,13 +1038,18 @@ def main():
 
     def _register_analysis_jobs():
         slots = mkt_schedule.get_schedule_strings()
-        if not slots:
-            console.print("[dim]Heute kein Handelstag – keine Vollanalysen geplant.[/dim]")
+        is_weekend = datetime.utcnow().weekday() >= 5
+        if not slots or is_weekend:
+            if is_weekend:
+                console.print("[dim]Wochenende – keine Vollanalysen geplant (nur Wochenvorbereitung).[/dim]")
+            else:
+                console.print("[dim]Heute kein Handelstag.[/dim]")
             return
         for slot in slots:
             job = schedule.every().day.at(slot["hhmm"]).do(
                 run_analysis_cycle,
                 portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
+                weekend_prep_inst,
             )
             job._is_analysis_job = True
             review_job = schedule.every().day.at(slot["hhmm"]).do(_monthly_review_check)
@@ -957,22 +1057,38 @@ def main():
         times_str = ", ".join(f"{s['hhmm']} ({s['exchange']})" for s in slots)
         console.print(f"[dim]Analyse-Jobs registriert: {times_str}[/dim]")
 
+    def _weekend_prep_job():
+        """Runs weekend preparation. Called Saturday 09:00 and Sunday 14:00."""
+        console.print(f"\n[bold cyan]📅 Wochenvorbereitung startet...[/bold cyan]")
+        run_weekend_prep(weekend_prep_inst)
+
     if args.once:
-        run_analysis_cycle(portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection)
+        run_analysis_cycle(
+            portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection, weekend_prep_inst
+        )
         return
 
-    # Register today's analysis jobs
+    # Register today's analysis jobs (weekdays only)
     _register_analysis_jobs()
 
-    # Reschedule every day at 00:01 (picks up DST changes and new weekday status)
+    # Reschedule every day at 00:01 (picks up DST changes and weekday/weekend transitions)
     schedule.every().day.at("00:01").do(_reschedule_analysis)
 
-    # Hourly tasks
+    # Weekend preparation: Saturday 09:00 and Sunday 14:00 (updated briefing after Sunday news)
+    schedule.every().saturday.at("09:00").do(_weekend_prep_job)
+    schedule.every().sunday.at("14:00").do(_weekend_prep_job)
+
+    # If today is already weekend, run prep now if no briefing exists for next week
+    if datetime.utcnow().weekday() >= 5 and not weekend_prep_inst.get_current_briefing():
+        console.print("[bold cyan]📅 Wochenende erkannt – starte Wochenvorbereitung...[/bold cyan]")
+        _weekend_prep_job()
+
+    # Hourly tasks (7 days a week)
     schedule.every().hour.do(strategy.check_open_positions)
     if config.enable_social_scan:
         schedule.every().hour.do(_social_scan_job)
 
-    console.print(f"[dim]Stop-Loss-Check stündlich. Ctrl+C zum Beenden.[/dim]")
+    console.print(f"[dim]Stop-Loss-Check stündlich. Wochenvorbereitung Sa 09:00 + So 14:00. Ctrl+C zum Beenden.[/dim]")
 
     try:
         while True:
