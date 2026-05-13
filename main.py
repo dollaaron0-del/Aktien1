@@ -21,8 +21,10 @@ Starten:  python main.py
           python main.py --pulse         (Social-Marktpuls der letzten 6h anzeigen)
           python main.py --queue         (Warteschlange ausstehender Signale)
 
-Analyse-Zeiten konfigurieren (.env):
-  ANALYSIS_TIMES=08:30,12:00,16:00   # Vollanalyse mit Claude 3× täglich
+Analyse-Zeitplan (.env):
+  MARKET_EXCHANGES=XETRA,NYSE,TSE    # Vollanalyse 30 Min vor Börseneröffnung
+                                     # Optionen: XETRA NYSE NASDAQ TSE HKEX SSE LSE ASX
+  MARKET_LEAD_MINUTES=30             # Vorlauf in Minuten
   ENABLE_SOCIAL_SCAN=true            # Stündlicher Social-Scan (Reddit+StockTwits)
   SIGNAL_QUEUE_MAX_AGE_HOURS=48      # Signale verfallen nach 48h
 """
@@ -69,6 +71,7 @@ from portfolio.signal_queue import SignalQueue
 from collectors.social_scan import SocialPulseDB
 from collectors.reddit_collector import RedditCollector as _RedditColl
 from collectors.stocktwits_collector import StockTwitsCollector as _TwitsColl
+from analyzers.market_schedule import MarketSchedule
 
 console = Console()
 
@@ -869,22 +872,43 @@ def main():
     phase_info = phase_ctrl.get_info(total)
     phase_color = "green" if phase_info["phase"] == "GROWTH" else "magenta"
 
-    analysis_times_display = ", ".join(config.analysis_times)
+    # Build market schedule
+    mkt_schedule = MarketSchedule(
+        exchanges=config.market_exchanges,
+        lead_minutes=config.market_lead_minutes,
+    )
+    today_slots = mkt_schedule.get_schedule_strings()
     social_label = "[green]aktiv[/green]" if config.enable_social_scan else "[dim]deaktiviert[/dim]"
     queue_label = f"{signal_queue.count_pending()} Signal(e) ausstehend"
+
+    # Build display string: "08:30 (XETRA), 13:00 (NYSE), 23:30 (TSE)"
+    if today_slots:
+        schedule_display = ", ".join(
+            f"[cyan]{s['hhmm']}[/cyan] ({s['exchange']})" for s in today_slots
+        )
+    else:
+        schedule_display = "[dim]Heute kein Handelstag[/dim]"
+
+    nxt = mkt_schedule.next_window()
+    next_str = nxt["analysis_local"] if nxt else "–"
 
     console.print(Panel(
         f"[bold]Stock Sentiment Bot gestartet[/bold]\n"
         f"Broker: [cyan]{config.broker_mode.upper()}[/cyan] | "
         f"Watchlist: [cyan]{', '.join(config.watchlist)}[/cyan]\n"
         f"Fokus: [magenta]{focus_ctrl.profile.label}[/magenta] | "
-        f"Vollanalyse um: [cyan]{analysis_times_display}[/cyan]\n"
+        f"Nächste Analyse: [bold]{next_str}[/bold]\n"
+        f"Heute: {schedule_display} ({config.market_lead_minutes} Min vor Börseneröffnung)\n"
         f"Social-Scan: {social_label} (stündlich) | "
         f"Signal-Queue: [yellow]{queue_label}[/yellow]\n"
         f"Phase: [{phase_color}]{phase_info['phase']}[/{phase_color}] | "
         f"Kapital: ${total:,.2f} | Ziel: ${phase_info['growth_target']:,.0f}",
         border_style="green",
     ))
+
+    # Print full market schedule
+    console.print(f"\n[dim]Markt-Zeitplan für heute:[/dim]")
+    console.print(f"[dim]{mkt_schedule.describe()}[/dim]\n")
 
     def _monthly_review_check():
         if datetime.utcnow().day == 1:
@@ -910,27 +934,45 @@ def main():
                 actions_today=[f"📡 Social-Spike: {l}" for l in spike_lines],
             )
 
+    def _reschedule_analysis():
+        """Rebuilds analysis schedule for the new day (handles DST changes)."""
+        for job in list(schedule.jobs):
+            if getattr(job, "_is_analysis_job", False):
+                schedule.cancel_job(job)
+        _register_analysis_jobs()
+
+    def _register_analysis_jobs():
+        slots = mkt_schedule.get_schedule_strings()
+        if not slots:
+            console.print("[dim]Heute kein Handelstag – keine Vollanalysen geplant.[/dim]")
+            return
+        for slot in slots:
+            job = schedule.every().day.at(slot["hhmm"]).do(
+                run_analysis_cycle,
+                portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
+            )
+            job._is_analysis_job = True
+            review_job = schedule.every().day.at(slot["hhmm"]).do(_monthly_review_check)
+            review_job._is_analysis_job = True
+        times_str = ", ".join(f"{s['hhmm']} ({s['exchange']})" for s in slots)
+        console.print(f"[dim]Analyse-Jobs registriert: {times_str}[/dim]")
+
     if args.once:
         run_analysis_cycle(portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection)
         return
 
-    # Schedule full analysis at each configured time
-    for t in config.analysis_times:
-        schedule.every().day.at(t).do(
-            run_analysis_cycle, portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection
-        )
-        schedule.every().day.at(t).do(_monthly_review_check)
+    # Register today's analysis jobs
+    _register_analysis_jobs()
+
+    # Reschedule every day at 00:01 (picks up DST changes and new weekday status)
+    schedule.every().day.at("00:01").do(_reschedule_analysis)
 
     # Hourly tasks
     schedule.every().hour.do(strategy.check_open_positions)
     if config.enable_social_scan:
         schedule.every().hour.do(_social_scan_job)
-        console.print(f"[dim]Social-Scan läuft stündlich.[/dim]")
 
-    console.print(
-        f"[dim]Vollanalysen um: {analysis_times_display}. "
-        f"Stop-Loss-Check stündlich. Ctrl+C zum Beenden.[/dim]"
-    )
+    console.print(f"[dim]Stop-Loss-Check stündlich. Ctrl+C zum Beenden.[/dim]")
 
     try:
         while True:

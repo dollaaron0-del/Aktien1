@@ -1,0 +1,137 @@
+"""
+Market-aware analysis scheduler.
+
+Calculates analysis times as "30 minutes before market open" for each
+configured exchange, with full DST/timezone awareness via zoneinfo.
+
+Supported exchanges:
+  XETRA  – Frankfurt       09:00 CET/CEST  (Europe/Berlin)
+  NYSE   – New York        09:30 ET        (America/New_York)
+  NASDAQ – New York        09:30 ET        (same as NYSE)
+  TSE    – Tokyo           09:00 JST       (Asia/Tokyo, no DST)
+  HKEX   – Hong Kong       09:30 HKT       (Asia/Hong_Kong, no DST)
+  SSE    – Shanghai        09:30 CST       (Asia/Shanghai, no DST)
+  LSE    – London          08:00 GMT/BST   (Europe/London)
+  ASX    – Sydney          10:00 AEST/AEDT (Australia/Sydney)
+"""
+from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, time as dtime
+from typing import List, Dict, Optional
+
+
+EXCHANGE_DEFS: Dict[str, Dict] = {
+    "XETRA":  {"tz": "Europe/Berlin",      "open": dtime(9, 0),  "name": "Frankfurt XETRA"},
+    "NYSE":   {"tz": "America/New_York",   "open": dtime(9, 30), "name": "NYSE/NASDAQ New York"},
+    "NASDAQ": {"tz": "America/New_York",   "open": dtime(9, 30), "name": "NASDAQ New York"},
+    "TSE":    {"tz": "Asia/Tokyo",         "open": dtime(9, 0),  "name": "Tokyo TSE"},
+    "HKEX":   {"tz": "Asia/Hong_Kong",     "open": dtime(9, 30), "name": "Hong Kong HKEX"},
+    "SSE":    {"tz": "Asia/Shanghai",      "open": dtime(9, 30), "name": "Shanghai SSE"},
+    "LSE":    {"tz": "Europe/London",      "open": dtime(8, 0),  "name": "London LSE"},
+    "ASX":    {"tz": "Australia/Sydney",   "open": dtime(10, 0), "name": "Sydney ASX"},
+}
+
+# ISO weekday: Mon=1 … Sun=7; exchanges trade Mon–Fri
+_TRADING_DAYS = {1, 2, 3, 4, 5}
+
+
+class MarketSchedule:
+    """
+    Computes analysis times (N minutes before open) for a set of exchanges,
+    returned as UTC datetimes or HH:MM strings in the local server timezone.
+    """
+
+    def __init__(
+        self,
+        exchanges: List[str],
+        lead_minutes: int = 30,
+    ):
+        self.exchanges = [e.upper() for e in exchanges if e.upper() in EXCHANGE_DEFS]
+        self.lead_minutes = lead_minutes
+
+    def get_analysis_times_utc(self, date: Optional["datetime.date"] = None) -> List[Dict]:
+        """
+        Returns list of dicts for each exchange for the given date:
+          {exchange, name, open_local, open_utc, analysis_utc, is_trading_day}
+
+        If `date` is None, uses today in UTC.
+        """
+        if date is None:
+            date = datetime.utcnow().date()
+
+        results = []
+        for code in self.exchanges:
+            ex = EXCHANGE_DEFS[code]
+            tz = ZoneInfo(ex["tz"])
+            # Build the open datetime in the exchange's local timezone
+            open_local_naive = datetime.combine(date, ex["open"])
+            open_local = open_local_naive.replace(tzinfo=tz)
+            open_utc = open_local.astimezone(ZoneInfo("UTC"))
+            analysis_utc = open_utc - timedelta(minutes=self.lead_minutes)
+            is_trading = date.isoweekday() in _TRADING_DAYS
+            results.append({
+                "exchange": code,
+                "name": ex["name"],
+                "open_local": open_local.strftime("%H:%M %Z"),
+                "open_utc": open_utc.strftime("%H:%M UTC"),
+                "analysis_utc": analysis_utc,
+                "analysis_utc_str": analysis_utc.strftime("%H:%M UTC"),
+                "is_trading_day": is_trading,
+            })
+        # Sort chronologically
+        results.sort(key=lambda r: r["analysis_utc"])
+        return results
+
+    def get_schedule_strings(self, date: Optional["datetime.date"] = None) -> List[Dict]:
+        """
+        Returns the schedule for today as HH:MM strings in the SERVER'S local time,
+        suitable for passing to the `schedule` library.
+        Only includes trading days.
+        """
+        entries = self.get_analysis_times_utc(date)
+        seen: set = set()
+        result = []
+        for e in entries:
+            if not e["is_trading_day"]:
+                continue
+            # Convert UTC to local server time
+            local_dt = e["analysis_utc"].astimezone()
+            hhmm = local_dt.strftime("%H:%M")
+            if hhmm not in seen:
+                seen.add(hhmm)
+                result.append({
+                    "hhmm": hhmm,
+                    "exchange": e["exchange"],
+                    "name": e["name"],
+                    "open_local": e["open_local"],
+                    "analysis_utc_str": e["analysis_utc_str"],
+                })
+        return result
+
+    def next_window(self) -> Optional[Dict]:
+        """Returns the next upcoming analysis window from now."""
+        now_utc = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC"))
+        # Check today and tomorrow
+        for delta in (0, 1):
+            date = (now_utc + timedelta(days=delta)).date()
+            for entry in self.get_analysis_times_utc(date):
+                if entry["is_trading_day"] and entry["analysis_utc"] > now_utc:
+                    local_dt = entry["analysis_utc"].astimezone()
+                    return {
+                        **entry,
+                        "analysis_local": local_dt.strftime("%d.%m. %H:%M"),
+                    }
+        return None
+
+    def describe(self, date: Optional["datetime.date"] = None) -> str:
+        """Human-readable schedule description for the given date."""
+        entries = self.get_schedule_strings(date)
+        if not entries:
+            day = (date or datetime.utcnow().date())
+            return f"Kein Handel am {day.strftime('%A, %d.%m.%Y')}."
+        lines = []
+        for e in entries:
+            lines.append(
+                f"  {e['hhmm']} Lokalzeit  ←  {e['name']} öffnet um {e['open_local']}  "
+                f"(= {e['analysis_utc_str']})"
+            )
+        return "\n".join(lines)

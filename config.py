@@ -6,15 +6,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def _parse_times(raw: str) -> List[str]:
-    """Parses comma-separated HH:MM strings, falls back to ['08:30']."""
-    times = [t.strip() for t in raw.split(",") if t.strip()]
-    valid = []
-    for t in times:
-        parts = t.split(":")
-        if len(parts) == 2 and all(p.isdigit() for p in parts):
-            valid.append(f"{int(parts[0]):02d}:{int(parts[1]):02d}")
-    return valid or ["08:30"]
+def _parse_exchanges(raw: str) -> List[str]:
+    known = {"XETRA", "NYSE", "NASDAQ", "TSE", "HKEX", "SSE", "LSE", "ASX"}
+    return [e.strip().upper() for e in raw.split(",") if e.strip().upper() in known] or ["XETRA", "NYSE", "TSE"]
 
 
 @dataclass
@@ -49,14 +43,16 @@ class Config:
     sell_threshold: float = 0.35
     min_sources: int = 2
 
-    # ── Analyse-Zeitplan ──────────────────────────────────────────────────────
-    # Vollanalyse (Claude + alle Quellen) mehrmals täglich, z.B. "08:30,12:00,16:00"
-    analysis_times: List[str] = field(
-        default_factory=lambda: _parse_times(os.getenv("ANALYSIS_TIMES", "08:30,12:00,16:00"))
+    # ── Marktbasierter Analyse-Zeitplan ─────────────────────────────────────
+    # Welche Börsen beobachten? Analyse läuft je 30 Min vor Börseneröffnung.
+    # Verfügbare Codes: XETRA NYSE NASDAQ TSE HKEX SSE LSE ASX
+    market_exchanges: List[str] = field(
+        default_factory=lambda: _parse_exchanges(os.getenv("MARKET_EXCHANGES", "XETRA,NYSE,TSE"))
     )
-    # Legacy single-time fallback (wird ignoriert wenn ANALYSIS_TIMES gesetzt)
-    analysis_hour: int = 8
-    analysis_minute: int = 30
+    # Vorlauf in Minuten vor Börseneröffnung
+    market_lead_minutes: int = field(
+        default_factory=lambda: int(os.getenv("MARKET_LEAD_MINUTES", "30"))
+    )
 
     # Stündlicher Social-Scan aktivieren (Reddit + StockTwits, ohne Claude)
     enable_social_scan: bool = field(
