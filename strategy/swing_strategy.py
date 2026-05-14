@@ -14,7 +14,21 @@ from notifier.telegram_notifier import TelegramNotifier
 from analyzers.earnings_filter import EarningsFilter
 from analyzers.correlation_check import CorrelationChecker
 from analyzers.kelly_sizing import KellySizer
+from analyzers.macro_calendar import MacroCalendar
+from analyzers.sector_rotation import SectorRotation
+from analyzers.earnings_surprise import EarningsSurprise
 from config import config
+
+# Confidence → Positionsgröße-Multiplikator
+_CONFIDENCE_SIZING = {"HIGH": 1.0, "MEDIUM": 0.70, "LOW": 0.45}
+
+# Trailing-Stop: Gewinnsicherungs-Stufen
+# (min_gain_pct, new_stop_below_peak_pct)
+_TRAILING_STEPS = [
+    (0.20, 0.10),   # +20% Gewinn → SL auf peak - 10%
+    (0.12, 0.06),   # +12% Gewinn → SL auf peak - 6%
+    (0.06, 0.03),   # +6%  Gewinn → SL auf breakeven + 3%
+]
 
 
 class SwingStrategy:
@@ -44,6 +58,9 @@ class SwingStrategy:
         self.correlation = correlation_checker
         self.kelly = kelly_sizer
         self.goal_risk = goal_risk_assessor
+        self.macro_cal = MacroCalendar()
+        self.sector_rot = SectorRotation()
+        self.earn_surp  = EarningsSurprise()
 
     def evaluate(self, analysis: AnalysisResult, sources_breakdown: Optional[Dict[str, int]] = None) -> Optional[str]:
         ticker = analysis.ticker
@@ -54,6 +71,10 @@ class SwingStrategy:
             return f"[{ticker}] Kein Kurs verfügbar – übersprungen."
 
         if existing_position:
+            # Scale-In: bei starkem Signal bestehende Position aufstocken
+            scale_result = self._try_scale_in(existing_position, current_price, analysis)
+            if scale_result:
+                return scale_result
             return self._check_exit(existing_position, current_price, analysis)
 
         if analysis.recommendation != "BUY":
@@ -77,6 +98,16 @@ class SwingStrategy:
                 f"[{ticker}] Sentiment {analysis.sentiment_score:.2f} unter Schwelle "
                 f"{effective_threshold:.2f} ({self.focus.profile.label}) – übersprungen."
             )
+
+        # Makro-Kalender: Kauf pausieren vor kritischen Terminen
+        macro_block, macro_reason = self.macro_cal.should_block_buy()
+        if macro_block:
+            return f"[{ticker}] ⏸ Makro-Pause: {macro_reason}"
+
+        # Sektor-Rotation: schwache Sektoren meiden
+        in_strong, sector_reason = self.sector_rot.is_ticker_in_strong_sector(ticker)
+        if not in_strong:
+            return f"[{ticker}] 📉 Sektor schwach: {sector_reason} – übersprungen."
 
         # Earnings filter: skip buy if earnings imminent
         if self.earnings_filter:
@@ -139,8 +170,15 @@ class SwingStrategy:
                 continue
 
             days_held = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
-            reason = None
 
+            # ── Trailing Stop-Loss aktualisieren ─────────────────────────────
+            trailing_updated = self._update_trailing_stop(pos, price)
+            if trailing_updated:
+                actions.append(
+                    f"[{ticker}] 📈 Trailing-Stop angepasst → ${pos.stop_loss:.2f}"
+                )
+
+            reason = None
             if price <= pos.stop_loss:
                 reason = f"Stop-Loss ausgelöst bei ${price:.2f}"
             elif price >= pos.take_profit:
@@ -331,7 +369,14 @@ class SwingStrategy:
         if self.kelly:
             kelly_pct = self.kelly.compute(fallback_pct=max_pos_pct)
             max_pos_pct = min(max_pos_pct, kelly_pct)
-        max_invest = portfolio_value * max_pos_pct
+
+        # Konfidenz-basiertes Positions-Sizing
+        conf_mult    = _CONFIDENCE_SIZING.get(analysis.confidence, 0.70)
+        sector_mult  = self.sector_rot.get_position_size_modifier(ticker)
+        macro_mult   = self.macro_cal.get_position_size_modifier()
+        earn_adj     = self.earn_surp.get_sentiment_adjustment(ticker)
+        total_mult   = conf_mult * sector_mult * macro_mult
+        max_invest   = portfolio_value * max_pos_pct * total_mult
         invest = min(max_invest, self.portfolio.cash * 0.95)
 
         if invest < 50:
@@ -398,11 +443,15 @@ class SwingStrategy:
             hold_days=capped_hold,
         )
 
+        earn_info = self.earn_surp.check(ticker)
+        earn_tag  = f" | {EarningsSurprise.format_surprise(earn_info)}" if earn_info.get("label") not in ("UNKNOWN", "IN_LINE", None) else ""
+
         return (
             f"[{ticker}] GEKAUFT – {shares} Stück @ ${price:.2f} "
             f"| SL: ${stop_loss} | {tp_source} "
             f"| Haltedauer: {capped_hold}d "
             f"| Investiert: ${shares * price:.2f}"
+            f"{earn_tag}"
         )
 
     def _do_close(self, ticker: str, pos: Position, price: float, reason: str, days_held: int = 0) -> float:
@@ -453,6 +502,79 @@ class SwingStrategy:
             self._notifier.send(msg)
         except Exception:
             pass
+
+    @staticmethod
+    def _update_trailing_stop(pos: Position, current_price: float) -> bool:
+        """Zieht den Stop-Loss nach oben wenn der Kurs steigt. Gibt True zurück wenn aktualisiert."""
+        gain = (current_price - pos.entry_price) / pos.entry_price
+        best_stop = pos.stop_loss
+        for min_gain, trail_pct in _TRAILING_STEPS:
+            if gain >= min_gain:
+                candidate = round(current_price * (1 - trail_pct), 2)
+                best_stop = max(best_stop, candidate)
+                break
+        if best_stop > pos.stop_loss:
+            pos.stop_loss = best_stop
+            return True
+        return False
+
+    def _try_scale_in(
+        self, pos: Position, current_price: float, analysis: AnalysisResult
+    ) -> Optional[str]:
+        """
+        Stockt eine bestehende Position auf wenn:
+        - Signal ist BUY mit HIGH-Konfidenz
+        - Kurs ist nicht mehr als 8% über Einstiegskurs (kein Nachjagen)
+        - Bestehende Position ist kleiner als 80% des erlaubten Maximums
+        - Genug freies Kapital
+        """
+        if analysis.recommendation != "BUY" or analysis.confidence != "HIGH":
+            return None
+        if analysis.sentiment_score < config.buy_threshold + 0.15:
+            return None
+
+        ticker = pos.ticker
+        price_drift = (current_price - pos.entry_price) / pos.entry_price
+        if price_drift > 0.08:
+            return None  # Kurs schon zu weit gelaufen
+
+        portfolio_value = self.portfolio.total_value(
+            self.broker.get_prices(list(self.portfolio.all_positions().keys()))
+        )
+        max_pos_value = portfolio_value * self.focus.get_max_position_pct(portfolio_value)
+        current_pos_value = pos.shares * current_price
+
+        # Nur aufstocken wenn aktuelle Position < 80% des Maximums
+        if current_pos_value >= max_pos_value * 0.80:
+            return None
+
+        add_invest = min(
+            (max_pos_value - current_pos_value) * 0.50,  # max. 50% der Lücke
+            self.portfolio.cash * 0.30,
+        )
+        if add_invest < 50:
+            return None
+
+        add_shares = math.floor(add_invest / current_price * 100) / 100
+        if add_shares <= 0:
+            return None
+
+        self.broker.buy(ticker, add_shares, current_price)
+        # Durchschnittskurs berechnen
+        new_total_shares = pos.shares + add_shares
+        avg_price = (pos.shares * pos.entry_price + add_shares * current_price) / new_total_shares
+        pos.shares = new_total_shares
+        pos.entry_price = round(avg_price, 4)
+
+        self._notifier.send(
+            f"📈 <b>Scale-In {ticker}</b>\n"
+            f"+{add_shares} Stück @ ${current_price:.2f}\n"
+            f"Ø Einstieg jetzt: ${avg_price:.2f} | Gesamt: {new_total_shares:.2f} Stück"
+        )
+        return (
+            f"[{ticker}] 📈 SCALE-IN +{add_shares} Stück @ ${current_price:.2f} "
+            f"| Ø ${avg_price:.2f} | Gesamt: {new_total_shares:.2f} Stück"
+        )
 
     def build_open_position_context(self, ticker: str) -> Optional[Dict]:
         pos = self.portfolio.get_position(ticker)
