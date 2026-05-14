@@ -50,6 +50,10 @@ from collectors import (
     InsiderCollector, USASpendingCollector,
     SECEdgarCollector, StockTwitsCollector, WireCollector,
     OptionsFlowCollector, EuropeanNewsCollector, TwitterCollector,
+    SEC8KCollector, ShortInterestCollector, InstitutionalCollector,
+    AnalystCollector, EarningsTranscriptCollector, PatentCollector,
+    JobListingsCollector, CEOInterviewCollector, EURegulationCollector,
+    ChineseMediaCollector, WebTrafficCollector,
 )
 from collectors.news_archive import NewsArchive
 from analyzers import ClaudeAnalyzer, AnalysisResult
@@ -130,37 +134,73 @@ def collect_news(ticker: str, archive: NewsArchive) -> tuple[List[Dict], Dict[st
     options_flow = OptionsFlowCollector()
     euro_news    = EuropeanNewsCollector(lookback_hours=72)
     twitter      = TwitterCollector()
+    sec_8k          = SEC8KCollector()
+    short_interest  = ShortInterestCollector()
+    institutional   = InstitutionalCollector()
+    analyst         = AnalystCollector()
+    earn_transcript = EarningsTranscriptCollector()
+    patent          = PatentCollector()
+    job_listings    = JobListingsCollector()
+    ceo_interview   = CEOInterviewCollector()
+    eu_regulation   = EURegulationCollector()
+    chinese_media   = ChineseMediaCollector()
+    web_traffic     = WebTrafficCollector()
 
-    yahoo_items     = yahoo.collect(ticker)
-    reddit_items    = reddit.collect(ticker)
-    newsapi_items   = newsapi.collect(ticker)
-    insider_items   = insider.collect(ticker)
-    contract_items  = usaspending.collect(ticker)
-    edgar_items     = sec_edgar.collect(ticker)
-    twits_items     = stocktwits.collect(ticker)
-    wire_items      = wire.collect(ticker)
-    options_items   = options_flow.collect(ticker)
-    euro_items      = euro_news.collect(ticker)
-    twitter_items   = twitter.collect(ticker) if twitter.available else []
+    yahoo_items          = yahoo.collect(ticker)
+    reddit_items         = reddit.collect(ticker)
+    newsapi_items        = newsapi.collect(ticker)
+    insider_items        = insider.collect(ticker)
+    contract_items       = usaspending.collect(ticker)
+    edgar_items          = sec_edgar.collect(ticker)
+    twits_items          = stocktwits.collect(ticker)
+    wire_items           = wire.collect(ticker)
+    options_items        = options_flow.collect(ticker)
+    euro_items           = euro_news.collect(ticker)
+    twitter_items        = twitter.collect(ticker) if twitter.available else []
+    sec_8k_items         = sec_8k.collect(ticker)
+    short_interest_items = short_interest.collect(ticker)
+    institutional_items  = institutional.collect(ticker)
+    analyst_items        = analyst.collect(ticker)
+    transcript_items     = earn_transcript.collect(ticker)
+    patent_items         = patent.collect(ticker)
+    job_items            = job_listings.collect(ticker)
+    ceo_items            = ceo_interview.collect(ticker)
+    eu_items             = eu_regulation.collect(ticker)
+    chinese_items        = chinese_media.collect(ticker)
+    traffic_items        = web_traffic.collect(ticker)
 
     sources_breakdown = {
-        "yahoo":         len(yahoo_items),
-        "reddit":        len(reddit_items),
-        "newsapi":       len(newsapi_items),
-        "insider":       len(insider_items),
-        "usaspending":   len(contract_items),
-        "sec_edgar":     len(edgar_items),
-        "stocktwits":    len(twits_items),
-        "wire":          len(wire_items),
-        "options_flow":  len(options_items),
-        "european_news": len(euro_items),
-        "twitter":       len(twitter_items),
+        "yahoo":               len(yahoo_items),
+        "reddit":              len(reddit_items),
+        "newsapi":             len(newsapi_items),
+        "insider":             len(insider_items),
+        "usaspending":         len(contract_items),
+        "sec_edgar":           len(edgar_items),
+        "stocktwits":          len(twits_items),
+        "wire":                len(wire_items),
+        "options_flow":        len(options_items),
+        "european_news":       len(euro_items),
+        "twitter":             len(twitter_items),
+        "sec_8k":              len(sec_8k_items),
+        "short_interest":      len(short_interest_items),
+        "institutional_13f":   len(institutional_items),
+        "analyst_ratings":     len(analyst_items),
+        "earn_transcripts":    len(transcript_items),
+        "patents":             len(patent_items),
+        "job_listings":        len(job_items),
+        "ceo_interviews":      len(ceo_items),
+        "eu_regulation":       len(eu_items),
+        "chinese_media":       len(chinese_items),
+        "web_traffic":         len(traffic_items),
     }
 
     all_items = (
         yahoo_items + reddit_items + newsapi_items + insider_items
         + contract_items + edgar_items + twits_items + wire_items
         + options_items + euro_items + twitter_items
+        + sec_8k_items + short_interest_items + institutional_items
+        + analyst_items + transcript_items + patent_items + job_items
+        + ceo_items + eu_items + chinese_items + traffic_items
     )
 
     # Archive everything before deduplication (archive handles its own dedup)
