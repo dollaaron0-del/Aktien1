@@ -78,9 +78,20 @@ from collectors.twitter_collector import TwitterCollector as _TwitterColl
 from analyzers.market_schedule import MarketSchedule
 from analyzers.weekend_prep import WeekendPrep
 from analyzers.recession_detector import RecessionDetector, BULL, NEUTRAL, BEAR, CRISIS
+from analyzers.dynamic_watchlist import DynamicWatchlist
 from strategy.hedge_strategy import HedgeStrategy
 
 console = Console()
+
+_dynamic_watchlist = DynamicWatchlist(max_picks=config.scan_max_picks or 12) if config.auto_scan_watchlist else None
+
+
+def _get_watchlist(portfolio: Portfolio) -> List[str]:
+    """Returns dynamic or static watchlist depending on config."""
+    if _dynamic_watchlist:
+        active = list(portfolio.all_positions().keys())
+        return _dynamic_watchlist.get_watchlist(active_tickers=active)
+    return config.watchlist
 
 
 def _make_phase_ctrl() -> PhaseController:
@@ -217,7 +228,8 @@ def run_analysis_cycle(
         console.print(f"  [yellow]{action}[/yellow]")
     cycle_actions.extend(exit_actions)
 
-    for ticker in config.watchlist:
+    active_watchlist = _get_watchlist(portfolio)
+    for ticker in active_watchlist:
         console.print(f"\n[cyan]Sammle Daten für {ticker}...[/cyan]")
 
         news, sources_breakdown = collect_news(ticker, archive)
@@ -616,7 +628,8 @@ def run_social_scan(pulse_db: SocialPulseDB, strategy: Optional[SwingStrategy] =
     twits = _TwitsColl(lookback_hours=2)
     twitter = _TwitterColl()
     spikes = []
-    for ticker in config.watchlist:
+    _scan_portfolio = strategy.portfolio if strategy else None
+    for ticker in _get_watchlist(_scan_portfolio or Portfolio(config.initial_capital)):
         try:
             r_items = reddit.collect(ticker)
             t_items = twits.collect(ticker)

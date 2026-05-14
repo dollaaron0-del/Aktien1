@@ -25,6 +25,7 @@ from portfolio.signal_queue import SignalQueue
 from analyzers.reflection_engine import ReflectionEngine
 from analyzers.recession_detector import RecessionDetector, BULL, NEUTRAL, BEAR, CRISIS
 from analyzers.technical_indicators import TechnicalIndicators
+from analyzers.dynamic_watchlist import DynamicWatchlist
 from collectors.social_scan import SocialPulseDB
 from analyzers.weekend_prep import WeekendPrep
 from portfolio.goal_risk_assessor import GoalRiskAssessor, OK, CAUTION, DANGER, UNREACHABLE
@@ -167,7 +168,7 @@ st.divider()
 # ═══════════════════════════════════════════════════════════════════════════════
 # TABS
 # ═══════════════════════════════════════════════════════════════════════════════
-tab_portfolio, tab_regime, tab_queue, tab_social, tab_briefing, tab_trades, tab_tech = st.tabs([
+tab_portfolio, tab_regime, tab_queue, tab_social, tab_briefing, tab_trades, tab_tech, tab_watchlist = st.tabs([
     "📊 Portfolio",
     "🛡 Markt-Regime",
     f"📋 Signal-Queue ({pending_cnt})",
@@ -175,6 +176,7 @@ tab_portfolio, tab_regime, tab_queue, tab_social, tab_briefing, tab_trades, tab_
     "📰 Wochenbriefing",
     "📈 Trades & Lernen",
     "📉 Technicals",
+    "🔭 Watchlist",
 ])
 
 
@@ -951,6 +953,90 @@ with tab_tech:
         if all_snaps:
             df_tech = pd.DataFrame(all_snaps).set_index("Ticker")
             st.dataframe(df_tech, use_container_width=True)
+
+
+# ══════════════════════════════════════════════════════════
+# TAB 8 – DYNAMISCHE WATCHLIST
+# ══════════════════════════════════════════════════════════
+with tab_watchlist:
+    st.subheader("🔭 Dynamische Watchlist")
+    st.caption(
+        "Der Bot scannt täglich ~80 Aktien und wählt automatisch die vielversprechendsten aus. "
+        "Scoring: Volumen (30%) + Momentum (25%) + RSI (25%) + MACD (20%)"
+    )
+
+    _dw = DynamicWatchlist(max_picks=config.scan_max_picks or 12)
+
+    wl_col1, wl_col2 = st.columns([4, 1])
+    with wl_col2:
+        if st.button("🔄 Jetzt neu scannen", use_container_width=True):
+            with st.spinner("Scanne Markt-Universum…"):
+                active = list(portfolio.all_positions().keys())
+                new_wl = _dw.force_refresh(active_tickers=active)
+            st.success(f"Neue Watchlist: {', '.join(new_wl)}")
+            st.rerun()
+
+    with wl_col1:
+        if not config.auto_scan_watchlist:
+            st.warning(
+                "Dynamische Watchlist ist deaktiviert. "
+                "Setze `AUTO_SCAN_WATCHLIST=true` in der `.env` Datei."
+            )
+        else:
+            cached = _dw._load_cache()
+            if cached:
+                age_h = _dw._cache_age_hours(cached)
+                updated = cached.get("updated_at", "–")[:16]
+                st.info(
+                    f"Letzte Aktualisierung: **{updated} UTC** "
+                    f"(vor {age_h:.1f}h) · Nächste in {max(0, 24 - age_h):.1f}h"
+                )
+                current_wl = cached["tickers"]
+                st.markdown("**Aktuelle Watchlist:**")
+                wl_badges = "  ".join(
+                    f"`{t}`" for t in current_wl
+                )
+                st.markdown(wl_badges)
+            else:
+                st.info("Noch kein Scan durchgeführt. Klicke 'Jetzt neu scannen'.")
+
+    st.divider()
+
+    # Scored candidates table
+    st.subheader("Alle bewerteten Kandidaten")
+    st.caption("Vollständige Rangliste aller gescannten Aktien mit Einzelscores.")
+    with st.spinner("Lade Kandidaten-Scores…"):
+        candidates = _dw.get_scored_candidates()
+
+    if candidates:
+        df_wl = pd.DataFrame(candidates).rename(columns={
+            "ticker":       "Ticker",
+            "total_score":  "Gesamt-Score",
+            "price":        "Kurs $",
+            "vol_ratio":    "Vol-Ratio",
+            "momentum_20d": "Momentum 20d %",
+            "rsi":          "RSI",
+            "macd_hist":    "MACD-Hist",
+            "vol_score":    "Score Volumen",
+            "mom_score":    "Score Momentum",
+            "rsi_score":    "Score RSI",
+            "macd_score":   "Score MACD",
+        })
+        # Highlight top 12 (current watchlist)
+        top_n = config.scan_max_picks or 12
+        st.dataframe(
+            df_wl.style.background_gradient(
+                subset=["Gesamt-Score"], cmap="RdYlGn", vmin=0, vmax=100
+            ).map(
+                lambda v: "color: #00e676; font-weight:700" if isinstance(v, (int, float)) and v >= 0 else "",
+                subset=["Momentum 20d %"],
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(f"Top {top_n} (grün markiert) werden als Watchlist verwendet.")
+    else:
+        st.info("Noch keine Scan-Daten. Klicke 'Jetzt neu scannen'.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
