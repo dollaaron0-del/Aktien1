@@ -1,9 +1,13 @@
 import json
 import os
+import tempfile
 from datetime import datetime
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field, asdict
 
+from logger import get_logger
+
+log = get_logger(__name__)
 
 DATA_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "portfolio.json")
 
@@ -61,8 +65,23 @@ class Portfolio:
         return PortfolioState(cash=initial_capital)
 
     def _save(self):
-        with open(DATA_FILE, "w") as f:
-            json.dump(asdict(self._state), f, indent=2)
+        """Atomar schreiben: erst Temp-Datei, dann umbenennen – crash-sicher."""
+        tmp_path = None
+        try:
+            dir_ = os.path.dirname(DATA_FILE)
+            with tempfile.NamedTemporaryFile(
+                mode="w", dir=dir_, suffix=".tmp", delete=False
+            ) as tmp:
+                json.dump(asdict(self._state), tmp, indent=2)
+                tmp_path = tmp.name
+            os.replace(tmp_path, DATA_FILE)
+        except Exception as e:
+            log.error("Portfolio: Speicherfehler – %s", e)
+            if tmp_path:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
 
     @property
     def cash(self) -> float:

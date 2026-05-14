@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List
 import os
+import sys
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -132,3 +133,65 @@ class Config:
 
 
 config = Config()
+
+
+def validate_config() -> None:
+    """
+    Prüft kritische Konfigurationswerte beim Start.
+    Gibt Warnungen aus und beendet das Programm bei fatalen Fehlern.
+    """
+    errors:   List[str] = []
+    warnings: List[str] = []
+
+    # ── Kritisch: ohne diese Keys läuft gar nichts ────────────────────────────
+    if not config.anthropic_api_key:
+        errors.append("ANTHROPIC_API_KEY fehlt – Claude-Analyse nicht möglich.")
+
+    # ── Broker-spezifisch ─────────────────────────────────────────────────────
+    if config.broker_mode == "alpaca":
+        if not config.alpaca_api_key or not config.alpaca_secret_key:
+            errors.append(
+                "BROKER_MODE=alpaca, aber ALPACA_API_KEY / ALPACA_SECRET_KEY fehlen."
+            )
+
+    # ── Warnungen für optionale aber empfohlene Keys ──────────────────────────
+    if not config.telegram_bot_token or not config.telegram_chat_id:
+        warnings.append("TELEGRAM_BOT_TOKEN / CHAT_ID fehlen – keine Push-Benachrichtigungen.")
+    if not config.newsapi_key:
+        warnings.append("NEWSAPI_KEY fehlt – NewsAPI-Quelle deaktiviert.")
+    if not config.reddit_client_id:
+        warnings.append("REDDIT_CLIENT_ID fehlt – Reddit-Quelle deaktiviert.")
+
+    # ── Wertebereich-Prüfungen ────────────────────────────────────────────────
+    if not (0.0 < config.stop_loss_pct < 1.0):
+        errors.append(f"STOP_LOSS_PCT={config.stop_loss_pct} ungültig (muss 0–1 sein).")
+    if not (0.0 < config.take_profit_pct < 5.0):
+        errors.append(f"TAKE_PROFIT_PCT={config.take_profit_pct} ungültig.")
+    if not (0.0 < config.max_position_pct <= 1.0):
+        errors.append(f"MAX_POSITION_PCT={config.max_position_pct} ungültig.")
+    if not (0.0 < config.buy_threshold <= 1.0):
+        errors.append(f"BUY_THRESHOLD={config.buy_threshold} ungültig (muss 0–1 sein).")
+    if config.initial_capital <= 0:
+        errors.append(f"INITIAL_CAPITAL={config.initial_capital} ungültig.")
+
+    if config.focus_mode == "TARGET_GOAL":
+        if not config.target_goal_amount or config.target_goal_amount <= 0:
+            warnings.append("FOCUS_MODE=TARGET_GOAL aber TARGET_GOAL_AMOUNT nicht gesetzt.")
+        if not config.target_goal_date:
+            warnings.append("FOCUS_MODE=TARGET_GOAL aber TARGET_GOAL_DATE nicht gesetzt.")
+
+    if config.kelly_fraction > 0.5:
+        warnings.append(
+            f"KELLY_FRACTION={config.kelly_fraction} ist sehr hoch (>0.5) – "
+            f"erhöhtes Risiko. Empfehlung: 0.25."
+        )
+
+    # ── Ausgabe ───────────────────────────────────────────────────────────────
+    for w in warnings:
+        print(f"[CONFIG WARNUNG] {w}", file=sys.stderr)
+
+    if errors:
+        print("\n[CONFIG FEHLER] Programm kann nicht starten:", file=sys.stderr)
+        for e in errors:
+            print(f"  ✗ {e}", file=sys.stderr)
+        sys.exit(1)

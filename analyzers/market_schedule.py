@@ -3,6 +3,7 @@ Market-aware analysis scheduler.
 
 Calculates analysis times as "30 minutes before market open" for each
 configured exchange, with full DST/timezone awareness via zoneinfo.
+Also skips national market holidays (NYSE + XETRA).
 
 Supported exchanges:
   XETRA  – Frankfurt       09:00 CET/CEST  (Europe/Berlin)
@@ -15,8 +16,8 @@ Supported exchanges:
   ASX    – Sydney          10:00 AEST/AEDT (Australia/Sydney)
 """
 from zoneinfo import ZoneInfo
-from datetime import datetime, timedelta, time as dtime
-from typing import List, Dict, Optional
+from datetime import datetime, timedelta, time as dtime, date as date_type
+from typing import List, Dict, Optional, Set
 
 
 EXCHANGE_DEFS: Dict[str, Dict] = {
@@ -32,6 +33,64 @@ EXCHANGE_DEFS: Dict[str, Dict] = {
 
 # ISO weekday: Mon=1 … Sun=7; exchanges trade Mon–Fri
 _TRADING_DAYS = {1, 2, 3, 4, 5}
+
+# ── Market Holidays ────────────────────────────────────────────────────────────
+# NYSE holidays 2025 + 2026 (mm-dd format, year-independent where applicable)
+_NYSE_HOLIDAYS: Set[str] = {
+    # 2025
+    "2025-01-01",  # New Year's Day
+    "2025-01-20",  # MLK Day
+    "2025-02-17",  # Presidents' Day
+    "2025-04-18",  # Good Friday
+    "2025-05-26",  # Memorial Day
+    "2025-06-19",  # Juneteenth
+    "2025-07-04",  # Independence Day
+    "2025-09-01",  # Labor Day
+    "2025-11-27",  # Thanksgiving
+    "2025-12-25",  # Christmas
+    # 2026
+    "2026-01-01",  # New Year's Day
+    "2026-01-19",  # MLK Day
+    "2026-02-16",  # Presidents' Day
+    "2026-04-03",  # Good Friday
+    "2026-05-25",  # Memorial Day
+    "2026-06-19",  # Juneteenth
+    "2026-07-03",  # Independence Day (observed, July 4 is Saturday)
+    "2026-09-07",  # Labor Day
+    "2026-11-26",  # Thanksgiving
+    "2026-12-25",  # Christmas
+}
+
+# XETRA / Frankfurt holidays 2025 + 2026
+_XETRA_HOLIDAYS: Set[str] = {
+    # 2025
+    "2025-01-01",  # New Year's Day
+    "2025-04-18",  # Good Friday
+    "2025-04-21",  # Easter Monday
+    "2025-05-01",  # Labour Day
+    "2025-12-24",  # Christmas Eve (half day → skip)
+    "2025-12-25",  # Christmas Day
+    "2025-12-26",  # Boxing Day
+    "2025-12-31",  # New Year's Eve (half day → skip)
+    # 2026
+    "2026-01-01",  # New Year's Day
+    "2026-04-03",  # Good Friday
+    "2026-04-06",  # Easter Monday
+    "2026-05-01",  # Labour Day
+    "2026-12-24",  # Christmas Eve
+    "2026-12-25",  # Christmas Day
+    "2026-12-31",  # New Year's Eve
+}
+
+# Combined: holiday in any major market → skip trading day
+_ALL_HOLIDAYS: Set[str] = _NYSE_HOLIDAYS | _XETRA_HOLIDAYS
+
+
+def is_market_holiday(d: Optional[date_type] = None) -> bool:
+    """Returns True if the given date (default today) is a market holiday."""
+    if d is None:
+        d = datetime.utcnow().date()
+    return d.isoformat() in _ALL_HOLIDAYS
 
 
 class MarketSchedule:
@@ -67,7 +126,7 @@ class MarketSchedule:
             open_local = open_local_naive.replace(tzinfo=tz)
             open_utc = open_local.astimezone(ZoneInfo("UTC"))
             analysis_utc = open_utc - timedelta(minutes=self.lead_minutes)
-            is_trading = date.isoweekday() in _TRADING_DAYS
+            is_trading = (date.isoweekday() in _TRADING_DAYS) and not is_market_holiday(date)
             results.append({
                 "exchange": code,
                 "name": ex["name"],

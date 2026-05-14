@@ -9,6 +9,7 @@ from portfolio.focus_mode import FocusController
 from portfolio.trade_journal import TradeJournal
 from portfolio.signal_queue import SignalQueue
 from portfolio.goal_risk_assessor import GoalRiskAssessor, CAUTION, DANGER, UNREACHABLE
+from portfolio.circuit_breaker import CircuitBreaker
 from broker.paper_broker import PaperBroker
 from notifier.telegram_notifier import TelegramNotifier
 from analyzers.earnings_filter import EarningsFilter
@@ -18,6 +19,9 @@ from analyzers.macro_calendar import MacroCalendar
 from analyzers.sector_rotation import SectorRotation
 from analyzers.earnings_surprise import EarningsSurprise
 from config import config
+from logger import get_logger
+
+log = get_logger(__name__)
 
 # Confidence → Positionsgröße-Multiplikator
 _CONFIDENCE_SIZING = {"HIGH": 1.0, "MEDIUM": 0.70, "LOW": 0.45}
@@ -58,9 +62,10 @@ class SwingStrategy:
         self.correlation = correlation_checker
         self.kelly = kelly_sizer
         self.goal_risk = goal_risk_assessor
-        self.macro_cal = MacroCalendar()
-        self.sector_rot = SectorRotation()
-        self.earn_surp  = EarningsSurprise()
+        self.macro_cal      = MacroCalendar()
+        self.sector_rot     = SectorRotation()
+        self.earn_surp      = EarningsSurprise()
+        self.circuit_breaker = CircuitBreaker()
 
     def evaluate(self, analysis: AnalysisResult, sources_breakdown: Optional[Dict[str, int]] = None) -> Optional[str]:
         ticker = analysis.ticker
@@ -98,6 +103,14 @@ class SwingStrategy:
                 f"[{ticker}] Sentiment {analysis.sentiment_score:.2f} unter Schwelle "
                 f"{effective_threshold:.2f} ({self.focus.profile.label}) – übersprungen."
             )
+
+        # Circuit Breaker: Tagesverlust / Drawdown prüfen
+        self.circuit_breaker.register_day_open(portfolio_value)
+        cb_allowed, cb_reason = self.circuit_breaker.check_buy_allowed(portfolio_value)
+        if not cb_allowed:
+            self._notifier.send(cb_reason)
+            log.warning("CircuitBreaker ausgelöst für %s: %s", ticker, cb_reason)
+            return f"[{ticker}] {cb_reason}"
 
         # Makro-Kalender: Kauf pausieren vor kritischen Terminen
         macro_block, macro_reason = self.macro_cal.should_block_buy()
@@ -535,8 +548,8 @@ class SwingStrategy:
 
         ticker = pos.ticker
         price_drift = (current_price - pos.entry_price) / pos.entry_price
-        if price_drift > 0.08:
-            return None  # Kurs schon zu weit gelaufen
+        if abs(price_drift) > 0.08:
+            return None  # Kurs zu weit vom Einstieg (oben oder unten)
 
         portfolio_value = self.portfolio.total_value(
             self.broker.get_prices(list(self.portfolio.all_positions().keys()))

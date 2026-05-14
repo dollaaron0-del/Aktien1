@@ -31,6 +31,12 @@ class SocialPulseDB:
         self._conn.row_factory = sqlite3.Row
         self._init_db()
 
+    def __del__(self):
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+
     def _init_db(self):
         self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS social_pulse (

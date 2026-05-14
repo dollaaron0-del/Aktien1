@@ -44,7 +44,8 @@ from rich.table import Table
 from rich.panel import Panel
 from rich import box
 
-from config import config
+from config import config, validate_config
+from logger import get_logger
 from collectors import (
     RedditCollector, YahooCollector, NewsAPICollector,
     InsiderCollector, USASpendingCollector,
@@ -118,6 +119,18 @@ def _make_focus_ctrl() -> FocusController:
     )
 
 
+_collect_log = get_logger("collectors")
+
+
+def _safe_collect(collector_name: str, fn, *args, **kwargs) -> List[Dict]:
+    """Ruft einen Collector auf und loggt Fehler – gibt bei Ausnahme [] zurück."""
+    try:
+        return fn(*args, **kwargs) or []
+    except Exception as e:
+        _collect_log.warning("Collector %s fehlgeschlagen: %s", collector_name, e)
+        return []
+
+
 def collect_news(ticker: str, archive: NewsArchive) -> tuple[List[Dict], Dict[str, int]]:
     """
     Collects fresh news from all sources (incl. Congressional + SEC insider trades),
@@ -146,28 +159,28 @@ def collect_news(ticker: str, archive: NewsArchive) -> tuple[List[Dict], Dict[st
     chinese_media   = ChineseMediaCollector()
     web_traffic     = WebTrafficCollector()
 
-    yahoo_items          = yahoo.collect(ticker)
-    reddit_items         = reddit.collect(ticker)
-    newsapi_items        = newsapi.collect(ticker)
-    insider_items        = insider.collect(ticker)
-    contract_items       = usaspending.collect(ticker)
-    edgar_items          = sec_edgar.collect(ticker)
-    twits_items          = stocktwits.collect(ticker)
-    wire_items           = wire.collect(ticker)
-    options_items        = options_flow.collect(ticker)
-    euro_items           = euro_news.collect(ticker)
-    twitter_items        = twitter.collect(ticker) if twitter.available else []
-    sec_8k_items         = sec_8k.collect(ticker)
-    short_interest_items = short_interest.collect(ticker)
-    institutional_items  = institutional.collect(ticker)
-    analyst_items        = analyst.collect(ticker)
-    transcript_items     = earn_transcript.collect(ticker)
-    patent_items         = patent.collect(ticker)
-    job_items            = job_listings.collect(ticker)
-    ceo_items            = ceo_interview.collect(ticker)
-    eu_items             = eu_regulation.collect(ticker)
-    chinese_items        = chinese_media.collect(ticker)
-    traffic_items        = web_traffic.collect(ticker)
+    yahoo_items          = _safe_collect("yahoo",          yahoo.collect,          ticker)
+    reddit_items         = _safe_collect("reddit",         reddit.collect,         ticker)
+    newsapi_items        = _safe_collect("newsapi",        newsapi.collect,        ticker)
+    insider_items        = _safe_collect("insider",        insider.collect,        ticker)
+    contract_items       = _safe_collect("usaspending",    usaspending.collect,    ticker)
+    edgar_items          = _safe_collect("sec_edgar",      sec_edgar.collect,      ticker)
+    twits_items          = _safe_collect("stocktwits",     stocktwits.collect,     ticker)
+    wire_items           = _safe_collect("wire",           wire.collect,           ticker)
+    options_items        = _safe_collect("options_flow",   options_flow.collect,   ticker)
+    euro_items           = _safe_collect("european_news",  euro_news.collect,      ticker)
+    twitter_items        = _safe_collect("twitter",        twitter.collect,        ticker) if twitter.available else []
+    sec_8k_items         = _safe_collect("sec_8k",         sec_8k.collect,         ticker)
+    short_interest_items = _safe_collect("short_interest", short_interest.collect, ticker)
+    institutional_items  = _safe_collect("institutional",  institutional.collect,  ticker)
+    analyst_items        = _safe_collect("analyst",        analyst.collect,        ticker)
+    transcript_items     = _safe_collect("earn_transcript",earn_transcript.collect,ticker)
+    patent_items         = _safe_collect("patent",         patent.collect,         ticker)
+    job_items            = _safe_collect("job_listings",   job_listings.collect,   ticker)
+    ceo_items            = _safe_collect("ceo_interview",  ceo_interview.collect,  ticker)
+    eu_items             = _safe_collect("eu_regulation",  eu_regulation.collect,  ticker)
+    chinese_items        = _safe_collect("chinese_media",  chinese_media.collect,  ticker)
+    traffic_items        = _safe_collect("web_traffic",    web_traffic.collect,    ticker)
 
     sources_breakdown = {
         "yahoo":               len(yahoo_items),
@@ -247,14 +260,16 @@ def run_analysis_cycle(
     # Track all material trade actions for the daily summary
     cycle_actions: List[str] = []
 
+    log = get_logger(__name__)
+
     # ── Regime check + hedge evaluation ──────────────────────────────────────
     if hedge_strategy:
         macro_news_for_regime = []
         try:
             from collectors.news_api_collector import NewsAPICollector as _NAPI
             macro_news_for_regime = _NAPI().collect_general("market recession economy", max_results=10)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("Hedge-Regime: Macro-News konnten nicht geladen werden – %s", e)
         regime, hedge_actions = hedge_strategy.evaluate_regime(macro_news_for_regime or None)
         regime_color = {"BULL": "green", "NEUTRAL": "yellow", "BEAR": "red", "CRISIS": "bold red"}.get(regime, "white")
         latest = hedge_strategy.regime_summary()
@@ -1002,6 +1017,9 @@ def main():
         subprocess.run(["streamlit", "run", dashboard_path])
         return
 
+    # Konfiguration validieren – bricht bei fatalen Fehlern ab
+    validate_config()
+
     # Select broker based on config
     if config.broker_mode == "alpaca":
         broker = AlpacaBroker()
@@ -1195,8 +1213,12 @@ def main():
                 total_value=portfolio.total_value(broker.get_prices(list(portfolio.all_positions().keys()))),
                 cash=portfolio.cash,
                 open_positions=len(portfolio.all_positions()),
-                phase=phase_ctrl.current_phase(portfolio.total_value({})),
-                progress_pct=phase_ctrl.progress_pct(portfolio.total_value({})),
+                phase=phase_ctrl.current_phase(portfolio.total_value(
+                    broker.get_prices(list(portfolio.all_positions().keys()))
+                )),
+                progress_pct=phase_ctrl.progress_pct(portfolio.total_value(
+                    broker.get_prices(list(portfolio.all_positions().keys()))
+                )),
                 actions_today=[f"📡 Social-Spike: {l}" for l in spike_lines],
             )
 
@@ -1281,8 +1303,12 @@ def main():
                 total_value=portfolio.total_value(broker.get_prices(list(portfolio.all_positions().keys()))),
                 cash=portfolio.cash,
                 open_positions=len(portfolio.all_positions()),
-                phase=phase_ctrl.current_phase(portfolio.total_value({})),
-                progress_pct=phase_ctrl.progress_pct(portfolio.total_value({})),
+                phase=phase_ctrl.current_phase(portfolio.total_value(
+                    broker.get_prices(list(portfolio.all_positions().keys()))
+                )),
+                progress_pct=phase_ctrl.progress_pct(portfolio.total_value(
+                    broker.get_prices(list(portfolio.all_positions().keys()))
+                )),
                 actions_today=actions,
             )
 

@@ -172,9 +172,8 @@ class MacroCalendar:
             if not obs:
                 return None
             last_date = datetime.strptime(obs[0]["date"], "%Y-%m-%d").date()
-            # Nächste monatliche Veröffentlichung schätzen (+30 Tage)
-            next_date = last_date + timedelta(days=32)
-            next_date = next_date.replace(day=min(last_date.day, 28))
+            # Nächste monatliche Veröffentlichung: +30 Tage ist gut genug
+            next_date = last_date + timedelta(days=30)
             return next_date if next_date >= date.today() else None
         except Exception:
             return None
