@@ -21,6 +21,8 @@ from typing import List, Dict, Optional
 
 import yfinance as yf
 
+from analyzers.signal_expander import SignalDrivenExpander
+
 # ─── Scan-Universum ──────────────────────────────────────────────────────────
 SCAN_UNIVERSE = [
     # Mega-Cap Tech
@@ -56,6 +58,7 @@ class DynamicWatchlist:
         self.universe = universe or SCAN_UNIVERSE
         self.max_picks = max_picks
         self.refresh_hours = refresh_hours
+        self.expander = SignalDrivenExpander()
         os.makedirs(os.path.dirname(_DATA_FILE), exist_ok=True)
 
     def get_watchlist(self, active_tickers: List[str] = None) -> List[str]:
@@ -80,6 +83,13 @@ class DynamicWatchlist:
             tickers = cached["tickers"]
             age_h = self._cache_age_hours(cached)
             print(f"📋 Watchlist geladen (vor {age_h:.1f}h aktualisiert): {', '.join(tickers)}")
+
+        # Signal-Ticker (Insider, Social, Options, Contracts) anhängen
+        signal_tickers = self.expander.get_active_tickers()
+        for t in signal_tickers:
+            if t not in tickers:
+                tickers.append(t)
+                print(f"  📡 Signal-Ticker hinzugefügt: {t}")
 
         # Immer aktive Positionen einfügen
         for t in active_tickers:

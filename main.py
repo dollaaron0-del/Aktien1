@@ -79,11 +79,13 @@ from analyzers.market_schedule import MarketSchedule
 from analyzers.weekend_prep import WeekendPrep
 from analyzers.recession_detector import RecessionDetector, BULL, NEUTRAL, BEAR, CRISIS
 from analyzers.dynamic_watchlist import DynamicWatchlist
+from analyzers.signal_expander import SignalDrivenExpander
 from strategy.hedge_strategy import HedgeStrategy
 
 console = Console()
 
 _dynamic_watchlist = DynamicWatchlist(max_picks=config.scan_max_picks or 12) if config.auto_scan_watchlist else None
+_signal_expander   = SignalDrivenExpander()
 
 
 def _get_watchlist(portfolio: Portfolio) -> List[str]:
@@ -234,6 +236,11 @@ def run_analysis_cycle(
 
         news, sources_breakdown = collect_news(ticker, archive)
         price_data = yahoo.get_price_data(ticker)
+
+        # Feed news items to signal expander – detects unknown small-cap tickers
+        new_signal_tickers = _signal_expander.process_news_items(news)
+        if new_signal_tickers:
+            console.print(f"  [magenta]📡 Neue Signal-Ticker entdeckt: {', '.join(new_signal_tickers)}[/magenta]")
 
         # Load 30-day history, excluding articles already in current batch
         current_titles = {item.get("title") or "" for item in news}
@@ -643,8 +650,13 @@ def run_social_scan(pulse_db: SocialPulseDB, strategy: Optional[SwingStrategy] =
         except Exception:
             continue
     pulse_db.cleanup(keep_days=7)
+    _signal_expander.cleanup_expired()
     spikes = pulse_db.get_spikes(hours=2, min_mentions=3)
     if spikes:
+        # Feed spikes to signal expander for small-cap discovery
+        new_spike_tickers = _signal_expander.process_social_spikes(spikes)
+        if new_spike_tickers:
+            console.print(f"  [magenta]📡 Social-Spike-Ticker hinzugefügt: {', '.join(new_spike_tickers)}[/magenta]")
         console.print(f"\n[bold yellow]📡 Social-Spike erkannt:[/bold yellow]")
         for s in spikes:
             score_label = "🟢 Bullisch" if s["avg_score"] > 0.1 else ("🔴 Bärisch" if s["avg_score"] < -0.1 else "⚪ Neutral")

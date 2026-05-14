@@ -26,6 +26,7 @@ from analyzers.reflection_engine import ReflectionEngine
 from analyzers.recession_detector import RecessionDetector, BULL, NEUTRAL, BEAR, CRISIS
 from analyzers.technical_indicators import TechnicalIndicators
 from analyzers.dynamic_watchlist import DynamicWatchlist
+from analyzers.signal_expander import SignalDrivenExpander
 from collectors.social_scan import SocialPulseDB
 from analyzers.weekend_prep import WeekendPrep
 from portfolio.goal_risk_assessor import GoalRiskAssessor, OK, CAUTION, DANGER, UNREACHABLE
@@ -1034,9 +1035,44 @@ with tab_watchlist:
             use_container_width=True,
             hide_index=True,
         )
-        st.caption(f"Top {top_n} (grün markiert) werden als Watchlist verwendet.")
+        st.caption(f"Top {top_n} werden als Watchlist verwendet.")
     else:
         st.info("Noch keine Scan-Daten. Klicke 'Jetzt neu scannen'.")
+
+    st.divider()
+
+    # Signal-Ticker (Insider, Social, Options, Contracts)
+    st.subheader("📡 Signal-Ticker (Small-Cap-Radar)")
+    st.caption(
+        "Aktien die durch Insider-Käufe, Social-Spikes, Options-Flow oder "
+        "Regierungsaufträge aufgefallen sind. Werden temporär (7 Tage) beobachtet."
+    )
+    _expander = SignalDrivenExpander()
+    sig_entries = _expander.get_all_entries()
+    if sig_entries:
+        df_sig = pd.DataFrame(sig_entries).rename(columns={
+            "ticker":     "Ticker",
+            "reason":     "Signal-Grund",
+            "added_at":   "Entdeckt",
+            "expires_at": "Läuft ab",
+            "active":     "Aktiv",
+            "signals":    "Signale",
+        })
+        st.dataframe(
+            df_sig.style.map(
+                lambda v: "color: #00e676; font-weight:700" if v is True else
+                          ("color: #888" if v is False else ""),
+                subset=["Aktiv"],
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info(
+            "Noch keine Signal-Ticker entdeckt.  \n"
+            "Der Bot erkennt automatisch unbekannte Aktien aus Insider-Trades, "
+            "Social-Spikes und Options-Flow während des Betriebs."
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
