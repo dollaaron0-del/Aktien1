@@ -1,6 +1,8 @@
 import yfinance as yf
-import feedparser
+import requests
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
 from typing import List, Dict
 
 
@@ -35,24 +37,29 @@ class YahooCollector:
         except Exception:
             pass
 
-        # Yahoo RSS feed
+        # Yahoo RSS feed (parsed with stdlib xml to avoid feedparser/sgmllib dep)
         try:
             feed_url = RSS_FEEDS[0].format(ticker=ticker)
-            feed = feedparser.parse(feed_url)
-            for entry in feed.entries[:15]:
-                published_struct = entry.get("published_parsed")
-                if published_struct:
-                    published = datetime(*published_struct[:6])
-                    if published < cutoff:
-                        continue
-                else:
+            resp = requests.get(feed_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            root = ET.fromstring(resp.content)
+            ns = {"content": "http://purl.org/rss/1.0/modules/content/"}
+            for item in root.iter("item"):
+                title = (item.findtext("title") or "").strip()
+                link  = (item.findtext("link") or "").strip()
+                desc  = (item.findtext("description") or title).strip()
+                pub   = item.findtext("pubDate") or ""
+                try:
+                    published = parsedate_to_datetime(pub).replace(tzinfo=None)
+                except Exception:
                     published = datetime.utcnow()
+                if published < cutoff:
+                    continue
                 results.append({
                     "source": "Yahoo Finance RSS",
                     "ticker": ticker,
-                    "title": entry.get("title", ""),
-                    "text": entry.get("summary", entry.get("title", "")),
-                    "url": entry.get("link", ""),
+                    "title": title,
+                    "text": desc,
+                    "url": link,
                     "published_at": published.isoformat(),
                 })
         except Exception:
