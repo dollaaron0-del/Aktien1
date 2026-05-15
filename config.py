@@ -113,6 +113,22 @@ class Config:
         default_factory=lambda: int(os.getenv("SCAN_MAX_PICKS", "3"))
     )
 
+    # ── Ollama (lokales KI-Modell, Mac mini M5) ──────────────────────────────
+    # false = nur Claude API; true = Ollama filtert vor, Claude bestätigt
+    ollama_enabled: bool = field(
+        default_factory=lambda: os.getenv("OLLAMA_ENABLED", "false").lower() in ("1", "true", "yes")
+    )
+    ollama_url: str = field(
+        default_factory=lambda: os.getenv("OLLAMA_URL", "http://localhost:11434")
+    )
+    # Modell-Empfehlung: llama3.1:8b (16GB), qwen2.5:14b (24GB), llama3.3:70b (32GB)
+    ollama_model: str = field(
+        default_factory=lambda: os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+    )
+    ollama_timeout: int = field(
+        default_factory=lambda: int(os.getenv("OLLAMA_TIMEOUT", "30"))
+    )
+
     # ── Hedge / Rezessions-Absicherung ───────────────────────────────────────
     # Inverse ETFs kaufen wenn Marktregime BEAR oder CRISIS erreicht
     enable_hedging: bool = field(

@@ -1123,9 +1123,41 @@ with st.sidebar:
         )
     st.divider()
 
+    # ── Ollama / API-Kosten ────────────────────────────────────────────────────
+    st.markdown("### 🤖 KI-Backend & Kosten")
+    try:
+        from analyzers.api_cost_tracker import APICostTracker
+        cost_summary = APICostTracker().summary()
+        ollama_active = config.ollama_enabled
+
+        if ollama_active:
+            st.success(f"Ollama aktiv: `{config.ollama_model}`")
+        else:
+            st.info("Nur Claude API (Ollama deaktiviert)")
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.metric("Claude-Aufrufe gesamt", cost_summary["claude_calls"])
+            st.metric("Heute Claude-Kosten",   f"${cost_summary['today_cost_usd']:.2f}")
+            st.metric("Gesamt Claude-Kosten",  f"${cost_summary['total_cost_usd']:.2f}")
+        with c2:
+            st.metric("Ollama-Skips gesamt",   cost_summary["ollama_skips"],
+                      help="Analysen die Claude nicht gerufen haben")
+            st.metric("Heute gespart",         f"${cost_summary['today_saved_usd']:.2f}")
+            st.metric("Gesamt gespart",        f"${cost_summary['total_saved_usd']:.2f}")
+
+        skip_pct = cost_summary["skip_rate_pct"]
+        if cost_summary["total_analyses"] > 0:
+            st.progress(skip_pct / 100,
+                        text=f"Ollama-Einsparrate: {skip_pct:.1f}% der Analysen ohne Claude")
+    except Exception:
+        st.caption("Kosten-Tracking noch nicht verfügbar")
+    st.divider()
+
     # Config summary
     st.markdown("### ⚙️ Konfiguration")
-    st.write(f"**Modell:** {config.claude_model}")
+    st.write(f"**Claude Modell:** {config.claude_model}")
+    st.write(f"**Ollama Modell:** {config.ollama_model if config.ollama_enabled else '–'}")
     st.write(f"**Broker:** {config.broker_mode.upper()}")
     st.write(f"**Watchlist:** {', '.join(config.watchlist)}")
     st.write(f"**Kauf-Schwelle:** {config.buy_threshold:.2f}")

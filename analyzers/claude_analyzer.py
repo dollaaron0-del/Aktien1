@@ -4,6 +4,35 @@ from typing import List, Dict, Optional
 import anthropic
 from config import config
 from analyzers.technical_indicators import TechnicalIndicators, TechnicalSnapshot
+from analyzers.ollama_prescreener import OllamaPrescreener
+from analyzers.api_cost_tracker import APICostTracker
+from logger import get_logger
+
+log = get_logger(__name__)
+
+# Singleton-Instanzen (einmal erstellen, wiederverwenden)
+_prescreener: Optional[OllamaPrescreener] = None
+_cost_tracker: Optional[APICostTracker]   = None
+
+
+def _get_prescreener() -> Optional[OllamaPrescreener]:
+    global _prescreener
+    if not config.ollama_enabled:
+        return None
+    if _prescreener is None:
+        _prescreener = OllamaPrescreener(
+            base_url=config.ollama_url,
+            model=config.ollama_model,
+            timeout=config.ollama_timeout,
+        )
+    return _prescreener
+
+
+def _get_cost_tracker() -> APICostTracker:
+    global _cost_tracker
+    if _cost_tracker is None:
+        _cost_tracker = APICostTracker()
+    return _cost_tracker
 
 
 @dataclass
@@ -138,11 +167,35 @@ class ClaudeAnalyzer:
         historical_news: Optional[List[Dict]] = None,
         open_position: Optional[Dict] = None,
         lessons_memo: Optional[str] = None,
-        weekly_briefing: Optional[str] = None,  # weekend prep briefing
+        weekly_briefing: Optional[str] = None,
         technical: Optional[TechnicalSnapshot] = None,
     ) -> AnalysisResult:
         if not news_items:
             return self._empty_result(ticker, "Keine Nachrichtenartikel verfügbar")
+
+        # ── Ollama Pre-Screening ───────────────────────────────────────────────
+        prescreener  = _get_prescreener()
+        cost_tracker = _get_cost_tracker()
+
+        if prescreener:
+            prescreen = prescreener.prescreen(
+                ticker=ticker,
+                news_items=news_items,
+                has_open_position=bool(open_position),
+            )
+
+            if not prescreen.send_to_claude:
+                # Ollama sagt: kein Claude-Aufruf nötig
+                log.info(
+                    "Ollama SKIP [%s]: score=%.2f %s – %s",
+                    ticker, prescreen.score, prescreen.direction, prescreen.skip_reason,
+                )
+                cost_tracker.record(claude_called=False, ollama_used=True)
+                # Gib direktes Ergebnis zurück basierend auf Ollama-Score
+                return self._result_from_prescreen(ticker, prescreen, len(news_items))
+
+            if not prescreen.ollama_used:
+                cost_tracker.record_fallback()
 
         # Auto-calculate technicals if not provided
         if technical is None:
@@ -198,6 +251,9 @@ class ClaudeAnalyzer:
             system=system_prompt,
             messages=[{"role": "user", "content": prompt}],
         )
+
+        cost_tracker = _get_cost_tracker()
+        cost_tracker.record(claude_called=True, ollama_used=bool(prescreener))
 
         raw = message.content[0].text.strip()
         return self._parse_response(ticker, raw, len(news_items))
@@ -270,6 +326,38 @@ class ClaudeAnalyzer:
             )
         except (json.JSONDecodeError, KeyError, ValueError):
             return self._empty_result(ticker, f"Parse-Fehler: {raw[:200]}")
+
+    def _result_from_prescreen(self, ticker: str, prescreen, sources: int) -> AnalysisResult:
+        """Erzeugt AnalysisResult direkt aus Ollama-Score (kein Claude-Aufruf)."""
+        from analyzers.ollama_prescreener import PrescreenResult
+        score      = prescreen.score
+        direction  = prescreen.direction
+        confidence = prescreen.confidence
+
+        if score < 0.35:
+            recommendation = "SELL" if score < 0.25 else "HOLD"
+        elif score > 0.70:
+            recommendation = "HOLD"   # Nie BUY ohne Claude
+        else:
+            recommendation = "HOLD"
+
+        return AnalysisResult(
+            ticker=ticker,
+            sentiment_score=score,
+            direction=direction,
+            confidence=confidence,
+            recommendation=recommendation,
+            entry_rationale=f"[Ollama] {prescreen.reason}",
+            risk_factors=[],
+            key_catalysts=[],
+            suggested_hold_days=7,
+            target_price=None,
+            target_price_rationale="",
+            thesis_valid=None,
+            thesis_break_reason="",
+            sources_used=sources,
+            raw_summary=f"Ollama Pre-Screen: {direction} ({score:.2f}) – Claude nicht gerufen.",
+        )
 
     def _empty_result(self, ticker: str, reason: str) -> AnalysisResult:
         return AnalysisResult(
