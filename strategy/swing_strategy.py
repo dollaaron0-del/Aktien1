@@ -92,6 +92,15 @@ class SwingStrategy:
         portfolio_value = self.portfolio.total_value(
             self.broker.get_prices(list(self.portfolio.all_positions().keys()) + [ticker])
         )
+
+        # Skalierungs-Check: Positionslimit für aktuelles Portfolio
+        open_count  = len(self.portfolio.all_positions())
+        max_allowed = self.focus.get_max_positions(portfolio_value)
+        if open_count >= max_allowed:
+            return (
+                f"[{ticker}] Positionslimit erreicht ({open_count}/{max_allowed} bei "
+                f"${portfolio_value:,.0f} Portfolio) – kein neuer Kauf."
+            )
         adaptive_threshold = self.tracker.get_adaptive_threshold(config.buy_threshold)
         phase_modifier = self.phase_ctrl.get_entry_threshold_modifier(portfolio_value)
         effective_threshold = self.focus.get_effective_threshold(

@@ -13,12 +13,38 @@ TARGET_GOAL (Bestimmtes Ziel):
   Zielbetrag bis Zieldatum. Risikobereitschaft skaliert je nachdem,
   wie weit man vom Ziel entfernt ist – aggressiver wenn hinter Plan,
   defensiver wenn voraus.
+
+Skalierung (automatisch nach Portfolio-Größe):
+  Je größer das Portfolio, desto kleiner die einzelnen Positionen
+  und desto mehr Positionen gleichzeitig → bessere Risikostreuung.
 """
 
 from dataclasses import dataclass
 from datetime import datetime, date
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple
 import math
+
+
+# ── Skalierungs-Tabelle ────────────────────────────────────────────────────────
+# (min_portfolio_value, max_positions, max_position_pct)
+# Konservative Strategie: mehr Diversifikation bei mehr Kapital.
+_SCALING_TIERS: list[Tuple[float, int, float]] = [
+    (500_000, 25, 0.04),   # > $500k  → 25 Positionen à max 4%
+    (200_000, 18, 0.05),   # > $200k  → 18 Positionen à max 5%
+    ( 75_000, 12, 0.08),   # > $75k   → 12 Positionen à max 8%
+    ( 25_000,  8, 0.12),   # > $25k   →  8 Positionen à max 12%
+    (      0,  5, 0.20),   # bis $25k →  5 Positionen à max 20%
+]
+
+
+def get_scaling(portfolio_value: float) -> Tuple[int, float]:
+    """
+    Gibt (max_positions, max_position_pct) für den aktuellen Portfolio-Wert zurück.
+    """
+    for min_val, max_pos, max_pct in _SCALING_TIERS:
+        if portfolio_value >= min_val:
+            return max_pos, max_pct
+    return 5, 0.20
 
 
 @dataclass
@@ -143,12 +169,37 @@ class FocusController:
         return self.profile.take_profit_pct
 
     def get_max_position_pct(self, portfolio_value: float) -> float:
+        """
+        Positionsgröße: das Minimum aus dem Profil-Limit und dem Skalierungs-Limit.
+        Bei TARGET_GOAL zusätzlich dynamisch nach Zielfortschritt.
+        """
+        _, scale_pct = get_scaling(portfolio_value)
+
         if self.mode == FocusMode.TARGET_GOAL and self.target_amount:
             urgency = self._goal_urgency(portfolio_value)
-            # Behind plan → allow larger positions (but max 30%)
+            # Behind plan → allow larger positions, but never beyond scaling limit
             scaled = self.profile.max_position_pct * urgency
-            return max(0.10, min(scaled, 0.30))
-        return self.profile.max_position_pct
+            return max(0.04, min(scaled, scale_pct * 1.5))
+
+        # Nimm das konservativere der beiden Limits
+        return min(self.profile.max_position_pct, scale_pct)
+
+    def get_max_positions(self, portfolio_value: float) -> int:
+        """
+        Maximale Anzahl gleichzeitig offener Positionen basierend auf Portfolio-Größe.
+        """
+        max_pos, _ = get_scaling(portfolio_value)
+        return max_pos
+
+    def scaling_info(self, portfolio_value: float) -> Dict:
+        """Gibt Skalierungs-Info für Anzeige im Dashboard zurück."""
+        max_pos, max_pct = get_scaling(portfolio_value)
+        return {
+            "portfolio_value":   round(portfolio_value, 2),
+            "max_positions":     max_pos,
+            "max_position_pct":  max_pct,
+            "max_position_usd":  round(portfolio_value * max_pct, 2),
+        }
 
     def cap_hold_days(self, claude_suggestion: int) -> int:
         """Cap Claude's suggestion at the mode's preferred holding period."""
@@ -187,15 +238,18 @@ class FocusController:
     # ── Reporting ─────────────────────────────────────────────────────────────
 
     def get_info(self, portfolio_value: float) -> Dict:
+        scale = self.scaling_info(portfolio_value)
         info = {
-            "mode": self.mode,
-            "label": self.profile.label,
-            "description": self.profile.description,
-            "stop_loss_pct": self.profile.stop_loss_pct,
-            "take_profit_pct": self.profile.take_profit_pct,
-            "max_position_pct": self.profile.max_position_pct,
-            "min_sentiment": self.profile.min_sentiment_for_buy,
+            "mode":               self.mode,
+            "label":              self.profile.label,
+            "description":        self.profile.description,
+            "stop_loss_pct":      self.profile.stop_loss_pct,
+            "take_profit_pct":    self.profile.take_profit_pct,
+            "max_position_pct":   scale["max_position_pct"],   # skaliert, nicht Profil-Default
+            "min_sentiment":      self.profile.min_sentiment_for_buy,
             "preferred_hold_days": self.profile.preferred_hold_days,
+            "max_positions":      scale["max_positions"],
+            "max_position_usd":   scale["max_position_usd"],
         }
         if self.mode == FocusMode.TARGET_GOAL and self.target_amount and self.target_date:
             urgency = self._goal_urgency(portfolio_value)

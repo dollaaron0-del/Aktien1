@@ -1101,12 +1101,20 @@ with st.sidebar:
 
     # Focus mode
     st.markdown("### 🎯 Fokus-Modus")
-    fm_info = focus_ctrl.get_info(total_value)
+    fm_info   = focus_ctrl.get_info(total_value)
+    scale_info = focus_ctrl.scaling_info(total_value)
     st.markdown(f"**{fm_info['label']}**")
     st.caption(fm_info["description"])
     st.write(f"SL: **{fm_info['stop_loss_pct']*100:.0f}%** · TP: **{fm_info['take_profit_pct']*100:.0f}%**")
-    st.write(f"Max Position: **{fm_info['max_position_pct']*100:.0f}%** · Halt: **{fm_info['preferred_hold_days']}d**")
-    st.write(f"Min Sentiment: **{fm_info['min_sentiment']:.2f}**")
+    st.write(f"Max Position: **{scale_info['max_position_pct']*100:.0f}%** (${scale_info['max_position_usd']:,.0f}) · Halt: **{fm_info['preferred_hold_days']}d**")
+    st.write(f"Max Positionen: **{scale_info['max_positions']}** · Min Sentiment: **{fm_info['min_sentiment']:.2f}**")
+
+    open_count = len(portfolio.all_positions())
+    slots_free = scale_info["max_positions"] - open_count
+    st.progress(
+        min(open_count / scale_info["max_positions"], 1.0),
+        text=f"Positionen: {open_count}/{scale_info['max_positions']} ({slots_free} frei)"
+    )
 
     if fm_info["mode"] == FocusMode.TARGET_GOAL and fm_info.get("target_amount"):
         st.progress(
