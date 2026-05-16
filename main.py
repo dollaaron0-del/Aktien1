@@ -25,6 +25,7 @@ Starten:  python main.py
           python main.py --goal          (Ziel-Analyse: Wahrscheinlichkeit und Status)
           python main.py --optimize      (Parameter-Optimierung basierend auf Trade-History)
           python main.py --optimize --apply  (Vorschläge direkt in .env schreiben)
+          python main.py --margin        (Margin-Bereitschaft prüfen und Empfehlung anzeigen)
 
 Analyse-Zeitplan (.env):
   MARKET_EXCHANGES=XETRA,NYSE,TSE    # Vollanalyse 30 Min vor Börseneröffnung
@@ -932,6 +933,46 @@ def show_regime(detector: RecessionDetector):
         console.print("[dim]Keine Hedges empfohlen – Regime zu gut.[/dim]")
 
 
+def _run_margin_check(tracker) -> None:
+    """Zeigt Margin-Bereitschaft und aktuelle Einstellung."""
+    from analyzers.margin_readiness import MarginReadinessChecker
+    checker  = MarginReadinessChecker(tracker)
+    readiness = checker.check()
+
+    console.rule("[bold blue]Margin-Bereitschaft")
+    console.print(readiness.to_text())
+
+    # Aktuelle Einstellung anzeigen
+    margin_active = config.use_margin
+    factor        = config.margin_factor
+    status_color  = "green" if margin_active else "yellow"
+    status_label  = f"AKTIV ({factor:.1f}×)" if margin_active else "DEAKTIVIERT"
+
+    console.print(
+        f"\nAktuelle Einstellung: [{status_color}]{status_label}[/{status_color}]"
+    )
+
+    if readiness.ready and not margin_active:
+        console.print(
+            "\n[bold green]Bot ist bereit für Margin![/bold green]\n"
+            "Zum Aktivieren in .env eintragen:\n"
+            f"  [cyan]USE_MARGIN=true[/cyan]\n"
+            f"  [cyan]MARGIN_FACTOR={readiness.recommended_factor:.2f}[/cyan]\n"
+            f"  [cyan]MARGIN_MIN_CONFIDENCE=HIGH[/cyan]\n"
+            "[dim]⚠ Nur mit Alpaca Margin-Account (kein Cash-Account)![/dim]"
+        )
+    elif not readiness.ready and margin_active:
+        console.print(
+            "\n[bold red]⚠ Warnung:[/bold red] Margin ist aktiv, aber der Bot "
+            "hat die Bereitschaftskriterien noch nicht erfüllt.\n"
+            "Empfehlung: [cyan]USE_MARGIN=false[/cyan] in .env setzen."
+        )
+    elif readiness.ready and margin_active:
+        console.print(
+            f"\n[bold green]✓ Margin läuft korrekt mit {factor:.1f}× Hebel.[/bold green]"
+        )
+
+
 def _run_optimizer(tracker, apply: bool = False) -> None:
     """Zeigt Parameter-Optimierungsvorschläge und schreibt sie optional in .env."""
     from analyzers.parameter_optimizer import ParameterOptimizer
@@ -1153,6 +1194,7 @@ def main():
     parser.add_argument("--goal", action="store_true", help="Ziel-Analyse: Wahrscheinlichkeit und Status")
     parser.add_argument("--optimize", action="store_true", help="Parameter-Optimierung basierend auf Trade-History")
     parser.add_argument("--apply", action="store_true", help="Optimierungs-Vorschläge in .env schreiben")
+    parser.add_argument("--margin", action="store_true", help="Margin-Bereitschaft prüfen und Empfehlung anzeigen")
     args = parser.parse_args()
 
     if args.dashboard:
@@ -1265,6 +1307,10 @@ def main():
 
     if args.optimize:
         _run_optimizer(tracker, apply=args.apply)
+        return
+
+    if args.margin:
+        _run_margin_check(tracker)
         return
 
     if not config.anthropic_api_key:

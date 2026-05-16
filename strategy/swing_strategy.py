@@ -399,7 +399,19 @@ class SwingStrategy:
         earn_adj     = self.earn_surp.get_sentiment_adjustment(ticker)
         total_mult   = conf_mult * sector_mult * macro_mult
         max_invest   = portfolio_value * max_pos_pct * total_mult
-        invest = min(max_invest, self.portfolio.cash * 0.95)
+
+        # Margin: nur bei HIGH Confidence und wenn aktiviert
+        margin_factor = 1.0
+        using_margin = False
+        if (config.use_margin
+                and analysis.confidence == config.margin_min_confidence
+                and config.margin_factor > 1.0):
+            margin_factor = config.margin_factor
+            using_margin = True
+            log.info("[%s] Margin aktiv: %.1f× (HIGH Confidence)", ticker, margin_factor)
+
+        cash_limit = self.portfolio.cash * 0.95 * margin_factor
+        invest = min(max_invest * margin_factor, cash_limit)
 
         if invest < 50:
             return f"[{ticker}] Nicht genug freies Kapital für neuen Trade."
@@ -468,12 +480,13 @@ class SwingStrategy:
         earn_info = self.earn_surp.check(ticker)
         earn_tag  = f" | {EarningsSurprise.format_surprise(earn_info)}" if earn_info.get("label") not in ("UNKNOWN", "IN_LINE", None) else ""
 
+        margin_tag = f" | ⚡ MARGIN {margin_factor:.1f}×" if using_margin else ""
         return (
             f"[{ticker}] GEKAUFT – {shares} Stück @ ${price:.2f} "
             f"| SL: ${stop_loss} | {tp_source} "
             f"| Haltedauer: {capped_hold}d "
             f"| Investiert: ${shares * price:.2f}"
-            f"{earn_tag}"
+            f"{earn_tag}{margin_tag}"
         )
 
     def _do_close(self, ticker: str, pos: Position, price: float, reason: str, days_held: int = 0) -> float:
