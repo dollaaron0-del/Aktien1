@@ -22,6 +22,7 @@ Starten:  python main.py
           python main.py --queue         (Warteschlange ausstehender Signale)
           python main.py --weekend       (Wochenvorbereitung jetzt ausführen)
           python main.py --briefing      (Letztes Wochenbriefing anzeigen)
+          python main.py --goal          (Ziel-Analyse: Wahrscheinlichkeit und Status)
 
 Analyse-Zeitplan (.env):
   MARKET_EXCHANGES=XETRA,NYSE,TSE    # Vollanalyse 30 Min vor Börseneröffnung
@@ -928,6 +929,99 @@ def show_regime(detector: RecessionDetector):
         console.print("[dim]Keine Hedges empfohlen – Regime zu gut.[/dim]")
 
 
+def show_goal(goal_risk: GoalRiskAssessor, portfolio: Portfolio, broker, tracker):
+    """Zeigt aktuellen Zielstatus mit Wahrscheinlichkeit und Empfehlungen."""
+    console.rule("[bold blue]Ziel-Analyse (TARGET_GOAL)")
+
+    if not goal_risk.active:
+        console.print(
+            "[yellow]Kein aktives Ziel gesetzt.[/yellow]\n"
+            "In .env eintragen:\n"
+            "  FOCUS_MODE=TARGET_GOAL\n"
+            "  TARGET_GOAL_AMOUNT=2000\n"
+            "  TARGET_GOAL_DATE=2025-12-31"
+        )
+        return
+
+    prices = broker.get_prices(list(portfolio.all_positions().keys()))
+    total = portfolio.total_value(prices)
+    stats = tracker.get_stats()
+    assessment = goal_risk.assess(total, stats)
+    if not assessment:
+        console.print("[dim]Keine Bewertung möglich.[/dim]")
+        return
+
+    risk_colors = {"OK": "green", "CAUTION": "yellow", "DANGER": "red", "UNREACHABLE": "bold red"}
+    risk_icons  = {"OK": "✓", "CAUTION": "⚠", "DANGER": "🚨", "UNREACHABLE": "✗"}
+    color = risk_colors.get(assessment.risk_level, "white")
+    icon  = risk_icons.get(assessment.risk_level, "?")
+
+    prob_bar = _progress_bar(assessment.probability_pct)
+    progress_pct = min(100.0, total / assessment.target_value * 100)
+    progress_bar = _progress_bar(progress_pct)
+
+    lines = [
+        f"Ziel:              ${assessment.target_value:,.2f}",
+        f"Aktuell:           ${assessment.portfolio_value:,.2f}",
+        f"Fortschritt:       {progress_bar} {progress_pct:.1f}%",
+        f"Tage bis Zieldatum:{assessment.days_remaining}",
+        f"",
+        f"Wahrscheinlichkeit: {prob_bar} [bold]{assessment.probability_pct:.0f}%[/bold]",
+        f"Benötigte Rendite:  {assessment.required_annual_return*100:.1f}% p.a.",
+        f"Realistische Rendite:{assessment.realistic_annual_return*100:.1f}% p.a.",
+        f"",
+        f"Status: [{color}]{icon} {assessment.risk_level}[/{color}]",
+        f"Hinweis: {assessment.note}",
+    ]
+    if assessment.actions:
+        lines.append("")
+        lines.append("Empfehlungen:")
+        for a in assessment.actions:
+            lines.append(f"  → {a}")
+
+    border = {"OK": "green", "CAUTION": "yellow", "DANGER": "red", "UNREACHABLE": "red"}.get(
+        assessment.risk_level, "cyan"
+    )
+    console.print(Panel("\n".join(lines), title="Zielerreichungs-Analyse", border_style=border))
+
+    if assessment.goal_reached:
+        console.print(
+            "\n[bold green]🎉 Ziel erreicht![/bold green] "
+            f"Du kannst jetzt ${assessment.target_value:,.2f} entnehmen.\n"
+            "[dim]Tipp: FOCUS_MODE auf WEALTH_BUILDING zurückstellen nach der Entnahme.[/dim]"
+        )
+
+
+def _check_goal_reached(
+    goal_risk: GoalRiskAssessor,
+    portfolio: Portfolio,
+    broker,
+    tracker,
+    notifier: "TelegramNotifier",
+    _notified: list,
+) -> None:
+    """Sendet einmalig eine Telegram-Nachricht wenn das Ziel erreicht ist."""
+    if not goal_risk.active or _notified:
+        return
+    try:
+        prices = broker.get_prices(list(portfolio.all_positions().keys()))
+        total = portfolio.total_value(prices)
+        if total < goal_risk.target_value:
+            return
+        assessment = goal_risk.assess(total, tracker.get_stats())
+        if assessment and assessment.goal_reached:
+            _notified.append(True)
+            notifier.send(
+                f"🎉 *ZIEL ERREICHT!*\n\n"
+                f"Portfolio: ${total:,.2f}\n"
+                f"Ziel: ${goal_risk.target_value:,.2f}\n\n"
+                f"Du kannst jetzt ${goal_risk.target_value:,.2f} entnehmen.\n"
+                f"Danach FOCUS\\_MODE in der .env zurück auf WEALTH\\_BUILDING setzen."
+            )
+    except Exception:
+        pass
+
+
 def run_backtest(period: str = "2y"):
     console.rule(f"[bold blue]Backtest – {period}")
     bt = Backtester(
@@ -1009,6 +1103,7 @@ def main():
     parser.add_argument("--weekend", action="store_true", help="Wochenvorbereitung jetzt ausführen")
     parser.add_argument("--briefing", action="store_true", help="Letztes Wochenbriefing anzeigen")
     parser.add_argument("--regime", action="store_true", help="Aktuelles Marktregime analysieren")
+    parser.add_argument("--goal", action="store_true", help="Ziel-Analyse: Wahrscheinlichkeit und Status")
     args = parser.parse_args()
 
     if args.dashboard:
@@ -1113,6 +1208,10 @@ def main():
     if args.regime:
         recession_detector = RecessionDetector(anthropic_api_key=config.anthropic_api_key)
         show_regime(recession_detector)
+        return
+
+    if args.goal:
+        show_goal(goal_risk, portfolio, broker, tracker)
         return
 
     if not config.anthropic_api_key:
@@ -1281,6 +1380,13 @@ def main():
     schedule.every().hour.do(strategy.check_open_positions)
     if config.enable_social_scan:
         schedule.every().hour.do(_social_scan_job)
+
+    # Goal-reached check (einmalige Telegram-Nachricht wenn Ziel erreicht)
+    _goal_notified: list = []
+    if goal_risk.active:
+        schedule.every().hour.do(
+            lambda: _check_goal_reached(goal_risk, portfolio, broker, tracker, TelegramNotifier(), _goal_notified)
+        )
 
     # Periodic regime check + hedge exit monitoring
     if hedge_strategy_inst:

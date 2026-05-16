@@ -40,6 +40,7 @@ class GoalAssessment:
     realistic_annual_return: float    # basiert auf bisherigen Trades
     shortfall_pct: float              # wie weit fehlt man noch (%)
     risk_level: str                   # OK | CAUTION | DANGER | UNREACHABLE
+    probability_pct: float = 0.0      # Wahrscheinlichkeit Ziel zu erreichen (0–100)
     actions: List[str] = field(default_factory=list)
     note: str = ""
 
@@ -47,7 +48,12 @@ class GoalAssessment:
     def on_track(self) -> bool:
         return self.risk_level == OK
 
+    @property
+    def goal_reached(self) -> bool:
+        return self.portfolio_value >= self.target_value
+
     def to_text(self) -> str:
+        prob_bar = _make_bar(self.probability_pct)
         lines = [
             f"=== ZIEL-RISIKOANALYSE ===",
             f"Portfolio:       ${self.portfolio_value:,.2f}",
@@ -56,6 +62,7 @@ class GoalAssessment:
             f"Tage bis Ziel:   {self.days_remaining}",
             f"Benötigte Rendite p.a.: {self.required_annual_return*100:.1f}%",
             f"Realistische Rendite p.a.: {self.realistic_annual_return*100:.1f}%",
+            f"Wahrscheinlichkeit: {self.probability_pct:.0f}% {prob_bar}",
             f"Risiko-Level:    {self.risk_level}",
         ]
         if self.note:
@@ -66,6 +73,23 @@ class GoalAssessment:
                 lines.append(f"  → {a}")
         lines.append("=" * 30)
         return "\n".join(lines)
+
+
+def _make_bar(pct: float, width: int = 10) -> str:
+    filled = round(pct / 100 * width)
+    return "[" + "█" * filled + "░" * (width - filled) + "]"
+
+
+def _calc_probability(required: float, realistic: float, risk_level: str) -> float:
+    """Schätzt Zielerreichungswahrscheinlichkeit in Prozent (0–100)."""
+    if risk_level == OK and required == 0.0:
+        return 99.0  # bereits erreicht
+    if realistic <= 0 or required == float("inf"):
+        return 3.0
+    ratio = required / max(realistic, 0.001)
+    # Sigmoid-ähnliche Funktion: ratio=0.5→88%, ratio=1.0→65%, ratio=1.5→40%, ratio=2.5→15%
+    raw = 90.0 * math.exp(-0.85 * max(ratio - 0.3, 0))
+    return round(min(92.0, max(3.0, raw)), 1)
 
 
 class GoalRiskAssessor:
@@ -109,17 +133,20 @@ class GoalRiskAssessor:
         days_remaining = (self._target_date - today).days
 
         if days_remaining <= 0:
-            # Zieldatum bereits überschritten
+            reached = portfolio_value >= self.target_value
+            shortfall = max(0.0, (self.target_value - portfolio_value) / self.target_value * 100)
+            lvl = OK if reached else UNREACHABLE
             return GoalAssessment(
                 portfolio_value=portfolio_value,
                 target_value=self.target_value,
                 days_remaining=0,
                 required_annual_return=float("inf"),
                 realistic_annual_return=0.0,
-                shortfall_pct=max(0.0, (self.target_value - portfolio_value) / self.target_value * 100),
-                risk_level=UNREACHABLE if portfolio_value < self.target_value else OK,
-                note="Zieldatum überschritten.",
-                actions=["Zieldatum neu setzen (TARGET_GOAL_DATE in .env)"] if portfolio_value < self.target_value else [],
+                shortfall_pct=shortfall,
+                risk_level=lvl,
+                probability_pct=99.0 if reached else 3.0,
+                note="Zieldatum überschritten." if not reached else "Ziel erreicht!",
+                actions=["Zieldatum neu setzen (TARGET_GOAL_DATE in .env)"] if not reached else [],
             )
 
         shortfall_pct = max(0.0, (self.target_value - portfolio_value) / self.target_value * 100)
@@ -134,6 +161,7 @@ class GoalRiskAssessor:
                 realistic_annual_return=self._realistic_return(tracker_stats),
                 shortfall_pct=0.0,
                 risk_level=OK,
+                probability_pct=99.0,
                 note="Ziel bereits erreicht!",
             )
 
@@ -145,6 +173,7 @@ class GoalRiskAssessor:
         risk_level, actions, note = self._classify(
             required_annual, realistic_annual, shortfall_pct, years_left, portfolio_value
         )
+        probability = _calc_probability(required_annual, realistic_annual, risk_level)
 
         return GoalAssessment(
             portfolio_value=portfolio_value,
@@ -154,6 +183,7 @@ class GoalRiskAssessor:
             realistic_annual_return=realistic_annual,
             shortfall_pct=shortfall_pct,
             risk_level=risk_level,
+            probability_pct=probability,
             actions=actions,
             note=note,
         )
