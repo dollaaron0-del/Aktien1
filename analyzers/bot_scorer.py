@@ -5,7 +5,17 @@ Jeder abgeschlossene Trade gibt Punkte oder zieht sie ab.
 Je höher der Margin-Tier, desto stärker werden Punkte multipliziert –
 gute Trades zählen mehr, schlechte aber auch.
 
-Meilensteine schalten Features frei und senden Telegram-Benachrichtigungen.
+Der Score verändert das VERHALTEN des Bots direkt:
+  Niedriger Score → Bot wird eingeschränkt (Karotte entzogen)
+  Hoher Score     → Bot bekommt mehr Freiheiten (Karotte näher)
+
+Score-Stufen und ihre Auswirkungen:
+   0–24  Eingeschränkt:  Kaufschwelle +0.05, Positionen −2, Größe −30%
+  25–39  Lernend:        Kaufschwelle +0.03, Positionen −1, Größe −15%
+  40–59  Standard:       Keine Änderung (Baseline)
+  60–74  Stark:          Kaufschwelle −0.02, Positionen +1, Größe +10%
+  75–89  Exzellent:      Kaufschwelle −0.04, Positionen +2, Größe +25%
+  90–100 Elite:          Kaufschwelle −0.06, Positionen +3, Größe +40%
 
 Persistenz: data/bot_score.json
 """
@@ -46,6 +56,42 @@ MILESTONES: Dict[int, Tuple[str, str, str]] = {
 }
 
 
+@dataclass(frozen=True)
+class ScoreModifier:
+    """Verhaltensänderungen basierend auf aktuellem Score."""
+    score_range:       str    # Label der Stufe
+    threshold_adj:     float  # Kaufschwellen-Anpassung (±)
+    position_count_adj: int   # Zusätzliche/weniger Positionen erlaubt
+    position_size_mult: float # Multiplikator auf Positionsgröße (1.0 = keine Änderung)
+    hold_days_mult:    float  # Haltedauer-Multiplikator
+    description:       str
+
+
+# Score-Stufen → Verhaltensänderungen
+_SCORE_LEVELS: list[tuple[int, ScoreModifier]] = [
+    (90, ScoreModifier("Elite",          -0.06, +3, 1.40, 1.20,
+                       "Maximale Freiheit: mehr Positionen, größere Größen, niedrigere Schwelle")),
+    (75, ScoreModifier("Exzellent",      -0.04, +2, 1.25, 1.10,
+                       "Erweiterter Spielraum: mehr Signale erlaubt")),
+    (60, ScoreModifier("Stark",          -0.02, +1, 1.10, 1.05,
+                       "Leicht mehr Spielraum: eine zusätzliche Position")),
+    (40, ScoreModifier("Standard",        0.00,  0, 1.00, 1.00,
+                       "Normale Parameter – Baseline")),
+    (25, ScoreModifier("Lernend",        +0.03, -1, 0.85, 0.90,
+                       "Leicht eingeschränkt: etwas konservativer")),
+    ( 0, ScoreModifier("Eingeschränkt",  +0.05, -2, 0.70, 0.80,
+                       "Stark eingeschränkt: Bot muss erst wieder Vertrauen aufbauen")),
+]
+
+
+def get_modifiers(score: float) -> ScoreModifier:
+    """Gibt die aktiven Verhaltens-Modifier für einen gegebenen Score zurück."""
+    for threshold, mod in _SCORE_LEVELS:
+        if score >= threshold:
+            return mod
+    return _SCORE_LEVELS[-1][1]
+
+
 @dataclass
 class ScoreEntry:
     date:        str
@@ -80,13 +126,23 @@ class BotScore:
         return "█" * filled + "░" * (10 - filled)
 
     def to_text(self) -> str:
+        mod = get_modifiers(self.current)
+        thr_sign = f"{mod.threshold_adj:+.2f}" if mod.threshold_adj != 0 else "±0.00"
+        pos_sign = f"{mod.position_count_adj:+d}" if mod.position_count_adj != 0 else "±0"
+        size_pct = f"{(mod.position_size_mult - 1) * 100:+.0f}%"
         lines = [
             "=== BOT-SCORE ===",
             f"Score:   {self.current:.1f}/100  {self.bar}",
             f"Status:  {self.label}",
-            f"Peak:    {self.peak:.1f}",
-            f"Trades:  {self.trades_scored}",
+            f"Peak:    {self.peak:.1f}  |  Trades: {self.trades_scored}",
             f"Verdient: +{self.total_earned:.1f} Pkt  |  Verloren: -{self.total_lost:.1f} Pkt",
+            "",
+            f"Aktive Verhaltens-Modifier ({mod.score_range}):",
+            f"  Kaufschwelle:    {thr_sign}  (niedriger = mehr Signale erlaubt)",
+            f"  Max. Positionen: {pos_sign}",
+            f"  Positionsgröße:  {size_pct}",
+            f"  Haltedauer:      {(mod.hold_days_mult - 1)*100:+.0f}%",
+            f"  → {mod.description}",
         ]
         if self.history:
             lines += ["", "Letzte 10 Trades:"]

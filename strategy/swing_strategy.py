@@ -93,18 +93,23 @@ class SwingStrategy:
             self.broker.get_prices(list(self.portfolio.all_positions().keys()) + [ticker])
         )
 
-        # Skalierungs-Check: Positionslimit für aktuelles Portfolio
+        # Score-Modifier für Positions-Limit und Kaufschwelle
+        from analyzers.bot_scorer import BotScorer, get_modifiers as _get_score_mod
+        _smod = _get_score_mod(BotScorer().get().current)
+
+        # Skalierungs-Check: Positionslimit (Score-adjustiert)
         open_count  = len(self.portfolio.all_positions())
-        max_allowed = self.focus.get_max_positions(portfolio_value)
+        max_allowed = max(1, self.focus.get_max_positions(portfolio_value) + _smod.position_count_adj)
         if open_count >= max_allowed:
             return (
                 f"[{ticker}] Positionslimit erreicht ({open_count}/{max_allowed} bei "
-                f"${portfolio_value:,.0f} Portfolio) – kein neuer Kauf."
+                f"${portfolio_value:,.0f} Portfolio, Score-Mod: {_smod.position_count_adj:+d}) – kein neuer Kauf."
             )
         adaptive_threshold = self.tracker.get_adaptive_threshold(config.buy_threshold)
         phase_modifier = self.phase_ctrl.get_entry_threshold_modifier(portfolio_value)
+        # Score-Modifier auf Kaufschwelle anwenden
         effective_threshold = self.focus.get_effective_threshold(
-            adaptive_threshold + phase_modifier, portfolio_value
+            adaptive_threshold + phase_modifier + _smod.threshold_adj, portfolio_value
         )
 
         if analysis.sentiment_score < effective_threshold:
@@ -387,6 +392,10 @@ class SwingStrategy:
         portfolio_value: float,
         sources_breakdown: Dict[str, int],
     ) -> str:
+        # Score-basierte Verhaltens-Modifier laden
+        from analyzers.bot_scorer import BotScorer, get_modifiers
+        _score_mod = get_modifiers(BotScorer().get().current)
+
         max_pos_pct = self.focus.get_max_position_pct(portfolio_value)
         if self.kelly:
             kelly_pct = self.kelly.compute(fallback_pct=max_pos_pct)
@@ -397,7 +406,7 @@ class SwingStrategy:
         sector_mult  = self.sector_rot.get_position_size_modifier(ticker)
         macro_mult   = self.macro_cal.get_position_size_modifier()
         earn_adj     = self.earn_surp.get_sentiment_adjustment(ticker)
-        total_mult   = conf_mult * sector_mult * macro_mult
+        total_mult   = conf_mult * sector_mult * macro_mult * _score_mod.position_size_mult
         max_invest   = portfolio_value * max_pos_pct * total_mult
 
         # Margin: nur bei HIGH Confidence und wenn aktiviert
@@ -437,7 +446,8 @@ class SwingStrategy:
             take_profit = fixed_tp
             tp_source = f"Fix {tp_pct*100:.0f}% → TP ${take_profit:.2f}"
 
-        capped_hold = self.focus.cap_hold_days(analysis.suggested_hold_days)
+        raw_hold    = round(analysis.suggested_hold_days * _score_mod.hold_days_mult)
+        capped_hold = self.focus.cap_hold_days(raw_hold)
 
         position = Position(
             ticker=ticker,
@@ -490,12 +500,13 @@ class SwingStrategy:
         earn_tag  = f" | {EarningsSurprise.format_surprise(earn_info)}" if earn_info.get("label") not in ("UNKNOWN", "IN_LINE", None) else ""
 
         margin_tag = f" | ⚡ MARGIN {margin_factor:.1f}×" if using_margin else ""
+        score_tag  = f" | Score {BotScorer().get().current:.0f} ({_score_mod.score_range})"
         return (
             f"[{ticker}] GEKAUFT – {shares} Stück @ ${price:.2f} "
             f"| SL: ${stop_loss} | {tp_source} "
             f"| Haltedauer: {capped_hold}d "
             f"| Investiert: ${shares * price:.2f}"
-            f"{earn_tag}{margin_tag}"
+            f"{earn_tag}{margin_tag}{score_tag}"
         )
 
     def _do_close(self, ticker: str, pos: Position, price: float, reason: str, days_held: int = 0) -> float:
