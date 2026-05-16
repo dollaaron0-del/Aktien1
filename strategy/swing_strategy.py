@@ -514,7 +514,50 @@ class SwingStrategy:
             days_held=days_held,
         )
         self._run_goal_risk_check()
+        self._run_score_update(ticker, pos.entry_price, price, reason)
         return pnl
+
+    def _run_score_update(self, ticker: str, entry_price: float, exit_price: float, reason: str) -> None:
+        """Bot-Score nach Trade aktualisieren und bei Meilensteinen benachrichtigen."""
+        try:
+            from analyzers.bot_scorer import BotScorer
+            from analyzers.margin_readiness import MarginTierTracker
+
+            return_pct = (exit_price - entry_price) / entry_price * 100
+            tier = 0
+            try:
+                tier = MarginTierTracker(self.tracker).get_active_tier().active_tier.level
+            except Exception:
+                pass
+
+            # Konfidenz aus letztem Journal-Eintrag
+            confidence = "MEDIUM"
+            try:
+                recent = self.tracker.get_recent_trades(n=1)
+                if recent:
+                    conf_raw = recent[0].get("confidence") or "MEDIUM"
+                    confidence = conf_raw.upper()
+            except Exception:
+                pass
+
+            scorer = BotScorer()
+            delta, new_milestones = scorer.record_trade(
+                ticker=ticker,
+                return_pct=return_pct,
+                confidence=confidence,
+                exit_reason=reason,
+                current_tier=tier,
+            )
+
+            score = scorer.get()
+            sign  = "+" if delta >= 0 else ""
+            log.info("Score: %s%+.1f → %.1f/100 (%s)", sign, delta, score.current, score.label)
+
+            for milestone in new_milestones:
+                self._notifier.send(scorer.to_telegram_milestone(milestone))
+
+        except Exception as e:
+            log.warning("Score-Update fehlgeschlagen: %s", e)
 
     def _run_goal_risk_check(self) -> None:
         """Nach jedem Trade: prüfe ob das Portfolio-Ziel noch erreichbar ist."""

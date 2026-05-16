@@ -26,6 +26,7 @@ Starten:  python main.py
           python main.py --optimize      (Parameter-Optimierung basierend auf Trade-History)
           python main.py --optimize --apply  (Vorschläge direkt in .env schreiben)
           python main.py --margin        (Margin-Bereitschaft prüfen und Empfehlung anzeigen)
+          python main.py --score         (Bot-Score anzeigen: Punkte, Meilensteine, History)
 
 Analyse-Zeitplan (.env):
   MARKET_EXCHANGES=XETRA,NYSE,TSE    # Vollanalyse 30 Min vor Börseneröffnung
@@ -933,6 +934,26 @@ def show_regime(detector: RecessionDetector):
         console.print("[dim]Keine Hedges empfohlen – Regime zu gut.[/dim]")
 
 
+def _run_score_display() -> None:
+    """Zeigt den aktuellen Bot-Score mit History und Meilensteinen."""
+    from analyzers.bot_scorer import BotScorer, MILESTONES
+    scorer = BotScorer()
+    state  = scorer.get()
+
+    console.rule("[bold blue]Bot-Score")
+    console.print(state.to_text())
+
+    # Nächster Meilenstein
+    next_ms = next((t for t in sorted(MILESTONES) if t > state.current), None)
+    if next_ms:
+        label, desc, reward = MILESTONES[next_ms]
+        console.print(
+            f"\nNächster Meilenstein: [cyan]{label}[/cyan] bei Score [bold]{next_ms}[/bold]\n"
+            f"  {desc}"
+            + (f"\n  💡 {reward}" if reward else "")
+        )
+
+
 def _run_margin_check(tracker) -> None:
     """Zeigt Margin-Tier-Status und aktuelle Einstellung."""
     from analyzers.margin_readiness import MarginTierTracker
@@ -1208,6 +1229,7 @@ def main():
     parser.add_argument("--optimize", action="store_true", help="Parameter-Optimierung basierend auf Trade-History")
     parser.add_argument("--apply", action="store_true", help="Optimierungs-Vorschläge in .env schreiben")
     parser.add_argument("--margin", action="store_true", help="Margin-Bereitschaft prüfen und Empfehlung anzeigen")
+    parser.add_argument("--score", action="store_true", help="Bot-Score anzeigen (Punkte, Meilensteine, History)")
     args = parser.parse_args()
 
     if args.dashboard:
@@ -1324,6 +1346,10 @@ def main():
 
     if args.margin:
         _run_margin_check(tracker)
+        return
+
+    if args.score:
+        _run_score_display()
         return
 
     if not config.anthropic_api_key:
