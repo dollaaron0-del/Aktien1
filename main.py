@@ -451,6 +451,14 @@ def _print_analysis(a: AnalysisResult):
         f"Konfidenz: [{conf_color}]{a.confidence}[/{conf_color}] | "
         f"Empfehlung: [{rec_color}]{a.recommendation}[/{rec_color}]"
     )
+    if a.bull_case or a.bear_case:
+        winner_color = {"BULL": "green", "BEAR": "red", "DRAW": "yellow"}.get(a.debate_winner, "white")
+        winner_icon  = {"BULL": "🟢", "BEAR": "🔴", "DRAW": "⚖️"}.get(a.debate_winner, "")
+        console.print(f"  {winner_icon} Debatte: [{winner_color}]{a.debate_winner}[/{winner_color}]")
+        if a.bull_case:
+            console.print(f"  [green]▲ Bull:[/green] [italic]{a.bull_case}[/italic]")
+        if a.bear_case:
+            console.print(f"  [red]▼ Bear:[/red] [italic]{a.bear_case}[/italic]")
     if a.entry_rationale:
         console.print(f"  Begründung: [italic]{a.entry_rationale}[/italic]")
     if a.target_price:

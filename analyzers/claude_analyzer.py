@@ -53,6 +53,10 @@ class AnalysisResult:
     thesis_break_reason: str        # Filled if thesis_valid == False
     sources_used: int
     raw_summary: str
+    # Bullish/Bearish Debate
+    bull_case: str = ""             # Stärkstes Argument FÜR den Trade
+    bear_case: str = ""             # Stärkstes Argument GEGEN den Trade
+    debate_winner: str = ""         # "BULL" | "BEAR" | "DRAW"
 
 
 _SYSTEM_PROMPT = """Du bist ein erfahrener quantitativer Aktienanalyst mit Schwerpunkt auf Swing-Trading (Haltedauer 3–30 Tage).
@@ -84,13 +88,26 @@ _USER_TEMPLATE_STANDARD = """Analysiere folgende Informationen zur Aktie {ticker
 {historical_block}
 
 === AUFGABE ===
-Bewerte das Gesamt-Sentiment für einen Swing-Trade (3–30 Tage).
-Berücksichtige Kontinuität und Trendwenden zwischen historischen und aktuellen Nachrichten.
-Berücksichtige die technischen Indikatoren: RSI-Extremwerte (>70 überkauft, <30 überverkauft),
-MACD-Kreuzungen, Bollinger-Band-Position und den EMA-Trend als ergänzende Signalbestätigung.
+Führe eine strukturierte Zwei-Seiten-Analyse für einen Swing-Trade (3–30 Tage) durch:
 
-Antworte mit diesem JSON:
+SCHRITT 1 – INTERNE DEBATTE:
+Überlege zuerst intern (ohne separate Ausgabe):
+  BULLISCH: Was sind die 2–3 stärksten Argumente FÜR einen Kauf?
+  BÄRISCH:  Was sind die 2–3 stärksten Argumente GEGEN einen Kauf?
+  URTEIL:   Welche Seite überwiegt klar – und warum?
+
+Berücksichtige dabei:
+- Kontinuität und Trendwenden zwischen historischen und aktuellen Nachrichten
+- RSI-Extremwerte (>70 überkauft, <30 überverkauft), MACD-Kreuzungen,
+  Bollinger-Band-Position und EMA-Trend als Signalbestätigung
+- Congressional/Insider-Käufe als starke bullische Signale
+- Analyst-Upgrades/-Downgrades als Bestätigung oder Warnung
+
+SCHRITT 2 – AUSGABE als JSON:
 {{
+  "bull_case": "<1–2 Sätze: das stärkste Bullish-Argument>",
+  "bear_case": "<1–2 Sätze: das stärkste Bearish-Argument>",
+  "debate_winner": "<BULL|BEAR|DRAW>",
   "sentiment_score": <float 0.0–1.0>,
   "direction": "<BULLISH|NEUTRAL|BEARISH>",
   "confidence": "<LOW|MEDIUM|HIGH>",
@@ -106,8 +123,8 @@ Antworte mit diesem JSON:
   "summary": "<3–5 Sätze Gesamtbewertung>"
 }}
 
-BUY nur bei starker, konsistenter Nachrichtenlage UND bestätigenden technischen Signalen.
-SKIP wenn zu wenige/widersprüchliche Informationen oder technische Signale stark dagegen sprechen.
+BUY nur wenn BULL-Seite klar überwiegt UND technische Signale bestätigen.
+SKIP wenn DRAW oder wenn BEAR-Argumente das Risiko zu hoch machen.
 """
 
 # Used when an open position EXISTS – Claude must validate the original thesis
@@ -129,19 +146,22 @@ Ursprüngliche Katalysatoren: {catalysts}
 {historical_block}
 
 === AUFGABE ===
-1. Beurteile ob die ursprüngliche Kaufthese noch gültig ist.
-   → Sind die Katalysatoren noch intakt? Hat sich die Nachrichtenlage fundamental verändert?
-   → Eine These gilt als GEBROCHEN wenn: die ursprünglichen Treiber weggefallen sind, neue stark negative
-     Nachrichten den Kaufgrund widerlegen, oder das Sentiment sich stark umgekehrt hat.
-   → Berücksichtige auch technische Warnsignale: RSI >75, MACD-Negativkreuzung, Kurs unter EMA21.
-2. Gib eine aktuelle Handlungsempfehlung.
+SCHRITT 1 – INTERNE DEBATTE:
+  HALTEN:   Was spricht dafür die Position zu behalten? (These noch intakt, Katalysatoren aktiv?)
+  VERKAUFEN: Was spricht für einen Ausstieg? (These gebrochen, neue Risiken, technische Warnsignale?)
+  Eine These gilt als GEBROCHEN wenn: ursprüngliche Treiber weggefallen, stark negative neue
+  Nachrichten den Kaufgrund widerlegen, Sentiment sich fundamental umgekehrt hat,
+  oder technische Warnsignale: RSI >75, MACD-Negativkreuzung, Kurs unter EMA21.
 
-Antworte mit diesem JSON:
+SCHRITT 2 – AUSGABE als JSON:
 {{
+  "bull_case": "<1–2 Sätze: stärkstes Argument die Position zu halten>",
+  "bear_case": "<1–2 Sätze: stärkstes Argument für Ausstieg>",
+  "debate_winner": "<BULL|BEAR|DRAW>",
   "sentiment_score": <float 0.0–1.0>,
   "direction": "<BULLISH|NEUTRAL|BEARISH>",
   "confidence": "<LOW|MEDIUM|HIGH>",
-  "recommendation": "<BUY|HOLD|SELL|SKIP>",
+  "recommendation": "<HOLD|SELL|SKIP>",
   "entry_rationale": "<1–2 Sätze aktuelle Lage>",
   "risk_factors": ["<Risiko 1>", "<Risiko 2>"],
   "key_catalysts": ["<noch aktiver Katalysator>"],
@@ -247,7 +267,7 @@ class ClaudeAnalyzer:
 
         message = self._client.messages.create(
             model=config.claude_model,
-            max_tokens=1200,
+            max_tokens=1500,
             system=system_prompt,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -323,6 +343,9 @@ class ClaudeAnalyzer:
                 thesis_break_reason=data.get("thesis_break_reason", ""),
                 sources_used=sources,
                 raw_summary=data.get("summary", ""),
+                bull_case=data.get("bull_case", ""),
+                bear_case=data.get("bear_case", ""),
+                debate_winner=data.get("debate_winner", ""),
             )
         except (json.JSONDecodeError, KeyError, ValueError):
             return self._empty_result(ticker, f"Parse-Fehler: {raw[:200]}")
