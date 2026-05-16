@@ -551,18 +551,35 @@ class SwingStrategy:
             except Exception:
                 pass
 
+            # Normalise reason string to match bot_scorer exit_reason keys
+            exit_reason_key = reason.lower()
+            if "stop" in exit_reason_key:
+                exit_reason_key = "stop_loss"
+            elif "take" in exit_reason_key or "profit" in exit_reason_key:
+                exit_reason_key = "take_profit"
+            elif "these" in exit_reason_key or "thesis" in exit_reason_key:
+                exit_reason_key = "thesis_broken"
+            elif "haltedauer" in exit_reason_key or "hold" in exit_reason_key:
+                exit_reason_key = "hold_expired"
+            elif "sentiment" in exit_reason_key:
+                exit_reason_key = "sentiment_sell"
+
             scorer = BotScorer()
-            delta, new_milestones = scorer.record_trade(
+            delta, new_milestones, record_msgs = scorer.record_trade(
                 ticker=ticker,
                 return_pct=return_pct,
                 confidence=confidence,
-                exit_reason=reason,
+                exit_reason=exit_reason_key,
                 current_tier=tier,
+                tracker=self.tracker,
             )
 
             score = scorer.get()
             sign  = "+" if delta >= 0 else ""
             log.info("Score: %s%+.1f → %.1f/100 (%s)", sign, delta, score.current, score.label)
+
+            if record_msgs:
+                self._notifier.send(scorer.to_telegram_record(record_msgs))
 
             for milestone in new_milestones:
                 self._notifier.send(scorer.to_telegram_milestone(milestone))

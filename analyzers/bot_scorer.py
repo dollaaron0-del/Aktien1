@@ -92,6 +92,72 @@ def get_modifiers(score: float) -> ScoreModifier:
     return _SCORE_LEVELS[-1][1]
 
 
+# ── Persönliche Bestleistungen ─────────────────────────────────────────────────
+
+@dataclass
+class PersonalRecord:
+    value:     float
+    date:      str
+    ticker:    str = ""   # bei Trade-Rekorden
+    times_beaten: int = 0
+
+
+@dataclass
+class PersonalBests:
+    """Verfolgt die eigenen Rekorde des Bots – Wettbewerb gegen sich selbst."""
+    best_win_rate_20:    Optional[PersonalRecord] = None   # Beste Win-Rate (rollend 20)
+    best_avg_return_20:  Optional[PersonalRecord] = None   # Beste Ø-Rendite (rollend 20)
+    best_streak:         Optional[PersonalRecord] = None   # Längste Gewinnserie
+    best_single_trade:   Optional[PersonalRecord] = None   # Bester Einzel-Trade (%)
+    best_score_velocity: Optional[PersonalRecord] = None   # Stärkster Score-Anstieg (10 Trades)
+
+
+def _check_record(
+    current_val: float,
+    record: Optional[PersonalRecord],
+    ticker: str = "",
+) -> Tuple[bool, float, Optional[PersonalRecord]]:
+    """
+    Vergleicht Wert mit bestehendem Rekord.
+    Gibt (is_new_record, improvement_pct, updated_record) zurück.
+    """
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    if record is None or current_val > record.value:
+        improvement = (
+            (current_val - record.value) / max(abs(record.value), 0.001) * 100
+            if record else 0.0
+        )
+        new_rec = PersonalRecord(
+            value=current_val,
+            date=today,
+            ticker=ticker,
+            times_beaten=(record.times_beaten + 1) if record else 0,
+        )
+        return True, improvement, new_rec
+    return False, 0.0, record
+
+
+def _near_record(current_val: float, record: Optional[PersonalRecord], margin: float = 0.05) -> bool:
+    """True wenn aktueller Wert innerhalb von `margin` Prozent des Rekords liegt."""
+    if record is None or current_val <= 0:
+        return False
+    return current_val >= record.value * (1 - margin)
+
+
+def _record_bonus(is_new: bool, improvement_pct: float, near: bool) -> Tuple[float, str]:
+    """Berechnet Bonus-Punkte für Rekord-Ereignisse."""
+    if is_new:
+        base = 3.0
+        if improvement_pct > 25:
+            base += 3.0
+        elif improvement_pct > 10:
+            base += 1.5
+        return base, f"🏆 Neuer Rekord! (+{improvement_pct:.0f}%)"
+    if near:
+        return 0.5, "📈 Nahe am Rekord"
+    return 0.0, ""
+
+
 @dataclass
 class ScoreEntry:
     date:        str
@@ -110,8 +176,9 @@ class BotScore:
     trades_scored:    int   = 0
     total_earned:     float = 0.0
     total_lost:       float = 0.0
-    milestones:       List[int]       = field(default_factory=list)
-    history:          List[ScoreEntry] = field(default_factory=list)
+    milestones:       List[int]         = field(default_factory=list)
+    history:          List[ScoreEntry]  = field(default_factory=list)
+    personal_bests:   PersonalBests     = field(default_factory=PersonalBests)
 
     @property
     def label(self) -> str:
@@ -138,12 +205,24 @@ class BotScore:
             f"Verdient: +{self.total_earned:.1f} Pkt  |  Verloren: -{self.total_lost:.1f} Pkt",
             "",
             f"Aktive Verhaltens-Modifier ({mod.score_range}):",
-            f"  Kaufschwelle:    {thr_sign}  (niedriger = mehr Signale erlaubt)",
+            f"  Kaufschwelle:    {thr_sign}",
             f"  Max. Positionen: {pos_sign}",
             f"  Positionsgröße:  {size_pct}",
             f"  Haltedauer:      {(mod.hold_days_mult - 1)*100:+.0f}%",
-            f"  → {mod.description}",
         ]
+        # Persönliche Bestleistungen
+        pb = self.personal_bests
+        lines += ["", "Persönliche Rekorde:"]
+        def _pr(label, rec):
+            if rec is None:
+                return f"  {label:<22} –"
+            return f"  {label:<22} {rec.value:.1f}  ({rec.date}  ×{rec.times_beaten} gebrochen)"
+        lines.append(_pr("Win-Rate 20 Trades:",    pb.best_win_rate_20))
+        lines.append(_pr("Ø-Rendite 20 Trades:",   pb.best_avg_return_20))
+        lines.append(_pr("Gewinnserie:",            pb.best_streak))
+        lines.append(_pr("Bester Einzel-Trade %:",  pb.best_single_trade))
+        lines.append(_pr("Score-Anstieg (10 Tr.):", pb.best_score_velocity))
+
         if self.history:
             lines += ["", "Letzte 10 Trades:"]
             for e in self.history[-10:]:
@@ -172,34 +251,93 @@ class BotScorer:
         ticker: str,
         return_pct: float,
         confidence: str,
-        exit_reason: str,        # "stop_loss" | "take_profit" | "thesis_broken" | ...
+        exit_reason: str,
         current_tier: int = 0,
-    ) -> Tuple[float, List[int]]:
+        tracker=None,            # PerformanceTracker für rollende Metriken
+    ) -> Tuple[float, List[int], List[str]]:
         """
         Wertet einen Trade aus.
-        Gibt (delta, neu_erreichte_meilensteine) zurück.
+        Gibt (delta, neue_meilensteine, rekord_nachrichten) zurück.
         """
         base   = _base_points(return_pct, confidence, exit_reason)
         mult   = _TIER_MULTIPLIER.get(current_tier, 1.0)
         delta  = round(base * mult, 2)
-        reason = _build_reason(return_pct, confidence, exit_reason, base, mult)
+
+        # ── Persönliche Rekorde prüfen ─────────────────────────────────────
+        record_msgs: List[str] = []
+        record_bonus = 0.0
+        pb = self._state.personal_bests
+
+        # 1. Bester Einzel-Trade
+        if return_pct > 0:
+            is_new, imp, pb.best_single_trade = _check_record(return_pct, pb.best_single_trade, ticker)
+            bonus, msg = _record_bonus(is_new, imp, _near_record(return_pct, pb.best_single_trade))
+            if msg:
+                record_bonus += bonus
+                record_msgs.append(f"Bester Trade: {msg} {return_pct:.1f}%")
+
+        # 2. Rollende Metriken (nur wenn Tracker vorhanden)
+        if tracker:
+            recent = tracker.get_recent_trades(n=20)
+            if len(recent) >= 5:
+                # Win-Rate letzte 20
+                wr = _win_rate_from_list(recent) * 100
+                is_new, imp, pb.best_win_rate_20 = _check_record(wr, pb.best_win_rate_20)
+                bonus, msg = _record_bonus(is_new, imp, _near_record(wr, pb.best_win_rate_20))
+                if msg:
+                    record_bonus += bonus
+                    record_msgs.append(f"Win-Rate: {msg} {wr:.0f}%")
+
+                # Ø-Rendite letzte 20
+                avg_r = sum(t.get("actual_return_pct") or 0 for t in recent) / len(recent)
+                if avg_r > 0:
+                    is_new, imp, pb.best_avg_return_20 = _check_record(avg_r, pb.best_avg_return_20)
+                    bonus, msg = _record_bonus(is_new, imp, _near_record(avg_r, pb.best_avg_return_20))
+                    if msg:
+                        record_bonus += bonus
+                        record_msgs.append(f"Ø-Rendite: {msg} {avg_r:.1f}%")
+
+            # Gewinnserie
+            streak = _current_streak(tracker.get_recent_trades(n=50))
+            if streak > 0:
+                is_new, imp, pb.best_streak = _check_record(float(streak), pb.best_streak)
+                bonus, msg = _record_bonus(is_new, imp, _near_record(streak, pb.best_streak))
+                if msg:
+                    record_bonus += bonus
+                    record_msgs.append(f"Gewinnserie: {msg} {streak} Trades")
+
+        # 3. Score-Velocity (Anstieg über letzte 10 Scores)
+        if len(self._state.history) >= 10:
+            old_s = self._state.history[-10].score_after
+            velocity = self._state.current - old_s + delta   # inkl. aktueller Trade
+            if velocity > 0:
+                is_new, imp, pb.best_score_velocity = _check_record(velocity, pb.best_score_velocity)
+                bonus, msg = _record_bonus(is_new, imp, _near_record(velocity, pb.best_score_velocity))
+                if msg:
+                    record_bonus += bonus
+                    record_msgs.append(f"Score-Anstieg: {msg} +{velocity:.1f} Pkt")
+
+        # Rekord-Bonus addieren (nicht durch Tier multipliziert – fair bleiben)
+        total_delta = round(delta + record_bonus, 2)
+        reason = _build_reason(return_pct, confidence, exit_reason, base, mult, record_bonus)
 
         old_score = self._state.current
-        new_score = max(0.0, min(100.0, old_score + delta))
+        new_score = max(0.0, min(100.0, old_score + total_delta))
 
         self._state.current       = new_score
         self._state.peak          = max(self._state.peak, new_score)
         self._state.trades_scored += 1
+        self._state.personal_bests = pb
 
-        if delta >= 0:
-            self._state.total_earned = round(self._state.total_earned + delta, 2)
+        if total_delta >= 0:
+            self._state.total_earned = round(self._state.total_earned + total_delta, 2)
         else:
-            self._state.total_lost   = round(self._state.total_lost   - delta, 2)
+            self._state.total_lost   = round(self._state.total_lost   - total_delta, 2)
 
         entry = ScoreEntry(
             date=datetime.utcnow().isoformat()[:16],
             ticker=ticker,
-            delta=delta,
+            delta=total_delta,
             score_after=new_score,
             tier=current_tier,
             multiplier=mult,
@@ -217,8 +355,11 @@ class BotScorer:
                 new_milestones.append(threshold)
 
         self._save()
-        log.info("BotScorer: %s  %+.1f Pkt (×%.2f) → %.1f/100", ticker, delta, mult, new_score)
-        return delta, new_milestones
+        log.info(
+            "BotScorer: %s  %+.1f Pkt (×%.2f, Rekord +%.1f) → %.1f/100",
+            ticker, delta, mult, record_bonus, new_score,
+        )
+        return total_delta, new_milestones, record_msgs
 
     def get(self) -> BotScore:
         return self._state
@@ -234,6 +375,12 @@ class BotScorer:
             lines += ["", f"💡 {reward}"]
         return "\n".join(lines)
 
+    def to_telegram_record(self, msgs: List[str]) -> str:
+        lines = ["🏆 *Persönlicher Rekord!*", ""]
+        lines += [f"  • {m}" for m in msgs]
+        lines += ["", f"Score: *{self._state.current:.1f}/100*"]
+        return "\n".join(lines)
+
     # ── Persistenz ────────────────────────────────────────────────────────────
 
     def _load(self) -> BotScore:
@@ -241,8 +388,18 @@ class BotScorer:
             with open(_FILE) as f:
                 data = json.load(f)
             history = [ScoreEntry(**e) for e in data.pop("history", [])]
-            state   = BotScore(**{k: v for k, v in data.items() if k != "history"})
-            state.history = history
+            # PersonalBests deserialisieren
+            pb_raw  = data.pop("personal_bests", {})
+            pb      = PersonalBests()
+            for field_name in ("best_win_rate_20", "best_avg_return_20",
+                               "best_streak", "best_single_trade", "best_score_velocity"):
+                raw = pb_raw.get(field_name)
+                if raw:
+                    setattr(pb, field_name, PersonalRecord(**raw))
+            state   = BotScore(**{k: v for k, v in data.items()
+                                  if k not in ("history", "personal_bests")})
+            state.history       = history
+            state.personal_bests = pb
             return state
         except Exception:
             return BotScore()
@@ -293,7 +450,7 @@ def _base_points(return_pct: float, confidence: str, exit_reason: str) -> float:
 
 
 def _build_reason(return_pct: float, confidence: str, exit_reason: str,
-                  base: float, mult: float) -> str:
+                  base: float, mult: float, record_bonus: float = 0.0) -> str:
     exit_map = {
         "take_profit":    "TP erreicht",
         "stop_loss":      "SL getroffen",
@@ -302,8 +459,27 @@ def _build_reason(return_pct: float, confidence: str, exit_reason: str,
         "sentiment_sell": "Sentiment gedreht",
     }
     exit_label = exit_map.get(exit_reason, exit_reason or "manuell")
+    rec_str = f" + Rekord +{record_bonus:.1f}pt" if record_bonus > 0 else ""
     return (
         f"{'+' if return_pct >= 0 else ''}{return_pct:.1f}% | "
         f"{confidence} | {exit_label} | "
-        f"Basis {base:+.1f}pt × {mult:.2f}"
+        f"Basis {base:+.1f}pt × {mult:.2f}{rec_str}"
     )
+
+
+def _win_rate_from_list(trades: List[Dict]) -> float:
+    if not trades:
+        return 0.0
+    wins = sum(1 for t in trades if (t.get("actual_return_pct") or 0) > 0)
+    return wins / len(trades)
+
+
+def _current_streak(trades: List[Dict]) -> int:
+    """Aktuelle laufende Gewinnserie vom neuesten Trade."""
+    streak = 0
+    for t in trades:
+        if (t.get("actual_return_pct") or 0) > 0:
+            streak += 1
+        else:
+            break
+    return streak
