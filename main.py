@@ -27,6 +27,9 @@ Starten:  python main.py
           python main.py --optimize --apply  (Vorschläge direkt in .env schreiben)
           python main.py --margin        (Margin-Bereitschaft prüfen und Empfehlung anzeigen)
           python main.py --score         (Bot-Score anzeigen: Punkte, Meilensteine, History)
+          python main.py --reentry       (Re-Entry-Kandidaten: verkaufte Positionen die sich erholen)
+          python main.py --velocity AAPL (News-Geschwindigkeit für einen Ticker anzeigen)
+          python main.py --sentiment-memory  (Sentiment-Verlässlichkeit pro Ticker anzeigen)
 
 Analyse-Zeitplan (.env):
   MARKET_EXCHANGES=XETRA,NYSE,TSE    # Vollanalyse 30 Min vor Börseneröffnung
@@ -92,6 +95,11 @@ from analyzers.recession_detector import RecessionDetector, BULL, NEUTRAL, BEAR,
 from analyzers.dynamic_watchlist import DynamicWatchlist
 from analyzers.signal_expander import SignalDrivenExpander
 from strategy.hedge_strategy import HedgeStrategy
+from analyzers.news_velocity import NewsVelocityAnalyzer
+from analyzers.sentiment_memory import SentimentMemory
+from analyzers.reentry_tracker import ReEntryTracker
+from analyzers.multi_timeframe_sentiment import MultiTimeframeSentiment
+from notifier.daily_dashboard import DailyDashboard
 
 console = Console()
 
@@ -225,6 +233,12 @@ def collect_news(ticker: str, archive: NewsArchive) -> tuple[List[Dict], Dict[st
     # Archive everything before deduplication (archive handles its own dedup)
     archive.store(ticker, all_items)
 
+    # Track news velocity (Nachrichten-Beschleunigung – Frühindikator)
+    try:
+        NewsVelocityAnalyzer().record_articles(ticker, all_items)
+    except Exception:
+        pass
+
     # Deduplicate for the current analysis batch
     seen: set = set()
     unique: List[Dict] = []
@@ -321,6 +335,52 @@ def run_analysis_cycle(
         if not news:
             console.print("  [dim]Keine Nachrichten – übersprungen[/dim]")
             continue
+
+        # News-Geschwindigkeit anzeigen
+        try:
+            vel = NewsVelocityAnalyzer().analyze(ticker)
+            if vel.acceleration in ("SPIKE", "HIGH"):
+                boost_str = f" (Signal-Boost ×{vel.signal_boost:.2f})" if vel.signal_boost > 1.0 else ""
+                color = "bold yellow" if vel.acceleration == "SPIKE" else "yellow"
+                console.print(
+                    f"  [{color}]📡 Nachrichten-{vel.acceleration}: "
+                    f"{vel.articles_24h} Artikel/24h (Basis: {vel.baseline_per_day:.0f}/Tag){boost_str}[/{color}]"
+                )
+        except Exception:
+            pass
+
+        # Multi-Zeitrahmen-Sentiment (1d/7d/30d)
+        try:
+            hist_30d = archive.get_history(ticker, days=30)
+            from collections import defaultdict
+            by_date: dict = defaultdict(list)
+            for item in hist_30d:
+                pub = (item.get("published") or item.get("timestamp") or "")[:10]
+                if pub and item.get("sentiment_score") is not None:
+                    by_date[pub].append(item)
+            for item in news:
+                from datetime import date as _date
+                today_key = _date.today().isoformat()
+                if item.get("sentiment_score") is not None:
+                    by_date[today_key].append(item)
+            if len(by_date) >= 2:
+                mtf_result = MultiTimeframeSentiment().analyze(ticker, dict(by_date))
+                mtf_line = MultiTimeframeSentiment().to_text(mtf_result)
+                if mtf_result.trend in ("UPTREND", "DOWNTREND"):
+                    t_color = "green" if mtf_result.trend == "UPTREND" else "red"
+                    console.print(f"  [{t_color}]📈 {mtf_line}[/{t_color}]")
+        except Exception:
+            pass
+
+        # Re-Entry-Tracker: Preise aktualisieren
+        try:
+            tickers_watched = [c.ticker for c in ReEntryTracker().get_all_watched()]
+            if tickers_watched:
+                watch_prices = broker.get_prices(tickers_watched)
+                rt = ReEntryTracker()
+                rt.update_prices(watch_prices)
+        except Exception:
+            pass
 
         # Build open-position context for thesis check
         open_position_ctx = strategy.build_open_position_context(ticker)
@@ -1203,6 +1263,93 @@ def run_scan(portfolio: Portfolio):
     console.print("[dim]Tipp: Ticker in config.watchlist aufnehmen für tägliche Analyse.[/dim]")
 
 
+def _run_reentry_display(broker) -> None:
+    """Re-Entry-Kandidaten anzeigen."""
+    console.rule("[bold blue]Re-Entry-Kandidaten")
+    rt = ReEntryTracker()
+    watched = rt.get_all_watched()
+    if not watched:
+        console.print("[dim]Keine Positionen werden beobachtet.[/dim]")
+        return
+
+    # Preise aktualisieren
+    prices = broker.get_prices([c.ticker for c in watched])
+    rt.update_prices(prices)
+
+    candidates = rt.get_candidates()
+    all_watched = rt.get_all_watched()
+
+    if candidates:
+        table = Table(title="Re-Entry-Kandidaten", box=box.ROUNDED)
+        table.add_column("Ticker", style="cyan")
+        table.add_column("Verkauft @ ", justify="right")
+        table.add_column("Tief", justify="right")
+        table.add_column("Jetzt", justify="right")
+        table.add_column("Erholung", justify="right")
+        table.add_column("Score", justify="right")
+        table.add_column("Signal")
+        for c in candidates:
+            recovery = (c.last_price - c.low_since_sell) / max(c.low_since_sell, 0.01) * 100
+            signal_color = "bold green" if c.signal == "STRONG" else "green"
+            table.add_row(
+                c.ticker, f"${c.sell_price:.2f}", f"${c.low_since_sell:.2f}",
+                f"${c.last_price:.2f}", f"+{recovery:.1f}%",
+                f"{c.re_entry_score:.2f}", f"[{signal_color}]{c.signal}[/{signal_color}]",
+            )
+        console.print(table)
+    else:
+        console.print("[dim]Aktuell keine attraktiven Re-Entry-Möglichkeiten.[/dim]")
+
+    console.print(f"\n[dim]Beobachtet werden {len(all_watched)} Ticker.[/dim]")
+    console.print(console.print(rt.to_text()))
+
+
+def _run_velocity_display(ticker: str) -> None:
+    """News-Geschwindigkeit für einen Ticker anzeigen."""
+    console.rule(f"[bold blue]News-Velocity – {ticker}")
+    vel = NewsVelocityAnalyzer().analyze(ticker)
+    acc_color = {"SPIKE": "bold red", "HIGH": "yellow", "NORMAL": "green", "LOW": "dim"}.get(
+        vel.acceleration, "white"
+    )
+    lines = [
+        f"Ticker:         {vel.ticker}",
+        f"Artikel (1h):   {vel.articles_1h}",
+        f"Artikel (6h):   {vel.articles_6h}",
+        f"Artikel (24h):  {vel.articles_24h}",
+        f"Tages-Basis:    {vel.baseline_per_day:.1f} Artikel/Tag (7-Tage-Ø)",
+        f"Velocity-Score: {vel.velocity_score:.2f}",
+        f"Signal-Boost:   ×{vel.signal_boost:.2f}",
+    ]
+    console.print(Panel("\n".join(lines), title=f"Beschleunigung: [{acc_color}]{vel.acceleration}[/{acc_color}]"))
+
+
+def _run_sentiment_memory_display() -> None:
+    """Sentiment-Verlässlichkeit pro Ticker anzeigen."""
+    console.rule("[bold blue]Sentiment-Verlässlichkeit pro Ticker")
+    sm = SentimentMemory()
+    stats = sm.get_all_stats()
+    if not stats:
+        console.print("[dim]Noch keine Daten – Verlässlichkeit wird nach abgeschlossenen Trades berechnet.[/dim]")
+        return
+    table = Table(title="Sentiment-Trefferquote", box=box.ROUNDED)
+    table.add_column("Ticker", style="cyan")
+    table.add_column("Trades", justify="right")
+    table.add_column("Trefferquote", justify="right")
+    table.add_column("Schwellen-Adj.", justify="right")
+    for row in stats:
+        rel = row["reliability"]
+        rel_color = "green" if rel >= 0.65 else ("red" if rel < 0.4 else "yellow")
+        adj = row["adjustment"]
+        adj_str = f"[green]{adj:+.2f}[/green]" if adj < 0 else (f"[red]{adj:+.2f}[/red]" if adj > 0 else "±0.00")
+        table.add_row(
+            row["ticker"], str(row["records"]),
+            f"[{rel_color}]{rel*100:.0f}%[/{rel_color}]",
+            adj_str,
+        )
+    console.print(table)
+    console.print(sm.to_text())
+
+
 def main():
     parser = argparse.ArgumentParser(description="Stock Sentiment Trading Bot")
     parser.add_argument("--once", action="store_true", help="Einmaliger Analysezyklus")
@@ -1230,6 +1377,9 @@ def main():
     parser.add_argument("--apply", action="store_true", help="Optimierungs-Vorschläge in .env schreiben")
     parser.add_argument("--margin", action="store_true", help="Margin-Bereitschaft prüfen und Empfehlung anzeigen")
     parser.add_argument("--score", action="store_true", help="Bot-Score anzeigen (Punkte, Meilensteine, History)")
+    parser.add_argument("--reentry", action="store_true", help="Re-Entry-Kandidaten anzeigen (verkaufte Positionen die sich erholen)")
+    parser.add_argument("--velocity", metavar="TICKER", help="News-Geschwindigkeit für einen Ticker anzeigen")
+    parser.add_argument("--sentiment-memory", action="store_true", help="Sentiment-Verlässlichkeit pro Ticker anzeigen")
     args = parser.parse_args()
 
     if args.dashboard:
@@ -1350,6 +1500,18 @@ def main():
 
     if args.score:
         _run_score_display()
+        return
+
+    if args.reentry:
+        _run_reentry_display(broker)
+        return
+
+    if args.velocity:
+        _run_velocity_display(args.velocity.upper())
+        return
+
+    if args.sentiment_memory:
+        _run_sentiment_memory_display()
         return
 
     if not config.anthropic_api_key:
@@ -1531,6 +1693,29 @@ def main():
         schedule.every(2).hours.do(
             lambda: _margin_tier_watch(tracker, TelegramNotifier(), _margin_tier_state)
         )
+
+    # Tägliches Dashboard (21:00 UTC, nach NYSE-Schluss)
+    from analyzers.bot_scorer import BotScorer as _BotScorer
+    _dashboard = DailyDashboard()
+
+    def _daily_dashboard_job():
+        if not _dashboard.should_send():
+            return
+        try:
+            msg = _dashboard.generate(
+                portfolio=portfolio,
+                tracker=tracker,
+                scorer=_BotScorer(),
+                broker=broker,
+                initial_capital=config.initial_capital,
+            )
+            TelegramNotifier().send(msg)
+            _dashboard.mark_sent()
+            log.info("Tägliches Dashboard gesendet.")
+        except Exception as e:
+            log.warning("Daily Dashboard fehlgeschlagen: %s", e)
+
+    schedule.every().hour.do(_daily_dashboard_job)
 
     # Goal-reached check (einmalige Telegram-Nachricht wenn Ziel erreicht)
     _goal_notified: list = []

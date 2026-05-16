@@ -107,9 +107,19 @@ class SwingStrategy:
             )
         adaptive_threshold = self.tracker.get_adaptive_threshold(config.buy_threshold)
         phase_modifier = self.phase_ctrl.get_entry_threshold_modifier(portfolio_value)
+
+        # Sentiment-Verlässlichkeit pro Ticker (aus historischen Trades gelernt)
+        sentiment_memory_adj = 0.0
+        try:
+            from analyzers.sentiment_memory import SentimentMemory
+            sentiment_memory_adj = SentimentMemory().get_threshold_adjustment(ticker)
+        except Exception:
+            pass
+
         # Score-Modifier auf Kaufschwelle anwenden
         effective_threshold = self.focus.get_effective_threshold(
-            adaptive_threshold + phase_modifier + _smod.threshold_adj, portfolio_value
+            adaptive_threshold + phase_modifier + _smod.threshold_adj + sentiment_memory_adj,
+            portfolio_value
         )
 
         if analysis.sentiment_score < effective_threshold:
@@ -526,6 +536,7 @@ class SwingStrategy:
         )
         self._run_goal_risk_check()
         self._run_score_update(ticker, pos.entry_price, price, reason)
+        self._run_post_close_learning(ticker, pos.entry_price, price, reason, pos)
         return pnl
 
     def _run_score_update(self, ticker: str, entry_price: float, exit_price: float, reason: str) -> None:
@@ -586,6 +597,46 @@ class SwingStrategy:
 
         except Exception as e:
             log.warning("Score-Update fehlgeschlagen: %s", e)
+
+    def _run_post_close_learning(
+        self, ticker: str, entry_price: float, exit_price: float, reason: str, pos
+    ) -> None:
+        """SentimentMemory + ReEntryTracker nach Trade-Abschluss aktualisieren."""
+        return_pct = (exit_price - entry_price) / entry_price * 100
+
+        # Sentiment-Verlässlichkeit pro Ticker lernen
+        try:
+            from analyzers.sentiment_memory import SentimentMemory
+            sentiment_at_entry = None
+            try:
+                recent = self.tracker.get_recent_trades(n=1)
+                if recent:
+                    sentiment_at_entry = recent[0].get("sentiment_score")
+            except Exception:
+                pass
+            if sentiment_at_entry is not None:
+                SentimentMemory().record(ticker, sentiment_at_entry, return_pct)
+        except Exception as e:
+            log.debug("SentimentMemory.record fehlgeschlagen: %s", e)
+
+        # Verkaufte Position zur Re-Entry-Beobachtung hinzufügen
+        try:
+            from analyzers.reentry_tracker import ReEntryTracker
+            confidence = "MEDIUM"
+            try:
+                recent = self.tracker.get_recent_trades(n=1)
+                if recent:
+                    confidence = (recent[0].get("confidence") or "MEDIUM").upper()
+            except Exception:
+                pass
+            ReEntryTracker().add_sold(
+                ticker=ticker,
+                sell_price=exit_price,
+                sell_reason=reason,
+                confidence=confidence,
+            )
+        except Exception as e:
+            log.debug("ReEntryTracker.add_sold fehlgeschlagen: %s", e)
 
     def _run_goal_risk_check(self) -> None:
         """Nach jedem Trade: prüfe ob das Portfolio-Ziel noch erreichbar ist."""
