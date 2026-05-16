@@ -934,43 +934,30 @@ def show_regime(detector: RecessionDetector):
 
 
 def _run_margin_check(tracker) -> None:
-    """Zeigt Margin-Bereitschaft und aktuelle Einstellung."""
-    from analyzers.margin_readiness import MarginReadinessChecker
-    checker  = MarginReadinessChecker(tracker)
-    readiness = checker.check()
+    """Zeigt Margin-Tier-Status und aktuelle Einstellung."""
+    from analyzers.margin_readiness import MarginTierTracker
+    result = MarginTierTracker(tracker).get_active_tier(use_cache=False)
 
-    console.rule("[bold blue]Margin-Bereitschaft")
-    console.print(readiness.to_text())
+    console.rule("[bold blue]Progressiver Hebel-Tracker")
+    console.print(result.to_text())
 
-    # Aktuelle Einstellung anzeigen
     margin_active = config.use_margin
-    factor        = config.margin_factor
     status_color  = "green" if margin_active else "yellow"
-    status_label  = f"AKTIV ({factor:.1f}×)" if margin_active else "DEAKTIVIERT"
+    status_label  = f"AKTIV – Tier {result.active_tier.level} ({result.factor:.2f}×)" if margin_active else "DEAKTIVIERT"
+    console.print(f"\nSystem-Einstellung: [{status_color}]{status_label}[/{status_color}]")
 
-    console.print(
-        f"\nAktuelle Einstellung: [{status_color}]{status_label}[/{status_color}]"
-    )
-
-    if readiness.ready and not margin_active:
+    if not margin_active:
         console.print(
-            "\n[bold green]Bot ist bereit für Margin![/bold green]\n"
-            "Zum Aktivieren in .env eintragen:\n"
-            f"  [cyan]USE_MARGIN=true[/cyan]\n"
-            f"  [cyan]MARGIN_FACTOR={readiness.recommended_factor:.2f}[/cyan]\n"
-            f"  [cyan]MARGIN_MIN_CONFIDENCE=HIGH[/cyan]\n"
-            "[dim]⚠ Nur mit Alpaca Margin-Account (kein Cash-Account)![/dim]"
+            "\nZum Aktivieren des Tier-Systems in .env eintragen:\n"
+            "  [cyan]USE_MARGIN=true[/cyan]\n"
+            "  [cyan]MARGIN_MIN_CONFIDENCE=HIGH[/cyan]\n"
+            "[dim]Der Bot bestimmt den Hebel dann selbst anhand seiner Performance.[/dim]\n"
+            "[dim]⚠ Erfordert Alpaca Margin-Account (nicht Cash-Account)![/dim]"
         )
-    elif not readiness.ready and margin_active:
-        console.print(
-            "\n[bold red]⚠ Warnung:[/bold red] Margin ist aktiv, aber der Bot "
-            "hat die Bereitschaftskriterien noch nicht erfüllt.\n"
-            "Empfehlung: [cyan]USE_MARGIN=false[/cyan] in .env setzen."
-        )
-    elif readiness.ready and margin_active:
-        console.print(
-            f"\n[bold green]✓ Margin läuft korrekt mit {factor:.1f}× Hebel.[/bold green]"
-        )
+    elif result.active_tier.level == 0 and result.downgrade_reason:
+        console.print(f"\n[bold red]⚠ Hebel pausiert:[/bold red] {result.downgrade_reason}")
+    elif result.at_max:
+        console.print("\n[bold green]🏆 Maximaler Tier erreicht – 2.00× Hebel aktiv.[/bold green]")
 
 
 def _run_optimizer(tracker, apply: bool = False) -> None:
@@ -996,6 +983,32 @@ def _run_optimizer(tracker, apply: bool = False) -> None:
             "\n[dim]Zum Anwenden:[/dim] [cyan]python main.py --optimize --apply[/cyan]\n"
             "[dim]Zum Ablehnen:[/dim] Nichts tun – .env bleibt unverändert."
         )
+
+
+def _margin_tier_watch(tracker, notifier: "TelegramNotifier", _state: list) -> None:
+    """Prüft ob sich der Margin-Tier geändert hat und sendet Telegram-Benachrichtigung."""
+    if not config.use_margin:
+        return
+    try:
+        from analyzers.margin_readiness import MarginTierTracker
+        tracker_inst = MarginTierTracker(tracker)
+        tracker_inst.invalidate_cache()
+        result   = tracker_inst.get_active_tier(use_cache=False)
+        prev_lvl = _state[0] if _state else -1
+
+        if prev_lvl < 0:
+            _state.append(result.active_tier.level)
+            return
+
+        if result.active_tier.level != prev_lvl:
+            notifier.send(result.to_telegram(prev_level=prev_lvl))
+            log.info(
+                "Margin-Tier geändert: %d → %d (%s)",
+                prev_lvl, result.active_tier.level, result.active_tier.label,
+            )
+            _state[0] = result.active_tier.level
+    except Exception as e:
+        log.warning("Margin-Tier-Watch fehlgeschlagen: %s", e)
 
 
 def _auto_optimize_check(tracker, notifier: "TelegramNotifier") -> None:
@@ -1484,6 +1497,14 @@ def main():
     schedule.every(6).hours.do(
         lambda: _auto_optimize_check(tracker, TelegramNotifier())
     )
+
+    # Margin-Tier-Watch: bei Tier-Wechsel Telegram-Benachrichtigung
+    _margin_tier_state: list = []
+    if config.use_margin:
+        _margin_tier_watch(tracker, TelegramNotifier(), _margin_tier_state)  # Init
+        schedule.every(2).hours.do(
+            lambda: _margin_tier_watch(tracker, TelegramNotifier(), _margin_tier_state)
+        )
 
     # Goal-reached check (einmalige Telegram-Nachricht wenn Ziel erreicht)
     _goal_notified: list = []

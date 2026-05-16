@@ -105,17 +105,14 @@ class Config:
         default_factory=lambda: float(os.getenv("KELLY_FRACTION", "0.25"))
     )
 
-    # ── Margin / Hebel ────────────────────────────────────────────────────────
-    # Nur aktivieren wenn MarginReadinessChecker BEREIT meldet!
+    # ── Margin / Hebel (progressives Tier-System) ─────────────────────────────
+    # false = kein Hebel (Standard)
+    # true  = Bot verdient sich Hebel durch Performance (Tier 1–4: 1.25×–2.00×)
     # Erfordert Alpaca Margin-Account (nicht Cash-Account).
     use_margin: bool = field(
         default_factory=lambda: os.getenv("USE_MARGIN", "false").lower() in ("1", "true", "yes")
     )
-    # Hebelfaktor: 1.5 = 50% mehr kaufen als Cash erlaubt (empfohlen: max. 1.5)
-    margin_factor: float = field(
-        default_factory=lambda: float(os.getenv("MARGIN_FACTOR", "1.5"))
-    )
-    # Nur bei dieser Konfidenz Margin nutzen
+    # Nur bei dieser Konfidenz Margin nutzen (HIGH empfohlen)
     margin_min_confidence: str = field(
         default_factory=lambda: os.getenv("MARGIN_MIN_CONFIDENCE", "HIGH")
     )

@@ -404,11 +404,20 @@ class SwingStrategy:
         margin_factor = 1.0
         using_margin = False
         if (config.use_margin
-                and analysis.confidence == config.margin_min_confidence
-                and config.margin_factor > 1.0):
-            margin_factor = config.margin_factor
-            using_margin = True
-            log.info("[%s] Margin aktiv: %.1f× (HIGH Confidence)", ticker, margin_factor)
+                and analysis.confidence == config.margin_min_confidence):
+            try:
+                from analyzers.margin_readiness import MarginTierTracker
+                tier_result  = MarginTierTracker(self.tracker).get_active_tier()
+                margin_factor = tier_result.factor
+                using_margin  = margin_factor > 1.0
+                if using_margin:
+                    log.info(
+                        "[%s] Margin Tier %d aktiv: %.2f× (%s)",
+                        ticker, tier_result.active_tier.level,
+                        margin_factor, tier_result.active_tier.label,
+                    )
+            except Exception as e:
+                log.warning("[%s] Margin-Tier-Check fehlgeschlagen: %s", ticker, e)
 
         cash_limit = self.portfolio.cash * 0.95 * margin_factor
         invest = min(max_invest * margin_factor, cash_limit)
