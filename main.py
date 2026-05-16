@@ -23,6 +23,8 @@ Starten:  python main.py
           python main.py --weekend       (Wochenvorbereitung jetzt ausführen)
           python main.py --briefing      (Letztes Wochenbriefing anzeigen)
           python main.py --goal          (Ziel-Analyse: Wahrscheinlichkeit und Status)
+          python main.py --optimize      (Parameter-Optimierung basierend auf Trade-History)
+          python main.py --optimize --apply  (Vorschläge direkt in .env schreiben)
 
 Analyse-Zeitplan (.env):
   MARKET_EXCHANGES=XETRA,NYSE,TSE    # Vollanalyse 30 Min vor Börseneröffnung
@@ -77,6 +79,7 @@ from notifier.telegram_notifier import TelegramNotifier
 from reporting.exporter import Exporter
 from portfolio.signal_queue import SignalQueue
 from portfolio.goal_risk_assessor import GoalRiskAssessor
+from analyzers.parameter_optimizer import ParameterOptimizer
 from collectors.social_scan import SocialPulseDB
 from collectors.reddit_collector import RedditCollector as _RedditColl
 from collectors.stocktwits_collector import StockTwitsCollector as _TwitsColl
@@ -929,6 +932,50 @@ def show_regime(detector: RecessionDetector):
         console.print("[dim]Keine Hedges empfohlen – Regime zu gut.[/dim]")
 
 
+def _run_optimizer(tracker, apply: bool = False) -> None:
+    """Zeigt Parameter-Optimierungsvorschläge und schreibt sie optional in .env."""
+    from analyzers.parameter_optimizer import ParameterOptimizer
+    optimizer = ParameterOptimizer(tracker)
+    report = optimizer.analyze()
+    console.rule("[bold blue]Parameter-Optimierung")
+    console.print(report.to_text())
+
+    if not report.has_suggestions:
+        return
+
+    if apply:
+        console.print("\n[cyan]Schreibe Änderungen in .env...[/cyan]")
+        lines = optimizer.apply(report)
+        for l in lines:
+            console.print(f"  [green]{l}[/green]")
+        console.print("\n[bold green]Fertig![/bold green] Bot neu starten damit Änderungen wirksam werden.")
+        console.print("[dim]Backup der alten .env wurde automatisch erstellt.[/dim]")
+    else:
+        console.print(
+            "\n[dim]Zum Anwenden:[/dim] [cyan]python main.py --optimize --apply[/cyan]\n"
+            "[dim]Zum Ablehnen:[/dim] Nichts tun – .env bleibt unverändert."
+        )
+
+
+def _auto_optimize_check(tracker, notifier: "TelegramNotifier") -> None:
+    """Prüft nach je 15 neuen Trades ob Optimierung sinnvoll ist. Sendet Telegram-Hinweis."""
+    from analyzers.parameter_optimizer import ParameterOptimizer, _MIN_TRADES
+    try:
+        report_data = tracker.get_accuracy_report()
+        total = report_data.get("total_closed", 0)
+        if total < _MIN_TRADES:
+            return
+        if total % _MIN_TRADES != 0:
+            return
+        optimizer = ParameterOptimizer(tracker)
+        report = optimizer.analyze()
+        if report.has_suggestions:
+            notifier.send(report.to_telegram())
+            log.info("ParameterOptimizer: %d Vorschläge nach %d Trades gesendet.", len(report.suggestions), total)
+    except Exception as e:
+        log.warning("Auto-Optimize-Check fehlgeschlagen: %s", e)
+
+
 def show_goal(goal_risk: GoalRiskAssessor, portfolio: Portfolio, broker, tracker):
     """Zeigt aktuellen Zielstatus mit Wahrscheinlichkeit und Empfehlungen."""
     console.rule("[bold blue]Ziel-Analyse (TARGET_GOAL)")
@@ -1104,6 +1151,8 @@ def main():
     parser.add_argument("--briefing", action="store_true", help="Letztes Wochenbriefing anzeigen")
     parser.add_argument("--regime", action="store_true", help="Aktuelles Marktregime analysieren")
     parser.add_argument("--goal", action="store_true", help="Ziel-Analyse: Wahrscheinlichkeit und Status")
+    parser.add_argument("--optimize", action="store_true", help="Parameter-Optimierung basierend auf Trade-History")
+    parser.add_argument("--apply", action="store_true", help="Optimierungs-Vorschläge in .env schreiben")
     args = parser.parse_args()
 
     if args.dashboard:
@@ -1212,6 +1261,10 @@ def main():
 
     if args.goal:
         show_goal(goal_risk, portfolio, broker, tracker)
+        return
+
+    if args.optimize:
+        _run_optimizer(tracker, apply=args.apply)
         return
 
     if not config.anthropic_api_key:
@@ -1380,6 +1433,11 @@ def main():
     schedule.every().hour.do(strategy.check_open_positions)
     if config.enable_social_scan:
         schedule.every().hour.do(_social_scan_job)
+
+    # Auto-Optimierung: nach je 15 abgeschlossenen Trades per Telegram benachrichtigen
+    schedule.every(6).hours.do(
+        lambda: _auto_optimize_check(tracker, TelegramNotifier())
+    )
 
     # Goal-reached check (einmalige Telegram-Nachricht wenn Ziel erreicht)
     _goal_notified: list = []
