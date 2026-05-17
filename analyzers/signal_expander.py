@@ -253,5 +253,11 @@ class SignalDrivenExpander:
             return {}
 
     def _save(self, data: Dict):
-        with open(_DATA_FILE, "w") as f:
-            json.dump(data, f, indent=2)
+        import tempfile, os
+        os.makedirs(os.path.dirname(_DATA_FILE), exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w", dir=os.path.dirname(_DATA_FILE), suffix=".tmp", delete=False
+        ) as tmp:
+            json.dump(data, tmp, indent=2)
+            tmp_path = tmp.name
+        os.replace(tmp_path, _DATA_FILE)

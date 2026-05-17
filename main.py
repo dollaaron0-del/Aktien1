@@ -372,12 +372,12 @@ def run_analysis_cycle(
         except Exception:
             pass
 
-        # Re-Entry-Tracker: Preise aktualisieren
+        # Re-Entry-Tracker: Preise aktualisieren (einmal instanziieren)
         try:
-            tickers_watched = [c.ticker for c in ReEntryTracker().get_all_watched()]
+            rt = ReEntryTracker()
+            tickers_watched = [c.ticker for c in rt.get_all_watched()]
             if tickers_watched:
                 watch_prices = broker.get_prices(tickers_watched)
-                rt = ReEntryTracker()
                 rt.update_prices(watch_prices)
         except Exception:
             pass
@@ -1309,7 +1309,7 @@ def _run_reentry_display(broker) -> None:
         console.print("[dim]Aktuell keine attraktiven Re-Entry-Möglichkeiten.[/dim]")
 
     console.print(f"\n[dim]Beobachtet werden {len(all_watched)} Ticker.[/dim]")
-    console.print(console.print(rt.to_text()))
+    console.print(rt.to_text())
 
 
 def _run_velocity_display(ticker: str) -> None:

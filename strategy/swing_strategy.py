@@ -93,9 +93,11 @@ class SwingStrategy:
             self.broker.get_prices(list(self.portfolio.all_positions().keys()) + [ticker])
         )
 
-        # Score-Modifier für Positions-Limit und Kaufschwelle
+        # Score-Modifier für Positions-Limit und Kaufschwelle (einmal laden, mehrfach nutzen)
         from analyzers.bot_scorer import BotScorer, get_modifiers as _get_score_mod
-        _smod = _get_score_mod(BotScorer().get().current)
+        _bot_scorer = BotScorer()
+        _current_score = _bot_scorer.get().current
+        _smod = _get_score_mod(_current_score)
 
         # Skalierungs-Check: Positionslimit (Score-adjustiert)
         open_count  = len(self.portfolio.all_positions())
@@ -168,7 +170,8 @@ class SwingStrategy:
             if not sec_check["allowed"]:
                 return f"[{ticker}] {sec_check['reason']} – übersprungen."
 
-        result = self._open_position(ticker, current_price, analysis, portfolio_value, sources_breakdown or {})
+        result = self._open_position(ticker, current_price, analysis, portfolio_value, sources_breakdown or {},
+                                     score_mod=_smod, current_score=_current_score)
 
         # If capital was insufficient, save signal for later execution
         if result and "Nicht genug freies Kapital" in result and self.signal_queue:
@@ -401,10 +404,12 @@ class SwingStrategy:
         analysis: AnalysisResult,
         portfolio_value: float,
         sources_breakdown: Dict[str, int],
+        score_mod=None,
+        current_score: float = 50.0,
     ) -> str:
-        # Score-basierte Verhaltens-Modifier laden
-        from analyzers.bot_scorer import BotScorer, get_modifiers
-        _score_mod = get_modifiers(BotScorer().get().current)
+        # Score-Modifier ggf. neu laden (z.B. bei direktem Aufruf ohne evaluate())
+        from analyzers.bot_scorer import get_modifiers
+        _score_mod = score_mod if score_mod is not None else get_modifiers(current_score)
 
         max_pos_pct = self.focus.get_max_position_pct(portfolio_value)
         if self.kelly:
@@ -510,7 +515,7 @@ class SwingStrategy:
         earn_tag  = f" | {EarningsSurprise.format_surprise(earn_info)}" if earn_info.get("label") not in ("UNKNOWN", "IN_LINE", None) else ""
 
         margin_tag = f" | ⚡ MARGIN {margin_factor:.1f}×" if using_margin else ""
-        score_tag  = f" | Score {BotScorer().get().current:.0f} ({_score_mod.score_range})"
+        score_tag  = f" | Score {current_score:.0f} ({_score_mod.score_range})"
         return (
             f"[{ticker}] GEKAUFT – {shares} Stück @ ${price:.2f} "
             f"| SL: ${stop_loss} | {tp_source} "
@@ -534,12 +539,21 @@ class SwingStrategy:
             pnl=pnl, reason=reason,
             days_held=days_held,
         )
+        # Einmalig letzten Trade lesen – wird an beide Methoden weitergegeben
+        last_trade: dict = {}
+        try:
+            recent = self.tracker.get_recent_trades(n=1)
+            last_trade = recent[0] if recent else {}
+        except Exception:
+            pass
+
         self._run_goal_risk_check()
-        self._run_score_update(ticker, pos.entry_price, price, reason)
-        self._run_post_close_learning(ticker, pos.entry_price, price, reason, pos)
+        self._run_score_update(ticker, pos.entry_price, price, reason, last_trade)
+        self._run_post_close_learning(ticker, pos.entry_price, price, reason, last_trade)
         return pnl
 
-    def _run_score_update(self, ticker: str, entry_price: float, exit_price: float, reason: str) -> None:
+    def _run_score_update(self, ticker: str, entry_price: float, exit_price: float, reason: str,
+                          last_trade: dict = {}) -> None:
         """Bot-Score nach Trade aktualisieren und bei Meilensteinen benachrichtigen."""
         try:
             from analyzers.bot_scorer import BotScorer
@@ -552,15 +566,8 @@ class SwingStrategy:
             except Exception:
                 pass
 
-            # Konfidenz aus letztem Journal-Eintrag
-            confidence = "MEDIUM"
-            try:
-                recent = self.tracker.get_recent_trades(n=1)
-                if recent:
-                    conf_raw = recent[0].get("confidence") or "MEDIUM"
-                    confidence = conf_raw.upper()
-            except Exception:
-                pass
+            conf_raw = last_trade.get("confidence") or "MEDIUM"
+            confidence = conf_raw.upper()
 
             # Normalise reason string to match bot_scorer exit_reason keys
             exit_reason_key = reason.lower()
@@ -599,21 +606,16 @@ class SwingStrategy:
             log.warning("Score-Update fehlgeschlagen: %s", e)
 
     def _run_post_close_learning(
-        self, ticker: str, entry_price: float, exit_price: float, reason: str, pos
+        self, ticker: str, entry_price: float, exit_price: float, reason: str, last_trade: dict = {}
     ) -> None:
         """SentimentMemory + ReEntryTracker nach Trade-Abschluss aktualisieren."""
         return_pct = (exit_price - entry_price) / entry_price * 100
+        confidence = (last_trade.get("confidence") or "MEDIUM").upper()
 
         # Sentiment-Verlässlichkeit pro Ticker lernen
         try:
             from analyzers.sentiment_memory import SentimentMemory
-            sentiment_at_entry = None
-            try:
-                recent = self.tracker.get_recent_trades(n=1)
-                if recent:
-                    sentiment_at_entry = recent[0].get("sentiment_score")
-            except Exception:
-                pass
+            sentiment_at_entry = last_trade.get("sentiment_score")
             if sentiment_at_entry is not None:
                 SentimentMemory().record(ticker, sentiment_at_entry, return_pct)
         except Exception as e:
@@ -622,13 +624,6 @@ class SwingStrategy:
         # Verkaufte Position zur Re-Entry-Beobachtung hinzufügen
         try:
             from analyzers.reentry_tracker import ReEntryTracker
-            confidence = "MEDIUM"
-            try:
-                recent = self.tracker.get_recent_trades(n=1)
-                if recent:
-                    confidence = (recent[0].get("confidence") or "MEDIUM").upper()
-            except Exception:
-                pass
             ReEntryTracker().add_sold(
                 ticker=ticker,
                 sell_price=exit_price,

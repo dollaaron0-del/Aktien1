@@ -205,9 +205,15 @@ class SectorRotation:
             return None
 
     def _save_cache(self, snaps: List[SectorSnapshot]):
+        import tempfile, os as _os
         data = {
             "updated_at": datetime.utcnow().isoformat(),
             "sectors": [s.to_dict() for s in snaps],
         }
-        with open(_CACHE_FILE, "w") as f:
-            json.dump(data, f, indent=2)
+        _os.makedirs(_os.path.dirname(_CACHE_FILE), exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w", dir=_os.path.dirname(_CACHE_FILE), suffix=".tmp", delete=False
+        ) as tmp:
+            json.dump(data, tmp, indent=2)
+            tmp_path = tmp.name
+        _os.replace(tmp_path, _CACHE_FILE)
