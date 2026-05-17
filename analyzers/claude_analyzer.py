@@ -352,7 +352,6 @@ class ClaudeAnalyzer:
 
     def _result_from_prescreen(self, ticker: str, prescreen, sources: int) -> AnalysisResult:
         """Erzeugt AnalysisResult direkt aus Ollama-Score (kein Claude-Aufruf)."""
-        from analyzers.ollama_prescreener import PrescreenResult
         score      = prescreen.score
         direction  = prescreen.direction
         confidence = prescreen.confidence

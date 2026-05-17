@@ -44,7 +44,8 @@ import subprocess
 import sys
 import schedule
 import time
-from datetime import datetime
+from collections import defaultdict
+from datetime import datetime, date
 from typing import List, Dict, Optional
 
 from rich.console import Console
@@ -91,7 +92,7 @@ from collectors.stocktwits_collector import StockTwitsCollector as _TwitsColl
 from collectors.twitter_collector import TwitterCollector as _TwitterColl
 from analyzers.market_schedule import MarketSchedule
 from analyzers.weekend_prep import WeekendPrep
-from analyzers.recession_detector import RecessionDetector, BULL, NEUTRAL, BEAR, CRISIS
+from analyzers.recession_detector import RecessionDetector
 from analyzers.dynamic_watchlist import DynamicWatchlist
 from analyzers.signal_expander import SignalDrivenExpander
 from strategy.hedge_strategy import HedgeStrategy
@@ -145,101 +146,56 @@ def _safe_collect(collector_name: str, fn, *args, **kwargs) -> List[Dict]:
         return []
 
 
-def collect_news(ticker: str, archive: NewsArchive) -> tuple[List[Dict], Dict[str, int]]:
-    """
-    Collects fresh news from all sources (incl. Congressional + SEC insider trades),
-    stores them in the 30-day archive, and returns (deduplicated_items, sources_breakdown).
-    """
-    yahoo        = YahooCollector()
-    reddit       = RedditCollector()
-    newsapi      = NewsAPICollector()
-    insider      = InsiderCollector(lookback_days=90)
-    usaspending  = USASpendingCollector(lookback_days=180, min_award_usd=1_000_000)
-    sec_edgar    = SECEdgarCollector(lookback_days=30)
-    stocktwits   = StockTwitsCollector(lookback_hours=48)
-    wire         = WireCollector(lookback_days=7)
-    options_flow = OptionsFlowCollector()
-    euro_news    = EuropeanNewsCollector(lookback_hours=72)
-    twitter      = TwitterCollector()
-    sec_8k          = SEC8KCollector()
-    short_interest  = ShortInterestCollector()
-    institutional   = InstitutionalCollector()
-    analyst         = AnalystCollector()
-    earn_transcript = EarningsTranscriptCollector()
-    patent          = PatentCollector()
-    job_listings    = JobListingsCollector()
-    ceo_interview   = CEOInterviewCollector()
-    eu_regulation   = EURegulationCollector()
-    chinese_media   = ChineseMediaCollector()
-    web_traffic     = WebTrafficCollector()
-
-    yahoo_items          = _safe_collect("yahoo",          yahoo.collect,          ticker)
-    reddit_items         = _safe_collect("reddit",         reddit.collect,         ticker)
-    newsapi_items        = _safe_collect("newsapi",        newsapi.collect,        ticker)
-    insider_items        = _safe_collect("insider",        insider.collect,        ticker)
-    contract_items       = _safe_collect("usaspending",    usaspending.collect,    ticker)
-    edgar_items          = _safe_collect("sec_edgar",      sec_edgar.collect,      ticker)
-    twits_items          = _safe_collect("stocktwits",     stocktwits.collect,     ticker)
-    wire_items           = _safe_collect("wire",           wire.collect,           ticker)
-    options_items        = _safe_collect("options_flow",   options_flow.collect,   ticker)
-    euro_items           = _safe_collect("european_news",  euro_news.collect,      ticker)
-    twitter_items        = _safe_collect("twitter",        twitter.collect,        ticker) if twitter.available else []
-    sec_8k_items         = _safe_collect("sec_8k",         sec_8k.collect,         ticker)
-    short_interest_items = _safe_collect("short_interest", short_interest.collect, ticker)
-    institutional_items  = _safe_collect("institutional",  institutional.collect,  ticker)
-    analyst_items        = _safe_collect("analyst",        analyst.collect,        ticker)
-    transcript_items     = _safe_collect("earn_transcript",earn_transcript.collect,ticker)
-    patent_items         = _safe_collect("patent",         patent.collect,         ticker)
-    job_items            = _safe_collect("job_listings",   job_listings.collect,   ticker)
-    ceo_items            = _safe_collect("ceo_interview",  ceo_interview.collect,  ticker)
-    eu_items             = _safe_collect("eu_regulation",  eu_regulation.collect,  ticker)
-    chinese_items        = _safe_collect("chinese_media",  chinese_media.collect,  ticker)
-    traffic_items        = _safe_collect("web_traffic",    web_traffic.collect,    ticker)
-
-    sources_breakdown = {
-        "yahoo":               len(yahoo_items),
-        "reddit":              len(reddit_items),
-        "newsapi":             len(newsapi_items),
-        "insider":             len(insider_items),
-        "usaspending":         len(contract_items),
-        "sec_edgar":           len(edgar_items),
-        "stocktwits":          len(twits_items),
-        "wire":                len(wire_items),
-        "options_flow":        len(options_items),
-        "european_news":       len(euro_items),
-        "twitter":             len(twitter_items),
-        "sec_8k":              len(sec_8k_items),
-        "short_interest":      len(short_interest_items),
-        "institutional_13f":   len(institutional_items),
-        "analyst_ratings":     len(analyst_items),
-        "earn_transcripts":    len(transcript_items),
-        "patents":             len(patent_items),
-        "job_listings":        len(job_items),
-        "ceo_interviews":      len(ceo_items),
-        "eu_regulation":       len(eu_items),
-        "chinese_media":       len(chinese_items),
-        "web_traffic":         len(traffic_items),
+def _make_collectors() -> Dict:
+    """Build all collector instances once per analysis cycle."""
+    _twitter = TwitterCollector()
+    return {
+        "yahoo":             YahooCollector(),
+        "reddit":            RedditCollector(),
+        "newsapi":           NewsAPICollector(),
+        "insider":           InsiderCollector(lookback_days=90),
+        "usaspending":       USASpendingCollector(lookback_days=180, min_award_usd=1_000_000),
+        "sec_edgar":         SECEdgarCollector(lookback_days=30),
+        "stocktwits":        StockTwitsCollector(lookback_hours=48),
+        "wire":              WireCollector(lookback_days=7),
+        "options_flow":      OptionsFlowCollector(),
+        "european_news":     EuropeanNewsCollector(lookback_hours=72),
+        "twitter":           _twitter if _twitter.available else None,
+        "sec_8k":            SEC8KCollector(),
+        "short_interest":    ShortInterestCollector(),
+        "institutional_13f": InstitutionalCollector(),
+        "analyst_ratings":   AnalystCollector(),
+        "earn_transcripts":  EarningsTranscriptCollector(),
+        "patents":           PatentCollector(),
+        "job_listings":      JobListingsCollector(),
+        "ceo_interviews":    CEOInterviewCollector(),
+        "eu_regulation":     EURegulationCollector(),
+        "chinese_media":     ChineseMediaCollector(),
+        "web_traffic":       WebTrafficCollector(),
     }
 
-    all_items = (
-        yahoo_items + reddit_items + newsapi_items + insider_items
-        + contract_items + edgar_items + twits_items + wire_items
-        + options_items + euro_items + twitter_items
-        + sec_8k_items + short_interest_items + institutional_items
-        + analyst_items + transcript_items + patent_items + job_items
-        + ceo_items + eu_items + chinese_items + traffic_items
-    )
 
-    # Archive everything before deduplication (archive handles its own dedup)
+def collect_news(ticker: str, archive: NewsArchive, collectors: Dict) -> tuple[List[Dict], Dict[str, int]]:
+    """
+    Collects fresh news from all sources, stores in archive,
+    and returns (deduplicated_items, sources_breakdown).
+    collectors: pre-built dict from _make_collectors() – reused across tickers.
+    """
+    all_items: List[Dict] = []
+    sources_breakdown: Dict[str, int] = {}
+
+    for name, collector in collectors.items():
+        items = _safe_collect(name, collector.collect, ticker) if collector is not None else []
+        sources_breakdown[name] = len(items)
+        all_items.extend(items)
+
     archive.store(ticker, all_items)
 
-    # Track news velocity (Nachrichten-Beschleunigung – Frühindikator)
     try:
         NewsVelocityAnalyzer().record_articles(ticker, all_items)
     except Exception:
         pass
 
-    # Deduplicate for the current analysis batch
     seen: set = set()
     unique: List[Dict] = []
     for item in all_items:
@@ -265,7 +221,7 @@ def run_analysis_cycle(
     console.rule(f"[bold blue]Analyse-Zyklus – {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
     analyzer = ClaudeAnalyzer()
-    yahoo = YahooCollector()
+    collectors = _make_collectors()
 
     # Inject continuous learning memo into Claude's system prompt
     lessons_memo = reflection.get_active_memo() if reflection else None
@@ -286,8 +242,7 @@ def run_analysis_cycle(
     if hedge_strategy:
         macro_news_for_regime = []
         try:
-            from collectors.news_api_collector import NewsAPICollector as _NAPI
-            macro_news_for_regime = _NAPI().collect_general("market recession economy", max_results=10)
+            macro_news_for_regime = NewsAPICollector().collect_general("market recession economy", max_results=10)
         except Exception as e:
             log.warning("Hedge-Regime: Macro-News konnten nicht geladen werden – %s", e)
         regime, hedge_actions = hedge_strategy.evaluate_regime(macro_news_for_regime or None)
@@ -309,8 +264,8 @@ def run_analysis_cycle(
     for ticker in active_watchlist:
         console.print(f"\n[cyan]Sammle Daten für {ticker}...[/cyan]")
 
-        news, sources_breakdown = collect_news(ticker, archive)
-        price_data = yahoo.get_price_data(ticker)
+        news, sources_breakdown = collect_news(ticker, archive, collectors)
+        price_data = collectors["yahoo"].get_price_data(ticker)
 
         # Feed news items to signal expander – detects unknown small-cap tickers
         new_signal_tickers = _signal_expander.process_news_items(news)
@@ -352,15 +307,13 @@ def run_analysis_cycle(
         # Multi-Zeitrahmen-Sentiment (1d/7d/30d)
         try:
             hist_30d = archive.get_history(ticker, days=30)
-            from collections import defaultdict
             by_date: dict = defaultdict(list)
             for item in hist_30d:
                 pub = (item.get("published") or item.get("timestamp") or "")[:10]
                 if pub and item.get("sentiment_score") is not None:
                     by_date[pub].append(item)
             for item in news:
-                from datetime import date as _date
-                today_key = _date.today().isoformat()
+                today_key = date.today().isoformat()
                 if item.get("sentiment_score") is not None:
                     by_date[today_key].append(item)
             if len(by_date) >= 2:

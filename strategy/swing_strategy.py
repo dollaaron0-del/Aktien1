@@ -1,6 +1,6 @@
 import math
 from datetime import datetime
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict
 from analyzers.claude_analyzer import AnalysisResult
 from portfolio.portfolio import Portfolio, Position
 from portfolio.performance_tracker import PerformanceTracker
@@ -18,6 +18,10 @@ from analyzers.kelly_sizing import KellySizer
 from analyzers.macro_calendar import MacroCalendar
 from analyzers.sector_rotation import SectorRotation
 from analyzers.earnings_surprise import EarningsSurprise
+from analyzers.bot_scorer import BotScorer, get_modifiers as _get_score_mod
+from analyzers.sentiment_memory import SentimentMemory
+from analyzers.margin_readiness import MarginTierTracker
+from analyzers.reentry_tracker import ReEntryTracker
 from config import config
 from logger import get_logger
 
@@ -94,7 +98,6 @@ class SwingStrategy:
         )
 
         # Score-Modifier für Positions-Limit und Kaufschwelle (einmal laden, mehrfach nutzen)
-        from analyzers.bot_scorer import BotScorer, get_modifiers as _get_score_mod
         _bot_scorer = BotScorer()
         _current_score = _bot_scorer.get().current
         _smod = _get_score_mod(_current_score)
@@ -113,7 +116,6 @@ class SwingStrategy:
         # Sentiment-Verlässlichkeit pro Ticker (aus historischen Trades gelernt)
         sentiment_memory_adj = 0.0
         try:
-            from analyzers.sentiment_memory import SentimentMemory
             sentiment_memory_adj = SentimentMemory().get_threshold_adjustment(ticker)
         except Exception:
             pass
@@ -408,8 +410,7 @@ class SwingStrategy:
         current_score: float = 50.0,
     ) -> str:
         # Score-Modifier ggf. neu laden (z.B. bei direktem Aufruf ohne evaluate())
-        from analyzers.bot_scorer import get_modifiers
-        _score_mod = score_mod if score_mod is not None else get_modifiers(current_score)
+        _score_mod = score_mod if score_mod is not None else _get_score_mod(current_score)
 
         max_pos_pct = self.focus.get_max_position_pct(portfolio_value)
         if self.kelly:
@@ -430,7 +431,6 @@ class SwingStrategy:
         if (config.use_margin
                 and analysis.confidence == config.margin_min_confidence):
             try:
-                from analyzers.margin_readiness import MarginTierTracker
                 tier_result  = MarginTierTracker(self.tracker).get_active_tier()
                 margin_factor = tier_result.factor
                 using_margin  = margin_factor > 1.0
@@ -556,9 +556,6 @@ class SwingStrategy:
                           last_trade: dict = {}) -> None:
         """Bot-Score nach Trade aktualisieren und bei Meilensteinen benachrichtigen."""
         try:
-            from analyzers.bot_scorer import BotScorer
-            from analyzers.margin_readiness import MarginTierTracker
-
             return_pct = (exit_price - entry_price) / entry_price * 100
             tier = 0
             try:
@@ -614,7 +611,6 @@ class SwingStrategy:
 
         # Sentiment-Verlässlichkeit pro Ticker lernen
         try:
-            from analyzers.sentiment_memory import SentimentMemory
             sentiment_at_entry = last_trade.get("sentiment_score")
             if sentiment_at_entry is not None:
                 SentimentMemory().record(ticker, sentiment_at_entry, return_pct)
@@ -623,7 +619,6 @@ class SwingStrategy:
 
         # Verkaufte Position zur Re-Entry-Beobachtung hinzufügen
         try:
-            from analyzers.reentry_tracker import ReEntryTracker
             ReEntryTracker().add_sold(
                 ticker=ticker,
                 sell_price=exit_price,
