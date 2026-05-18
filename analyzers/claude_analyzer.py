@@ -290,7 +290,7 @@ class ClaudeAnalyzer:
         raw = message.content[0].text.strip()
         return self._parse_response(ticker, raw, len(news_items))
 
-    def _format_news(self, items: List[Dict], label: str = "", max_items: int = 20) -> str:
+    def _format_news(self, items: List[Dict], label: str = "", max_items: int = 15) -> str:
         parts = []
         for i, item in enumerate(items[:max_items], 1):
             source = item.get("source", "Unbekannt")
