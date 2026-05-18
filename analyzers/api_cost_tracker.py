@@ -23,6 +23,8 @@ _FILE = os.path.join(os.path.dirname(__file__), "..", "data", "api_savings.json"
 # Output: ~1200 Tokens × $0.075/1k = $0.090
 # Gesamt: ~$0.135 pro Aufruf (konservative Schätzung)
 _COST_PER_CLAUDE_CALL = float(os.getenv("CLAUDE_COST_PER_CALL", "0.135"))
+# Prompt caching: cached tokens cost ~10% of normal input price
+_CACHE_DISCOUNT = 0.90  # 90% saved on cached tokens (~3000 tokens × $0.015/1k × 0.9 ≈ $0.04/call)
 
 
 class APICostTracker:
@@ -57,7 +59,7 @@ class APICostTracker:
         except Exception as e:
             log.warning("APICostTracker: Speicherfehler – %s", e)
 
-    def record(self, claude_called: bool, ollama_used: bool) -> None:
+    def record(self, claude_called: bool, ollama_used: bool, cache_hit_tokens: int = 0) -> None:
         """Einen Analyse-Vorgang erfassen."""
         today = date.today().isoformat()
 
@@ -65,32 +67,34 @@ class APICostTracker:
 
         if today not in self._data["daily"]:
             self._data["daily"][today] = {
-                "analyses": 0, "claude": 0, "ollama_skips": 0, "cost_usd": 0.0, "saved_usd": 0.0
+                "analyses": 0, "claude": 0, "ollama_skips": 0,
+                "cost_usd": 0.0, "saved_usd": 0.0, "cache_saved_usd": 0.0,
             }
 
         day = self._data["daily"][today]
         day["analyses"] += 1
 
         if claude_called:
+            # Estimate cache savings: cached_tokens × price × discount_rate
+            cache_saved = round(cache_hit_tokens / 1000 * 0.015 * _CACHE_DISCOUNT, 5) if cache_hit_tokens else 0.0
+            actual_cost = round(_COST_PER_CLAUDE_CALL - cache_saved, 4)
+
             self._data["claude_calls"]  += 1
-            self._data["total_cost_usd"] = round(
-                self._data["total_cost_usd"] + _COST_PER_CLAUDE_CALL, 4
+            self._data["total_cost_usd"] = round(self._data["total_cost_usd"] + actual_cost, 4)
+            self._data["total_saved_usd"] = round(
+                self._data["total_saved_usd"] + cache_saved, 4
             )
-            day["claude"]   += 1
-            day["cost_usd"]  = round(day["cost_usd"] + _COST_PER_CLAUDE_CALL, 4)
+            self._data["cache_hits"] = self._data.get("cache_hits", 0) + (1 if cache_hit_tokens else 0)
+
+            day["claude"]          += 1
+            day["cost_usd"]         = round(day["cost_usd"] + actual_cost, 4)
+            day["cache_saved_usd"]  = round(day.get("cache_saved_usd", 0.0) + cache_saved, 4)
         else:
             saved = _COST_PER_CLAUDE_CALL
             self._data["ollama_skips"]    += 1
-            self._data["total_saved_usd"]  = round(
-                self._data["total_saved_usd"] + saved, 4
-            )
+            self._data["total_saved_usd"]  = round(self._data["total_saved_usd"] + saved, 4)
             day["ollama_skips"] += 1
             day["saved_usd"]     = round(day["saved_usd"] + saved, 4)
-
-        if ollama_used and not claude_called:
-            pass  # Bereits als skip erfasst
-        elif ollama_used and claude_called:
-            pass  # Ollama hat vorgeprüft aber Claude bestätigt
 
         self._save()
 
@@ -107,21 +111,22 @@ class APICostTracker:
         cost     = self._data["total_cost_usd"]
         skip_pct = round(skips / total * 100, 1) if total > 0 else 0.0
 
-        # Heutiger Tag
         today     = date.today().isoformat()
         today_day = self._data["daily"].get(today, {})
 
         return {
-            "total_analyses":   total,
-            "claude_calls":     claude,
-            "ollama_skips":     skips,
-            "skip_rate_pct":    skip_pct,
-            "total_cost_usd":   round(cost, 2),
-            "total_saved_usd":  round(saved, 2),
-            "today_cost_usd":   round(today_day.get("cost_usd", 0.0), 2),
-            "today_saved_usd":  round(today_day.get("saved_usd", 0.0), 2),
-            "today_claude":     today_day.get("claude", 0),
-            "today_skips":      today_day.get("ollama_skips", 0),
-            "cost_per_call":    _COST_PER_CLAUDE_CALL,
-            "fallbacks":        self._data.get("ollama_fallbacks", 0),
+            "total_analyses":       total,
+            "claude_calls":         claude,
+            "ollama_skips":         skips,
+            "skip_rate_pct":        skip_pct,
+            "total_cost_usd":       round(cost, 2),
+            "total_saved_usd":      round(saved, 2),
+            "cache_hits":           self._data.get("cache_hits", 0),
+            "today_cost_usd":       round(today_day.get("cost_usd", 0.0), 2),
+            "today_saved_usd":      round(today_day.get("saved_usd", 0.0), 2),
+            "today_cache_saved":    round(today_day.get("cache_saved_usd", 0.0), 4),
+            "today_claude":         today_day.get("claude", 0),
+            "today_skips":          today_day.get("ollama_skips", 0),
+            "cost_per_call":        _COST_PER_CLAUDE_CALL,
+            "fallbacks":            self._data.get("ollama_fallbacks", 0),
         }

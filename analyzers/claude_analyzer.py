@@ -265,15 +265,27 @@ class ClaudeAnalyzer:
                 "bei deiner Analyse und Empfehlung.\n"
             )
 
+        # Prompt caching: system_prompt is identical across all tickers in a cycle.
+        # Marking it ephemeral caches it for ~5 min → ~85% savings on system-prompt tokens.
+        system_blocks = [
+            {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}
+        ]
+
         message = self._client.messages.create(
             model=config.claude_model,
             max_tokens=1500,
-            system=system_prompt,
+            system=system_blocks,
             messages=[{"role": "user", "content": prompt}],
         )
 
         cost_tracker = _get_cost_tracker()
-        cost_tracker.record(claude_called=True, ollama_used=bool(prescreener))
+        usage = message.usage
+        cache_hit = getattr(usage, "cache_read_input_tokens", 0) or 0
+        cost_tracker.record(
+            claude_called=True,
+            ollama_used=bool(prescreener),
+            cache_hit_tokens=cache_hit,
+        )
 
         raw = message.content[0].text.strip()
         return self._parse_response(ticker, raw, len(news_items))
