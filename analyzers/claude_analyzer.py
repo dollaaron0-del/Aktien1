@@ -273,7 +273,7 @@ class ClaudeAnalyzer:
 
         message = self._client.messages.create(
             model=config.claude_model,
-            max_tokens=1500,
+            max_tokens=900,
             system=system_blocks,
             messages=[{"role": "user", "content": prompt}],
         )
