@@ -63,12 +63,24 @@ class AlpacaBroker:
         return None
 
     def get_prices(self, tickers: List[str]) -> Dict[str, float]:
-        prices = {}
-        for t in tickers:
-            p = self.get_price(t)
-            if p is not None:
-                prices[t] = p
-        return prices
+        if not self._check_creds() or not tickers:
+            return {}
+        try:
+            r = requests.get(
+                f"{self.data_url}/v2/stocks/snapshots",
+                params={"symbols": ",".join(tickers)},
+                headers=self._headers(),
+                timeout=15,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                return {t: round(float(v["latestTrade"]["p"]), 2)
+                        for t, v in data.items() if v.get("latestTrade")}
+        except Exception as e:
+            log.warning("Alpaca batch prices: %s", e)
+        # Fallback: PriceCache (yfinance-backed)
+        from collectors.price_cache import get_prices as _cached
+        return _cached(tickers)
 
     # ── Order submission + fill tracking ──────────────────────────────────────
 
@@ -163,10 +175,129 @@ class AlpacaBroker:
         )
         return {"status": "pending", "order_id": order_id}
 
+    def _submit_limit_order(self, ticker: str, shares: float, side: str,
+                             limit_price: float, time_in_force: str = "day") -> Dict:
+        if not self._check_creds():
+            log.error("Alpaca: API-Credentials fehlen")
+            return {"status": "error", "reason": "Alpaca credentials missing"}
+        try:
+            payload = {
+                "symbol":        ticker,
+                "qty":           str(shares),
+                "side":          side,
+                "type":          "limit",
+                "limit_price":   str(round(limit_price, 2)),
+                "time_in_force": time_in_force,
+            }
+            r = requests.post(
+                f"{self.base_url}/v2/orders",
+                json=payload,
+                headers=self._headers(),
+                timeout=15,
+            )
+            if r.status_code not in (200, 201):
+                log.error("Alpaca limit order %s %s: HTTP %d – %s", side, ticker, r.status_code, r.text[:200])
+                return {"status": "error", "reason": f"HTTP {r.status_code}: {r.text[:200]}"}
+
+            data     = r.json()
+            order_id = data.get("id")
+            log.info("Alpaca limit order submitted: %s %s %.2f shares @ %.2f (id=%s)",
+                     side.upper(), ticker, shares, limit_price, order_id)
+
+            fill_result = self._wait_for_fill(order_id)
+            fill_result.update({
+                "ticker":      ticker,
+                "shares":      shares,
+                "side":        side,
+                "limit_price": limit_price,
+                "mode":        "alpaca",
+            })
+            return fill_result
+
+        except Exception as e:
+            log.exception("Alpaca _submit_limit_order %s %s: %s", side, ticker, e)
+            return {"status": "error", "reason": str(e)}
+
+    def buy_bracket(self, ticker: str, shares: float, limit_price: float,
+                    stop_loss: float, take_profit: float) -> Dict:
+        if not self._check_creds():
+            log.error("Alpaca: API-Credentials fehlen")
+            return {"status": "error", "reason": "Alpaca credentials missing"}
+        try:
+            payload = {
+                "symbol":      ticker,
+                "qty":         str(shares),
+                "side":        "buy",
+                "type":        "limit",
+                "limit_price": str(round(limit_price, 2)),
+                "time_in_force": "day",
+                "order_class": "bracket",
+                "stop_loss":   {"stop_price": str(round(stop_loss, 2))},
+                "take_profit": {"limit_price": str(round(take_profit, 2))},
+            }
+            r = requests.post(
+                f"{self.base_url}/v2/orders",
+                json=payload,
+                headers=self._headers(),
+                timeout=15,
+            )
+            if r.status_code not in (200, 201):
+                log.error("Alpaca bracket order %s: HTTP %d – %s", ticker, r.status_code, r.text[:200])
+                return {"status": "error", "reason": f"HTTP {r.status_code}: {r.text[:200]}"}
+
+            data     = r.json()
+            order_id = data.get("id")
+            log.info("Alpaca bracket order submitted: BUY %s %.2f shares @ %.2f "
+                     "SL=%.2f TP=%.2f (id=%s)",
+                     ticker, shares, limit_price, stop_loss, take_profit, order_id)
+
+            fill_result = self._wait_for_fill(order_id)
+            fill_result.update({
+                "ticker":      ticker,
+                "shares":      shares,
+                "side":        "buy",
+                "limit_price": limit_price,
+                "stop_loss":   stop_loss,
+                "take_profit": take_profit,
+                "mode":        "alpaca",
+            })
+            return fill_result
+
+        except Exception as e:
+            log.exception("Alpaca buy_bracket %s: %s", ticker, e)
+            return {"status": "error", "reason": str(e)}
+
+    def cancel_all_orders(self) -> int:
+        """Cancel all open orders. Returns the number of cancelled orders."""
+        if not self._check_creds():
+            log.error("Alpaca: API-Credentials fehlen")
+            return 0
+        try:
+            r = requests.delete(
+                f"{self.base_url}/v2/orders",
+                headers=self._headers(),
+                timeout=10,
+            )
+            if r.status_code in (200, 204, 207):
+                cancelled = len(r.json()) if r.content else 0
+                log.info("Alpaca: %d order(s) cancelled", cancelled)
+                return cancelled
+            log.warning("Alpaca cancel_all_orders: HTTP %d", r.status_code)
+        except Exception as e:
+            log.warning("Alpaca cancel_all_orders: %s", e)
+        return 0
+
     # ── Public interface ───────────────────────────────────────────────────────
 
-    def buy(self, ticker: str, shares: float, price: float) -> Dict:
-        return self._submit_order(ticker, shares, "buy")
+    def buy(self, ticker: str, shares: float, price: float,
+            limit: bool = False, stop_loss: Optional[float] = None,
+            take_profit: Optional[float] = None) -> Dict:
+        if limit and stop_loss and take_profit:
+            return self.buy_bracket(ticker, shares, price, stop_loss, take_profit)
+        elif limit:
+            return self._submit_limit_order(ticker, shares, "buy", price)
+        else:
+            return self._submit_order(ticker, shares, "buy")
 
     def sell(self, ticker: str, shares: float, price: float) -> Dict:
         return self._submit_order(ticker, shares, "sell")
