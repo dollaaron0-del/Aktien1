@@ -161,16 +161,43 @@ class Config:
 
 
     # ── TradingView Webhook ───────────────────────────────────────────────────
-    # TradingView sendet Alerts als HTTP POST an den Bot
     tradingview_webhook_enabled: bool = field(
         default_factory=lambda: os.getenv("TRADINGVIEW_WEBHOOK_ENABLED", "false").lower() in ("1", "true", "yes")
     )
     tradingview_webhook_port: int = field(
         default_factory=lambda: int(os.getenv("TRADINGVIEW_WEBHOOK_PORT", "8080"))
     )
-    # Geheimes Wort das TradingView mitsenden muss (Sicherheit)
     tradingview_webhook_secret: str = field(
         default_factory=lambda: os.getenv("TRADINGVIEW_WEBHOOK_SECRET", "")
+    )
+
+    # ── Multi-Timeframe-Bestätigung ───────────────────────────────────────────
+    # true  = BUY erst wenn 2 verschiedene Timeframes bestätigen (z.B. 5m + 1h)
+    # false = jedes Signal sofort ausführen (wie bisher)
+    mtf_confirmation_enabled: bool = field(
+        default_factory=lambda: os.getenv("MTF_CONFIRMATION_ENABLED", "false").lower() in ("1", "true", "yes")
+    )
+
+    # ── VIX Risk Management ───────────────────────────────────────────────────
+    # VIX > vix_pause_threshold: Positionsgrößen reduziert
+    # VIX > vix_block_threshold: keine neuen Käufe
+    vix_risk_enabled: bool = field(
+        default_factory=lambda: os.getenv("VIX_RISK_ENABLED", "true").lower() in ("1", "true", "yes")
+    )
+
+    # ── Earnings-Schutz ───────────────────────────────────────────────────────
+    # Offene Positionen werden N Tage vor Earnings automatisch geschlossen
+    earnings_protection_enabled: bool = field(
+        default_factory=lambda: os.getenv("EARNINGS_PROTECTION_ENABLED", "true").lower() in ("1", "true", "yes")
+    )
+    earnings_protect_days: int = field(
+        default_factory=lambda: int(os.getenv("EARNINGS_PROTECT_DAYS", "2"))
+    )
+
+    # ── Korrelations-Signale ──────────────────────────────────────────────────
+    # Wenn ein führender ETF signalisiert, folgen korrelierte Aktien automatisch
+    correlation_signals_enabled: bool = field(
+        default_factory=lambda: os.getenv("CORRELATION_SIGNALS_ENABLED", "true").lower() in ("1", "true", "yes")
     )
 
 

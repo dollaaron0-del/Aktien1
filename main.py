@@ -101,8 +101,10 @@ from analyzers.sentiment_memory import SentimentMemory
 from analyzers.reentry_tracker import ReEntryTracker
 from analyzers.multi_timeframe_sentiment import MultiTimeframeSentiment
 from notifier.daily_dashboard import DailyDashboard
-from collectors.tradingview_webhook import start_webhook_server, get_pending_sells
+from collectors.tradingview_webhook import start_webhook_server, get_pending_sells, get_pending_macro_events
 from collectors.tv_executor import start_tv_executor
+from collectors.earnings_protector import start_earnings_protector
+from collectors.vix_monitor import vix_summary
 from analyzers.analysis_cache import AnalysisCache
 
 console = Console()
@@ -257,6 +259,20 @@ def run_analysis_cycle(
         for action in hedge_actions:
             console.print(f"  [magenta]{action}[/magenta]")
             cycle_actions.append(action)
+
+    # ── Makro-Events aus Webhook anzeigen ────────────────────────────────────
+    if config.tradingview_webhook_enabled:
+        try:
+            macro_events = get_pending_macro_events(since_hours=24)
+            for me in macro_events:
+                surprise_color = "red" if me.get("surprise") == "ABOVE" and me.get("event") in ("CPI", "PPI") \
+                                 else "green" if me.get("surprise") == "BELOW" else "yellow"
+                console.print(
+                    f"  [{surprise_color}]📣 Makro: {me['event']} "
+                    f"(Surprise={me.get('surprise','?')}, Impact={me.get('impact','?')})[/{surprise_color}]"
+                )
+        except Exception:
+            pass
 
     # Check stop-loss / take-profit first (no Claude needed)
     exit_actions = strategy.check_open_positions()
@@ -1547,6 +1563,18 @@ def main():
     if config.tradingview_webhook_enabled:
         start_tv_executor(strategy, interval_seconds=60)
         console.print("  [bold green]⚡ TradingView Sofortausführung aktiv[/bold green] (alle 60s)")
+
+    # Earnings-Schutz: schließt Positionen 2 Tage vor Quartalsergebnissen
+    if config.earnings_protection_enabled:
+        start_earnings_protector(strategy, check_interval_hours=12)
+        console.print("  [bold yellow]🛡 Earnings-Protector aktiv[/bold yellow] (prüft alle 12h)")
+
+    # VIX-Status beim Start anzeigen
+    if config.vix_risk_enabled:
+        try:
+            console.print(f"  [dim]📊 {vix_summary()}[/dim]")
+        except Exception:
+            pass
 
     # Recession detector + hedge strategy
     recession_detector = RecessionDetector(anthropic_api_key=config.anthropic_api_key)

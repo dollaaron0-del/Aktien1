@@ -14,6 +14,7 @@ import time
 from typing import TYPE_CHECKING
 
 from collectors.tradingview_webhook import get_pending_sells
+from collectors.vix_monitor import should_block_buy, get_position_size_modifier, vix_summary
 from analyzers.analysis_cache import AnalysisCache
 from logger import get_logger
 
@@ -68,6 +69,16 @@ def _execute_cycle(strategy: "SwingStrategy") -> None:
             f"TradingView SELL ({sig.get('strategy', 'TV')})",
         )
         log.info("TV-Executor [%s]: Position sofort geschlossen @ $%.2f", ticker, price)
+
+    # ── VIX-Check: bei Markt-Crash keine neuen Käufe ────────────────────────
+    vix_blocked, vix_reason = should_block_buy()
+    if vix_blocked:
+        log.warning("TV-Executor: BUY-Phase pausiert – %s", vix_reason)
+        return
+
+    vix_mod = get_position_size_modifier()
+    if vix_mod < 1.0:
+        log.info("TV-Executor: %s", vix_summary())
 
     # ── BUY-Signale aus Queue sofort ausführen (mit Sentiment-Bestätigung) ────
     from portfolio.signal_queue import SignalQueue
