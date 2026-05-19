@@ -200,6 +200,20 @@ class Config:
         default_factory=lambda: os.getenv("CORRELATION_SIGNALS_ENABLED", "true").lower() in ("1", "true", "yes")
     )
 
+    # ── Exploration Mode ──────────────────────────────────────────────────────
+    # Lockere Parameter für die Datensammlungsphase (Paper-Trading).
+    # Ein: EXPLORATION_MODE=true in .env  oder  python main.py --exploration on
+    # Aus: EXPLORATION_MODE=false         oder  python main.py --exploration off
+    # Wenn aktiv, überschreiben die expl_* Werte die normalen Schwellwerte.
+    exploration_mode: bool = field(
+        default_factory=lambda: os.getenv("EXPLORATION_MODE", "false").lower() in ("1", "true", "yes")
+    )
+    # Explorations-Parameter (nur aktiv wenn exploration_mode=True)
+    expl_buy_threshold:    float = field(default_factory=lambda: float(os.getenv("EXPL_BUY_THRESHOLD",    "0.55")))
+    expl_min_sources:      int   = field(default_factory=lambda: int(os.getenv("EXPL_MIN_SOURCES",       "1")))
+    expl_max_position_pct: float = field(default_factory=lambda: float(os.getenv("EXPL_MAX_POSITION_PCT", "0.25")))
+    expl_max_daily_loss:   float = field(default_factory=lambda: float(os.getenv("EXPL_MAX_DAILY_LOSS",   "0.08")))
+
 
 config = Config()
 

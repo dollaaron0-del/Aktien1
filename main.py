@@ -234,7 +234,8 @@ def run_analysis_cycle(
     weekend_prep: Optional["WeekendPrep"] = None,
     hedge_strategy: Optional["HedgeStrategy"] = None,
 ):
-    console.rule(f"[bold blue]Analyse-Zyklus – {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    rule_suffix = "  [bold yellow][EXPLORATION][/bold yellow]" if config.exploration_mode else ""
+    console.rule(f"[bold blue]Analyse-Zyklus – {datetime.now().strftime('%Y-%m-%d %H:%M')}{rule_suffix}")
 
     # Multi-Agent Konsens wenn aktiviert, sonst Standard-Analyzer
     _multi_agent_enabled = os.getenv("MULTI_AGENT_ENABLED", "false").lower() in ("1", "true", "yes")
@@ -1385,6 +1386,81 @@ def _run_sentiment_memory_display() -> None:
     console.print(sm.to_text())
 
 
+def _set_env_var(key: str, value: str) -> None:
+    """Schreibt einen Key=Value Eintrag in .env (oder legt ihn an)."""
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    lines: list[str] = []
+    found = False
+    if os.path.exists(env_path):
+        with open(env_path, encoding="utf-8") as f:
+            lines = f.readlines()
+        for i, line in enumerate(lines):
+            if line.startswith(f"{key}=") or line.startswith(f"{key} ="):
+                lines[i] = f"{key}={value}\n"
+                found = True
+                break
+    if not found:
+        lines.append(f"{key}={value}\n")
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+
+
+def _handle_exploration_command(cmd: str) -> None:
+    """Verarbeitet --exploration on|off|status."""
+    if cmd == "on":
+        _set_env_var("EXPLORATION_MODE", "true")
+        console.print(Panel(
+            "[bold yellow]EXPLORATION MODE AKTIVIERT[/bold yellow]\n\n"
+            "Der Bot handelt jetzt mit lockeren Parametern:\n"
+            f"  • Kaufschwelle:    [cyan]{config.expl_buy_threshold}[/cyan] (normal: {config.buy_threshold})\n"
+            f"  • Min. Quellen:    [cyan]{config.expl_min_sources}[/cyan] (normal: {config.min_sources})\n"
+            f"  • Max. Position:   [cyan]{config.expl_max_position_pct*100:.0f}%[/cyan] (normal: {config.max_position_pct*100:.0f}%)\n"
+            f"  • Tagesverlust-CB: [cyan]{config.expl_max_daily_loss*100:.0f}%[/cyan] (normal: 5%)\n\n"
+            "Ziel: Daten sammeln, Fehler machen, RL-Agent trainieren.\n"
+            "Deaktivieren: [dim]python main.py --exploration off[/dim]",
+            title="Exploration Mode", border_style="yellow",
+        ))
+    elif cmd == "off":
+        _set_env_var("EXPLORATION_MODE", "false")
+        console.print(Panel(
+            "[bold green]EXPLORATION MODE DEAKTIVIERT[/bold green]\n\n"
+            "Der Bot kehrt zu normalen (strengeren) Parametern zurück.\n"
+            "Tipp: [dim]python main.py --optimize[/dim] um aus den gesammelten\n"
+            "Daten optimierte Parameter abzuleiten.",
+            title="Exploration Mode", border_style="green",
+        ))
+    elif cmd == "status":
+        active = config.exploration_mode
+        color  = "yellow" if active else "green"
+        status = "AKTIV" if active else "INAKTIV"
+        lines  = [f"Exploration Mode: [{color}]{status}[/{color}]\n"]
+        if active:
+            lines += [
+                f"  Kaufschwelle:    {config.expl_buy_threshold} (normal: {config.buy_threshold})",
+                f"  Min. Quellen:    {config.expl_min_sources} (normal: {config.min_sources})",
+                f"  Max. Position:   {config.expl_max_position_pct*100:.0f}% (normal: {config.max_position_pct*100:.0f}%)",
+                f"  Tagesverlust-CB: {config.expl_max_daily_loss*100:.0f}% (normal: 5%)",
+            ]
+        console.print(Panel("\n".join(lines), title="Exploration Status", border_style=color))
+    else:
+        console.print(f"[red]Unbekannte Option '{cmd}'. Nutze: on | off | status[/red]")
+
+
+def _apply_exploration_overrides() -> None:
+    """
+    Überschreibt Config-Werte mit Exploration-Parametern wenn EXPLORATION_MODE aktiv.
+    Wird einmal beim Bot-Start aufgerufen – alle Downstream-Komponenten erhalten
+    automatisch die gelockerten Werte.
+    """
+    if not config.exploration_mode:
+        return
+    config.buy_threshold    = config.expl_buy_threshold
+    config.min_sources      = config.expl_min_sources
+    config.max_position_pct = config.expl_max_position_pct
+    # Circuit Breaker liest MAX_DAILY_LOSS_PCT direkt aus env → env var setzen
+    os.environ["MAX_DAILY_LOSS_PCT"] = str(config.expl_max_daily_loss)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Stock Sentiment Trading Bot")
     parser.add_argument("--once", action="store_true", help="Einmaliger Analysezyklus")
@@ -1415,7 +1491,12 @@ def main():
     parser.add_argument("--reentry", action="store_true", help="Re-Entry-Kandidaten anzeigen (verkaufte Positionen die sich erholen)")
     parser.add_argument("--velocity", metavar="TICKER", help="News-Geschwindigkeit für einen Ticker anzeigen")
     parser.add_argument("--sentiment-memory", action="store_true", help="Sentiment-Verlässlichkeit pro Ticker anzeigen")
+    parser.add_argument("--exploration", metavar="{on|off|status}", help="Exploration-Mode ein-/ausschalten oder Status anzeigen")
     args = parser.parse_args()
+
+    if args.exploration is not None:
+        _handle_exploration_command(args.exploration.lower())
+        return
 
     if args.dashboard:
         dashboard_path = __file__.replace("main.py", "dashboard/app.py")
@@ -1425,6 +1506,19 @@ def main():
 
     # Konfiguration validieren – bricht bei fatalen Fehlern ab
     validate_config()
+
+    # Exploration-Mode: lockere Parameter für Datensammlung (vor allem anderen!)
+    _apply_exploration_overrides()
+    if config.exploration_mode:
+        console.print(Panel(
+            "[bold yellow]EXPLORATION MODE AKTIV[/bold yellow]  –  "
+            f"Kaufschwelle={config.buy_threshold}  |  "
+            f"MinQuellen={config.min_sources}  |  "
+            f"MaxPos={config.max_position_pct*100:.0f}%  |  "
+            f"CB-Verlust={config.expl_max_daily_loss*100:.0f}%\n"
+            "[dim]Deaktivieren: python main.py --exploration off[/dim]",
+            title="⚠  Exploration Mode", border_style="yellow",
+        ))
 
     # Select broker based on config
     if config.broker_mode == "alpaca":
