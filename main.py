@@ -102,6 +102,7 @@ from analyzers.reentry_tracker import ReEntryTracker
 from analyzers.multi_timeframe_sentiment import MultiTimeframeSentiment
 from notifier.daily_dashboard import DailyDashboard
 from collectors.tradingview_webhook import start_webhook_server, get_pending_sells
+from collectors.tv_executor import start_tv_executor
 
 console = Console()
 
@@ -1535,6 +1536,11 @@ def main():
         kelly_sizer=kelly_sizer,
         goal_risk_assessor=goal_risk,
     )
+
+    # TradingView Sofortausführungs-Thread
+    if config.tradingview_webhook_enabled:
+        start_tv_executor(strategy, interval_seconds=60)
+        console.print("  [bold green]⚡ TradingView Sofortausführung aktiv[/bold green] (alle 60s)")
 
     # Recession detector + hedge strategy
     recession_detector = RecessionDetector(anthropic_api_key=config.anthropic_api_key)
