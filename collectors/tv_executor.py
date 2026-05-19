@@ -14,7 +14,10 @@ import time
 from typing import TYPE_CHECKING
 
 from collectors.tradingview_webhook import get_pending_sells
+from analyzers.analysis_cache import AnalysisCache
 from logger import get_logger
+
+_cache = AnalysisCache()
 
 if TYPE_CHECKING:
     from strategy.swing_strategy import SwingStrategy
@@ -66,7 +69,17 @@ def _execute_cycle(strategy: "SwingStrategy") -> None:
         )
         log.info("TV-Executor [%s]: Position sofort geschlossen @ $%.2f", ticker, price)
 
-    # ── BUY-Signale aus Queue sofort ausführen ────────────────────────────────
-    results = strategy.process_signal_queue()
-    for msg in results:
-        log.info("TV-Executor: %s", msg)
+    # ── BUY-Signale aus Queue sofort ausführen (mit Sentiment-Bestätigung) ────
+    from portfolio.signal_queue import SignalQueue
+    if strategy.signal_queue:
+        for sig in list(strategy.signal_queue.get_pending()):
+            ticker = sig["ticker"]
+            # Bestätigungs-Filter: letztes Sentiment darf nicht bärisch sein
+            allowed, reason = _cache.is_buy_confirmed(ticker)
+            if not allowed:
+                log.info("TV-Executor [%s]: BUY blockiert – %s", ticker, reason)
+                strategy.signal_queue.mark_expired(sig["id"])
+                continue
+        results = strategy.process_signal_queue()
+        for msg in results:
+            log.info("TV-Executor: %s", msg)

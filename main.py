@@ -103,11 +103,13 @@ from analyzers.multi_timeframe_sentiment import MultiTimeframeSentiment
 from notifier.daily_dashboard import DailyDashboard
 from collectors.tradingview_webhook import start_webhook_server, get_pending_sells
 from collectors.tv_executor import start_tv_executor
+from analyzers.analysis_cache import AnalysisCache
 
 console = Console()
 
 _dynamic_watchlist = DynamicWatchlist(max_picks=config.scan_max_picks or 12) if config.auto_scan_watchlist else None
 _signal_expander   = SignalDrivenExpander()
+_analysis_cache    = AnalysisCache()
 
 
 def _get_watchlist(portfolio: Portfolio) -> List[str]:
@@ -377,6 +379,10 @@ def run_analysis_cycle(
         )
 
         _print_analysis(analysis)
+        _analysis_cache.store(
+            ticker, analysis.direction, analysis.sentiment_score,
+            analysis.confidence, analysis.recommendation,
+        )
 
         action = strategy.evaluate(analysis, sources_breakdown)
         if action:

@@ -70,24 +70,47 @@ def _run_server(signal_queue, port: int, secret: str) -> None:
     app = Flask("tradingview_webhook")
     log.getLogger("werkzeug").setLevel(logging.WARNING)  # Flask-Logs reduzieren
 
+    def _auth(data: dict) -> bool:
+        return not secret or data.get("secret") == secret
+
     @app.route("/webhook/tradingview", methods=["POST"])
     def receive_alert():
         try:
             data = request.get_json(force=True, silent=True) or {}
         except Exception:
             return jsonify({"error": "Invalid JSON"}), 400
-
-        # Sicherheits-Check
-        if secret and data.get("secret") != secret:
+        if not _auth(data):
             log.warning("Webhook: ungültiges Secret von %s", request.remote_addr)
             return jsonify({"error": "Unauthorized"}), 401
+
+        # Screener-Support: TradingView kann "tickers" als Array senden
+        tickers_raw = data.get("tickers")
+        if isinstance(tickers_raw, list):
+            results = [_process_signal({**data, "ticker": t}, signal_queue) for t in tickers_raw]
+            return jsonify({"ok": True, "results": results}), 200
 
         result = _process_signal(data, signal_queue)
         return jsonify(result), 200 if result.get("ok") else 400
 
+    @app.route("/webhook/external", methods=["POST"])
+    def receive_external():
+        """Generischer Endpunkt für externe Dienste (Benzinga, Unusual Whales, etc.)"""
+        try:
+            data = request.get_json(force=True, silent=True) or {}
+        except Exception:
+            return jsonify({"error": "Invalid JSON"}), 400
+        if not _auth(data):
+            return jsonify({"error": "Unauthorized"}), 401
+
+        # Normalisierung externer Formate auf internes Format
+        normalized = _normalize_external(data)
+        result = _process_signal(normalized, signal_queue)
+        return jsonify(result), 200 if result.get("ok") else 400
+
     @app.route("/health", methods=["GET"])
     def health():
-        return jsonify({"status": "ok", "service": "tradingview-webhook"}), 200
+        return jsonify({"status": "ok", "service": "tradingview-webhook",
+                        "endpoints": ["/webhook/tradingview", "/webhook/external", "/health"]}), 200
 
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
@@ -168,6 +191,44 @@ def _cancel_pending_buys(ticker: str, signal_queue) -> None:
                 log.info("TradingView [%s]: ausstehender BUY #%d storniert (SELL kam rein)", ticker, sig["id"])
     except Exception as e:
         log.warning("_cancel_pending_buys fehlgeschlagen: %s", e)
+
+
+def _normalize_external(data: dict) -> dict:
+    """
+    Normalisiert externe Signal-Formate auf das interne Format.
+    Unterstützt: Benzinga, Unusual Whales (Options Flow), generisches Format.
+    """
+    # Benzinga-Format: {"symbol": "AAPL", "headline": "...", "urgency": 3}
+    if "symbol" in data and "headline" in data:
+        return {
+            "ticker":    data["symbol"],
+            "action":    "BUY" if data.get("urgency", 0) >= 3 else "SKIP",
+            "score":     min(0.5 + data.get("urgency", 1) * 0.1, 0.85),
+            "confidence":"HIGH" if data.get("urgency", 0) >= 4 else "MEDIUM",
+            "rationale": data.get("headline", "")[:200],
+            "hold_days": 5,
+            "strategy":  "Benzinga",
+            "secret":    data.get("secret", ""),
+        }
+
+    # Unusual Whales / Options Flow: {"ticker": "NVDA", "type": "call", "premium": 500000}
+    if "type" in data and data.get("type") in ("call", "put"):
+        action = "BUY" if data["type"] == "call" else "SELL"
+        premium = data.get("premium", 0)
+        score = min(0.65 + premium / 5_000_000, 0.90)
+        return {
+            "ticker":    data.get("ticker", ""),
+            "action":    action,
+            "score":     round(score, 2),
+            "confidence":"HIGH" if premium > 1_000_000 else "MEDIUM",
+            "rationale": f"Unusual Options: {data['type'].upper()} ${premium:,.0f} Premium",
+            "hold_days": 3,
+            "strategy":  "UnusualWhales",
+            "secret":    data.get("secret", ""),
+        }
+
+    # Generisches Format – direkt durchreichen
+    return data
 
 
 def _write_sell_signal(ticker: str, data: dict) -> None:
