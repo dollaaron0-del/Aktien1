@@ -414,31 +414,16 @@ class RLAgent:
     # ── Hilfsmethoden ─────────────────────────────────────────────────────────
 
     def _state_from_entry(self, entry: Dict) -> RLState:
-        """
-        Rekonstruiert einen RLState aus einem Trade-Journal Entry-Dict.
-        Fehlende Felder werden mit neutralen Werten geschätzt.
-        """
-        sentiment   = float(entry.get("sentiment") or 0.5)
-        confidence  = str(entry.get("confidence") or "MEDIUM")
-        direction   = str(entry.get("direction") or "NEUTRAL")
-
-        # Schätzungen für Felder die nicht im Journal stehen
-        vix_level   = 0.3    # neutraler VIX-Level als Default
-        momentum_5d = 0.0    # kein Momentum bekannt
-        news_vel    = 0.5    # mittlere News-Velocity
-
-        # Regime aus direction/confidence ableiten wenn vorhanden
-        regime = "NEUTRAL"
-        if "bull" in direction.lower():
-            regime = "BULL"
-        elif "bear" in direction.lower():
-            regime = "BEAR"
-
+        """Rekonstruiert RLState aus Journal-Entry. Fehlende Felder = neutrale Defaults."""
+        sentiment  = float(entry.get("sentiment") or 0.5)
+        confidence = str(entry.get("confidence") or "MEDIUM")
+        direction  = str(entry.get("direction") or "NEUTRAL").lower()
+        regime     = "BULL" if "bull" in direction else ("BEAR" if "bear" in direction else "NEUTRAL")
         return RLState(
             sentiment_score=    max(0.0, min(1.0, sentiment)),
-            vix_level=          vix_level,
-            momentum_5d=        momentum_5d,
-            news_velocity=      news_vel,
+            vix_level=          0.3,   # neutraler Default (~VIX 15)
+            momentum_5d=        0.0,   # kein Momentum im Journal
+            news_velocity=      0.5,   # mittlere News-Aktivität
             confidence_encoded= RLState.encode_confidence(confidence),
             regime_encoded=     RLState.encode_regime(regime),
         )

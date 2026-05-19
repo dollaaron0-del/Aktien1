@@ -23,7 +23,7 @@ _CACHE_PATH = os.path.join(
 )
 _CACHE_TTL_HOURS = 1
 
-_HIGH_VOLUME_MULTIPLIER = 5.0   # > 5x avg volume = unusual
+_HIGH_VOLUME_MULTIPLIER = 5.0
 _BULL_PC_THRESHOLD = 0.5
 _BEAR_PC_THRESHOLD = 1.5
 _MIN_PREMIUM_SCORE_HIGH = 0.70
@@ -94,46 +94,35 @@ class OptionsIntelligence:
 
     def _build_snapshot(self, ticker: str) -> OptionsSnapshot:
         now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
-        neutral = OptionsSnapshot(
-            ticker=ticker,
-            timestamp=now,
-            expiration=None,
-            put_call_ratio=None,
-            iv_skew=None,
-            smart_money_signal="NEUTRAL",
-            premium_score=0.5,
-            signal_strength="LOW",
-        )
+        def _neutral(note: str) -> OptionsSnapshot:
+            return OptionsSnapshot(ticker=ticker, timestamp=now, expiration=None,
+                                   put_call_ratio=None, iv_skew=None,
+                                   smart_money_signal="NEUTRAL", premium_score=0.5,
+                                   signal_strength="LOW", notes=[note])
 
         try:
             ticker_obj = yf.Ticker(ticker)
             expirations = ticker_obj.options
         except Exception as exc:
-            log.warning("options_intelligence: failed to fetch options list for %s: %s", ticker, exc)
-            neutral.notes.append(f"yfinance error: {exc}")
-            return neutral
+            log.warning("options_intelligence: options list failed for %s: %s", ticker, exc)
+            return _neutral(f"yfinance error: {exc}")
 
         if not expirations:
-            neutral.notes.append("no options expirations available")
-            return neutral
+            return _neutral("no options expirations available")
 
         exp = expirations[0]
-
         try:
             chain = ticker_obj.option_chain(exp)
-            calls = chain.calls
-            puts = chain.puts
+            calls, puts = chain.calls, chain.puts
         except Exception as exc:
-            log.warning("options_intelligence: failed to fetch chain for %s/%s: %s", ticker, exp, exc)
-            neutral.notes.append(f"chain fetch error: {exc}")
-            return neutral
+            log.warning("options_intelligence: chain fetch failed for %s/%s: %s", ticker, exp, exc)
+            return _neutral(f"chain fetch error: {exc}")
 
         notes: list[str] = []
 
-        # --- Put/Call Volume Ratio ---
+        # Put/Call Volume Ratio
         pc_ratio: Optional[float] = None
-        call_vol = 0
-        put_vol = 0
+        call_vol, put_vol = 0, 0
         try:
             if calls is not None and not calls.empty:
                 call_vol = int(calls["volume"].fillna(0).sum())
@@ -142,40 +131,34 @@ class OptionsIntelligence:
             if call_vol + put_vol > 0:
                 pc_ratio = round(put_vol / max(call_vol, 1), 4)
         except Exception as exc:
-            log.warning("options_intelligence: pc ratio calc failed for %s: %s", ticker, exc)
+            log.warning("options_intelligence: pc ratio failed for %s: %s", ticker, exc)
 
-        # --- IV Skew ---
+        # IV Skew
         iv_skew: Optional[float] = None
         try:
-            if (
-                calls is not None and not calls.empty
-                and puts is not None and not puts.empty
-                and "impliedVolatility" in calls.columns
-                and "impliedVolatility" in puts.columns
-            ):
-                calls_iv = calls["impliedVolatility"].fillna(0)
-                puts_iv = puts["impliedVolatility"].fillna(0)
-                if calls_iv.mean() > 0 or puts_iv.mean() > 0:
-                    iv_skew = round(float(puts_iv.mean()) - float(calls_iv.mean()), 6)
+            if (calls is not None and not calls.empty and puts is not None and not puts.empty
+                    and "impliedVolatility" in calls.columns and "impliedVolatility" in puts.columns):
+                c_iv = calls["impliedVolatility"].fillna(0)
+                p_iv = puts["impliedVolatility"].fillna(0)
+                if c_iv.mean() > 0 or p_iv.mean() > 0:
+                    iv_skew = round(float(p_iv.mean()) - float(c_iv.mean()), 6)
         except Exception as exc:
-            log.warning("options_intelligence: IV skew calc failed for %s: %s", ticker, exc)
+            log.warning("options_intelligence: IV skew failed for %s: %s", ticker, exc)
 
-        # --- Top Call Strikes by Open Interest ---
+        # Top Call Strikes by Open Interest
         top_call_strikes: list[dict] = []
         try:
             if calls is not None and not calls.empty and "openInterest" in calls.columns:
-                top3 = calls.nlargest(3, "openInterest")[["strike", "openInterest", "lastPrice"]]
-                for _, row in top3.iterrows():
+                for _, row in calls.nlargest(3, "openInterest")[["strike", "openInterest", "lastPrice"]].iterrows():
                     top_call_strikes.append({
                         "strike": float(row.get("strike", 0)),
                         "open_interest": int(row.get("openInterest", 0) or 0),
                         "last_price": float(row.get("lastPrice", 0) or 0),
                     })
         except Exception as exc:
-            log.warning("options_intelligence: top strikes calc failed for %s: %s", ticker, exc)
+            log.warning("options_intelligence: top strikes failed for %s: %s", ticker, exc)
 
-        # --- Unusual Volume Detection ---
-        # Heuristic: if total options volume > 5× avg daily volume proxy (open interest / 30)
+        # Unusual Volume (volume > 5× OI/30 proxy)
         unusual_volume = False
         try:
             total_volume = call_vol + put_vol
@@ -185,12 +168,12 @@ class OptionsIntelligence:
             if puts is not None and not puts.empty and "openInterest" in puts.columns:
                 total_oi += int(puts["openInterest"].fillna(0).sum())
             if total_oi > 0:
-                avg_daily_proxy = total_oi / 30
-                if total_volume > avg_daily_proxy * _HIGH_VOLUME_MULTIPLIER:
+                avg_proxy = total_oi / 30
+                if total_volume > avg_proxy * _HIGH_VOLUME_MULTIPLIER:
                     unusual_volume = True
-                    notes.append(f"unusual volume detected: {total_volume} vs avg proxy {avg_daily_proxy:.0f}")
+                    notes.append(f"unusual volume: {total_volume} vs avg {avg_proxy:.0f}")
         except Exception as exc:
-            log.warning("options_intelligence: unusual volume calc failed for %s: %s", ticker, exc)
+            log.warning("options_intelligence: unusual volume failed for %s: %s", ticker, exc)
 
         # --- Premium Score ---
         premium_score = self._compute_premium_score(pc_ratio, iv_skew, unusual_volume, top_call_strikes)
