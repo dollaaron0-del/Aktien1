@@ -40,6 +40,7 @@ Analyse-Zeitplan (.env):
 """
 
 import argparse
+import os
 import subprocess
 import sys
 import schedule
@@ -105,11 +106,20 @@ from collectors.tradingview_webhook import start_webhook_server, get_pending_sel
 from collectors.tv_executor import start_tv_executor
 from collectors.earnings_protector import start_earnings_protector
 from collectors.vix_monitor import vix_summary
+from collectors.rl_trainer import start_rl_trainer
 from analyzers.analysis_cache import AnalysisCache
+from analyzers.rl_agent import RLAgent
+from analyzers.regime_adaptive import get_adaptive_params
+from analyzers.multi_agent_analyzer import MultiAgentAnalyzer
+from analyzers.earnings_predictor import EarningsPredictor
+from analyzers.cross_asset import CrossAssetSignals
 
 console = Console()
 
-_dynamic_watchlist = DynamicWatchlist(max_picks=config.scan_max_picks or 12) if config.auto_scan_watchlist else None
+_dynamic_watchlist  = DynamicWatchlist(max_picks=config.scan_max_picks or 12) if config.auto_scan_watchlist else None
+_rl_agent           = RLAgent()
+_earnings_predictor = EarningsPredictor()
+_cross_asset        = CrossAssetSignals()
 _signal_expander   = SignalDrivenExpander()
 _analysis_cache    = AnalysisCache()
 
@@ -226,7 +236,11 @@ def run_analysis_cycle(
 ):
     console.rule(f"[bold blue]Analyse-Zyklus – {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
-    analyzer = ClaudeAnalyzer()
+    # Multi-Agent Konsens wenn aktiviert, sonst Standard-Analyzer
+    _multi_agent_enabled = os.getenv("MULTI_AGENT_ENABLED", "false").lower() in ("1", "true", "yes")
+    analyzer = MultiAgentAnalyzer() if _multi_agent_enabled else ClaudeAnalyzer()
+    if _multi_agent_enabled:
+        console.print("  [bold magenta]🤝 Multi-Agent Konsens aktiv[/bold magenta] (3 Claude-Analysten)")
     collectors = _make_collectors()
 
     # Inject continuous learning memo into Claude's system prompt
@@ -382,6 +396,19 @@ def run_analysis_cycle(
         open_position_ctx = strategy.build_open_position_context(ticker)
         if open_position_ctx:
             console.print(f"  [yellow]Offene Position – prüfe Kaufthese...[/yellow]")
+
+        # Earnings Surprise Predictor (Stufe 2) – vor Claude-Analyse
+        try:
+            ep = _earnings_predictor.predict(ticker)
+            if ep.get("prediction") in ("BEAT", "MISS"):
+                ep_color = "green" if ep["prediction"] == "BEAT" else "red"
+                console.print(
+                    f"  [{ep_color}]🔮 Earnings-Prognose: {ep['prediction']} "
+                    f"(Konfidenz: {ep.get('confidence','LOW')}, "
+                    f"Score: {ep.get('score', 0):.2f})[/{ep_color}]"
+                )
+        except Exception:
+            pass
 
         console.print(f"  [cyan]Analysiere mit Claude ({config.claude_model})...[/cyan]")
         analysis = analyzer.analyze(
@@ -1575,6 +1602,32 @@ def main():
             console.print(f"  [dim]📊 {vix_summary()}[/dim]")
         except Exception:
             pass
+
+    # RL-Trainer: trainiert alle 24h auf Trade-History
+    try:
+        import os as _os
+        journal_db = _os.path.join("data", "trade_journal.db")
+        start_rl_trainer(_rl_agent, journal_db, interval_hours=24)
+        console.print("  [bold cyan]🤖 RL-Agent aktiv[/bold cyan] (trainiert alle 24h auf Trade-History)")
+        rl_stats = _rl_agent.get_stats()
+        if rl_stats.get("total_trades", 0) > 0:
+            console.print(f"  [dim]   RL: {rl_stats['total_trades']} Trades gelernt, avg_reward={rl_stats.get('avg_reward', 0):.3f}[/dim]")
+    except Exception as e:
+        get_logger(__name__).warning("RL-Trainer Start fehlgeschlagen: %s", e)
+
+    # Regime + Cross-Asset Status
+    try:
+        regime_params = get_adaptive_params()
+        from analyzers.regime_adaptive import RegimeAdaptiveConfig as _RAC
+        console.print(f"  [dim]📈 {_RAC().summary(regime_params.label.split()[0] if hasattr(regime_params,'label') else 'NEUTRAL')}[/dim]")
+    except Exception:
+        pass
+    try:
+        ca = _cross_asset.fetch()
+        ca_color = "green" if ca.recommendation == "RISK_ON" else "red" if ca.recommendation == "RISK_OFF" else "yellow"
+        console.print(f"  [dim]🌐 Cross-Asset: [{ca_color}]{ca.recommendation}[/{ca_color}] (Score={ca.risk_appetite_score:.2f})[/dim]")
+    except Exception:
+        pass
 
     # Recession detector + hedge strategy
     recession_detector = RecessionDetector(anthropic_api_key=config.anthropic_api_key)

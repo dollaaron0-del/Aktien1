@@ -23,6 +23,11 @@ from analyzers.bot_scorer import BotScorer, get_modifiers as _get_score_mod
 from analyzers.sentiment_memory import SentimentMemory
 from analyzers.margin_readiness import MarginTierTracker
 from analyzers.reentry_tracker import ReEntryTracker
+from analyzers.regime_adaptive import RegimeAdaptiveConfig, get_adaptive_params
+from analyzers.sharpe_sizer import SharpeSizer
+from analyzers.cross_asset import CrossAssetSignals
+from analyzers.options_intelligence import OptionsIntelligence
+from analyzers.rl_agent import RLAgent, RLState
 from config import config
 from logger import get_logger
 
@@ -67,10 +72,15 @@ class SwingStrategy:
         self.correlation = correlation_checker
         self.kelly = kelly_sizer
         self.goal_risk = goal_risk_assessor
-        self.macro_cal      = MacroCalendar()
-        self.sector_rot     = SectorRotation()
-        self.earn_surp      = EarningsSurprise()
+        self.macro_cal       = MacroCalendar()
+        self.sector_rot      = SectorRotation()
+        self.earn_surp       = EarningsSurprise()
         self.circuit_breaker = CircuitBreaker()
+        self.regime_cfg      = RegimeAdaptiveConfig()
+        self.sharpe_sizer    = SharpeSizer()
+        self.cross_asset     = CrossAssetSignals()
+        self.options_intel   = OptionsIntelligence()
+        self.rl_agent        = RLAgent()
 
     def evaluate(self, analysis: AnalysisResult, sources_breakdown: Optional[Dict[str, int]] = None) -> Optional[str]:
         ticker = analysis.ticker
@@ -173,8 +183,51 @@ class SwingStrategy:
             if not sec_check["allowed"]:
                 return f"[{ticker}] {sec_check['reason']} – übersprungen."
 
+        # ── Cross-Asset Risk-Appetite ────────────────────────────────────────
+        try:
+            ca = self.cross_asset.fetch()
+            if ca.recommendation == "RISK_OFF":
+                log.info("[%s] Cross-Asset RISK_OFF (score=%.2f) – Kaufschwelle erhöht", ticker, ca.risk_appetite_score)
+                if analysis.sentiment_score < effective_threshold + 0.08:
+                    return f"[{ticker}] ⚡ Cross-Asset RISK_OFF (Score={ca.risk_appetite_score:.2f}) – Signal zu schwach."
+        except Exception as e:
+            log.debug("Cross-Asset-Check fehlgeschlagen: %s", e)
+
+        # ── Options Intelligence ─────────────────────────────────────────────
+        try:
+            opt = self.options_intel.analyze(ticker)
+            if opt.smart_money_signal == "BEARISH" and opt.signal_strength == "HIGH":
+                return f"[{ticker}] 📊 Options: Smart-Money BEARISH (P/C={opt.put_call_ratio:.2f}) – übersprungen."
+        except Exception as e:
+            log.debug("Options-Intelligence fehlgeschlagen: %s", e)
+
+        # ── RL Agent Entscheidung ────────────────────────────────────────────
+        try:
+            from collectors.vix_monitor import get_vix
+            rl_state = RLState(
+                sentiment_score=analysis.sentiment_score,
+                vix_level=min(1.0, (get_vix() or 20.0) / 50.0),
+                momentum_5d=0.0,   # Wird vom RL aus vergangenen Trades gelernt
+                news_velocity=min(1.0, analysis.sources_used / 20.0),
+                confidence_encoded=RLState.encode_confidence(analysis.confidence),
+                regime_encoded=RLState.encode_regime(
+                    "BULL" if analysis.direction == "BULLISH" else
+                    "BEAR" if analysis.direction == "BEARISH" else "NEUTRAL"
+                ),
+            )
+            rl_buy, rl_modifier = self.rl_agent.should_buy(rl_state)
+            if not rl_buy:
+                log.info("[%s] RL-Agent rät ab (explain: %s)", ticker, self.rl_agent.explain(rl_state))
+                # RL blockiert nur wenn es genug Erfahrung hat (> 10 Trades)
+                stats = self.rl_agent.get_stats()
+                if stats.get("total_trades", 0) >= 10:
+                    return f"[{ticker}] 🤖 RL-Agent: Trade nicht empfohlen (Lernbasis: {stats['total_trades']} Trades)"
+        except Exception as e:
+            log.debug("RL-Agent fehlgeschlagen: %s", e)
+            rl_modifier = 1.0
+
         result = self._open_position(ticker, current_price, analysis, portfolio_value, sources_breakdown or {},
-                                     score_mod=_smod, current_score=_current_score)
+                                     score_mod=_smod, current_score=_current_score, rl_modifier=rl_modifier)
 
         # If capital was insufficient, save signal for later execution
         if result and "Nicht genug freies Kapital" in result and self.signal_queue:
@@ -456,9 +509,27 @@ class SwingStrategy:
         sources_breakdown: Dict[str, int],
         score_mod=None,
         current_score: float = 50.0,
+        rl_modifier: float = 1.0,
     ) -> str:
         # Score-Modifier ggf. neu laden (z.B. bei direktem Aufruf ohne evaluate())
         _score_mod = score_mod if score_mod is not None else _get_score_mod(current_score)
+
+        # Regime-adaptive Parameter (BULL/NEUTRAL/BEAR/CRISIS)
+        try:
+            regime_params = get_adaptive_params()
+            regime_sl_pct = regime_params.sl_pct
+            regime_tp_pct = regime_params.tp_pct
+            regime_pos_mult = regime_params.position_size_mult
+        except Exception:
+            regime_sl_pct = config.stop_loss_pct
+            regime_tp_pct = config.take_profit_pct
+            regime_pos_mult = 1.0
+
+        # Sharpe-basierter Größen-Multiplikator
+        try:
+            sharpe_mult = self.sharpe_sizer.get_size_modifier(ticker)
+        except Exception:
+            sharpe_mult = 1.0
 
         max_pos_pct = self.focus.get_max_position_pct(portfolio_value)
         if self.kelly:
@@ -470,7 +541,7 @@ class SwingStrategy:
         sector_mult  = self.sector_rot.get_position_size_modifier(ticker)
         macro_mult   = self.macro_cal.get_position_size_modifier()
         earn_adj     = self.earn_surp.get_sentiment_adjustment(ticker)
-        total_mult   = conf_mult * sector_mult * macro_mult * _score_mod.position_size_mult
+        total_mult   = conf_mult * sector_mult * macro_mult * _score_mod.position_size_mult * regime_pos_mult * sharpe_mult * rl_modifier
         max_invest   = portfolio_value * max_pos_pct * total_mult
 
         # Margin: nur bei HIGH Confidence und wenn aktiviert
@@ -503,18 +574,19 @@ class SwingStrategy:
             return f"[{ticker}] ⛔ {liq_reason} – Kauf abgebrochen."
 
         shares = math.floor(invest / price * 100) / 100
-        sl_pct = self.focus.get_stop_loss_pct()
-        tp_pct = self.focus.get_take_profit_pct()
+        # Regime-adaptive SL/TP (überschreibt fixe Config-Werte)
+        sl_pct   = regime_sl_pct
+        tp_pct   = regime_tp_pct
         stop_loss = round(price * (1 - sl_pct), 2)
-        fixed_tp = round(price * (1 + tp_pct), 2)
+        fixed_tp  = round(price * (1 + tp_pct), 2)
         if analysis.target_price and analysis.target_price > price:
             take_profit = min(analysis.target_price, fixed_tp)
             tp_source = f"Claude ${analysis.target_price:.2f} → TP ${take_profit:.2f}"
         else:
             take_profit = fixed_tp
-            tp_source = f"Fix {tp_pct*100:.0f}% → TP ${take_profit:.2f}"
+            tp_source = f"Regime {tp_pct*100:.0f}% → TP ${take_profit:.2f}"
 
-        raw_hold    = round(analysis.suggested_hold_days * _score_mod.hold_days_mult)
+        raw_hold    = round(analysis.suggested_hold_days * _score_mod.hold_days_mult * regime_params.hold_days_mult)
         capped_hold = self.focus.cap_hold_days(raw_hold)
 
         position = Position(
@@ -603,6 +675,27 @@ class SwingStrategy:
         self._run_goal_risk_check()
         self._run_score_update(ticker, pos.entry_price, price, reason, last_trade)
         self._run_post_close_learning(ticker, pos.entry_price, price, reason, last_trade)
+
+        # ── RL Agent: aus Trade-Ergebnis lernen ──────────────────────────────
+        try:
+            rl_state = self.rl_agent._state_from_entry({
+                "sentiment":  last_trade.get("sentiment_score"),
+                "confidence": last_trade.get("confidence"),
+                "direction":  last_trade.get("direction"),
+            })
+            return_pct = (price - pos.entry_price) / pos.entry_price * 100
+            planned_hold = int(last_trade.get("hold_days") or pos.target_hold_days or 14)
+            reward = self.rl_agent.compute_reward(
+                return_pct=return_pct,
+                hold_days=days_held,
+                planned_hold_days=planned_hold,
+                stop_loss_triggered="stop" in reason.lower(),
+            )
+            self.rl_agent.record_outcome(rl_state, reward)
+            log.info("[%s] RL-Update: return=%.1f%% reward=%+.4f", ticker, return_pct, reward)
+        except Exception as _rl_exc:
+            log.debug("RL record_outcome fehlgeschlagen: %s", _rl_exc)
+
         return pnl
 
     def _run_score_update(self, ticker: str, entry_price: float, exit_price: float, reason: str,
