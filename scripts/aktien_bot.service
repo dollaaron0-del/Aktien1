@@ -1,0 +1,39 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# systemd Service-Datei für den Aktien-Bot Watchdog
+#
+# Installation (als root oder mit sudo):
+#   sudo cp scripts/aktien_bot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable aktien_bot
+#   sudo systemctl start aktien_bot
+#
+# Status prüfen:
+#   sudo systemctl status aktien_bot
+#   sudo journalctl -u aktien_bot -f
+# ─────────────────────────────────────────────────────────────────────────────
+[Unit]
+Description=Aktien-Bot Trading Watchdog
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# !! Pfad und User anpassen !!
+User=user
+WorkingDirectory=/home/user/Aktien
+ExecStart=/home/user/Aktien/scripts/watchdog.sh
+Restart=always
+RestartSec=30
+
+# Logs
+StandardOutput=append:/home/user/Aktien/logs/systemd.log
+StandardError=append:/home/user/Aktien/logs/systemd.log
+
+# Sicherheit: Prozess isolieren
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

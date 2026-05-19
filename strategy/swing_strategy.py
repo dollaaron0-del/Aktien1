@@ -1,6 +1,7 @@
 import math
+import os
 from datetime import datetime
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 from analyzers.claude_analyzer import AnalysisResult
 from portfolio.portfolio import Portfolio, Position
 from portfolio.performance_tracker import PerformanceTracker
@@ -296,6 +297,12 @@ class SwingStrategy:
         self, ticker: str, price: float, signal: Dict, portfolio_value: float, invest: float
     ) -> str:
         """Opens a position from a queued signal (no AnalysisResult needed)."""
+        # Liquidität + Gap-Schutz (auch für TV/Queue-Signale)
+        liq_ok, liq_reason = self._check_liquidity_and_gap(ticker, price)
+        if not liq_ok:
+            log.warning("[%s] Queue-Signal abgebrochen: %s", ticker, liq_reason)
+            return f"[{ticker}] ⛔ {liq_reason} – Queue-Signal abgebrochen."
+
         shares = math.floor(invest / price * 100) / 100
         sl_pct = self.focus.get_stop_loss_pct()
         tp_pct = self.focus.get_take_profit_pct()
@@ -399,6 +406,47 @@ class SwingStrategy:
 
         return f"[{ticker}] Position gehalten ({days_held}d) | Kurs: ${price:.2f}{thesis_note}"
 
+    # ── Liquiditäts- und Gap-Prüfung ─────────────────────────────────────────
+
+    def _check_liquidity_and_gap(self, ticker: str, current_price: float) -> Tuple[bool, str]:
+        """
+        Prüft zwei Bedingungen vor jedem Kauf:
+        1. Mindest-Tagesvolumen (Standard: 500k Aktien) – illiquide Werte meiden
+        2. Market-Open-Gap (Standard: max. 4 %) – nicht in Gaps hinein kaufen
+
+        Gibt (True, "") zurück wenn alles in Ordnung ist.
+        Gibt (False, Grund) zurück wenn der Kauf übersprungen werden soll.
+        """
+        min_volume = int(os.getenv("MIN_DAILY_VOLUME", "500000"))
+        max_gap_pct = float(os.getenv("MAX_GAP_PCT", "0.04"))
+
+        try:
+            import yfinance as yf
+            hist = yf.Ticker(ticker).history(period="3d", interval="1d")
+            if hist.empty or len(hist) < 2:
+                return True, ""  # Kein Datenpunkt → nicht blockieren
+
+            avg_vol = int(hist["Volume"].mean())
+            if avg_vol < min_volume:
+                return False, (
+                    f"Zu geringes Volumen ({avg_vol:,} Ø vs. Minimum {min_volume:,}) – "
+                    f"illiquid, Slippage-Risiko"
+                )
+
+            prev_close = float(hist["Close"].iloc[-2])
+            if prev_close > 0:
+                gap = abs(current_price - prev_close) / prev_close
+                if gap > max_gap_pct:
+                    direction = "hoch" if current_price > prev_close else "runter"
+                    return False, (
+                        f"Gap {gap*100:.1f}% {direction} vs. Vortag ${prev_close:.2f} – "
+                        f"nicht in Gap hinein kaufen"
+                    )
+        except Exception as e:
+            log.debug("Liquiditäts-Check für %s fehlgeschlagen (ignoriert): %s", ticker, e)
+
+        return True, ""
+
     def _open_position(
         self,
         ticker: str,
@@ -448,6 +496,11 @@ class SwingStrategy:
 
         if invest < 50:
             return f"[{ticker}] Nicht genug freies Kapital für neuen Trade."
+
+        # Liquidität + Gap-Schutz
+        liq_ok, liq_reason = self._check_liquidity_and_gap(ticker, price)
+        if not liq_ok:
+            return f"[{ticker}] ⛔ {liq_reason} – Kauf abgebrochen."
 
         shares = math.floor(invest / price * 100) / 100
         sl_pct = self.focus.get_stop_loss_pct()

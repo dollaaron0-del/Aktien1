@@ -26,6 +26,7 @@ Erwartetes JSON von TradingView:
 """
 from __future__ import annotations
 
+import collections
 import json
 import logging
 import os
@@ -45,11 +46,17 @@ _server_thread: Optional[threading.Thread] = None
 _shutdown_event = threading.Event()
 
 # ── Multi-Timeframe-Puffer ────────────────────────────────────────────────────
-# Struktur: {ticker: {"timeframes": {tf: signal_data}, "ts": float}}
 _MTF_BUFFER: Dict[str, dict] = {}
-_MTF_TTL = 900  # 15 Minuten
-_MTF_REQUIRED = 2  # Anzahl verschiedener Timeframes die übereinstimmen müssen
+_MTF_TTL = 900       # 15 Minuten
+_MTF_REQUIRED = 2    # Anzahl verschiedener Timeframes die übereinstimmen müssen
 _mtf_lock = threading.Lock()
+
+# ── Replay-Schutz ────────────────────────────────────────────────────────────
+# Signale mit Timestamp älter als 5 Minuten werden abgelehnt.
+# Gesehene Nonces werden für 10 Minuten gespeichert.
+_REPLAY_MAX_AGE  = 300   # Sekunden
+_seen_nonces: collections.deque = collections.deque(maxlen=500)
+_nonce_lock = threading.Lock()
 
 
 def start_webhook_server(signal_queue, port: int = 8080, secret: str = "") -> None:
@@ -82,6 +89,31 @@ def _run_server(signal_queue, port: int, secret: str) -> None:
     def _auth(data: dict) -> bool:
         return not secret or data.get("secret") == secret
 
+    def _replay_check(data: dict) -> tuple[bool, str]:
+        """
+        Schützt gegen Replay-Attacks:
+        1. Timestamp 'ts' (Unix-Sekunden) darf max. _REPLAY_MAX_AGE Sek. alt sein.
+        2. Optionale Nonce 'nonce' darf nicht doppelt vorkommen.
+        Gibt (True, "") zurück wenn alles in Ordnung.
+        """
+        ts = data.get("ts")
+        if ts is not None:
+            try:
+                age = abs(time.time() - float(ts))
+                if age > _REPLAY_MAX_AGE:
+                    return False, f"Signal zu alt ({age:.0f}s > {_REPLAY_MAX_AGE}s) – abgelehnt"
+            except (TypeError, ValueError):
+                pass
+
+        nonce = data.get("nonce")
+        if nonce:
+            with _nonce_lock:
+                if nonce in _seen_nonces:
+                    return False, f"Nonce '{nonce}' bereits verarbeitet – Replay abgelehnt"
+                _seen_nonces.append(nonce)
+
+        return True, ""
+
     @app.route("/webhook/tradingview", methods=["POST"])
     def receive_alert():
         try:
@@ -91,8 +123,11 @@ def _run_server(signal_queue, port: int, secret: str) -> None:
         if not _auth(data):
             log.warning("Webhook: ungültiges Secret von %s", request.remote_addr)
             return jsonify({"error": "Unauthorized"}), 401
+        replay_ok, replay_reason = _replay_check(data)
+        if not replay_ok:
+            log.warning("Webhook: Replay-Schutz – %s (%s)", replay_reason, request.remote_addr)
+            return jsonify({"error": replay_reason}), 429
 
-        # Screener-Support: TradingView kann "tickers" als Array senden
         tickers_raw = data.get("tickers")
         if isinstance(tickers_raw, list):
             results = [_process_signal({**data, "ticker": t}, signal_queue) for t in tickers_raw]
@@ -110,6 +145,9 @@ def _run_server(signal_queue, port: int, secret: str) -> None:
             return jsonify({"error": "Invalid JSON"}), 400
         if not _auth(data):
             return jsonify({"error": "Unauthorized"}), 401
+        replay_ok, replay_reason = _replay_check(data)
+        if not replay_ok:
+            return jsonify({"error": replay_reason}), 429
 
         # Normalisierung externer Formate auf internes Format
         normalized = _normalize_external(data)
@@ -250,13 +288,31 @@ def _mtf_check(ticker: str, timeframe: str, data: dict) -> tuple[bool, dict]:
     return False, {}
 
 
+_MAX_CORR_PER_GROUP = int(os.getenv("MAX_CORR_SIGNALS_PER_GROUP", "2"))
+
+
 def _queue_correlated(ticker: str, action: str, source_data: dict, signal_queue) -> None:
-    """Reiht Korrelations-Signale in die Queue ein."""
+    """
+    Reiht Korrelations-Signale in die Queue ein.
+    Sektor-Cap: maximal MAX_CORR_SIGNALS_PER_GROUP Signale pro Trigger-Gruppe
+    um Sektor-Konzentration zu vermeiden (Standard: 2).
+    """
     try:
         from collectors.correlation_engine import get_correlated_signals
-        for corr in get_correlated_signals(ticker, action):
+        corr_list = get_correlated_signals(ticker, action)
+        if not corr_list:
+            return
+
+        queued_count = 0
+        for corr in corr_list:
+            if queued_count >= _MAX_CORR_PER_GROUP:
+                log.info(
+                    "CorrelationCap: %d/%d Signale für %s %s eingereiht – Rest ignoriert",
+                    queued_count, len(corr_list), ticker, action,
+                )
+                break
             if corr["action"] != "BUY":
-                continue  # SELL-Korrelationen werden separat verarbeitet
+                continue
             if _has_pending_sell(corr["ticker"]):
                 continue
             signal_queue.enqueue(
@@ -272,6 +328,7 @@ def _queue_correlated(ticker: str, action: str, source_data: dict, signal_queue)
                 sources_breakdown={"correlation": 1},
                 suggested_hold_days=corr["hold_days"],
             )
+            queued_count += 1
     except Exception as e:
         log.warning("Korrelations-Signale fehlgeschlagen: %s", e)
 

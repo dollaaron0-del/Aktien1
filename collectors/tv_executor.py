@@ -57,6 +57,20 @@ def _execute_cycle(strategy: "SwingStrategy") -> None:
     broker    = strategy.broker
     portfolio = strategy.portfolio
 
+    # ── Globaler Drawdown-Check (Circuit Breaker) ────────────────────────────
+    try:
+        prices = broker.get_prices(list(portfolio.all_positions().keys()))
+        portfolio_value = portfolio.total_value(prices)
+        strategy.circuit_breaker.register_day_open(portfolio_value)
+        cb_ok, cb_reason = strategy.circuit_breaker.check_buy_allowed(portfolio_value)
+        if not cb_ok:
+            log.warning("TV-Executor: %s", cb_reason)
+            # SELLs trotzdem ausführen – nur BUYs blockiert
+    except Exception as e:
+        log.debug("TV-Executor: Circuit-Breaker-Check fehlgeschlagen: %s", e)
+        cb_ok = True
+        cb_reason = ""
+
     # ── SELL-Signale sofort ausführen ─────────────────────────────────────────
     for sig in get_pending_sells():
         ticker = sig["ticker"]
@@ -69,6 +83,11 @@ def _execute_cycle(strategy: "SwingStrategy") -> None:
             f"TradingView SELL ({sig.get('strategy', 'TV')})",
         )
         log.info("TV-Executor [%s]: Position sofort geschlossen @ $%.2f", ticker, price)
+
+    # ── BUY-Phase: beide Sperren prüfen ─────────────────────────────────────
+    if not cb_ok:
+        log.warning("TV-Executor: BUY-Phase gesperrt (Circuit Breaker) – %s", cb_reason)
+        return
 
     # ── VIX-Check: bei Markt-Crash keine neuen Käufe ────────────────────────
     vix_blocked, vix_reason = should_block_buy()
