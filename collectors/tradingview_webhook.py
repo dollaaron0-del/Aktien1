@@ -103,14 +103,20 @@ def _process_signal(data: dict, signal_queue) -> dict:
         return {"ok": False, "error": f"Ungültige action: {action}"}
 
     if action == "SELL":
-        # SELL-Signal: in separater Datei speichern, Hauptloop liest sie aus
+        # BUY-Signale für denselben Ticker aus der Queue entfernen bevor SELL gespeichert wird
+        _cancel_pending_buys(ticker, signal_queue)
         _write_sell_signal(ticker, data)
-        log.info("TradingView [%s]: SELL-Signal gespeichert", ticker)
+        log.info("TradingView [%s]: SELL-Signal gespeichert (offene BUYs storniert)", ticker)
         return {"ok": True, "queued": False, "action": "SELL", "ticker": ticker}
 
     if action == "SKIP":
         log.info("TradingView [%s]: SKIP – kein Eintrag", ticker)
         return {"ok": True, "queued": False, "action": "SKIP"}
+
+    # BUY nur einreihen wenn kein SELL für denselben Ticker aussteht
+    if _has_pending_sell(ticker):
+        log.info("TradingView [%s]: BUY ignoriert – SELL-Signal steht noch aus", ticker)
+        return {"ok": True, "queued": False, "action": "BUY_BLOCKED", "reason": "pending SELL"}
 
     # Standardwerte wenn TradingView keine optionalen Felder sendet
     score      = float(data.get("score", 0.70))
@@ -141,6 +147,27 @@ def _process_signal(data: dict, signal_queue) -> dict:
         ticker, sig_id, score, confidence,
     )
     return {"ok": True, "queued": True, "signal_id": sig_id, "ticker": ticker}
+
+
+def _has_pending_sell(ticker: str) -> bool:
+    """Prüft ob ein SELL-Signal für diesen Ticker noch aussteht."""
+    try:
+        with open(_SELL_FILE) as f:
+            signals = json.load(f)
+        return any(s.get("ticker") == ticker for s in signals)
+    except Exception:
+        return False
+
+
+def _cancel_pending_buys(ticker: str, signal_queue) -> None:
+    """Storniert alle ausstehenden BUY-Signale in der Queue für diesen Ticker."""
+    try:
+        for sig in signal_queue.get_pending():
+            if sig.get("ticker") == ticker:
+                signal_queue.mark_expired(sig["id"])
+                log.info("TradingView [%s]: ausstehender BUY #%d storniert (SELL kam rein)", ticker, sig["id"])
+    except Exception as e:
+        log.warning("_cancel_pending_buys fehlgeschlagen: %s", e)
 
 
 def _write_sell_signal(ticker: str, data: dict) -> None:
