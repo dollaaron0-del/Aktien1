@@ -1386,6 +1386,137 @@ def _run_sentiment_memory_display() -> None:
     console.print(sm.to_text())
 
 
+def show_crash_radar(force: bool = False) -> None:
+    """Crash-Wahrscheinlichkeit, Blasen-Detektor und historischer Vergleich."""
+    from analyzers.crash_radar import CrashRadar, _BUBBLE_MILD, _BUBBLE_HIGH, _BUBBLE_SEVERE
+
+    console.rule("[bold red]CRASH RADAR – Markt-Risiko & Blasen-Detektor")
+    console.print("[dim]Lade Marktdaten (yfinance)... Das kann 10–20 Sekunden dauern.[/dim]")
+
+    radar  = CrashRadar()
+    result = radar.analyze(force_refresh=force)
+
+    if not result.data_available:
+        console.print(f"[red]Daten nicht verfügbar: {result.summary_line}[/red]")
+        return
+
+    # ── Gesamt-Score ──────────────────────────────────────────────────────────
+    prob  = result.crash_probability
+    level = result.risk_level
+    color = {"GERING": "green", "MITTEL": "yellow", "HOCH": "bold red", "EXTREM": "bold red on white"}.get(level, "white")
+    bar_filled = round(prob / 5)
+    bar = "█" * bar_filled + "░" * (20 - bar_filled)
+
+    console.print(Panel(
+        f"[{color}]GESAMT-CRASH-WAHRSCHEINLICHKEIT: {prob}%[/{color}]\n"
+        f"[{color}][{bar}] {level}[/{color}]\n\n"
+        f"[dim]Stand: {result.timestamp}  |  Daten: yfinance  |  "
+        f"Cache: 1h  |  [/dim][dim]python main.py --crash-radar --refresh[/dim]",
+        border_style=color if color not in ("bold red", "bold red on white") else "red",
+    ))
+
+    # ── Indikatoren-Tabelle ───────────────────────────────────────────────────
+    ind_table = Table(title="Markt-Indikatoren", box=box.ROUNDED, show_lines=False)
+    ind_table.add_column("Indikator",   style="cyan", min_width=28)
+    ind_table.add_column("Wert",        justify="right", min_width=10)
+    ind_table.add_column("Status",      justify="center", min_width=10)
+    ind_table.add_column("Gefahr",      justify="center", min_width=8)
+    ind_table.add_column("Bedeutung",   style="dim", min_width=40)
+
+    status_colors = {"NORMAL": "green", "ERHÖHT": "yellow", "ALARM": "bold red"}
+    for ind in result.indicators:
+        sc = ind.score
+        bar_len = round(sc * 10)
+        score_bar = f"[{'█' * bar_len}{'░' * (10 - bar_len)}]"
+        s_color = status_colors.get(ind.status, "white")
+        ind_table.add_row(
+            ind.name,
+            ind.value_str,
+            f"[{s_color}]{ind.status}[/{s_color}]",
+            score_bar,
+            ind.description,
+        )
+    console.print(ind_table)
+
+    # ── Blasen-Detektor ───────────────────────────────────────────────────────
+    bubble_table = Table(title="Blasen-Detektor – Sektor-Überhitzung", box=box.ROUNDED)
+    bubble_table.add_column("Sektor",      style="cyan", min_width=22)
+    bubble_table.add_column("Ticker",      style="dim", justify="center")
+    bubble_table.add_column("YTD",         justify="right")
+    bubble_table.add_column("1 Jahr",      justify="right")
+    bubble_table.add_column("Blase",       justify="center", min_width=10)
+    bubble_table.add_column("Risiko",      justify="center")
+    bubble_table.add_column("Hinweis",     style="dim")
+
+    risk_colors = {
+        "EXTREM": "bold red",
+        "HOCH":   "red",
+        "MITTEL": "yellow",
+        "GERING": "green",
+    }
+    for b in result.bubbles:
+        r_color = risk_colors.get(b.risk_label, "white")
+        score_bar = "█" * round(b.bubble_score / 10) + "░" * (10 - round(b.bubble_score / 10))
+        ytd_color = "green" if b.ytd_pct >= 0 else "red"
+        y1_color  = "green" if b.return_1y >= 0 else "red"
+        bubble_table.add_row(
+            b.name,
+            b.ticker,
+            f"[{ytd_color}]{b.ytd_pct:+.1f}%[/{ytd_color}]",
+            f"[{y1_color}]{b.return_1y:+.1f}%[/{y1_color}]",
+            f"[{r_color}]{score_bar}[/{r_color}]",
+            f"[{r_color}]{b.risk_label}[/{r_color}]",
+            b.note,
+        )
+    console.print(bubble_table)
+
+    # ── Historischer Vergleich ────────────────────────────────────────────────
+    hist_table = Table(title="Historischer Vergleich – Ähnlichkeit mit früheren Crashes", box=box.ROUNDED)
+    hist_table.add_column("Crash-Phase",       style="cyan", min_width=28)
+    hist_table.add_column("Ähnlichkeit",       justify="center", min_width=14)
+    hist_table.add_column("Beschreibung",      style="dim")
+
+    for i, m in enumerate(result.historical_matches[:6]):
+        pct = m.similarity_pct
+        bar_len  = round(pct / 5)
+        sim_bar  = "█" * bar_len + "░" * (20 - bar_len)
+        if i == 0:
+            row_style = "bold"
+            label = f"[bold yellow]{m.label}[/bold yellow]"
+        else:
+            row_style = ""
+            label = m.label
+        hist_table.add_row(
+            label,
+            f"{sim_bar} {pct}%",
+            m.desc,
+        )
+    console.print(hist_table)
+
+    # ── Empfehlung ────────────────────────────────────────────────────────────
+    best_match = result.historical_matches[0] if result.historical_matches else None
+    alarm_inds = [i for i in result.indicators if i.status == "ALARM"]
+    high_bubbles = [b for b in result.bubbles if b.risk_label in ("HOCH", "EXTREM")]
+
+    rec_lines = []
+    if prob >= 70:
+        rec_lines.append("[bold red]HANDLUNGS­EMPFEHLUNG: Portfolio-Absicherung prüfen (Stop-Losses straffen, Hedge-ETFs).[/bold red]")
+    elif prob >= 50:
+        rec_lines.append("[yellow]HANDLUNGS­EMPFEHLUNG: Erhöhte Vorsicht – keine neuen großen Positionen, SL überprüfen.[/yellow]")
+    elif prob >= 30:
+        rec_lines.append("[cyan]HANDLUNGS­EMPFEHLUNG: Normaler Betrieb, aber Indikatoren im Auge behalten.[/cyan]")
+    else:
+        rec_lines.append("[green]HANDLUNGS­EMPFEHLUNG: Markt-Umfeld ruhig. Normale Strategie.[/green]")
+    if alarm_inds:
+        rec_lines.append(f"Alarm-Indikatoren: {', '.join(i.name for i in alarm_inds)}")
+    if high_bubbles:
+        rec_lines.append(f"Überhitzte Sektoren meiden: {', '.join(b.name for b in high_bubbles[:3])}")
+    if best_match and best_match.similarity_pct >= 50:
+        rec_lines.append(f"Ähnelt historisch am meisten: {best_match.label} ({best_match.similarity_pct}%)")
+
+    console.print(Panel("\n".join(rec_lines), title="Einschätzung", border_style="cyan"))
+
+
 def _set_env_var(key: str, value: str) -> None:
     """Schreibt einen Key=Value Eintrag in .env (oder legt ihn an)."""
     env_path = os.path.join(os.path.dirname(__file__), ".env")
@@ -1492,6 +1623,8 @@ def main():
     parser.add_argument("--velocity", metavar="TICKER", help="News-Geschwindigkeit für einen Ticker anzeigen")
     parser.add_argument("--sentiment-memory", action="store_true", help="Sentiment-Verlässlichkeit pro Ticker anzeigen")
     parser.add_argument("--exploration", metavar="{on|off|status}", help="Exploration-Mode ein-/ausschalten oder Status anzeigen")
+    parser.add_argument("--crash-radar", action="store_true", help="Crash-Wahrscheinlichkeit, Blasen-Detektor und historischer Vergleich")
+    parser.add_argument("--refresh", action="store_true", help="Cache ignorieren (zusammen mit --crash-radar)")
     args = parser.parse_args()
 
     if args.exploration is not None:
@@ -1654,6 +1787,10 @@ def main():
 
     if args.sentiment_memory:
         _run_sentiment_memory_display()
+        return
+
+    if args.crash_radar:
+        show_crash_radar(force=getattr(args, "refresh", False))
         return
 
     if not config.anthropic_api_key:
