@@ -160,6 +160,20 @@ class Config:
     )
 
 
+    # ── TradingView Webhook ───────────────────────────────────────────────────
+    # TradingView sendet Alerts als HTTP POST an den Bot
+    tradingview_webhook_enabled: bool = field(
+        default_factory=lambda: os.getenv("TRADINGVIEW_WEBHOOK_ENABLED", "false").lower() in ("1", "true", "yes")
+    )
+    tradingview_webhook_port: int = field(
+        default_factory=lambda: int(os.getenv("TRADINGVIEW_WEBHOOK_PORT", "8080"))
+    )
+    # Geheimes Wort das TradingView mitsenden muss (Sicherheit)
+    tradingview_webhook_secret: str = field(
+        default_factory=lambda: os.getenv("TRADINGVIEW_WEBHOOK_SECRET", "")
+    )
+
+
 config = Config()
 
 

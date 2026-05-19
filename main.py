@@ -101,6 +101,7 @@ from analyzers.sentiment_memory import SentimentMemory
 from analyzers.reentry_tracker import ReEntryTracker
 from analyzers.multi_timeframe_sentiment import MultiTimeframeSentiment
 from notifier.daily_dashboard import DailyDashboard
+from collectors.tradingview_webhook import start_webhook_server
 
 console = Console()
 
@@ -1371,6 +1372,19 @@ def main():
     archive = NewsArchive()
     reflection = ReflectionEngine(tracker, journal)
     signal_queue = SignalQueue(max_age_hours=config.signal_queue_max_age_hours)
+
+    # TradingView Webhook-Server (optional, läuft als Background-Thread)
+    if config.tradingview_webhook_enabled:
+        start_webhook_server(
+            signal_queue=signal_queue,
+            port=config.tradingview_webhook_port,
+            secret=config.tradingview_webhook_secret,
+        )
+        console.print(
+            f"  [bold green]📡 TradingView Webhook aktiv[/bold green] "
+            f"(Port {config.tradingview_webhook_port})"
+        )
+
     pulse_db = SocialPulseDB()
     weekend_prep_inst = WeekendPrep(
         anthropic_api_key=config.anthropic_api_key,

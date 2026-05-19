@@ -9,3 +9,4 @@ requests>=2.31.0
 rich>=13.7.0
 streamlit>=1.35.0
 reportlab
+flask>=3.0.0
