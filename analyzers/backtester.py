@@ -3,6 +3,13 @@ Backtester – simulates the strategy on historical price data.
 Uses a simplified sentiment proxy from price momentum and volume (since real news
 sentiment isn't available historically), so it primarily validates risk parameters
 (SL/TP/hold-days) rather than the Claude-driven sentiment signals.
+
+Wichtige Annahmen (kein Look-ahead Bias):
+  - Alle Ein-/Ausstiegsentscheidungen basieren auf dem Schlusskurs des aktuellen Tages
+  - Die Ausführung erfolgt zum Schlusskurs (market-on-close order)
+  - Signalberechnung (Momentum) verwendet ausschließlich Daten bis einschließlich
+    des aktuellen Tages — kein Vorgriff auf zukünftige Kurse
+  - Slippage und Kommission werden simuliert (konfigurierbar)
 """
 from datetime import datetime
 from typing import List, Dict, Optional
@@ -19,6 +26,8 @@ class Backtester:
         hold_days: int = 14,
         max_position_pct: float = 0.20,
         sentiment_threshold: float = 0.65,
+        slippage_pct: float = 0.001,    # 0.1% Slippage pro Trade
+        commission_pct: float = 0.001,  # 0.1% Kommission pro Trade (ein Weg)
     ):
         self.tickers = tickers
         self.initial_capital = initial_capital
@@ -27,6 +36,8 @@ class Backtester:
         self.hold_days = hold_days
         self.max_pos_pct = max_position_pct
         self.threshold = sentiment_threshold
+        self.slippage_pct = slippage_pct
+        self.commission_pct = commission_pct
 
     def run(self, period: str = "2y") -> Dict:
         """
@@ -75,9 +86,12 @@ class Backtester:
                     elif days_held >= self.hold_days:
                         exit_reason = "hold_expired"
                     if exit_reason:
-                        proceeds = pos["shares"] * price
-                        pnl = proceeds - pos["cost"]
-                        cash += proceeds
+                        # Slippage: beim Verkauf etwas unter Close (ungünstige Ausführung)
+                        exit_price  = price * (1 - self.slippage_pct)
+                        commission  = pos["shares"] * exit_price * self.commission_pct
+                        proceeds    = pos["shares"] * exit_price - commission
+                        pnl         = proceeds - pos["cost"]
+                        cash       += proceeds
                         trades.append({
                             "ticker": ticker,
                             "entry_date": pos["entry_date"].strftime("%Y-%m-%d"),
@@ -106,16 +120,20 @@ class Backtester:
                     invest = min(cash * 0.95, (cash + self._positions_value(positions, all_data, date)) * self.max_pos_pct)
                     if invest < 100:
                         continue
-                    shares = invest / price
-                    cost = shares * price
-                    cash -= cost
+                    # Slippage: beim Kauf etwas über Close (ungünstige Ausführung)
+                    entry_price = price * (1 + self.slippage_pct)
+                    commission  = invest * self.commission_pct
+                    net_invest  = invest - commission
+                    shares      = net_invest / entry_price
+                    cost        = shares * entry_price + commission
+                    cash       -= cost
                     positions[ticker] = {
-                        "entry_date": date,
-                        "entry_price": price,
-                        "shares": shares,
-                        "cost": cost,
-                        "stop_loss": price * (1 - self.sl_pct),
-                        "take_profit": price * (1 + self.tp_pct),
+                        "entry_date":  date,
+                        "entry_price": entry_price,
+                        "shares":      shares,
+                        "cost":        cost,
+                        "stop_loss":   entry_price * (1 - self.sl_pct),
+                        "take_profit": entry_price * (1 + self.tp_pct),
                     }
 
             total_equity = cash + self._positions_value(positions, all_data, date)
@@ -124,35 +142,45 @@ class Backtester:
         # Close out remaining positions at last price
         last_date = dates[-1]
         for ticker, pos in list(positions.items()):
-            price = float(all_data[ticker].loc[last_date]["Close"])
-            proceeds = pos["shares"] * price
-            cash += proceeds
+            price      = float(all_data[ticker].loc[last_date]["Close"])
+            exit_price = price * (1 - self.slippage_pct)
+            commission = pos["shares"] * exit_price * self.commission_pct
+            proceeds   = pos["shares"] * exit_price - commission
+            cash      += proceeds
             trades.append({
-                "ticker": ticker,
-                "entry_date": pos["entry_date"].strftime("%Y-%m-%d"),
-                "exit_date": last_date.strftime("%Y-%m-%d"),
-                "entry_price": pos["entry_price"],
-                "exit_price": price,
-                "shares": pos["shares"],
-                "pnl": round(proceeds - pos["cost"], 2),
-                "return_pct": round((proceeds - pos["cost"]) / pos["cost"] * 100, 2),
-                "reason": "end_of_test",
+                "ticker":       ticker,
+                "entry_date":   pos["entry_date"].strftime("%Y-%m-%d"),
+                "exit_date":    last_date.strftime("%Y-%m-%d"),
+                "entry_price":  pos["entry_price"],
+                "exit_price":   round(exit_price, 4),
+                "shares":       pos["shares"],
+                "pnl":          round(proceeds - pos["cost"], 2),
+                "return_pct":   round((proceeds - pos["cost"]) / pos["cost"] * 100, 2),
+                "reason":       "end_of_test",
             })
 
         final = cash
-        wins = sum(1 for t in trades if t["pnl"] > 0)
+        wins  = sum(1 for t in trades if t["pnl"] > 0)
+        total_commission = sum(
+            t["shares"] * t["entry_price"] * self.commission_pct * 2
+            for t in trades
+        )
         return {
-            "initial_capital": self.initial_capital,
-            "final_capital": round(final, 2),
-            "total_return_pct": round((final - self.initial_capital) / self.initial_capital * 100, 2),
-            "num_trades": len(trades),
-            "win_rate_pct": round(wins / len(trades) * 100, 1) if trades else 0,
-            "avg_return_pct": round(sum(t["return_pct"] for t in trades) / len(trades), 2) if trades else 0,
-            "best_trade": max(trades, key=lambda t: t["return_pct"]) if trades else None,
-            "worst_trade": min(trades, key=lambda t: t["return_pct"]) if trades else None,
-            "max_drawdown_pct": self._max_drawdown(equity_curve),
-            "equity_curve": equity_curve,
-            "trades": trades,
+            "initial_capital":    self.initial_capital,
+            "final_capital":      round(final, 2),
+            "total_return_pct":   round((final - self.initial_capital) / self.initial_capital * 100, 2),
+            "num_trades":         len(trades),
+            "win_rate_pct":       round(wins / len(trades) * 100, 1) if trades else 0,
+            "avg_return_pct":     round(sum(t["return_pct"] for t in trades) / len(trades), 2) if trades else 0,
+            "best_trade":         max(trades, key=lambda t: t["return_pct"]) if trades else None,
+            "worst_trade":        min(trades, key=lambda t: t["return_pct"]) if trades else None,
+            "max_drawdown_pct":   self._max_drawdown(equity_curve),
+            "slippage_pct":       self.slippage_pct,
+            "commission_pct":     self.commission_pct,
+            "total_commission":   round(total_commission, 2),
+            "methodology":        "close-to-close, market-on-close orders, no look-ahead bias",
+            "equity_curve":       equity_curve,
+            "trades":             trades,
         }
 
     def _sentiment_proxy(self, momentum: float, vol_ratio: float) -> float:

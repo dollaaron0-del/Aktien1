@@ -6,7 +6,10 @@ from config import config
 from analyzers.technical_indicators import TechnicalIndicators, TechnicalSnapshot
 from analyzers.ollama_prescreener import OllamaPrescreener
 from analyzers.api_cost_tracker import APICostTracker
+from analyzers.news_credibility import NewsTrustFilter
 from logger import get_logger
+
+_trust_filter = NewsTrustFilter()
 
 log = get_logger(__name__)
 
@@ -196,6 +199,26 @@ class ClaudeAnalyzer:
         # ── Ollama Pre-Screening ───────────────────────────────────────────────
         prescreener  = _get_prescreener()
         cost_tracker = _get_cost_tracker()
+
+        # ── News-Glaubwürdigkeits-Filter ────────────────────────────────────────
+        news_items, trust_report = _trust_filter.filter(news_items)
+        if trust_report.get("dropped", 0) > 0:
+            log.info(
+                "[%s] NewsTrust: %d/%d Artikel entfernt (avg_trust=%.2f, koordiniert: %s)",
+                ticker,
+                trust_report["dropped"],
+                trust_report["total"],
+                trust_report["avg_trust"],
+                trust_report.get("coordinated") or "keine",
+            )
+        if not news_items:
+            return self._empty_result(ticker, "Alle Artikel nach Glaubwürdigkeits-Filter entfernt")
+
+        # ── API-Kosten-Limit ─────────────────────────────────────────────────
+        cost_ok, cost_reason = cost_tracker.check_daily_limit()
+        if not cost_ok:
+            log.warning("[%s] %s", ticker, cost_reason)
+            return self._empty_result(ticker, cost_reason)
 
         if prescreener:
             prescreen = prescreener.prescreen(

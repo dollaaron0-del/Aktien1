@@ -10,7 +10,7 @@ import json
 import os
 import tempfile
 from datetime import datetime, date
-from typing import Dict
+from typing import Dict, Tuple
 
 from logger import get_logger
 
@@ -25,6 +25,8 @@ _FILE = os.path.join(os.path.dirname(__file__), "..", "data", "api_savings.json"
 _COST_PER_CLAUDE_CALL = float(os.getenv("CLAUDE_COST_PER_CALL", "0.135"))
 # Prompt caching: cached tokens cost ~10% of normal input price
 _CACHE_DISCOUNT = 0.90  # 90% saved on cached tokens (~3000 tokens × $0.015/1k × 0.9 ≈ $0.04/call)
+# Maximale tägliche Claude-Kosten (Schutz vor Runaway-Kosten)
+_MAX_DAILY_COST_USD = float(os.getenv("MAX_DAILY_COST_USD", "5.00"))
 
 
 class APICostTracker:
@@ -97,6 +99,28 @@ class APICostTracker:
             day["saved_usd"]     = round(day["saved_usd"] + saved, 4)
 
         self._save()
+
+    def check_daily_limit(self) -> Tuple[bool, str]:
+        """
+        Prüft ob das tägliche Kostenlimit bereits erreicht ist.
+        Gibt (True, "") zurück wenn Aufruf erlaubt.
+        Gibt (False, Grund) zurück wenn Limit überschritten.
+        """
+        today = date.today().isoformat()
+        today_cost = self._data["daily"].get(today, {}).get("cost_usd", 0.0)
+        if today_cost >= _MAX_DAILY_COST_USD:
+            return False, (
+                f"Tages-Kostenlimit ${_MAX_DAILY_COST_USD:.2f} erreicht "
+                f"(heute: ${today_cost:.2f}) – Claude-Aufruf übersprungen. "
+                f"Erhöhe MAX_DAILY_COST_USD in .env falls nötig."
+            )
+        remaining = _MAX_DAILY_COST_USD - today_cost
+        if remaining < _COST_PER_CLAUDE_CALL:
+            return False, (
+                f"Nicht genug Budget für weiteren Aufruf (verbleibend: ${remaining:.3f}, "
+                f"Kosten: ${_COST_PER_CLAUDE_CALL:.3f}) – übersprungen."
+            )
+        return True, ""
 
     def record_fallback(self) -> None:
         """Ollama war offline → Claude-Fallback."""
