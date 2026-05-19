@@ -101,7 +101,7 @@ from analyzers.sentiment_memory import SentimentMemory
 from analyzers.reentry_tracker import ReEntryTracker
 from analyzers.multi_timeframe_sentiment import MultiTimeframeSentiment
 from notifier.daily_dashboard import DailyDashboard
-from collectors.tradingview_webhook import start_webhook_server
+from collectors.tradingview_webhook import start_webhook_server, get_pending_sells
 
 console = Console()
 
@@ -260,6 +260,29 @@ def run_analysis_cycle(
     for action in exit_actions:
         console.print(f"  [yellow]{action}[/yellow]")
     cycle_actions.extend(exit_actions)
+
+    # TradingView SELL-Signale verarbeiten (Short/Bearish Engulfing)
+    if config.tradingview_webhook_enabled:
+        tv_sells = get_pending_sells()
+        for sig in tv_sells:
+            tv_ticker = sig["ticker"]
+            pos = portfolio.get_position(tv_ticker)
+            if pos:
+                price = broker.get_price(tv_ticker) or pos.entry_price
+                action = strategy._do_close(
+                    tv_ticker, pos, price,
+                    f"TradingView SELL-Signal ({sig.get('strategy', 'TV')})"
+                )
+                msg = (
+                    f"[{tv_ticker}] 📉 TradingView SELL ({sig.get('strategy', 'TV')}) "
+                    f"@ ${price:.2f}"
+                )
+                console.print(f"  [bold red]{msg}[/bold red]")
+                cycle_actions.append(msg)
+            else:
+                console.print(
+                    f"  [dim]TradingView SELL [{tv_ticker}]: keine offene Position[/dim]"
+                )
 
     active_watchlist = _get_watchlist(portfolio)
     for ticker in active_watchlist:

@@ -28,9 +28,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
+
+_SELL_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "tv_sell_signals.json")
 
 from logger import get_logger
 
@@ -99,9 +102,15 @@ def _process_signal(data: dict, signal_queue) -> dict:
     if action not in ("BUY", "SELL", "SKIP"):
         return {"ok": False, "error": f"Ungültige action: {action}"}
 
-    if action != "BUY":
-        log.info("TradingView [%s]: %s – kein Queue-Eintrag nötig", ticker, action)
-        return {"ok": True, "queued": False, "action": action}
+    if action == "SELL":
+        # SELL-Signal: in separater Datei speichern, Hauptloop liest sie aus
+        _write_sell_signal(ticker, data)
+        log.info("TradingView [%s]: SELL-Signal gespeichert", ticker)
+        return {"ok": True, "queued": False, "action": "SELL", "ticker": ticker}
+
+    if action == "SKIP":
+        log.info("TradingView [%s]: SKIP – kein Eintrag", ticker)
+        return {"ok": True, "queued": False, "action": "SKIP"}
 
     # Standardwerte wenn TradingView keine optionalen Felder sendet
     score      = float(data.get("score", 0.70))
@@ -132,3 +141,46 @@ def _process_signal(data: dict, signal_queue) -> dict:
         ticker, sig_id, score, confidence,
     )
     return {"ok": True, "queued": True, "signal_id": sig_id, "ticker": ticker}
+
+
+def _write_sell_signal(ticker: str, data: dict) -> None:
+    """Speichert ein SELL-Signal atomar in eine JSON-Datei."""
+    import tempfile
+    os.makedirs(os.path.dirname(_SELL_FILE), exist_ok=True)
+    try:
+        with open(_SELL_FILE) as f:
+            signals = json.load(f)
+    except Exception:
+        signals = []
+
+    signals.append({
+        "ticker":    ticker,
+        "price":     data.get("price"),
+        "strategy":  data.get("strategy", "TradingView"),
+        "timestamp": datetime.utcnow().isoformat(),
+    })
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", dir=os.path.dirname(_SELL_FILE), suffix=".tmp", delete=False
+    ) as tmp:
+        json.dump(signals, tmp, indent=2)
+        tmp_path = tmp.name
+    os.replace(tmp_path, _SELL_FILE)
+
+
+def get_pending_sells() -> List[dict]:
+    """Gibt ausstehende SELL-Signale zurück und leert die Liste."""
+    try:
+        with open(_SELL_FILE) as f:
+            signals = json.load(f)
+        # Sofort leeren damit Signale nicht doppelt verarbeitet werden
+        import tempfile
+        with tempfile.NamedTemporaryFile(
+            mode="w", dir=os.path.dirname(_SELL_FILE), suffix=".tmp", delete=False
+        ) as tmp:
+            json.dump([], tmp)
+            tmp_path = tmp.name
+        os.replace(tmp_path, _SELL_FILE)
+        return signals
+    except Exception:
+        return []
