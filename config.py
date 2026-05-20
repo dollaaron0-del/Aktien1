@@ -25,6 +25,12 @@ class Config:
     alpaca_secret_key: str = field(default_factory=lambda: os.getenv("ALPACA_SECRET_KEY", ""))
     alpaca_base_url: str = field(default_factory=lambda: os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets"))
 
+    # Interactive Brokers (TWS / IB Gateway)
+    ibkr_host:      str = field(default_factory=lambda: os.getenv("IBKR_HOST",      "127.0.0.1"))
+    ibkr_port:      int = field(default_factory=lambda: int(os.getenv("IBKR_PORT",  "7497")))
+    ibkr_client_id: int = field(default_factory=lambda: int(os.getenv("IBKR_CLIENT_ID", "1")))
+    ibkr_account:   str = field(default_factory=lambda: os.getenv("IBKR_ACCOUNT",   ""))
+
     # Broker mode: "paper", "alpaca", "ibkr"
     broker_mode: str = field(default_factory=lambda: os.getenv("BROKER_MODE", "paper"))
     initial_capital: float = field(default_factory=lambda: float(os.getenv("INITIAL_CAPITAL", "10000.0")))
@@ -270,6 +276,14 @@ def validate_config() -> None:
         if not config.alpaca_api_key or not config.alpaca_secret_key:
             errors.append(
                 "BROKER_MODE=alpaca, aber ALPACA_API_KEY / ALPACA_SECRET_KEY fehlen."
+            )
+
+    if config.broker_mode == "ibkr":
+        try:
+            import ib_insync  # noqa: F401
+        except ImportError:
+            errors.append(
+                "BROKER_MODE=ibkr, aber ib_insync fehlt. Bitte: pip install ib_insync"
             )
 
     # ── Warnungen für optionale aber empfohlene Keys ──────────────────────────

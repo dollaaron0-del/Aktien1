@@ -58,6 +58,7 @@ from config import config, validate_config
 from logger import get_logger
 from broker.paper_broker import PaperBroker
 from broker.alpaca_broker import AlpacaBroker
+from broker.ibkr_broker import IBKRBroker
 from portfolio import Portfolio
 from portfolio.performance_tracker import PerformanceTracker
 from portfolio.trade_journal import TradeJournal
@@ -204,6 +205,19 @@ def main():
             broker = PaperBroker()
         else:
             console.print("[green]✓ Alpaca-Broker aktiv[/green]")
+    elif config.broker_mode == "ibkr":
+        broker = IBKRBroker()
+        if broker.is_connected():
+            console.print(
+                f"[green]✓ Interactive Brokers aktiv "
+                f"({config.ibkr_host}:{config.ibkr_port})[/green]"
+            )
+        else:
+            console.print(
+                "[yellow]⚠ IBKR-Verbindung fehlgeschlagen "
+                f"({config.ibkr_host}:{config.ibkr_port}) – Fallback auf Paper-Broker.[/yellow]"
+            )
+            broker = PaperBroker()
     else:
         broker = PaperBroker()
 
