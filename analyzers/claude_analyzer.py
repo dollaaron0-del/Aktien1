@@ -99,6 +99,8 @@ _USER_TEMPLATE_STANDARD = """Analysiere folgende Informationen zur Aktie {ticker
 
 {tech_block}
 
+{eu_market_block}
+
 === AKTUELLE NACHRICHTEN ({current_count} Artikel, letzte 24–48h) ===
 {current_news}
 
@@ -279,6 +281,7 @@ class ClaudeAnalyzer:
         technical: Optional[TechnicalSnapshot] = None,
         pattern_result=None,    # Optional[PatternResult] – lazy-imported to avoid circular dep
         onchain_snapshot=None,  # Optional[OnChainSnapshot]
+        eu_market_snapshot=None,  # Optional[EUMarketSnapshot]
     ) -> AnalysisResult:
         if not news_items:
             return self._empty_result(ticker, "Keine Nachrichtenartikel verfügbar")
@@ -340,6 +343,12 @@ class ClaudeAnalyzer:
         tech_block    = technical.to_prompt_block() if technical else ""
         pattern_block = pattern_result.to_prompt_block() if pattern_result else ""
         onchain_block = onchain_snapshot.to_prompt_block() if onchain_snapshot else ""
+        # EU market block: only for EU tickers, include BoE note for .L tickers
+        include_boe = ticker.upper().endswith(".L")
+        eu_market_block = (
+            eu_market_snapshot.to_prompt_block(include_boe=include_boe)
+            if eu_market_snapshot else ""
+        )
 
         if open_position:
             prompt = _USER_TEMPLATE_THESIS_CHECK.format(
@@ -371,6 +380,7 @@ class ClaudeAnalyzer:
                 ticker=ticker,
                 price_data=price_text,
                 tech_block=tech_block,
+                eu_market_block=eu_market_block,
                 current_count=len(news_items),
                 current_news=current_news_text,
                 historical_block=historical_block,

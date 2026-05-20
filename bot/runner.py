@@ -26,6 +26,7 @@ from collectors.crypto_news_collector import CryptoNewsCollector
 from analyzers import ClaudeAnalyzer, AnalysisResult
 from analyzers.chart_patterns import ChartPatternAnalyzer
 from analyzers.onchain_signals import OnChainSignalAnalyzer
+from analyzers.eu_market_context import EUMarketContext
 from collectors.onchain_collector import OnChainCollector
 from analyzers.reflection_engine import ReflectionEngine
 from analyzers.dynamic_watchlist import DynamicWatchlist
@@ -66,6 +67,17 @@ def _is_crypto(ticker: str) -> bool:
     return base in CRYPTO_UNIVERSE or ticker.endswith("/USD")
 
 
+_EU_SUFFIXES = {
+    ".DE", ".F", ".MU", ".PA", ".AS", ".MI", ".MC",
+    ".BR", ".BE", ".VI", ".L", ".SW", ".CO", ".ST", ".HE", ".OL",
+}
+
+
+def _is_eu_stock(ticker: str) -> bool:
+    upper = ticker.upper()
+    return any(upper.endswith(s.upper()) for s in _EU_SUFFIXES)
+
+
 def _get_watchlist(portfolio: Portfolio) -> List[str]:
     """Returns watchlist: dynamic/static US + optional EU + optional Crypto."""
     if _dynamic_watchlist:
@@ -74,9 +86,23 @@ def _get_watchlist(portfolio: Portfolio) -> List[str]:
     else:
         base = list(config.watchlist)
 
-    # EU-Aktien anhängen wenn aktiviert (Duplikate vermeiden)
-    if config.eu_stocks_enabled and config.eu_watchlist:
-        for t in config.eu_watchlist:
+    # EU-Aktien anhängen wenn aktiviert
+    if config.eu_stocks_enabled:
+        eu_tickers = list(config.eu_watchlist)
+        if not eu_tickers:
+            # Keine manuelle Watchlist → EU-Scanner automatisch ausführen (Top 6)
+            try:
+                from analyzers.eu_stock_scanner import EUStockScanner
+                scan = EUStockScanner(max_results=6).scan()
+                eu_tickers = [c.ticker for c in scan.candidates]
+                if eu_tickers:
+                    log.info(
+                        "EU-Auto-Scan: %d Kandidaten gefunden: %s",
+                        len(eu_tickers), ", ".join(eu_tickers),
+                    )
+            except Exception as e:
+                log.warning("EU-Auto-Scan fehlgeschlagen: %s", e)
+        for t in eu_tickers:
             if t not in base:
                 base.append(t)
 
@@ -376,7 +402,29 @@ def run_analysis_cycle(
                     f"  [dim]TradingView SELL [{tv_ticker}]: keine offene Position[/dim]"
                 )
 
+    # EU Marktbarometer einmal pro Zyklus laden (cached 2h)
+    _eu_market_ctx = None
     active_watchlist = _get_watchlist(portfolio)
+    if any(_is_eu_stock(t) for t in active_watchlist):
+        try:
+            _eu_market_ctx = EUMarketContext().get_snapshot()
+            if _eu_market_ctx:
+                sig_color = {"RISK_ON": "green", "RISK_OFF": "red"}.get(
+                    _eu_market_ctx.signal, "yellow"
+                )
+                dax = _eu_market_ctx.indices.get("DAX")
+                stoxx = _eu_market_ctx.indices.get("STOXX50")
+                dax_str  = f"DAX {dax.change_5d_pct:+.1f}%"  if dax   else ""
+                stx_str  = f"STOXX50 {stoxx.change_5d_pct:+.1f}%" if stoxx else ""
+                console.print(
+                    f"  [{sig_color}]🇪🇺 EU-Markt: {_eu_market_ctx.signal} "
+                    f"| {dax_str} | {stx_str}[/{sig_color}]"
+                )
+                if _eu_market_ctx.ecb_note:
+                    console.print(f"  [yellow]{_eu_market_ctx.ecb_note}[/yellow]")
+        except Exception as e:
+            log.debug("EU Marktkontext fehlgeschlagen: %s", e)
+
     for ticker in active_watchlist:
         console.print(f"\n[cyan]Sammle Daten für {ticker}...[/cyan]")
 
@@ -521,6 +569,7 @@ def run_analysis_cycle(
             weekly_briefing=weekly_briefing,
             pattern_result=pattern_result,
             onchain_snapshot=onchain_snapshot,
+            eu_market_snapshot=_eu_market_ctx if _is_eu_stock(ticker) else None,
         )
 
         _print_analysis(analysis)
