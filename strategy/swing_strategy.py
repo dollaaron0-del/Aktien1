@@ -1,8 +1,11 @@
 import math
 import os
 from datetime import datetime
-from typing import Optional, List, Dict, Tuple
+from typing import TYPE_CHECKING, Optional, List, Dict, Tuple
 from analyzers.claude_analyzer import AnalysisResult
+
+if TYPE_CHECKING:
+    from strategy.short_strategy import ShortStrategy
 from portfolio.portfolio import Portfolio, Position
 from portfolio.performance_tracker import PerformanceTracker
 from portfolio.phase_controller import PhaseController
@@ -81,6 +84,8 @@ class SwingStrategy:
         self.cross_asset     = CrossAssetSignals()
         self.options_intel   = OptionsIntelligence()
         self.rl_agent        = RLAgent()
+        # Short-Strategy (optional, wird von main.py gesetzt)
+        self._short_strategy: Optional["ShortStrategy"] = None
 
     def evaluate(self, analysis: AnalysisResult, sources_breakdown: Optional[Dict[str, int]] = None) -> Optional[str]:
         ticker = analysis.ticker
@@ -228,6 +233,13 @@ class SwingStrategy:
 
         result = self._open_position(ticker, current_price, analysis, portfolio_value, sources_breakdown or {},
                                      score_mod=_smod, current_score=_current_score, rl_modifier=rl_modifier)
+
+        # Short-Modus: SELL-Signal mit hoher Konfidenz → Short-Position prüfen
+        if analysis.recommendation == "SELL" and analysis.confidence in ("HIGH", "MEDIUM"):
+            if hasattr(self, '_short_strategy') and self._short_strategy:
+                short_result = self._short_strategy.evaluate_short(analysis)
+                if short_result:
+                    return short_result
 
         # If capital was insufficient, save signal for later execution
         if result and "Nicht genug freies Kapital" in result and self.signal_queue:
