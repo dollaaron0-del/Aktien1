@@ -23,11 +23,21 @@ from collectors.news_archive import NewsArchive
 from analyzers.market_schedule import MarketSchedule
 from analyzers.weekend_prep import WeekendPrep
 from analyzers.parameter_optimizer import ParameterOptimizer, _MIN_TRADES
+from bot.pre_market_scanner import PreMarketScanner
 from bot.runner import run_analysis_cycle, _print_portfolio_summary
 from cli.commands import run_social_scan, run_weekend_prep
 
 console = Console()
 log = get_logger(__name__)
+
+
+def _subtract_minutes(hhmm: str, minutes: int) -> str:
+    """Zieht N Minuten von einem HH:MM String ab. Ergebnis bleibt im selben Tag."""
+    from datetime import timedelta as _td
+    h, m = map(int, hhmm.split(":"))
+    total = h * 60 + m - minutes
+    total = max(0, total)
+    return f"{total // 60:02d}:{total % 60:02d}"
 
 
 def _auto_optimize_check(tracker, notifier: TelegramNotifier) -> None:
@@ -194,6 +204,21 @@ def run_bot_loop(
                 schedule.cancel_job(job)
         _register_analysis_jobs()
 
+    def _pre_market_job(exchange: str):
+        """Pre-Market Briefing: schneller Daten-Scan ohne Claude."""
+        console.rule(f"[bold yellow]Pre-Market Briefing – {exchange}[/bold yellow]")
+        try:
+            from bot.runner import _get_watchlist
+            watchlist = _get_watchlist(portfolio)
+            scanner = PreMarketScanner()
+            briefing = scanner.run(exchange=exchange, watchlist=watchlist)
+            if briefing:
+                for line in briefing.to_console_lines():
+                    console.print(line)
+                TelegramNotifier().send(briefing.to_telegram())
+        except Exception as e:
+            log.warning("Pre-Market-Job %s fehlgeschlagen: %s", exchange, e)
+
     def _register_analysis_jobs():
         slots = mkt_schedule.get_schedule_strings()
         is_weekend = datetime.utcnow().weekday() >= 5
@@ -204,6 +229,7 @@ def run_bot_loop(
                 console.print("[dim]Heute kein Handelstag.[/dim]")
             return
         for slot in slots:
+            # Volle Analyse 30 Min vor Open (bisherig)
             job = schedule.every().day.at(slot["hhmm"]).do(
                 run_analysis_cycle,
                 portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
@@ -212,8 +238,19 @@ def run_bot_loop(
             job._is_analysis_job = True
             review_job = schedule.every().day.at(slot["hhmm"]).do(_monthly_review_check)
             review_job._is_analysis_job = True
+
+            # Pre-Market Briefing 90 Min vor Open (60 Min früher als Vollanalyse)
+            pre_hhmm = _subtract_minutes(slot["hhmm"], 60)
+            exch = slot["exchange"]
+            pre_job = schedule.every().day.at(pre_hhmm).do(_pre_market_job, exch)
+            pre_job._is_analysis_job = True
+
         times_str = ", ".join(f"{s['hhmm']} ({s['exchange']})" for s in slots)
         console.print(f"[dim]Analyse-Jobs registriert: {times_str}[/dim]")
+        pre_times = ", ".join(
+            f"{_subtract_minutes(s['hhmm'], 60)} pre-market ({s['exchange']})" for s in slots
+        )
+        console.print(f"[dim]Pre-Market-Jobs: {pre_times}[/dim]")
 
     def _weekend_prep_job():
         """Runs weekend preparation. Called Saturday 09:00 and Sunday 14:00."""
