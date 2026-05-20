@@ -25,6 +25,8 @@ from collectors.news_archive import NewsArchive
 from collectors.crypto_news_collector import CryptoNewsCollector
 from analyzers import ClaudeAnalyzer, AnalysisResult
 from analyzers.chart_patterns import ChartPatternAnalyzer
+from analyzers.onchain_signals import OnChainSignalAnalyzer
+from collectors.onchain_collector import OnChainCollector
 from analyzers.reflection_engine import ReflectionEngine
 from analyzers.dynamic_watchlist import DynamicWatchlist
 from analyzers.signal_expander import SignalDrivenExpander
@@ -488,6 +490,26 @@ def run_analysis_cycle(
         except Exception as e:
             log.debug("[%s] Chart-Muster-Analyse fehlgeschlagen: %s", ticker, e)
 
+        # On-Chain-Analyse (nur für Krypto-Assets)
+        onchain_snapshot = None
+        if _is_crypto(ticker):
+            try:
+                base = ticker.split("/")[0].upper().removesuffix("-USD")
+                metrics = OnChainCollector().collect(base)
+                onchain_snapshot = OnChainSignalAnalyzer().analyze(metrics)
+                if onchain_snapshot:
+                    oc_color = {
+                        "STRONG_BULLISH": "bold green", "BULLISH": "green",
+                        "STRONG_BEARISH": "bold red",   "BEARISH": "red",
+                    }.get(onchain_snapshot.signal, "yellow")
+                    console.print(
+                        f"  [{oc_color}]⛓ On-Chain: {onchain_snapshot.signal} "
+                        f"(Score: {onchain_snapshot.score:.0f}) "
+                        f"[{onchain_snapshot.source}][/{oc_color}]"
+                    )
+            except Exception as e:
+                log.debug("[%s] On-Chain-Analyse fehlgeschlagen: %s", ticker, e)
+
         console.print(f"  [cyan]Analysiere mit Claude ({config.claude_model})...[/cyan]")
         analysis = analyzer.analyze(
             ticker=ticker,
@@ -498,6 +520,7 @@ def run_analysis_cycle(
             lessons_memo=lessons_memo,
             weekly_briefing=weekly_briefing,
             pattern_result=pattern_result,
+            onchain_snapshot=onchain_snapshot,
         )
 
         _print_analysis(analysis)

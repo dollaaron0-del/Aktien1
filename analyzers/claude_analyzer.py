@@ -192,7 +192,7 @@ SCHRITT 2 – AUSGABE als JSON:
 """
 
 
-# Crypto: technical signals PRIMARY, news SECONDARY context
+# Crypto: technical signals PRIMARY, on-chain SECONDARY, news TERTIARY context
 _USER_TEMPLATE_CRYPTO = """Analysiere folgende Informationen zum Krypto-Asset {ticker}:
 
 === MARKTDATEN ===
@@ -201,6 +201,8 @@ _USER_TEMPLATE_CRYPTO = """Analysiere folgende Informationen zum Krypto-Asset {t
 {tech_block}
 
 {pattern_block}
+
+{onchain_block}
 
 === AUFGABE (TECHNISCHE ANALYSE ZUERST) ===
 Kryptowährungen reagieren primär auf technische Chart-Signale – Nachrichten sind sekundärer Kontext.
@@ -214,7 +216,14 @@ Bewerte die Chart-Muster, Moving Averages, RSI und Volumen-Trends oben.
   - Volumen-Bestätigung: Ausbrüche MÜSSEN mit erhöhtem Volumen kommen
   Vergib einen technischen Score 0–100 und leite daraus die primäre Richtung ab.
 
-SCHRITT 2 – NEWS ALS KONTEXT (sekundär):
+SCHRITT 2 – ON-CHAIN DATEN (Bestätigung):
+Falls On-Chain-Daten vorhanden: prüfe ob NVT, aktive Adressen und Hash Rate
+das technische Signal bestätigen oder widersprechen.
+  - Niedriger NVT + steigendes technisches Signal → starke Konvergenz (bullisch)
+  - Hoher NVT trotz Kursanstieg → Vorsicht (Überbewertung möglich)
+  - Sinkende aktive Adressen trotz Kursanstieg → Distribution, kein echtes Kaufinteresse
+
+SCHRITT 3 – NEWS ALS KONTEXT (tertiär):
 === AKTUELLE NACHRICHTEN ({current_count} Artikel, letzte 24–48h) ===
 {current_news}
 
@@ -224,12 +233,12 @@ Nutze die Nachrichten nur zur Bestätigung oder als Warnsignal bei extremen Entw
 (z.B. Regulierungsverbote, Exchange-Zusammenbrüche). Einzelne bullische News ohne technische
 Bestätigung sind KEIN Kaufsignal.
 
-SCHRITT 3 – INTERNE DEBATTE:
-  BULLISCH: Technische Signale + ergänzende News-Bestätigung
-  BÄRISCH:  Technische Warnsignale + News-Risiken
-  Ohne technische Bestätigung: KEIN BUY, maximal HOLD.
+SCHRITT 4 – INTERNE DEBATTE:
+  BULLISCH: Technische Signale + On-Chain-Bestätigung + ergänzende News
+  BÄRISCH:  Technische Warnsignale + On-Chain-Schwäche + News-Risiken
+  Ohne technische UND On-Chain-Bestätigung: KEIN BUY, maximal HOLD.
 
-SCHRITT 4 – AUSGABE als JSON:
+SCHRITT 5 – AUSGABE als JSON:
 {{
   "bull_case": "<1–2 Sätze: stärkstes technisches + News-Argument FÜR>",
   "bear_case": "<1–2 Sätze: stärkstes technisches + News-Argument GEGEN>",
@@ -268,7 +277,8 @@ class ClaudeAnalyzer:
         lessons_memo: Optional[str] = None,
         weekly_briefing: Optional[str] = None,
         technical: Optional[TechnicalSnapshot] = None,
-        pattern_result=None,   # Optional[PatternResult] – lazy-imported to avoid circular dep
+        pattern_result=None,    # Optional[PatternResult] – lazy-imported to avoid circular dep
+        onchain_snapshot=None,  # Optional[OnChainSnapshot]
     ) -> AnalysisResult:
         if not news_items:
             return self._empty_result(ticker, "Keine Nachrichtenartikel verfügbar")
@@ -327,8 +337,9 @@ class ClaudeAnalyzer:
         current_news_text = self._format_news(news_items, label="aktuell")
         historical_block = self._format_historical_block(historical_news or [], news_items)
         price_text = self._format_price(price_data or {})
-        tech_block = technical.to_prompt_block() if technical else ""
+        tech_block    = technical.to_prompt_block() if technical else ""
         pattern_block = pattern_result.to_prompt_block() if pattern_result else ""
+        onchain_block = onchain_snapshot.to_prompt_block() if onchain_snapshot else ""
 
         if open_position:
             prompt = _USER_TEMPLATE_THESIS_CHECK.format(
@@ -350,6 +361,7 @@ class ClaudeAnalyzer:
                 price_data=price_text,
                 tech_block=tech_block,
                 pattern_block=pattern_block,
+                onchain_block=onchain_block,
                 current_count=len(news_items),
                 current_news=current_news_text,
                 historical_block=historical_block,
