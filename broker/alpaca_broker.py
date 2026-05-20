@@ -317,3 +317,158 @@ class AlpacaBroker:
         except Exception as e:
             log.warning("Alpaca get_account: %s", e)
         return None
+
+    # ── Crypto-specific methods ────────────────────────────────────────────────
+
+    @staticmethod
+    def _normalize_crypto(symbol: str) -> str:
+        """Normalize crypto symbol: 'BTC' -> 'BTC/USD', 'BTC/USD' unchanged."""
+        symbol = symbol.upper().strip()
+        if "/" not in symbol:
+            return f"{symbol}/USD"
+        return symbol
+
+    def get_crypto_price(self, symbol: str) -> Optional[float]:
+        """
+        Fetch latest price for a crypto symbol.
+        symbol: e.g. 'BTC/USD' or 'BTC' (auto-normalized to 'BTC/USD').
+        Falls back to yfinance on API failure.
+        """
+        pair = self._normalize_crypto(symbol)
+        if self._check_creds():
+            try:
+                r = requests.get(
+                    f"{self.data_url}/v1beta3/crypto/us/latest/trades",
+                    params={"symbols": pair},
+                    headers=self._headers(),
+                    timeout=10,
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    trades = data.get("trades", {})
+                    if pair in trades:
+                        price = float(trades[pair]["p"])
+                        log.debug("Alpaca crypto price %s: %.4f", pair, price)
+                        return round(price, 6)
+                log.debug("Alpaca crypto price %s: HTTP %d", pair, r.status_code)
+            except Exception as e:
+                log.debug("Alpaca get_crypto_price %s: %s", pair, e)
+
+        # Fallback to yfinance (e.g. 'BTC/USD' -> 'BTC-USD')
+        try:
+            import yfinance as yf
+            yf_symbol = pair.replace("/", "-")
+            hist = yf.Ticker(yf_symbol).history(period="1d")
+            if not hist.empty:
+                price = round(float(hist["Close"].iloc[-1]), 6)
+                log.debug("yfinance crypto fallback %s: %.4f", yf_symbol, price)
+                return price
+        except Exception as e:
+            log.debug("yfinance crypto fallback %s: %s", pair, e)
+        return None
+
+    def buy_crypto(self, symbol: str, usd_amount: float) -> Dict:
+        """
+        Buy crypto for a given USD amount (fractional shares supported).
+        symbol: 'BTC' or 'BTC/USD'. Uses time_in_force='gtc'.
+        """
+        if not self._check_creds():
+            log.error("Alpaca: API credentials missing")
+            return {"status": "error", "reason": "Alpaca credentials missing"}
+
+        pair = self._normalize_crypto(symbol)
+        price = self.get_crypto_price(pair)
+        if not price:
+            log.error("Alpaca buy_crypto %s: could not fetch price", pair)
+            return {"status": "error", "reason": f"Could not fetch price for {pair}"}
+
+        qty = round(usd_amount / price, 6)
+        if qty <= 0:
+            log.error("Alpaca buy_crypto %s: invalid qty %.6f for $%.2f", pair, qty, usd_amount)
+            return {"status": "error", "reason": "Calculated qty is zero or negative"}
+
+        try:
+            payload = {
+                "symbol":        pair,
+                "qty":           str(qty),
+                "side":          "buy",
+                "type":          "market",
+                "time_in_force": "gtc",
+            }
+            r = requests.post(
+                f"{self.base_url}/v2/orders",
+                json=payload,
+                headers=self._headers(),
+                timeout=15,
+            )
+            if r.status_code not in (200, 201):
+                log.error("Alpaca buy_crypto %s: HTTP %d – %s", pair, r.status_code, r.text[:200])
+                return {"status": "error", "reason": f"HTTP {r.status_code}: {r.text[:200]}"}
+
+            data     = r.json()
+            order_id = data.get("id")
+            log.info("Alpaca crypto BUY %s qty=%.6f (~$%.2f) submitted (id=%s)",
+                     pair, qty, usd_amount, order_id)
+
+            fill_result = self._wait_for_fill(order_id)
+            fill_result.update({
+                "ticker":     pair,
+                "qty":        qty,
+                "usd_amount": usd_amount,
+                "side":       "buy",
+                "mode":       "alpaca_crypto",
+            })
+            return fill_result
+
+        except Exception as e:
+            log.exception("Alpaca buy_crypto %s: %s", pair, e)
+            return {"status": "error", "reason": str(e)}
+
+    def sell_crypto(self, symbol: str, qty: float) -> Dict:
+        """
+        Sell a given quantity of crypto. symbol: 'BTC' or 'BTC/USD'.
+        Uses time_in_force='gtc'.
+        """
+        if not self._check_creds():
+            log.error("Alpaca: API credentials missing")
+            return {"status": "error", "reason": "Alpaca credentials missing"}
+
+        pair = self._normalize_crypto(symbol)
+        if qty <= 0:
+            log.error("Alpaca sell_crypto %s: invalid qty %.6f", pair, qty)
+            return {"status": "error", "reason": "qty must be positive"}
+
+        try:
+            payload = {
+                "symbol":        pair,
+                "qty":           str(qty),
+                "side":          "sell",
+                "type":          "market",
+                "time_in_force": "gtc",
+            }
+            r = requests.post(
+                f"{self.base_url}/v2/orders",
+                json=payload,
+                headers=self._headers(),
+                timeout=15,
+            )
+            if r.status_code not in (200, 201):
+                log.error("Alpaca sell_crypto %s: HTTP %d – %s", pair, r.status_code, r.text[:200])
+                return {"status": "error", "reason": f"HTTP {r.status_code}: {r.text[:200]}"}
+
+            data     = r.json()
+            order_id = data.get("id")
+            log.info("Alpaca crypto SELL %s qty=%.6f submitted (id=%s)", pair, qty, order_id)
+
+            fill_result = self._wait_for_fill(order_id)
+            fill_result.update({
+                "ticker": pair,
+                "qty":    qty,
+                "side":   "sell",
+                "mode":   "alpaca_crypto",
+            })
+            return fill_result
+
+        except Exception as e:
+            log.exception("Alpaca sell_crypto %s: %s", pair, e)
+            return {"status": "error", "reason": str(e)}

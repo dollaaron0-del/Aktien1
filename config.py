@@ -214,6 +214,41 @@ class Config:
     expl_max_position_pct: float = field(default_factory=lambda: float(os.getenv("EXPL_MAX_POSITION_PCT", "0.25")))
     expl_max_daily_loss:   float = field(default_factory=lambda: float(os.getenv("EXPL_MAX_DAILY_LOSS",   "0.08")))
 
+    # ── Krypto ───────────────────────────────────────────────────────────────
+    # Krypto-Handel via Alpaca (gleiche API-Credentials, kein Extra-Account nötig).
+    # CRYPTO_ENABLED=true  aktiviert Krypto im normalen Bot-Zyklus.
+    # --crypto-scan läuft immer manuell (unabhängig von CRYPTO_ENABLED).
+    crypto_enabled: bool = field(
+        default_factory=lambda: os.getenv("CRYPTO_ENABLED", "false").lower() in ("1", "true", "yes")
+    )
+    # Welche Coins handeln? Format: BTC,ETH,SOL (ohne /USD – wird automatisch ergänzt)
+    crypto_watchlist: List[str] = field(
+        default_factory=lambda: [c.strip().upper() for c in os.getenv("CRYPTO_WATCHLIST", "BTC,ETH,SOL").split(",") if c.strip()]
+    )
+    # Maximaler Portfolio-Anteil für alle Krypto-Positionen zusammen
+    crypto_max_portfolio_pct: float = field(
+        default_factory=lambda: float(os.getenv("CRYPTO_MAX_PORTFOLIO_PCT", "0.15"))
+    )
+    # Strengere Stop-Loss für Krypto (höhere Volatilität)
+    crypto_stop_loss_pct: float = field(
+        default_factory=lambda: float(os.getenv("CRYPTO_STOP_LOSS_PCT", "0.10"))
+    )
+    crypto_take_profit_pct: float = field(
+        default_factory=lambda: float(os.getenv("CRYPTO_TAKE_PROFIT_PCT", "0.25"))
+    )
+
+    # ── Europäische Aktien ────────────────────────────────────────────────────
+    # EU-Aktien im XETRA/LSE-Format (z.B. SAP.DE, ASML.AS, LVMH.PA).
+    # EU_STOCKS_ENABLED=true fügt EU-Watchlist zum normalen Bot-Zyklus hinzu.
+    # --eu-scan läuft immer manuell.
+    eu_stocks_enabled: bool = field(
+        default_factory=lambda: os.getenv("EU_STOCKS_ENABLED", "false").lower() in ("1", "true", "yes")
+    )
+    # Eigene EU-Watchlist (leer = Scanner-Empfehlungen nutzen)
+    eu_watchlist: List[str] = field(
+        default_factory=lambda: [t.strip().upper() for t in os.getenv("EU_WATCHLIST", "").split(",") if t.strip()]
+    )
+
 
 config = Config()
 
