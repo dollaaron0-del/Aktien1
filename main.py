@@ -89,7 +89,7 @@ from bot.scheduler import run_bot_loop
 from cli.display import (
     show_status, show_report, show_monthly_review, show_trade_journal,
     show_focus_info, show_pulse, show_signal_queue, show_briefing,
-    show_regime, show_goal, show_crash_radar,
+    show_regime, show_goal, show_crash_radar, show_fx_status,
     _run_score_display, _run_margin_check, _run_velocity_display,
     _run_sentiment_memory_display, _run_reentry_display,
 )
@@ -147,10 +147,15 @@ def main():
     parser.add_argument("--eu-scan", action="store_true", help="EU-Aktien Scanner: XETRA/AEX/CAC40/SMI/FTSE Kandidaten")
     parser.add_argument("--eu-country", nargs="+", metavar="DE|FR|NL|CH|GB|DK|ES", help="Länderfilter für EU-Scan (z.B. --eu-country DE FR)")
     parser.add_argument("--eu-sector", nargs="+", metavar="SEKTOR", help="Sektorfilter für EU-Scan (z.B. --eu-sector Technologie Halbleiter)")
+    parser.add_argument("--fx-status", action="store_true", help="Wechselkurs-Signale für EU-Aktien anzeigen (GBP/CHF/SEK Gegenwind)")
     args = parser.parse_args()
 
     if args.exploration is not None:
         _handle_exploration_command(args.exploration.lower())
+        return
+
+    if args.fx_status:
+        show_fx_status()
         return
 
     if args.small_cap_scan:

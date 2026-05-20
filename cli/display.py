@@ -820,3 +820,58 @@ def show_crash_radar(force: bool = False) -> None:
         rec_lines.append(f"Ähnelt historisch am meisten: {best_match.label} ({best_match.similarity_pct}%)")
 
     console.print(Panel("\n".join(rec_lines), title="Einschätzung", border_style="cyan"))
+
+
+def show_fx_status() -> None:
+    """Zeigt aktuelle Wechselkurs-Signale für EU-Aktien."""
+    from analyzers.currency_risk import get_fx_overview
+
+    console = Console()
+    console.rule("[bold blue]Währungsrisiko EU-Aktien")
+    console.print("[dim]Zeigt ob FX-Gegenwind die Positionsgröße für EU-Ticker beeinflusst.[/dim]\n")
+    console.print("[dim]Lade Wechselkursdaten …[/dim]")
+
+    signals = get_fx_overview()
+    if not signals:
+        console.print("[dim]Keine Daten verfügbar.[/dim]")
+        return
+
+    table = Table(title="Währungspaare (30-Tage-Trend)", box=box.ROUNDED)
+    table.add_column("Paar",         style="cyan", no_wrap=True)
+    table.add_column("Kurs",         justify="right")
+    table.add_column("5d",           justify="right")
+    table.add_column("30d",          justify="right")
+    table.add_column("Trend",        justify="center")
+    table.add_column("Pos.-Mult.",   justify="right", style="bold")
+    table.add_column("Betrifft",     style="dim")
+
+    _PAIR_SUFFIXES = {
+        "GBPEUR=X": ".L (London)",
+        "CHFEUR=X": ".SW (Schweiz)",
+        "DKKEUR=X": ".CO (Dänemark)",
+        "SEKEUR=X": ".ST (Schweden)",
+        "NOKEUR=X": ".OL (Norwegen)",
+        "EURUSD=X": ".DE/.PA/.AS (EUR-Zone)",
+    }
+
+    for pair, sig in sorted(signals.items()):
+        d5  = f"[green]+{sig.change_5d_pct:.1f}%[/green]"  if sig.change_5d_pct  >= 0 else f"[red]{sig.change_5d_pct:.1f}%[/red]"
+        d30 = f"[green]+{sig.change_30d_pct:.1f}%[/green]" if sig.change_30d_pct >= 0 else f"[red]{sig.change_30d_pct:.1f}%[/red]"
+        trend_color = "green" if sig.trend == "TAILWIND" else "red" if sig.trend == "HEADWIND" else "yellow"
+        mult_color  = "green" if sig.modifier >= 1.0 else "red" if sig.modifier < 0.8 else "yellow"
+        table.add_row(
+            pair,
+            f"{sig.rate_now:.4f}",
+            d5, d30,
+            f"[{trend_color}]{sig.trend}[/{trend_color}]",
+            f"[{mult_color}]×{sig.modifier:.2f}[/{mult_color}]",
+            _PAIR_SUFFIXES.get(pair, ""),
+        )
+
+    console.print(table)
+    console.print()
+    console.print(
+        "[dim]HEADWIND[/dim] = Währung fällt ggü. EUR → Position wird kleiner\n"
+        "[dim]TAILWIND[/dim] = Währung steigt ggü. EUR → normale Positionsgröße\n"
+        "[dim]Multiplikator wird automatisch angewandt beim Kauf von EU-Titeln.[/dim]"
+    )

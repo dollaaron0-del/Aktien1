@@ -566,7 +566,18 @@ class SwingStrategy:
         sector_mult  = self.sector_rot.get_position_size_modifier(ticker)
         macro_mult   = self.macro_cal.get_position_size_modifier()
         earn_adj     = self.earn_surp.get_sentiment_adjustment(ticker)
-        total_mult   = conf_mult * sector_mult * macro_mult * _score_mod.position_size_mult * regime_pos_mult * sharpe_mult * rl_modifier
+
+        # Währungsrisiko für EU-Aktien (GBP/CHF/SEK Gegenwind → kleinere Position)
+        fx_mult = 1.0
+        try:
+            from analyzers.currency_risk import get_currency_modifier
+            fx_mult, fx_note = get_currency_modifier(ticker)
+            if fx_note:
+                log.info("[%s] FX: %s (×%.2f)", ticker, fx_note, fx_mult)
+        except Exception:
+            pass
+
+        total_mult   = conf_mult * sector_mult * macro_mult * _score_mod.position_size_mult * regime_pos_mult * sharpe_mult * rl_modifier * fx_mult
         max_invest   = portfolio_value * max_pos_pct * total_mult
 
         # Margin: nur bei HIGH Confidence und wenn aktiviert
