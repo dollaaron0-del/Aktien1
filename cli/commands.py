@@ -254,6 +254,151 @@ def run_small_cap_scan(min_sector_gain: float = 1.0, max_results: int = 10) -> N
     console.print()
 
 
+def run_crypto_scan(max_results: int = 8) -> None:
+    """Krypto-Scanner – nur manuell aufrufbar."""
+    from analyzers.crypto_universe import CryptoScanner, CRYPTO_UNIVERSE
+    from config import config as _cfg
+
+    watchlist = _cfg.crypto_watchlist or list(CRYPTO_UNIVERSE.keys())
+    console.rule("[bold yellow]Krypto-Scanner")
+    console.print(
+        f"[dim]Analysiert {len(watchlist)} Coins auf Momentum, Volatilität und BTC-Korrelation.\n"
+        "Datenquelle: yfinance (30 Tage) | Mindest-Volumen: 100 Mio USD/Tag[/dim]\n"
+    )
+    console.print("[dim]Lade Marktdaten … (kann 20–40 Sekunden dauern)[/dim]")
+
+    scanner = CryptoScanner(watchlist=watchlist, max_results=max_results)
+    result = scanner.scan()
+
+    btc_color = "green" if result.btc_trend == "BULL" else "red" if result.btc_trend == "BEAR" else "yellow"
+    console.print(Panel(
+        f"BTC-Markttrend: [{btc_color}]{result.btc_trend}[/{btc_color}]  |  "
+        f"Coins analysiert: {len(result.candidates)}  |  "
+        f"Scan-Dauer: {result.scan_duration_s}s",
+        border_style="yellow",
+    ))
+
+    if not result.candidates:
+        console.print("[dim]Keine Kandidaten gefunden (Volumen zu gering oder Daten nicht verfügbar).[/dim]")
+        return
+
+    table = Table(title=f"Krypto-Kandidaten (Top {len(result.candidates)})", box=box.ROUNDED)
+    table.add_column("Coin",         style="yellow bold", no_wrap=True)
+    table.add_column("Name",         max_width=18)
+    table.add_column("Kurs USD",     justify="right")
+    table.add_column("24h",          justify="right")
+    table.add_column("7d",           justify="right")
+    table.add_column("Vola/Jahr",    justify="right")
+    table.add_column("MA7",          justify="center")
+    table.add_column("BTC-Korr.",    justify="right")
+    table.add_column("Vol/Tag",      justify="right")
+    table.add_column("Empfehlung",   justify="center")
+    table.add_column("Score",        justify="right", style="bold")
+
+    rec_color = {"STRONG_BUY": "green", "BUY": "cyan", "HOLD": "yellow", "AVOID": "red"}
+    for c in result.candidates:
+        d24 = f"[green]+{c.change_24h_pct:.1f}%[/green]" if c.change_24h_pct >= 0 else f"[red]{c.change_24h_pct:.1f}%[/red]"
+        d7  = f"[green]+{c.change_7d_pct:.1f}%[/green]"  if c.change_7d_pct  >= 0 else f"[red]{c.change_7d_pct:.1f}%[/red]"
+        ma  = "[green]✓[/green]" if c.above_ma7 else "[red]✗[/red]"
+        vol = f"{c.volume_24h_usd_m:.0f}M"
+        rc  = rec_color.get(c.recommendation, "white")
+        sc  = "green" if c.score >= 60 else "yellow" if c.score >= 40 else "red"
+        table.add_row(
+            c.symbol, c.name[:18],
+            f"${c.price_usd:,.2f}", d24, d7,
+            f"{c.volatility_ann_pct:.0f}%", ma,
+            f"{c.btc_correlation:.2f}", vol,
+            f"[{rc}]{c.recommendation}[/{rc}]",
+            f"[{sc}]{c.score:.0f}[/{sc}]",
+        )
+
+    console.print(table)
+    console.print()
+    console.print(f"[dim]Stop-Loss: [red]−{int(_cfg.crypto_stop_loss_pct*100)}%[/red]  "
+                  f"Take-Profit: [green]+{int(_cfg.crypto_take_profit_pct*100)}%[/green]  "
+                  f"Max. Portfolio-Anteil Krypto: [yellow]{int(_cfg.crypto_max_portfolio_pct*100)}%[/yellow][/dim]")
+    console.print("[dim]Krypto-Handel aktivieren: [cyan]CRYPTO_ENABLED=true[/cyan] in .env[/dim]\n")
+
+
+def run_eu_scan(
+    max_results: int = 12,
+    country_filter: list = None,
+    sector_filter: list = None,
+) -> None:
+    """EU-Aktien-Scanner – nur manuell aufrufbar."""
+    from analyzers.eu_stock_scanner import EUStockScanner, EU_UNIVERSE
+
+    console.rule("[bold blue]Europäischer Aktien-Scanner")
+    label_parts = []
+    if country_filter:
+        label_parts.append(f"Länder: {', '.join(country_filter)}")
+    if sector_filter:
+        label_parts.append(f"Sektoren: {', '.join(sector_filter)}")
+    console.print(
+        f"[dim]Scannt {len(EU_UNIVERSE)} EU-Aktien (XETRA/AEX/CAC40/SMI/FTSE)."
+        + (f"\nFilter: {' | '.join(label_parts)}" if label_parts else "")
+        + "\nDatenquelle: yfinance (30 Tage)[/dim]\n"
+    )
+    console.print("[dim]Lade Marktdaten … (kann 30–60 Sekunden dauern)[/dim]")
+
+    scanner = EUStockScanner(
+        max_results=max_results,
+        country_filter=country_filter,
+        sector_filter=sector_filter,
+    )
+    result = scanner.scan()
+
+    if not result.candidates:
+        console.print("[dim]Keine Kandidaten gefunden die alle Kriterien erfüllen.[/dim]")
+        return
+
+    by_c = "  ".join(f"[cyan]{k}[/cyan]:{v}" for k, v in sorted(result.by_country.items(), key=lambda x: -x[1]))
+    by_s = "  ".join(f"[magenta]{k}[/magenta]:{v}" for k, v in sorted(result.by_sector.items(), key=lambda x: -x[1]))
+    console.print(Panel(
+        f"Kandidaten: {len(result.candidates)} / {len(EU_UNIVERSE)}  |  "
+        f"Scan-Dauer: {result.scan_duration_s}s\n"
+        f"Länder:  {by_c}\n"
+        f"Sektoren: {by_s}",
+        border_style="blue",
+    ))
+
+    table = Table(title=f"Top EU-Aktien ({len(result.candidates)})", box=box.ROUNDED)
+    table.add_column("Ticker",   style="cyan bold", no_wrap=True)
+    table.add_column("Name",     max_width=20)
+    table.add_column("Land",     justify="center")
+    table.add_column("Sektor",   max_width=16)
+    table.add_column("Kurs",     justify="right")
+    table.add_column("Whg.",     justify="center")
+    table.add_column("1d",       justify="right")
+    table.add_column("5d",       justify="right")
+    table.add_column("1M",       justify="right")
+    table.add_column("MA20",     justify="center")
+    table.add_column("Vol-Ratio",justify="right")
+    table.add_column("SL",       justify="right", style="red")
+    table.add_column("TP",       justify="right", style="green")
+    table.add_column("Score",    justify="right", style="bold")
+
+    for c in result.candidates:
+        d1 = f"[green]+{c.change_1d_pct:.1f}%[/green]" if c.change_1d_pct >= 0 else f"[red]{c.change_1d_pct:.1f}%[/red]"
+        d5 = f"[green]+{c.change_5d_pct:.1f}%[/green]" if c.change_5d_pct >= 0 else f"[red]{c.change_5d_pct:.1f}%[/red]"
+        dm = f"[green]+{c.change_1m_pct:.1f}%[/green]" if c.change_1m_pct >= 0 else f"[red]{c.change_1m_pct:.1f}%[/red]"
+        ma = "[green]✓[/green]" if c.above_ma20 else "[red]✗[/red]"
+        sc = "green" if c.score >= 60 else "yellow" if c.score >= 40 else "red"
+        table.add_row(
+            c.ticker, c.name[:20], c.country, c.sector[:16],
+            f"{c.price:.2f}", c.currency,
+            d1, d5, dm, ma, f"{c.volume_ratio:.2f}×",
+            f"{c.stop_loss:.2f}", f"{c.take_profit:.2f}",
+            f"[{sc}]{c.score:.0f}[/{sc}]",
+        )
+
+    console.print(table)
+    console.print()
+    console.print("[dim]Stop-Loss: [red]−6%[/red]  Take-Profit: [green]+15%[/green][/dim]")
+    console.print("[dim]EU-Handel aktivieren: [cyan]EU_STOCKS_ENABLED=true[/cyan] in .env\n"
+                  "Eigene Watchlist: [cyan]EU_WATCHLIST=SAP.DE,ASML.AS,...[/cyan] in .env[/dim]\n")
+
+
 def run_scan(portfolio: Portfolio):
     console.rule("[bold blue]Watchlist-Scanner")
     existing = list(portfolio.all_positions().keys())

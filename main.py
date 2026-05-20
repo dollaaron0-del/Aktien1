@@ -33,6 +33,11 @@ Starten:  python main.py
           python main.py --small-cap-scan   (Small-Cap Sektor-Follower: 200 Mio – 2 Mrd USD)
           python main.py --small-cap-scan --sc-min-gain 0.5  (niedrigere Schwelle)
           python main.py --small-cap-scan --sc-results 15    (mehr Ergebnisse)
+          python main.py --crypto-scan                       (Krypto: BTC/ETH/SOL/... Momentum & Volatilität)
+          python main.py --crypto-scan --crypto-results 12  (mehr Coins anzeigen)
+          python main.py --eu-scan                          (EU-Aktien: XETRA/CAC40/SMI/FTSE/AEX)
+          python main.py --eu-scan --eu-country DE FR       (nur Deutschland + Frankreich)
+          python main.py --eu-scan --eu-sector Technologie  (nur Technologie-Sektor)
 
 Analyse-Zeitplan (.env):
   MARKET_EXCHANGES=XETRA,NYSE,TSE    # Vollanalyse 30 Min vor Börseneröffnung
@@ -90,7 +95,7 @@ from cli.display import (
 )
 from cli.commands import (
     run_social_scan, run_weekend_prep, run_backtest, run_scan,
-    run_small_cap_scan,
+    run_small_cap_scan, run_crypto_scan, run_eu_scan,
     _run_optimizer, _handle_exploration_command, _apply_exploration_overrides,
 )
 
@@ -137,6 +142,11 @@ def main():
     parser.add_argument("--small-cap-scan", action="store_true", help="Small-Cap Sektor-Follower Scanner (manuell, 200 Mio – 2 Mrd USD)")
     parser.add_argument("--sc-min-gain", type=float, default=1.0, metavar="PCT", help="Mindest-Sektor-Gain in %% für Small-Cap Scan (Standard: 1.0)")
     parser.add_argument("--sc-results", type=int, default=10, metavar="N", help="Maximale Anzahl Ergebnisse im Small-Cap Scan (Standard: 10)")
+    parser.add_argument("--crypto-scan", action="store_true", help="Krypto-Scanner: Momentum, Volatilität und BTC-Korrelation anzeigen")
+    parser.add_argument("--crypto-results", type=int, default=8, metavar="N", help="Maximale Anzahl Ergebnisse im Krypto-Scan (Standard: 8)")
+    parser.add_argument("--eu-scan", action="store_true", help="EU-Aktien Scanner: XETRA/AEX/CAC40/SMI/FTSE Kandidaten")
+    parser.add_argument("--eu-country", nargs="+", metavar="DE|FR|NL|CH|GB|DK|ES", help="Länderfilter für EU-Scan (z.B. --eu-country DE FR)")
+    parser.add_argument("--eu-sector", nargs="+", metavar="SEKTOR", help="Sektorfilter für EU-Scan (z.B. --eu-sector Technologie Halbleiter)")
     args = parser.parse_args()
 
     if args.exploration is not None:
@@ -145,6 +155,18 @@ def main():
 
     if args.small_cap_scan:
         run_small_cap_scan(min_sector_gain=args.sc_min_gain, max_results=args.sc_results)
+        return
+
+    if args.crypto_scan:
+        run_crypto_scan(max_results=args.crypto_results)
+        return
+
+    if args.eu_scan:
+        run_eu_scan(
+            max_results=15,
+            country_filter=[c.upper() for c in args.eu_country] if args.eu_country else None,
+            sector_filter=args.eu_sector,
+        )
         return
 
     if args.dashboard:
