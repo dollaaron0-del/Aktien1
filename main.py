@@ -30,6 +30,9 @@ Starten:  python main.py
           python main.py --reentry       (Re-Entry-Kandidaten: verkaufte Positionen die sich erholen)
           python main.py --velocity AAPL (News-Geschwindigkeit für einen Ticker anzeigen)
           python main.py --sentiment-memory  (Sentiment-Verlässlichkeit pro Ticker anzeigen)
+          python main.py --small-cap-scan   (Small-Cap Sektor-Follower: 200 Mio – 2 Mrd USD)
+          python main.py --small-cap-scan --sc-min-gain 0.5  (niedrigere Schwelle)
+          python main.py --small-cap-scan --sc-results 15    (mehr Ergebnisse)
 
 Analyse-Zeitplan (.env):
   MARKET_EXCHANGES=XETRA,NYSE,TSE    # Vollanalyse 30 Min vor Börseneröffnung
@@ -87,6 +90,7 @@ from cli.display import (
 )
 from cli.commands import (
     run_social_scan, run_weekend_prep, run_backtest, run_scan,
+    run_small_cap_scan,
     _run_optimizer, _handle_exploration_command, _apply_exploration_overrides,
 )
 
@@ -130,10 +134,17 @@ def main():
     parser.add_argument("--walk-forward", action="store_true", help="Walk-Forward Backtesting: Parameter-Stabilität über Zeitfenster validieren")
     parser.add_argument("--wf-tickers", nargs="+", metavar="TICKER", help="Ticker für Walk-Forward (Standard: Watchlist aus .env)")
     parser.add_argument("--short-status", action="store_true", help="Aktive Short/Inverse-ETF Positionen und unrealisierten P&L anzeigen")
+    parser.add_argument("--small-cap-scan", action="store_true", help="Small-Cap Sektor-Follower Scanner (manuell, 200 Mio – 2 Mrd USD)")
+    parser.add_argument("--sc-min-gain", type=float, default=1.0, metavar="PCT", help="Mindest-Sektor-Gain in %% für Small-Cap Scan (Standard: 1.0)")
+    parser.add_argument("--sc-results", type=int, default=10, metavar="N", help="Maximale Anzahl Ergebnisse im Small-Cap Scan (Standard: 10)")
     args = parser.parse_args()
 
     if args.exploration is not None:
         _handle_exploration_command(args.exploration.lower())
+        return
+
+    if args.small_cap_scan:
+        run_small_cap_scan(min_sector_gain=args.sc_min_gain, max_results=args.sc_results)
         return
 
     if args.dashboard:

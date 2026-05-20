@@ -171,6 +171,89 @@ def run_backtest(period: str = "2y"):
     )
 
 
+def run_small_cap_scan(min_sector_gain: float = 1.0, max_results: int = 10) -> None:
+    """Small-Cap Sektor-Follower Scanner – nur manuell aufrufbar."""
+    from analyzers.small_cap_scanner import SmallCapScanner
+
+    console.rule("[bold magenta]Small-Cap Sektor-Follower Scanner")
+    console.print(
+        "[dim]Sucht Small-Cap Aktien (200 Mio – 2 Mrd USD) in aktuell trending Sektoren.\n"
+        f"Sektor-ETF muss mind. +{min_sector_gain:.1f}% in 5 Tagen gestiegen sein.[/dim]\n"
+    )
+    console.print("[dim]Lade Marktdaten … (kann 30–60 Sekunden dauern)[/dim]")
+
+    scanner = SmallCapScanner(max_results=max_results, min_sector_etf_gain=min_sector_gain)
+    result = scanner.scan()
+
+    if not result.trending_sectors:
+        console.print(
+            Panel(
+                f"[yellow]Kein Sektor zeigt derzeit ausreichend Momentum "
+                f"(Schwelle: +{min_sector_gain:.1f}% in 5 Tagen).[/yellow]\n"
+                "[dim]Tipp: Schwelle senken mit --sc-min-gain 0.5[/dim]",
+                border_style="yellow",
+            )
+        )
+        return
+
+    console.print(
+        Panel(
+            "Trending Sektoren: " + ", ".join(f"[cyan]{s}[/cyan]" for s in result.trending_sectors) + "\n"
+            f"Scan-Dauer: {result.scan_duration_s}s  |  "
+            f"Kandidaten geprüft: {len(result.candidates) + result.skipped_count}  |  "
+            f"Kriterien nicht erfüllt: {result.skipped_count}",
+            border_style="magenta",
+        )
+    )
+
+    if not result.candidates:
+        console.print("[dim]Keine Kandidaten gefunden die alle Kriterien erfüllen.[/dim]")
+        console.print("[dim]Tipp: --sc-min-gain 0.5 für niedrigere Schwelle[/dim]")
+        return
+
+    table = Table(title=f"Top Small-Cap Kandidaten ({len(result.candidates)})", box=box.ROUNDED)
+    table.add_column("Ticker",    style="cyan bold", no_wrap=True)
+    table.add_column("Name",      style="white",     max_width=22)
+    table.add_column("Sektor",    style="magenta")
+    table.add_column("Kurs",      justify="right")
+    table.add_column("MktCap",    justify="right")
+    table.add_column("1d",        justify="right")
+    table.add_column("5d",        justify="right")
+    table.add_column("MA20",      justify="center")
+    table.add_column("Vol/Tag",   justify="right")
+    table.add_column("SL",        justify="right", style="red")
+    table.add_column("TP",        justify="right", style="green")
+    table.add_column("Score",     justify="right", style="bold")
+
+    for c in result.candidates:
+        d1 = f"[green]+{c.change_1d_pct}%[/green]" if c.change_1d_pct >= 0 else f"[red]{c.change_1d_pct}%[/red]"
+        d5 = f"[green]+{c.change_5d_pct}%[/green]" if c.change_5d_pct >= 0 else f"[red]{c.change_5d_pct}%[/red]"
+        ma = "[green]✓[/green]" if c.above_ma20 else "[red]✗[/red]"
+        vol_k = f"{c.volume // 1000}K"
+        mktcap = f"{c.market_cap_m:.0f}M"
+        score_color = "green" if c.score >= 60 else "yellow" if c.score >= 40 else "red"
+        table.add_row(
+            c.ticker, c.name[:22], c.sector_name,
+            f"${c.price:.2f}", mktcap,
+            d1, d5, ma, vol_k,
+            f"${c.stop_loss:.2f}", f"${c.take_profit:.2f}",
+            f"[{score_color}]{c.score:.0f}[/{score_color}]",
+        )
+
+    console.print(table)
+    console.print()
+    console.print(
+        "[dim]Stop-Loss:[/dim] [red]−7%[/red]  "
+        "[dim]Take-Profit:[/dim] [green]+20%[/green]  "
+        "[dim](strenger als normale Strategie)[/dim]"
+    )
+    console.print(
+        "[dim]Ticker in Watchlist aufnehmen:[/dim] "
+        "[cyan]WATCHLIST=AAPL,MSFT,... (in .env)[/cyan]"
+    )
+    console.print()
+
+
 def run_scan(portfolio: Portfolio):
     console.rule("[bold blue]Watchlist-Scanner")
     existing = list(portfolio.all_positions().keys())
