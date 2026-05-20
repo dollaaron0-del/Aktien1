@@ -127,6 +127,9 @@ def main():
     parser.add_argument("--exploration", metavar="{on|off|status}", help="Exploration-Mode ein-/ausschalten oder Status anzeigen")
     parser.add_argument("--crash-radar", action="store_true", help="Crash-Wahrscheinlichkeit, Blasen-Detektor und historischer Vergleich")
     parser.add_argument("--refresh", action="store_true", help="Cache ignorieren (zusammen mit --crash-radar)")
+    parser.add_argument("--walk-forward", action="store_true", help="Walk-Forward Backtesting: Parameter-Stabilität über Zeitfenster validieren")
+    parser.add_argument("--wf-tickers", nargs="+", metavar="TICKER", help="Ticker für Walk-Forward (Standard: Watchlist aus .env)")
+    parser.add_argument("--short-status", action="store_true", help="Aktive Short/Inverse-ETF Positionen und unrealisierten P&L anzeigen")
     args = parser.parse_args()
 
     if args.exploration is not None:
@@ -298,6 +301,65 @@ def main():
 
     if args.crash_radar:
         show_crash_radar(force=getattr(args, "refresh", False))
+        return
+
+    if args.walk_forward:
+        from analyzers.walk_forward_backtester import WalkForwardBacktester
+        tickers = args.wf_tickers or config.watchlist
+        if not tickers:
+            console.print("[red]Keine Ticker angegeben. Watchlist in .env setzen oder --wf-tickers AAPL MSFT ... nutzen.[/red]")
+            return
+        console.print(Panel(
+            f"[bold cyan]Walk-Forward Backtesting[/bold cyan]\n"
+            f"Ticker: {', '.join(tickers[:10])}{'...' if len(tickers) > 10 else ''}\n"
+            f"Zeitraum: 3 Jahre | Trainings-Fenster: 6M | Test-Fenster: 3M",
+            border_style="cyan",
+        ))
+        wf = WalkForwardBacktester(tickers=tickers, initial_capital=config.initial_capital)
+        result = wf.run()
+        console.print(Panel(
+            f"[bold]Ergebnisse[/bold]\n"
+            f"Fenster analysiert:         {result.total_windows}\n"
+            f"Ø Test-Return:              {result.avg_test_return:+.1f}%\n"
+            f"Ø Train-Return:             {result.avg_train_return:+.1f}%\n"
+            f"Walk-Forward-Effizienz:     {result.walk_forward_efficiency:.2f} "
+            f"({'[green]gut[/green]' if result.walk_forward_efficiency >= 0.5 else '[yellow]mittel[/yellow]' if result.walk_forward_efficiency >= 0.2 else '[red]schwach[/red]'})\n"
+            f"Stabilitäts-Score:          {result.stability_score:.0f}%\n"
+            f"Beste Parameter:            SL={result.best_params.get('stop_loss_pct', 0)*100:.0f}%  "
+            f"TP={result.best_params.get('take_profit_pct', 0)*100:.0f}%  "
+            f"Hold={result.best_params.get('hold_days', 0)}d\n"
+            f"Regime-Breakdown:           "
+            + "  ".join(f"{r}={v:+.1f}%" for r, v in result.regime_breakdown.items()) + "\n"
+            f"\n[bold]{result.recommendation}[/bold]",
+            title="Walk-Forward Backtest", border_style="cyan",
+        ))
+        return
+
+    if args.short_status:
+        from strategy.short_strategy import ShortStrategy
+        short = ShortStrategy(portfolio, broker, tracker, journal, None)
+        s = short.summary()
+        if not s["enabled"]:
+            console.print("[yellow]Short-Selling ist deaktiviert. SHORT_ENABLED=true in .env setzen.[/yellow]")
+            return
+        if s["active_count"] == 0:
+            console.print("[dim]Keine aktiven Short-Positionen.[/dim]")
+            return
+        rows = []
+        for p in s["positions"]:
+            pnl_color = "green" if p["pnl_unrealized"] >= 0 else "red"
+            rows.append(
+                f"  {p['ticker']:6s} → {p['inverse_ticker']:6s}  "
+                f"{p['shares']:.2f} Stk  "
+                f"@ ${p['entry_price']:.2f} → ${p['current_price'] or '?':.2f}  "
+                f"[{pnl_color}]P&L ${p['pnl_unrealized']:+.2f}[/{pnl_color}]  "
+                f"SL ${p['stop_loss']:.2f}  TP ${p['take_profit']:.2f}  "
+                f"{p['days_held']}d"
+            )
+        console.print(Panel(
+            f"Aktive Shorts: {s['active_count']}/{s['max_shorts']}\n\n" + "\n".join(rows),
+            title="Short-Positionen (Inverse ETFs)", border_style="yellow",
+        ))
         return
 
     if not config.anthropic_api_key:
