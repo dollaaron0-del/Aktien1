@@ -22,6 +22,7 @@ from collectors import (
     ChineseMediaCollector, WebTrafficCollector,
 )
 from collectors.news_archive import NewsArchive
+from collectors.crypto_news_collector import CryptoNewsCollector
 from analyzers import ClaudeAnalyzer, AnalysisResult
 from analyzers.reflection_engine import ReflectionEngine
 from analyzers.dynamic_watchlist import DynamicWatchlist
@@ -139,6 +140,7 @@ def _make_collectors() -> Dict:
         "eu_regulation":     EURegulationCollector(),
         "chinese_media":     ChineseMediaCollector(),
         "web_traffic":       WebTrafficCollector(),
+        "crypto_news":       CryptoNewsCollector(),
     }
 
 
@@ -151,7 +153,17 @@ def collect_news(ticker: str, archive: NewsArchive, collectors: Dict) -> tuple:
     all_items: List[Dict] = []
     sources_breakdown: Dict[str, int] = {}
 
+    is_crypto = _is_crypto(ticker)
+    # Collectors that make sense for crypto assets; stock-specific ones are skipped.
+    _CRYPTO_ALLOWED = {
+        "yahoo", "reddit", "newsapi", "wire", "stocktwits",
+        "twitter", "crypto_news",
+    }
+
     for name, collector in collectors.items():
+        if is_crypto and name not in _CRYPTO_ALLOWED:
+            sources_breakdown[name] = 0
+            continue
         items = _safe_collect(name, collector.collect, ticker) if collector is not None else []
         sources_breakdown[name] = len(items)
         all_items.extend(items)
@@ -366,7 +378,11 @@ def run_analysis_cycle(
         console.print(f"\n[cyan]Sammle Daten für {ticker}...[/cyan]")
 
         news, sources_breakdown = collect_news(ticker, archive, collectors)
-        price_data = collectors["yahoo"].get_price_data(ticker)
+        if _is_crypto(ticker):
+            crypto_price = broker.get_crypto_price(ticker)
+            price_data = {"current_price": crypto_price, "volume": 0}
+        else:
+            price_data = collectors["yahoo"].get_price_data(ticker)
 
         # Feed news items to signal expander – detects unknown small-cap tickers
         new_signal_tickers = _signal_expander.process_news_items(news)

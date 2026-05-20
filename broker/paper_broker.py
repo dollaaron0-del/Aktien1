@@ -29,3 +29,33 @@ class PaperBroker:
             "fill_price": price,
             "mode": "paper",
         }
+
+    def get_crypto_price(self, symbol: str) -> Optional[float]:
+        """Paper fallback: re-uses generic price lookup (yfinance via price_cache)."""
+        pair = symbol.split("/")[0].upper() + "-USD"
+        price = _cached_price(pair)
+        if price is None:
+            price = _cached_price(symbol)
+        return price
+
+    def buy_crypto(self, symbol: str, usd_amount: float) -> Dict:
+        price = self.get_crypto_price(symbol) or 1.0
+        qty = round(usd_amount / price, 6)
+        return {
+            "status":     "filled",
+            "ticker":     symbol,
+            "qty":        qty,
+            "usd_amount": usd_amount,
+            "fill_price": price,
+            "mode":       "paper",
+        }
+
+    def sell_crypto(self, symbol: str, qty: float) -> Dict:
+        price = self.get_crypto_price(symbol) or 1.0
+        return {
+            "status":     "filled",
+            "ticker":     symbol,
+            "qty":        qty,
+            "fill_price": price,
+            "mode":       "paper",
+        }

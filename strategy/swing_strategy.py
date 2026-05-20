@@ -36,6 +36,16 @@ from logger import get_logger
 
 log = get_logger(__name__)
 
+
+def _is_crypto(ticker: str) -> bool:
+    """True wenn der Ticker ein Krypto-Asset ist (z.B. 'BTC', 'ETH/USD')."""
+    try:
+        from analyzers.crypto_universe import CRYPTO_UNIVERSE
+        return ticker.split("/")[0].upper() in CRYPTO_UNIVERSE or ticker.endswith("/USD")
+    except Exception:
+        return False
+
+
 # Confidence → Positionsgröße-Multiplikator
 _CONFIDENCE_SIZING = {"HIGH": 1.0, "MEDIUM": 0.70, "LOW": 0.45}
 
@@ -273,7 +283,10 @@ class SwingStrategy:
 
         prices = self.broker.get_prices(list(positions.keys()))
         for ticker, pos in positions.items():
-            price = prices.get(ticker)
+            if _is_crypto(ticker):
+                price = self.broker.get_crypto_price(ticker)
+            else:
+                price = prices.get(ticker)
             if price is None:
                 continue
 
@@ -585,10 +598,16 @@ class SwingStrategy:
         if not liq_ok:
             return f"[{ticker}] ⛔ {liq_reason} – Kauf abgebrochen."
 
+        # Krypto: erweiterte SL/TP-Prozentsätze aus Config
+        if _is_crypto(ticker):
+            sl_pct = config.crypto_stop_loss_pct
+            tp_pct = config.crypto_take_profit_pct
+        else:
+            sl_pct = regime_sl_pct
+            tp_pct = regime_tp_pct
+
         shares = math.floor(invest / price * 100) / 100
         # Regime-adaptive SL/TP (überschreibt fixe Config-Werte)
-        sl_pct   = regime_sl_pct
-        tp_pct   = regime_tp_pct
         stop_loss = round(price * (1 - sl_pct), 2)
         fixed_tp  = round(price * (1 + tp_pct), 2)
         if analysis.target_price and analysis.target_price > price:
@@ -613,7 +632,10 @@ class SwingStrategy:
             entry_catalysts=analysis.key_catalysts[:5],
         )
 
-        self.broker.buy(ticker, shares, price)
+        if _is_crypto(ticker):
+            self.broker.buy_crypto(ticker, invest)
+        else:
+            self.broker.buy(ticker, shares, price)
         self.portfolio.open_position(position)
 
         self._notifier.notify_buy(
@@ -669,6 +691,10 @@ class SwingStrategy:
             sell_price=price,
             sell_reason=reason,
         )
+        if _is_crypto(ticker):
+            self.broker.sell_crypto(ticker, pos.shares)
+        else:
+            self.broker.sell(ticker, pos.shares, price)
         pnl = self.portfolio.close_position(ticker, price, reason)
         self.journal.log_exit(
             ticker=ticker, price=price,
