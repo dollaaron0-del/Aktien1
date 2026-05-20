@@ -24,6 +24,7 @@ from collectors import (
 from collectors.news_archive import NewsArchive
 from collectors.crypto_news_collector import CryptoNewsCollector
 from analyzers import ClaudeAnalyzer, AnalysisResult
+from analyzers.chart_patterns import ChartPatternAnalyzer
 from analyzers.reflection_engine import ReflectionEngine
 from analyzers.dynamic_watchlist import DynamicWatchlist
 from analyzers.signal_expander import SignalDrivenExpander
@@ -470,6 +471,23 @@ def run_analysis_cycle(
         except Exception:
             pass
 
+        # Chart-Muster-Analyse (für Krypto primär, für Aktien als Bestätigung)
+        pattern_result = None
+        try:
+            pattern_result = ChartPatternAnalyzer().analyze(ticker)
+            if pattern_result:
+                sig_color = {"STRONG_BUY": "bold green", "BUY": "green",
+                             "STRONG_SELL": "bold red", "SELL": "red"}.get(
+                    pattern_result.primary_signal, "yellow"
+                )
+                patterns_found = ", ".join(p.name for p in pattern_result.patterns) if pattern_result.patterns else "–"
+                console.print(
+                    f"  [{sig_color}]📊 Chart-Signal: {pattern_result.primary_signal} "
+                    f"(Score: {pattern_result.score:.0f}) | Muster: {patterns_found}[/{sig_color}]"
+                )
+        except Exception as e:
+            log.debug("[%s] Chart-Muster-Analyse fehlgeschlagen: %s", ticker, e)
+
         console.print(f"  [cyan]Analysiere mit Claude ({config.claude_model})...[/cyan]")
         analysis = analyzer.analyze(
             ticker=ticker,
@@ -479,6 +497,7 @@ def run_analysis_cycle(
             open_position=open_position_ctx,
             lessons_memo=lessons_memo,
             weekly_briefing=weekly_briefing,
+            pattern_result=pattern_result,
         )
 
         _print_analysis(analysis)

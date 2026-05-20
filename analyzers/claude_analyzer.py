@@ -9,6 +9,11 @@ from analyzers.api_cost_tracker import APICostTracker
 from analyzers.news_credibility import NewsTrustFilter
 from logger import get_logger
 
+# Lazy import – avoids circular import at module load time
+def _get_pattern_result_type():
+    from analyzers.chart_patterns import PatternResult
+    return PatternResult
+
 _trust_filter = NewsTrustFilter()
 
 log = get_logger(__name__)
@@ -68,6 +73,15 @@ Du berücksichtigst sowohl aktuelle als auch historische Nachrichtenentwicklunge
 
 Antworte IMMER ausschließlich mit einem validen JSON-Objekt ohne Markdown-Fences oder zusätzlichen Text.
 """
+
+def _is_crypto(ticker: str) -> bool:
+    try:
+        from analyzers.crypto_universe import CRYPTO_UNIVERSE
+        base = ticker.split("/")[0].upper()
+        return base in CRYPTO_UNIVERSE or ticker.upper().endswith("-USD") or ticker.upper().endswith("/USD")
+    except Exception:
+        return False
+
 
 _LESSONS_PREFIX = """
 
@@ -178,6 +192,68 @@ SCHRITT 2 – AUSGABE als JSON:
 """
 
 
+# Crypto: technical signals PRIMARY, news SECONDARY context
+_USER_TEMPLATE_CRYPTO = """Analysiere folgende Informationen zum Krypto-Asset {ticker}:
+
+=== MARKTDATEN ===
+{price_data}
+
+{tech_block}
+
+{pattern_block}
+
+=== AUFGABE (TECHNISCHE ANALYSE ZUERST) ===
+Kryptowährungen reagieren primär auf technische Chart-Signale – Nachrichten sind sekundärer Kontext.
+
+SCHRITT 1 – TECHNISCHE ANALYSE (Hauptsignal):
+Bewerte die Chart-Muster, Moving Averages, RSI und Volumen-Trends oben.
+  - Golden Cross / Death Cross (MA50 vs MA200) als Trendbestätigung
+  - Double Bottom / Bull Flag → starke Kaufsignale
+  - Double Top / Bear Flag / Head & Shoulders → Warnsignale
+  - RSI-Divergenz: bullische Divergenz (neues Preis-Tief, RSI steigt) = Trendwende
+  - Volumen-Bestätigung: Ausbrüche MÜSSEN mit erhöhtem Volumen kommen
+  Vergib einen technischen Score 0–100 und leite daraus die primäre Richtung ab.
+
+SCHRITT 2 – NEWS ALS KONTEXT (sekundär):
+=== AKTUELLE NACHRICHTEN ({current_count} Artikel, letzte 24–48h) ===
+{current_news}
+
+{historical_block}
+
+Nutze die Nachrichten nur zur Bestätigung oder als Warnsignal bei extremen Entwicklungen
+(z.B. Regulierungsverbote, Exchange-Zusammenbrüche). Einzelne bullische News ohne technische
+Bestätigung sind KEIN Kaufsignal.
+
+SCHRITT 3 – INTERNE DEBATTE:
+  BULLISCH: Technische Signale + ergänzende News-Bestätigung
+  BÄRISCH:  Technische Warnsignale + News-Risiken
+  Ohne technische Bestätigung: KEIN BUY, maximal HOLD.
+
+SCHRITT 4 – AUSGABE als JSON:
+{{
+  "bull_case": "<1–2 Sätze: stärkstes technisches + News-Argument FÜR>",
+  "bear_case": "<1–2 Sätze: stärkstes technisches + News-Argument GEGEN>",
+  "debate_winner": "<BULL|BEAR|DRAW>",
+  "sentiment_score": <float 0.0–1.0>,
+  "direction": "<BULLISH|NEUTRAL|BEARISH>",
+  "confidence": "<LOW|MEDIUM|HIGH>",
+  "recommendation": "<BUY|HOLD|SELL|SKIP>",
+  "entry_rationale": "<1–2 Sätze: technischer Kaufgrund oder warum skip/sell>",
+  "risk_factors": ["<Risiko 1>", "<Risiko 2>"],
+  "key_catalysts": ["<technischer Katalysator 1>", "<Katalysator 2>"],
+  "suggested_hold_days": <integer 1–14>,
+  "target_price": <float Zielkurs USD, oder null>,
+  "target_price_rationale": "<1 Satz: technisches Kursziel (z.B. Widerstand, Fib-Level)>",
+  "thesis_valid": null,
+  "thesis_break_reason": "",
+  "summary": "<3–5 Sätze: technische Gesamtbewertung, News als Kontext>"
+}}
+
+BUY nur wenn Chart-Muster UND technische Indikatoren eindeutig bullisch sind.
+SKIP/SELL wenn keine klare technische Bestätigung vorliegt.
+"""
+
+
 class ClaudeAnalyzer:
     def __init__(self):
         self._client = anthropic.Anthropic(api_key=config.anthropic_api_key)
@@ -192,6 +268,7 @@ class ClaudeAnalyzer:
         lessons_memo: Optional[str] = None,
         weekly_briefing: Optional[str] = None,
         technical: Optional[TechnicalSnapshot] = None,
+        pattern_result=None,   # Optional[PatternResult] – lazy-imported to avoid circular dep
     ) -> AnalysisResult:
         if not news_items:
             return self._empty_result(ticker, "Keine Nachrichtenartikel verfügbar")
@@ -251,6 +328,7 @@ class ClaudeAnalyzer:
         historical_block = self._format_historical_block(historical_news or [], news_items)
         price_text = self._format_price(price_data or {})
         tech_block = technical.to_prompt_block() if technical else ""
+        pattern_block = pattern_result.to_prompt_block() if pattern_result else ""
 
         if open_position:
             prompt = _USER_TEMPLATE_THESIS_CHECK.format(
@@ -262,6 +340,16 @@ class ClaudeAnalyzer:
                 hold_days=open_position.get("hold_days", "?"),
                 thesis=open_position.get("thesis", "Keine These gespeichert"),
                 catalysts=", ".join(open_position.get("catalysts", [])) or "–",
+                current_count=len(news_items),
+                current_news=current_news_text,
+                historical_block=historical_block,
+            )
+        elif _is_crypto(ticker):
+            prompt = _USER_TEMPLATE_CRYPTO.format(
+                ticker=ticker,
+                price_data=price_text,
+                tech_block=tech_block,
+                pattern_block=pattern_block,
                 current_count=len(news_items),
                 current_news=current_news_text,
                 historical_block=historical_block,
