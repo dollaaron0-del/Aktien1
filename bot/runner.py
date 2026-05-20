@@ -55,12 +55,34 @@ _analysis_cache     = AnalysisCache()
 _collect_log = get_logger("collectors")
 
 
+def _is_crypto(ticker: str) -> bool:
+    """True wenn der Ticker ein Krypto-Asset ist (z.B. 'BTC', 'ETH/USD')."""
+    from analyzers.crypto_universe import CRYPTO_UNIVERSE
+    base = ticker.split("/")[0].upper()
+    return base in CRYPTO_UNIVERSE or ticker.endswith("/USD")
+
+
 def _get_watchlist(portfolio: Portfolio) -> List[str]:
-    """Returns dynamic or static watchlist depending on config."""
+    """Returns watchlist: dynamic/static US + optional EU + optional Crypto."""
     if _dynamic_watchlist:
         active = list(portfolio.all_positions().keys())
-        return _dynamic_watchlist.get_watchlist(active_tickers=active)
-    return config.watchlist
+        base = _dynamic_watchlist.get_watchlist(active_tickers=active)
+    else:
+        base = list(config.watchlist)
+
+    # EU-Aktien anhängen wenn aktiviert (Duplikate vermeiden)
+    if config.eu_stocks_enabled and config.eu_watchlist:
+        for t in config.eu_watchlist:
+            if t not in base:
+                base.append(t)
+
+    # Krypto anhängen wenn aktiviert
+    if config.crypto_enabled and config.crypto_watchlist:
+        for t in config.crypto_watchlist:
+            if t not in base:
+                base.append(t)
+
+    return base
 
 
 def _make_phase_ctrl() -> PhaseController:
