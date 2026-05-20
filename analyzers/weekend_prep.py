@@ -37,15 +37,35 @@ SECTOR_ETFS: Dict[str, str] = {
     "XLC": "Kommunikation",
 }
 
-# Major indices
+# Major indices (US + EU + Asia)
 INDICES: Dict[str, str] = {
-    "^GSPC":  "S&P 500",
-    "^IXIC":  "NASDAQ",
-    "^DJI":   "Dow Jones",
-    "^GDAXI": "DAX",
-    "^N225":  "Nikkei 225",
-    "^HSI":   "Hang Seng",
-    "^VIX":   "VIX (Angst-Index)",
+    "^GSPC":     "S&P 500",
+    "^IXIC":     "NASDAQ",
+    "^DJI":      "Dow Jones",
+    "^GDAXI":    "DAX",
+    "^STOXX50E": "Euro Stoxx 50",
+    "^FCHI":     "CAC 40",
+    "^FTSE":     "FTSE 100",
+    "^N225":     "Nikkei 225",
+    "^HSI":      "Hang Seng",
+    "^VIX":      "VIX (Angst-Index)",
+}
+
+# EU Sector ETFs (STOXX-basiert, ergänzend zu US-Sektoren)
+EU_SECTOR_ETFS: Dict[str, str] = {
+    "EXV3.DE": "EU Technologie",
+    "EXH1.DE": "EU Gesundheit",
+    "EXV1.DE": "EU Banken",
+    "EXH4.DE": "EU Industrie",
+    "EXV6.DE": "EU Energie",
+    "EXH7.DE": "EU Konsum",
+}
+
+# Crypto weekend tickers
+CRYPTO_WEEKEND: Dict[str, str] = {
+    "BTC-USD": "Bitcoin",
+    "ETH-USD": "Ethereum",
+    "SOL-USD": "Solana",
 }
 
 # High-profile tickers that commonly move markets even outside user watchlist
@@ -84,11 +104,12 @@ class WeekendPrep:
     def collect_earnings_calendar(self) -> Dict:
         """
         Returns earnings for next week split into:
-          watchlist_earnings, broader_earnings (major movers)
+          watchlist_earnings, broader_earnings (major movers), eu_earnings
         """
         next_monday, next_friday = self._next_week_range()
         watchlist_earnings = []
         broader_earnings = []
+        eu_earnings = []
 
         all_tickers = list(dict.fromkeys(self.watchlist + MARKET_MOVERS))
         for ticker in all_tickers:
@@ -109,17 +130,46 @@ class WeekendPrep:
                 else:
                     broader_earnings.append(entry)
 
+        # EU Earnings aus EU_UNIVERSE
+        try:
+            from analyzers.eu_stock_scanner import EU_UNIVERSE
+            eu_tickers_in_watchlist = {t for t in self.watchlist if "." in t}
+            eu_check = list(EU_UNIVERSE.keys())
+            for ticker in eu_check:
+                info = self._get_earnings_date(ticker)
+                if not info:
+                    continue
+                ed = info["date"]
+                if next_monday <= ed <= next_friday:
+                    name, country, sector = EU_UNIVERSE[ticker]
+                    eu_earnings.append({
+                        "ticker": ticker,
+                        "name": name,
+                        "country": country,
+                        "date": ed.isoformat(),
+                        "weekday": ed.strftime("%A"),
+                        "in_watchlist": ticker in eu_tickers_in_watchlist,
+                    })
+            eu_earnings.sort(key=lambda x: x["date"])
+        except Exception:
+            pass
+
         watchlist_earnings.sort(key=lambda x: x["date"])
         broader_earnings.sort(key=lambda x: x["date"])
         return {
             "week": f"{next_monday} bis {next_friday}",
             "watchlist_earnings": watchlist_earnings,
             "broader_earnings": broader_earnings[:15],
+            "eu_earnings": eu_earnings[:15],
         }
 
     def collect_market_sentiment(self) -> Dict:
-        """VIX level + weekly sector + index performance."""
-        results = {"indices": {}, "sectors": {}, "vix": None, "vix_signal": ""}
+        """VIX level + weekly sector + index performance (US + EU + Crypto)."""
+        results = {
+            "indices": {}, "sectors": {}, "eu_sectors": {},
+            "crypto": {}, "vix": None, "vix_signal": "",
+            "ecb_next_week": None, "boe_next_week": None,
+        }
 
         # Indices – last 5 days return
         for sym, name in INDICES.items():
@@ -138,7 +188,7 @@ class WeekendPrep:
             except Exception:
                 pass
 
-        # Sector ETFs – weekly performance
+        # US Sector ETFs – weekly performance
         for sym, name in SECTOR_ETFS.items():
             try:
                 hist = yf.Ticker(sym).history(period="5d")
@@ -147,11 +197,48 @@ class WeekendPrep:
                     results["sectors"][name] = round(float(chg), 2)
             except Exception:
                 pass
-
-        # Sort sectors by performance
         results["sectors"] = dict(
             sorted(results["sectors"].items(), key=lambda x: x[1], reverse=True)
         )
+
+        # EU Sector ETFs
+        for sym, name in EU_SECTOR_ETFS.items():
+            try:
+                hist = yf.Ticker(sym).history(period="5d")
+                if len(hist) >= 2:
+                    chg = (hist["Close"].iloc[-1] - hist["Close"].iloc[0]) / hist["Close"].iloc[0] * 100
+                    results["eu_sectors"][name] = round(float(chg), 2)
+            except Exception:
+                pass
+        results["eu_sectors"] = dict(
+            sorted(results["eu_sectors"].items(), key=lambda x: x[1], reverse=True)
+        )
+
+        # Crypto Wochenend-Performance (7d)
+        for sym, name in CRYPTO_WEEKEND.items():
+            try:
+                hist = yf.Ticker(sym).history(period="7d")
+                if len(hist) >= 2:
+                    chg = (hist["Close"].iloc[-1] - hist["Close"].iloc[0]) / hist["Close"].iloc[0] * 100
+                    val = float(hist["Close"].iloc[-1])
+                    results["crypto"][name] = {
+                        "price": round(val, 2),
+                        "week_change_pct": round(float(chg), 2),
+                    }
+            except Exception:
+                pass
+
+        # EZB / BoE nächste Woche?
+        try:
+            from analyzers.eu_market_context import _ECB_DATES, _BOE_DATES
+            next_monday, next_friday = self._next_week_range()
+            ecb_next = [d for d in _ECB_DATES if next_monday <= d <= next_friday]
+            boe_next = [d for d in _BOE_DATES if next_monday <= d <= next_friday]
+            results["ecb_next_week"] = ecb_next[0].isoformat() if ecb_next else None
+            results["boe_next_week"] = boe_next[0].isoformat() if boe_next else None
+        except Exception:
+            pass
+
         return results
 
     def collect_macro_news(self, newsapi_key: str = "") -> List[Dict]:
@@ -226,12 +313,12 @@ class WeekendPrep:
         if not self.api_key:
             return None
 
-        earnings = self.collect_earnings_calendar()
+        earnings  = self.collect_earnings_calendar()
         sentiment = self.collect_market_sentiment()
         macro_news = self.collect_macro_news(newsapi_key)
         raw_data = {
-            "earnings": earnings,
-            "sentiment": sentiment,
+            "earnings":   earnings,
+            "sentiment":  sentiment,
             "macro_news": macro_news,
         }
 
@@ -342,45 +429,81 @@ class WeekendPrep:
             sign = "+" if chg >= 0 else ""
             idx_lines.append(f"  {name}: {sign}{chg:.2f}% (letzte Woche)")
 
-        # Format sectors (top 5 + bottom 5)
+        # US Sectors (top 5 + bottom 3)
         sectors = sentiment.get("sectors", {})
         s_items = list(sectors.items())
         top5 = s_items[:5]
-        bot5 = s_items[-5:]
+        bot3 = s_items[-3:]
 
-        # Format earnings
-        wl_earn = earnings.get("watchlist_earnings", [])
+        # EU Sectors
+        eu_sec_lines = []
+        for name, chg in list(sentiment.get("eu_sectors", {}).items())[:6]:
+            eu_sec_lines.append(f"  {name}: {chg:+.1f}%")
+
+        # Crypto weekend
+        crypto_lines = []
+        for name, data in sentiment.get("crypto", {}).items():
+            chg = data["week_change_pct"]
+            crypto_lines.append(f"  {name}: ${data['price']:,.0f} ({chg:+.1f}% 7d)")
+
+        # EZB / BoE next week
+        central_bank_lines = []
+        if sentiment.get("ecb_next_week"):
+            central_bank_lines.append(f"  ⚠️  EZB Zinsentscheid: {sentiment['ecb_next_week']} – erhöhte Volatilität EU-Aktien")
+        if sentiment.get("boe_next_week"):
+            central_bank_lines.append(f"  ⚠️  BoE Zinsentscheid: {sentiment['boe_next_week']} – erhöhte Volatilität GBP-Werte")
+
+        # US Earnings
+        wl_earn  = earnings.get("watchlist_earnings", [])
         brd_earn = earnings.get("broader_earnings", [])
+        eu_earn  = earnings.get("eu_earnings", [])
         earn_lines = []
         if wl_earn:
-            earn_lines.append("  WATCHLIST (direkt betroffen):")
+            earn_lines.append("  US WATCHLIST (direkt betroffen):")
             for e in wl_earn:
                 earn_lines.append(f"    ⚠ {e['ticker']} am {e['weekday']} ({e['date']})")
         if brd_earn:
-            earn_lines.append("  Markt-Schwergewichte:")
+            earn_lines.append("  US Markt-Schwergewichte:")
             for e in brd_earn[:8]:
                 earn_lines.append(f"    {e['ticker']} am {e['weekday']}")
+        if eu_earn:
+            earn_lines.append("  EU Unternehmen:")
+            for e in eu_earn[:6]:
+                wl_flag = " ⚠ (Watchlist)" if e.get("in_watchlist") else ""
+                earn_lines.append(f"    {e['ticker']} ({e.get('name','')}) am {e['weekday']}{wl_flag}")
 
-        # Format news
+        # Macro news
         news_lines = [f"  - {n['title']}" for n in macro_news[:8]]
 
         vix = sentiment.get("vix", "?")
         vix_signal = sentiment.get("vix_signal", "")
 
+        central_bank_block = "\n".join(central_bank_lines) if central_bank_lines else "  Keine Zinsentscheide nächste Woche"
+        eu_sector_block = "\n".join(eu_sec_lines) if eu_sec_lines else "  Keine EU-Sektordaten verfügbar"
+        crypto_block = "\n".join(crypto_lines) if crypto_lines else "  Keine Crypto-Daten"
+
         return f"""Du bist ein erfahrener Swing-Trader und bereitest das Portfolio auf die Handelswoche {earnings['week']} vor.
 
 ## Marktdaten der vergangenen Woche
 
-### Wichtige Indizes (Wochenperformance):
+### Wichtige Indizes (US + EU + Asien, Wochenperformance):
 {chr(10).join(idx_lines)}
 
 ### VIX: {vix} → {vix_signal}
 
-### Sektoren (beste):
-{chr(10).join(f'  {n}: +{v:.1f}%' if v >= 0 else f'  {n}: {v:.1f}%' for n, v in top5)}
+### US Sektoren (beste → schlechteste):
+{chr(10).join(f'  {n}: {v:+.1f}%' for n, v in top5)}
+  ...
+{chr(10).join(f'  {n}: {v:+.1f}%' for n, v in bot3)}
 
-### Sektoren (schlechteste):
-{chr(10).join(f'  {n}: +{v:.1f}%' if v >= 0 else f'  {n}: {v:.1f}%' for n, v in bot5)}
+### EU Sektoren:
+{eu_sector_block}
+
+### Krypto (7-Tage-Performance):
+{crypto_block}
+
+## Zentralbank-Ereignisse nächste Woche
+{central_bank_block}
 
 ## Quartalszahlen nächste Woche
 {chr(10).join(earn_lines) if earn_lines else '  Keine bekannten Earnings für Watchlist/Schwergewichte.'}
@@ -390,26 +513,33 @@ class WeekendPrep:
 
 ---
 
-Erstelle ein strukturiertes **Wochenvorbereitungs-Briefing** mit genau diesen 5 Abschnitten:
+Erstelle ein strukturiertes **Wochenvorbereitungs-Briefing** mit genau diesen 6 Abschnitten:
 
-**1. MARKTLAGE**
-Wie ist die allgemeine Stimmung? Risk-on oder Risk-off? Was sagt der VIX?
+**1. MARKTLAGE (US + EU + Krypto)**
+Wie ist die allgemeine Stimmung global? Risk-on oder Risk-off? VIX-Signal?
+Unterschiede zwischen US, EU und Krypto-Markt?
 
 **2. SEKTOREN DER WOCHE**
-Welche Sektoren bieten die besten Chancen? Welche meiden?
+Welche US- und EU-Sektoren bieten die besten Chancen? Welche meiden?
+Rotation erkennbar?
 
-**3. EARNINGS-RISIKEN**
-Ticker mit Quartalszahlen = erhöhtes Risiko (gute & schlechte Überraschungen möglich).
-Klare Empfehlung: kaufen/halten/meiden für Earnings-Woche.
+**3. ZENTRALBANK-RISIKEN**
+Falls EZB oder BoE nächste Woche tagen: konkrete Auswirkungen auf EU-Positionen.
+FOMC-Status und allgemeine Zinspolitik.
 
-**4. MAKRO-RISIKEN**
-Was sind die 2–3 wichtigsten Makro-Themen die den Markt nächste Woche bewegen könnten?
+**4. EARNINGS-RISIKEN**
+Ticker mit Quartalszahlen = erhöhtes Risiko.
+Empfehlung: kaufen/halten/meiden für Earnings-Woche (US und EU).
 
-**5. HANDLUNGSEMPFEHLUNG**
+**5. MAKRO-RISIKEN**
+Die 2–3 wichtigsten Makro-Themen die den Markt nächste Woche bewegen könnten.
+
+**6. HANDLUNGSEMPFEHLUNG**
 Konkrete Positionierungs-Empfehlung für die Woche:
 - Aggressiver / defensiver als normal?
 - Stop-Losses enger/weiter?
 - Sektoren übergewichten/untergewichten?
+- Krypto: bullisch/bärisch für nächste Woche?
 
-Schreib kompakt (max. 400 Wörter), direkt, auf Deutsch.
+Schreib kompakt (max. 500 Wörter), direkt, auf Deutsch.
 Vermeide Floskeln. Fokus auf actionable Insights für einen Swing-Trader."""
