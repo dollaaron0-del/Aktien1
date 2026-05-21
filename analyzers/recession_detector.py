@@ -40,27 +40,83 @@ INVERSE_ETF_MAP: Dict[str, Dict] = {
     "broad_market": {
         "conservative": "SH",    # ProShares Short S&P500 (1×)
         "aggressive":   "SDS",   # ProShares UltraShort S&P500 (2×)
-        "description":  "Breiter Markt (S&P 500)",
+        "description":  "Breiter Markt (S&P 500) Short",
+        "sl_pct": 0.08, "tp_pct": 0.25, "hold_days": 30,
     },
     "tech_bubble": {
         "conservative": "PSQ",   # ProShares Short QQQ (1×)
         "aggressive":   "SQQQ",  # ProShares UltraPro Short QQQ (3×)
-        "description":  "Technologie / NASDAQ",
+        "description":  "Technologie / NASDAQ Short",
+        "sl_pct": 0.08, "tp_pct": 0.30, "hold_days": 25,
     },
     "energy_crash": {
         "conservative": "DDG",   # ProShares Short Oil & Gas
         "aggressive":   "ERY",   # Direxion Daily Energy Bear 2×
-        "description":  "Energie-Sektor",
+        "description":  "Energie-Sektor Short",
+        "sl_pct": 0.08, "tp_pct": 0.25, "hold_days": 20,
     },
     "finance_crisis": {
         "conservative": "SEF",   # ProShares Short Financials
         "aggressive":   "FAZ",   # Direxion Daily Financial Bear 3×
-        "description":  "Finanz-Sektor",
+        "description":  "Finanz-Sektor Short",
+        "sl_pct": 0.08, "tp_pct": 0.30, "hold_days": 25,
     },
     "real_estate_bubble": {
         "conservative": "REK",   # ProShares Short Real Estate
         "aggressive":   "DRV",   # Direxion Daily Real Estate Bear 3×
-        "description":  "Immobilien",
+        "description":  "Immobilien Short",
+        "sl_pct": 0.08, "tp_pct": 0.25, "hold_days": 30,
+    },
+    # ── Neu: Volatilitäts-ETFs (nur CRISIS, VIX-Spike-Spiel) ─────────────────
+    "volatility_spike": {
+        "conservative": "VIXY",  # ProShares VIX Short-Term Futures (1×)
+        "aggressive":   "UVXY",  # ProShares Ultra VIX Short-Term (1.5×)
+        "description":  "VIX-Volatilitäts-Long (Angst-Index)",
+        "sl_pct": 0.15, "tp_pct": 0.50, "hold_days": 10,  # Schnell rein/raus
+    },
+    # ── Neu: Sichere Häfen (Long-Positionen, keine Inverse) ──────────────────
+    "safe_haven_bonds": {
+        "conservative": "TLT",   # iShares 20+ Year Treasury Bond ETF
+        "aggressive":   "TLT",   # gleich — kein gehebeltes Bond-Pendant nötig
+        "description":  "US-Staatsanleihen Long (Flight-to-Safety)",
+        "sl_pct": 0.05, "tp_pct": 0.15, "hold_days": 45,
+    },
+    "safe_haven_gold": {
+        "conservative": "GLD",   # SPDR Gold Shares
+        "aggressive":   "IAU",   # iShares Gold Trust (günstiger)
+        "description":  "Gold Long (Inflationsschutz / Krisen-Asset)",
+        "sl_pct": 0.06, "tp_pct": 0.18, "hold_days": 45,
+    },
+    "safe_haven_usd": {
+        "conservative": "UUP",   # Invesco DB US Dollar Index Bullish
+        "aggressive":   "UUP",
+        "description":  "US-Dollar Long (Safe Haven bei globalem Stress)",
+        "sl_pct": 0.04, "tp_pct": 0.10, "hold_days": 30,
+    },
+    # ── Neu: Defensive Sektor-Longs (halten in Krisen) ───────────────────────
+    "defensive_consumer": {
+        "conservative": "XLP",   # Consumer Staples Select SPDR
+        "aggressive":   "XLP",
+        "description":  "Konsumgüter-Basisbedarf Long (Defensive)",
+        "sl_pct": 0.05, "tp_pct": 0.12, "hold_days": 40,
+    },
+    "defensive_health": {
+        "conservative": "XLV",   # Health Care Select SPDR
+        "aggressive":   "XLV",
+        "description":  "Gesundheitswesen Long (Defensive, krisenfest)",
+        "sl_pct": 0.05, "tp_pct": 0.12, "hold_days": 40,
+    },
+    "defensive_utilities": {
+        "conservative": "XLU",   # Utilities Select SPDR
+        "aggressive":   "XLU",
+        "description":  "Versorger Long (Dividenden, stabile Cashflows)",
+        "sl_pct": 0.05, "tp_pct": 0.10, "hold_days": 40,
+    },
+    "defensive_defense": {
+        "conservative": "ITA",   # iShares U.S. Aerospace & Defense ETF
+        "aggressive":   "ITA",
+        "description":  "Rüstung/Aerospace Long (geopolitische Krisen)",
+        "sl_pct": 0.06, "tp_pct": 0.15, "hold_days": 35,
     },
 }
 
@@ -366,46 +422,121 @@ Antworte NUR mit diesem JSON (kein Text davor/dahinter):
         if regime == BULL:
             return [], "conservative"
 
-        intensity = "aggressive" if regime == CRISIS else "conservative"
-        hedges = []
+        intensity     = "aggressive" if regime == CRISIS else "conservative"
+        summary_lower = macro_summary.lower()
+        hedges: List[Dict] = []
 
-        # Always include broad market hedge in BEAR/CRISIS
+        def _hedge(theme: str, reason: str, alloc: float) -> Dict:
+            m = INVERSE_ETF_MAP[theme]
+            return {
+                "ticker":       m[intensity],
+                "theme":        theme,
+                "description":  m["description"],
+                "reason":       reason,
+                "allocation_pct": alloc,
+                "sl_pct":       m["sl_pct"],
+                "tp_pct":       m["tp_pct"],
+                "hold_days":    m["hold_days"],
+            }
+
+        # ── 1. Breiter Markt Short (immer in BEAR/CRISIS) ─────────────────────
         if regime in (BEAR, CRISIS):
-            broad = INVERSE_ETF_MAP["broad_market"]
-            hedges.append({
-                "ticker": broad[intensity],
-                "theme": "broad_market",
-                "description": broad["description"],
-                "reason": f"Breiter Marktabschwung erkannt (Score: {components.get('sp500_ma200', {}).get('gap_pct', '?')}% vs 200-MA)",
-                "allocation_pct": 0.15 if regime == CRISIS else 0.08,
-            })
+            gap = components.get("sp500_ma200", {}).get("gap_pct", "?")
+            hedges.append(_hedge(
+                "broad_market",
+                f"Breiter Marktabschwung (S&P500 {gap}% vs 200-MA)",
+                0.15 if regime == CRISIS else 0.08,
+            ))
 
-        # Tech/AI bubble detection
-        tech_score = components.get("sector_breadth", {}).get("score", 0)
-        sp_gap     = components.get("sp500_ma200", {}).get("gap_pct") or 0
-        bubble_keywords = {"tech", "ai", "ki", "bubble", "overvalued", "nvidia", "semiconductor"}
-        summary_lower   = macro_summary.lower()
-        if any(k in summary_lower for k in bubble_keywords) or (tech_score > 0.5 and regime != BULL):
-            tech = INVERSE_ETF_MAP["tech_bubble"]
-            hedges.append({
-                "ticker": tech[intensity],
-                "theme": "tech_bubble",
-                "description": tech["description"],
-                "reason": "Technologie/KI Überbewertungsrisiko erkannt",
-                "allocation_pct": 0.10 if regime == CRISIS else 0.05,
-            })
+        # ── 2. Volatilitäts-ETF (nur CRISIS, VIX > 30) ───────────────────────
+        vix_val = components.get("vix", {}).get("value") or 0
+        if regime == CRISIS and vix_val > 30:
+            hedges.append(_hedge(
+                "volatility_spike",
+                f"VIX {vix_val:.0f} – Panik-Spike, Volatilitäts-Long attraktiv",
+                0.05,  # Kleines Exposure – kann explodieren, kann auch schnell fallen
+            ))
 
-        # Finance sector stress
+        # ── 3. Sichere Häfen (BEAR + CRISIS) ─────────────────────────────────
+        if regime in (BEAR, CRISIS):
+            # US-Staatsanleihen: bei Zinskurveninversion besonders attraktiv
+            yc_score = components.get("yield_curve", {}).get("score", 0)
+            if yc_score > 0.4 or "recession" in summary_lower or "rezession" in summary_lower:
+                hedges.append(_hedge(
+                    "safe_haven_bonds",
+                    "Flight-to-Safety: Kapitalzuflüsse in US-Treasuries erwartet",
+                    0.08 if regime == CRISIS else 0.05,
+                ))
+
+            # Gold: bei Krise, Inflation oder geopolitischem Stress
+            gold_keywords = {"inflation", "krieg", "war", "geopolit", "sanktion", "gold"}
+            if regime == CRISIS or any(k in summary_lower for k in gold_keywords):
+                hedges.append(_hedge(
+                    "safe_haven_gold",
+                    "Gold als Krisen-Asset und Inflationsschutz",
+                    0.07 if regime == CRISIS else 0.04,
+                ))
+
+            # US-Dollar: bei globalem Stress stärkt sich der USD meist
+            if regime == CRISIS or "dollar" in summary_lower or "währung" in summary_lower:
+                hedges.append(_hedge(
+                    "safe_haven_usd",
+                    "USD Safe-Haven-Nachfrage bei globalem Stress",
+                    0.04,
+                ))
+
+        # ── 4. Defensive Sektor-Longs ─────────────────────────────────────────
+        if regime in (BEAR, CRISIS):
+            # Konsumgüter-Basisbedarf: immer stabil, Dividenden
+            hedges.append(_hedge(
+                "defensive_consumer",
+                "Konsumgüter-Basics: krisenfeste Umsätze, stabile Dividenden",
+                0.05 if regime == CRISIS else 0.03,
+            ))
+
+            # Gesundheit: unelastische Nachfrage, defensive Qualität
+            hedges.append(_hedge(
+                "defensive_health",
+                "Gesundheitswesen: unelastische Nachfrage, Outperformer in Rezessionen",
+                0.05 if regime == CRISIS else 0.03,
+            ))
+
+            # Versorger: stabile Cashflows, Dividenden
+            breadth_score = components.get("sector_breadth", {}).get("score", 0)
+            if breadth_score > 0.5 or regime == CRISIS:
+                hedges.append(_hedge(
+                    "defensive_utilities",
+                    "Versorger: regulierte Gewinne, Dividenden trotz Marktabschwung",
+                    0.04,
+                ))
+
+            # Rüstung: bei geopolitischer Krise oder erhöhten Verteidigungsbudgets
+            geo_keywords = {"krieg", "war", "nato", "militär", "rüstung", "geopolit", "konflikt"}
+            if any(k in summary_lower for k in geo_keywords) or regime == CRISIS:
+                hedges.append(_hedge(
+                    "defensive_defense",
+                    "Rüstungssektor: profitiert von geopolitischer Instabilität",
+                    0.04,
+                ))
+
+        # ── 5. Tech-Bubble Short ──────────────────────────────────────────────
+        tech_score    = components.get("sector_breadth", {}).get("score", 0)
+        bubble_kw     = {"tech", "ai", "ki", "bubble", "overvalued", "nvidia", "semiconductor"}
+        if any(k in summary_lower for k in bubble_kw) or (tech_score > 0.5 and regime != BULL):
+            hedges.append(_hedge(
+                "tech_bubble",
+                "Technologie/KI Überbewertungsrisiko erkannt",
+                0.10 if regime == CRISIS else 0.05,
+            ))
+
+        # ── 6. Finanz-Short bei Credit-Stress ────────────────────────────────
         credit_score = components.get("credit_spread", {}).get("score", 0)
         if credit_score > 0.6 or "bank" in summary_lower or "credit" in summary_lower:
-            fin = INVERSE_ETF_MAP["finance_crisis"]
-            hedges.append({
-                "ticker": fin[intensity],
-                "theme": "finance_crisis",
-                "description": fin["description"],
-                "reason": "Erhöhte Credit-Spreads / Bankenstress",
-                "allocation_pct": 0.05,
-            })
+            hedges.append(_hedge(
+                "finance_crisis",
+                "Erhöhte Credit-Spreads / Bankenstress",
+                0.05,
+            ))
 
         return hedges, intensity
 

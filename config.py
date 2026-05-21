@@ -156,9 +156,9 @@ class Config:
     hedge_from_regime: str = field(
         default_factory=lambda: os.getenv("HEDGE_FROM_REGIME", "BEAR")
     )
-    # Maximaler Portfolio-Anteil für Hedge-Positionen (0.20 = 20%)
+    # Maximaler Portfolio-Anteil für alle Krisen-Instrumente (Inverse ETFs + Safe Havens + Defensive)
     max_hedge_pct: float = field(
-        default_factory=lambda: float(os.getenv("MAX_HEDGE_PCT", "0.20"))
+        default_factory=lambda: float(os.getenv("MAX_HEDGE_PCT", "0.35"))
     )
     # Wie oft Regime-Check läuft (in Stunden, zwischen den Vollanalysen)
     regime_check_interval_hours: int = field(

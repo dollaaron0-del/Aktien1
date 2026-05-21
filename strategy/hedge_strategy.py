@@ -29,7 +29,7 @@ class HedgeStrategy:
         tracker: PerformanceTracker,
         journal: TradeJournal,
         detector: RecessionDetector,
-        max_hedge_pct: float = 0.20,   # Max 20% of portfolio in hedges
+        max_hedge_pct: float = 0.35,   # Max 35% of portfolio in hedges (inkl. Safe Havens + Defensive)
         min_regime_for_hedge: str = BEAR,  # Only hedge from BEAR upward
     ):
         self.portfolio = portfolio
@@ -147,11 +147,12 @@ class HedgeStrategy:
                 continue
 
             shares = math.floor(invest / price * 100) / 100
-            # Hedge SL: -8% (wrong regime call), TP: +25% (crash plays out)
-            stop_loss  = round(price * 0.92, 2)
-            take_profit = round(price * 1.25, 2)
-            # Hedges hold max 30 days; if regime doesn't worsen in 30d, re-evaluate
-            hold_days  = 30
+            # Per-instrument SL/TP/hold from INVERSE_ETF_MAP; fallbacks for legacy entries
+            sl_pct      = hedge.get("sl_pct",  0.08)
+            tp_pct      = hedge.get("tp_pct",  0.25)
+            hold_days   = hedge.get("hold_days", 30)
+            stop_loss   = round(price * (1 - sl_pct), 2)
+            take_profit = round(price * (1 + tp_pct), 2)
 
             position = Position(
                 ticker=ticker,
