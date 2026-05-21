@@ -149,3 +149,14 @@ class SignalQueue:
             (now,),
         )
         self._conn.commit()
+
+    def cleanup_expired(self, keep_days: int = 30) -> int:
+        """Löscht abgeschlossene/abgelaufene Signale die älter als keep_days sind."""
+        from datetime import timedelta
+        cutoff = (datetime.utcnow() - timedelta(days=keep_days)).isoformat()
+        cur = self._conn.execute(
+            "DELETE FROM pending_signals WHERE status IN ('executed','expired') AND created_at < ?",
+            (cutoff,),
+        )
+        self._conn.commit()
+        return cur.rowcount

@@ -585,6 +585,15 @@ Antworte NUR mit diesem JSON (kein Text davor/dahinter):
         )
         return [dict(r) for r in cursor.fetchall()]
 
+    def cleanup_old_snapshots(self, keep_days: int = 90) -> int:
+        """Löscht Regime-Snapshots die älter als keep_days sind. Gibt Anzahl gelöschter Zeilen zurück."""
+        cutoff = (datetime.utcnow() - timedelta(days=keep_days)).isoformat()
+        cursor = self._conn.execute(
+            "DELETE FROM regime_snapshots WHERE recorded_at < ?", (cutoff,)
+        )
+        self._conn.commit()
+        return cursor.rowcount
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     @staticmethod

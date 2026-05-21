@@ -463,6 +463,84 @@ def run_bot_loop(
                 actions_today=actions,
             )
 
+    def _daily_maintenance_job():
+        """
+        Läuft täglich um 02:00 UTC. Bereinigt alle Datenbanken und verhindert
+        unkontrolliertes Wachstum über Monate und Jahre hinweg.
+        """
+        import sqlite3 as _sqlite3
+        report_lines = []
+
+        # 1. News-Archiv: älter als 32 Tage löschen
+        try:
+            archive.cleanup_old(keep_days=32)
+            report_lines.append("✅ News-Archiv: alte Artikel bereinigt (>32 Tage)")
+        except Exception as e:
+            report_lines.append(f"⚠️ News-Archiv Cleanup: {e}")
+
+        # 2. Social Pulse: älter als 7 Tage löschen
+        try:
+            from collectors.social_scan import SocialPulseDB
+            SocialPulseDB().cleanup(keep_days=7)
+            report_lines.append("✅ Social-Pulse: Einträge >7 Tage bereinigt")
+        except Exception as e:
+            report_lines.append(f"⚠️ Social-Pulse Cleanup: {e}")
+
+        # 3. Regime-Snapshots: älter als 90 Tage löschen
+        try:
+            from analyzers.recession_detector import RecessionDetector
+            n = RecessionDetector().cleanup_old_snapshots(keep_days=90)
+            if n:
+                report_lines.append(f"✅ Regime-Snapshots: {n} alte Einträge gelöscht")
+        except Exception as e:
+            report_lines.append(f"⚠️ Regime-Snapshot Cleanup: {e}")
+
+        # 4. Reflection-Engine: älteste Memos/Reviews löschen
+        try:
+            n = reflection.cleanup_old(keep_memos=30, keep_monthly=24)
+            if n:
+                report_lines.append(f"✅ Reflections: {n} alte Einträge gelöscht")
+        except Exception as e:
+            report_lines.append(f"⚠️ Reflection Cleanup: {e}")
+
+        # 5. Signal-Queue: abgelaufene Signale bereinigen (nutzt bestehende Logik)
+        try:
+            expired = signal_queue.cleanup_expired()
+            if expired:
+                report_lines.append(f"✅ Signal-Queue: {expired} abgelaufene Signale entfernt")
+        except Exception as e:
+            report_lines.append(f"⚠️ Signal-Queue Cleanup: {e}")
+
+        # 6. VACUUM auf allen SQLite-Datenbanken (gibt gelöschte Seiten frei)
+        db_paths = [
+            "data/news_archive.db",
+            "data/social_pulse.db",
+            "data/trade_journal.db",
+            "data/performance.db",
+            "data/reflections.db",
+            "data/signal_queue.db",
+            "data/portfolio.db",
+        ]
+        vacuumed = 0
+        for db_path in db_paths:
+            try:
+                conn = _sqlite3.connect(db_path)
+                conn.execute("VACUUM")
+                conn.close()
+                vacuumed += 1
+            except Exception:
+                pass
+        if vacuumed:
+            report_lines.append(f"✅ VACUUM: {vacuumed} Datenbanken komprimiert")
+
+        summary = "\n".join(report_lines)
+        log.info("Tägliche Wartung abgeschlossen:\n%s", summary)
+
+        if any("⚠️" in l for l in report_lines):
+            TelegramNotifier().send(
+                f"🔧 <b>Tägliche DB-Wartung</b>\n\n{summary}"
+            )
+
     # Register today's analysis jobs (weekdays only)
     _register_analysis_jobs()
 
@@ -477,6 +555,9 @@ def run_bot_loop(
     if datetime.utcnow().weekday() >= 5 and not weekend_prep_inst.get_current_briefing():
         console.print("[bold cyan]📅 Wochenende erkannt – starte Wochenvorbereitung...[/bold cyan]")
         _weekend_prep_job()
+
+    # Tägliche Datenbankwartung: 02:00 UTC (außerhalb aller Handelszeiten)
+    schedule.every().day.at("02:00").do(_daily_maintenance_job)
 
     # Hourly tasks (7 days a week)
     schedule.every().hour.do(strategy.check_open_positions)

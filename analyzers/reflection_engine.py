@@ -276,6 +276,30 @@ class ReflectionEngine:
         )
         return [dict(r) for r in cursor.fetchall()]
 
+    def cleanup_old(self, keep_memos: int = 30, keep_monthly: int = 24) -> int:
+        """
+        Hält die DB klein:
+          - Behält die letzten keep_memos MEMO-Einträge (Lernnotizen)
+          - Behält die letzten keep_monthly MONTHLY-Einträge (Monatsreviews)
+        Gibt Anzahl gelöschter Zeilen zurück.
+        """
+        deleted = 0
+        for kind, keep in (("MEMO", keep_memos), ("MONTHLY", keep_monthly)):
+            ids = self._conn.execute(
+                """SELECT id FROM reflections WHERE kind=?
+                   ORDER BY created_at DESC LIMIT -1 OFFSET ?""",
+                (kind, keep),
+            ).fetchall()
+            if ids:
+                placeholders = ",".join("?" * len(ids))
+                cur = self._conn.execute(
+                    f"DELETE FROM reflections WHERE id IN ({placeholders})",
+                    [r["id"] for r in ids],
+                )
+                deleted += cur.rowcount
+        self._conn.commit()
+        return deleted
+
     def _get_trades_in_month(self, year_month: str) -> List[Dict]:
         start = f"{year_month}-01"
         # End of month: first of next month
