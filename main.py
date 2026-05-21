@@ -97,6 +97,7 @@ from cli.display import (
     show_regime, show_goal, show_crash_radar, show_fx_status,
     _run_score_display, _run_margin_check, _run_velocity_display,
     _run_sentiment_memory_display, _run_reentry_display,
+    show_watchlist_status,
 )
 from cli.commands import (
     run_social_scan, run_weekend_prep, run_backtest, run_scan,
@@ -163,6 +164,7 @@ def main():
     parser.add_argument("--dividends", action="store_true", help="Dividenden-Übersicht und bevorstehende Ex-Div-Termine")
     parser.add_argument("--dividend-ticker", metavar="TICKER", help="Dividenden nur für einen bestimmten Ticker anzeigen")
     parser.add_argument("--fx-pnl", action="store_true", help="Unrealisierten P&L nach Handelswährung aufschlüsseln")
+    parser.add_argument("--interessant", action="store_true", help="Watchlist-Status: welche Aktien sind spannend, welche warten auf Einstieg und warum")
     args = parser.parse_args()
 
     if args.exploration is not None:
@@ -367,6 +369,10 @@ def main():
 
     if args.score:
         _run_score_display()
+        return
+
+    if args.interessant:
+        show_watchlist_status(portfolio, signal_queue, broker)
         return
 
     if args.reentry:

@@ -693,6 +693,165 @@ def _run_reentry_display(broker) -> None:
     console.print(rt.to_text())
 
 
+def show_watchlist_status(portfolio: Portfolio, signal_queue: SignalQueue, broker) -> None:
+    """Zeigt den aktuellen Status aller Watchlist-Aktien: gehalten, Signal wartend, Re-Entry oder unbeobachtet."""
+    import json as _json
+    from bot.runner import _get_watchlist
+
+    console.rule("[bold blue]Watchlist-Status – Aktuelle Einschätzung des Bots")
+
+    watchlist = _get_watchlist(portfolio)
+    open_pos  = set(portfolio.all_positions().keys())
+    pending   = {s["ticker"]: s for s in signal_queue.get_pending()}
+
+    rt = ReEntryTracker()
+    reentry_map = {c.ticker: c for c in rt.get_all_watched()}
+
+    # Letzte bekannte Analyse pro Ticker aus dem Trade-Journal
+    journal   = TradeJournal()
+    last_known: dict = {}
+    try:
+        cur = journal._conn.execute(
+            """SELECT ticker, sentiment, confidence, direction, recommendation,
+                      rationale, catalysts, target_price, event_date
+               FROM trade_events
+               WHERE event_type IN ('ENTRY','DAILY_CHECK','EXIT')
+               ORDER BY event_date DESC"""
+        )
+        for row in cur.fetchall():
+            d = dict(row)
+            if d["ticker"] not in last_known:
+                last_known[d["ticker"]] = d
+    except Exception:
+        pass
+
+    held_n = sum(1 for t in watchlist if t in open_pos)
+    sig_n  = sum(1 for t in watchlist if t in pending)
+    re_n   = sum(1 for t in watchlist if t in reentry_map)
+    console.print(
+        f"  🟢 [green]Gehalten: {held_n}[/green]  "
+        f"📋 [yellow]Signal wartend: {sig_n}[/yellow]  "
+        f"🔍 [cyan]Re-Entry Watch: {re_n}[/cyan]  "
+        f"📊 Gesamt: [bold]{len(watchlist)}[/bold] Ticker\n"
+    )
+
+    table = Table(box=box.ROUNDED, show_lines=True)
+    table.add_column("Ticker",         style="cyan",  min_width=7)
+    table.add_column("Status",                        min_width=20)
+    table.add_column("Score",          justify="right", min_width=6)
+    table.add_column("Kf.",                           min_width=7)
+    table.add_column("Richtung",                      min_width=9)
+    table.add_column("Kursziel",       justify="right", min_width=8)
+    table.add_column("Analysiert",                    min_width=11)
+    table.add_column("Bot-Begründung (kurz)",         min_width=45)
+
+    for ticker in sorted(watchlist):
+        if ticker in open_pos:
+            status = "[bold green]🟢 Gehalten[/bold green]"
+        elif ticker in pending:
+            status = "[bold yellow]📋 Signal wartend[/bold yellow]"
+        elif ticker in reentry_map:
+            rc = reentry_map[ticker]
+            col = "green" if rc.signal in ("STRONG", "WATCH") else "dim"
+            status = f"[{col}]🔍 Re-Entry · {rc.signal}[/{col}]"
+        else:
+            status = "[dim]⬜ Noch nicht analysiert[/dim]"
+
+        lk = last_known.get(ticker) or (
+            {
+                "sentiment": pending[ticker].get("sentiment_score"),
+                "confidence": pending[ticker].get("confidence"),
+                "direction":  pending[ticker].get("direction"),
+                "target_price": pending[ticker].get("target_price"),
+                "rationale":  pending[ticker].get("entry_rationale"),
+                "event_date": pending[ticker].get("created_at"),
+            }
+            if ticker in pending else {}
+        )
+
+        score  = lk.get("sentiment")
+        conf   = lk.get("confidence") or "–"
+        direc  = lk.get("direction")  or "–"
+        target = lk.get("target_price")
+        raw_r  = lk.get("rationale")  or "–"
+        date_s = (lk.get("event_date") or "")[:10] or "–"
+
+        score_str  = f"{score:.2f}" if score is not None else "–"
+        target_str = f"${target:.0f}" if target else "–"
+        reason     = raw_r[:60] + "…" if len(raw_r) > 60 else raw_r
+
+        conf_col = {"HIGH": "green", "MEDIUM": "yellow", "LOW": "red"}.get(conf, "white")
+        dir_col  = {"BULLISH": "green", "BEARISH": "red", "NEUTRAL": "yellow"}.get(direc, "white")
+
+        table.add_row(
+            ticker, status, score_str,
+            f"[{conf_col}]{conf}[/{conf_col}]",
+            f"[{dir_col}]{direc}[/{dir_col}]",
+            target_str, date_s,
+            f"[dim]{reason}[/dim]",
+        )
+
+    console.print(table)
+
+    # ── Detail-Panel: Signal-Warteschlange ────────────────────────────────────
+    if pending:
+        console.print()
+        console.rule("[bold yellow]📋 Signale warten auf Kapital")
+        for ticker, sig in pending.items():
+            cats_text = ""
+            try:
+                cats = _json.loads(sig.get("key_catalysts") or "[]")
+                if cats:
+                    cats_text = "\n\n[dim]Kaufkatalysatoren:\n" + "\n".join(f"  • {c}" for c in cats[:4]) + "[/dim]"
+            except Exception:
+                pass
+            rationale = (sig.get("entry_rationale") or "Keine Begründung vorhanden.")[:500]
+            tp = sig.get("target_price")
+            tp_str = f"${tp:.2f}" if tp else "–"
+            console.print(Panel(
+                f"Score: [bold]{sig['sentiment_score']:.2f}[/bold]  ·  "
+                f"Konfidenz: [green]{sig.get('confidence','?')}[/green]  ·  "
+                f"Richtung: {sig.get('direction','?')}  ·  "
+                f"Kursziel: {tp_str}\n\n"
+                f"[italic]{rationale}[/italic]{cats_text}",
+                title=f"📋 {ticker}",
+                border_style="yellow",
+            ))
+
+    # ── Detail-Panel: Re-Entry-Kandidaten ────────────────────────────────────
+    all_watched = rt.get_all_watched()
+    if all_watched:
+        console.print()
+        console.rule("[bold cyan]🔍 Re-Entry-Beobachtung")
+        rt_table = Table(box=box.SIMPLE)
+        rt_table.add_column("Ticker",       style="cyan")
+        rt_table.add_column("Verkauft @",   justify="right")
+        rt_table.add_column("Tief seitdem", justify="right")
+        rt_table.add_column("Aktuell",      justify="right")
+        rt_table.add_column("Verkaufsgrund")
+        rt_table.add_column("Score",        justify="right")
+        rt_table.add_column("Signal")
+        for c in all_watched:
+            col = "bold green" if c.signal == "STRONG" else ("green" if c.signal == "WATCH" else "dim")
+            rt_table.add_row(
+                c.ticker,
+                f"${c.sell_price:.2f}",
+                f"${c.low_since_sell:.2f}",
+                f"${c.last_price:.2f}",
+                c.sell_reason.replace("_", " ").title(),
+                f"{c.re_entry_score:.3f}",
+                f"[{col}]{c.signal}[/{col}]",
+            )
+        console.print(rt_table)
+        console.print(rt.to_text())
+
+    if held_n == 0 and sig_n == 0 and re_n == 0:
+        console.print(
+            "\n[dim]Der Bot hat noch keine Analysen durchgeführt. "
+            "Starte mit: [bold]python main.py[/bold][/dim]"
+        )
+
+
 def show_crash_radar(force: bool = False) -> None:
     """Crash-Wahrscheinlichkeit, Blasen-Detektor und historischer Vergleich."""
     from analyzers.crash_radar import CrashRadar, _BUBBLE_MILD, _BUBBLE_HIGH, _BUBBLE_SEVERE
