@@ -165,7 +165,13 @@ def main():
     parser.add_argument("--dividend-ticker", metavar="TICKER", help="Dividenden nur für einen bestimmten Ticker anzeigen")
     parser.add_argument("--fx-pnl", action="store_true", help="Unrealisierten P&L nach Handelswährung aufschlüsseln")
     parser.add_argument("--interessant", action="store_true", help="Watchlist-Status: welche Aktien sind spannend, welche warten auf Einstieg und warum")
+    parser.add_argument("--check", action="store_true", help="Startup-Check: alle API-Keys, Verbindungen und Config prüfen vor dem ersten Start")
     args = parser.parse_args()
+
+    if args.check:
+        from cli.startup_check import run_startup_check
+        run_startup_check()
+        return
 
     if args.exploration is not None:
         _handle_exploration_command(args.exploration.lower())

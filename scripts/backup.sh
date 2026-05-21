@@ -37,12 +37,15 @@ CRITICAL=(
 IMPORTANT=(
     "data/trade_journal.db"
     "data/performance.db"
+    "data/portfolio.db"
     "data/reflections.db"
     "data/bot_score.json"
     "data/sentiment_memory.json"
     "data/news_velocity.json"
     "data/reentry_watch.json"
     "data/short_positions.json"
+    "data/tax.db"
+    "data/dividends.db"
 )
 
 # Optional: Social-Daten, News-Archiv (groß, aber nützlich)

@@ -3,10 +3,14 @@ praw>=7.7.1
 yfinance>=0.2.40
 newsapi-python>=0.2.7
 pandas>=2.2.0
+numpy>=1.26.0
 schedule>=1.2.1
 python-dotenv>=1.0.0
 requests>=2.31.0
 rich>=13.7.0
+python-dateutil>=2.9.0
 streamlit>=1.35.0
-reportlab
+reportlab>=4.0.0
 flask>=3.0.0
+prometheus_client>=0.20.0
+ib_insync>=0.9.86
