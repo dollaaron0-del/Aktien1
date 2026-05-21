@@ -270,8 +270,9 @@ class BotScorer:
 
         # 1. Bester Einzel-Trade
         if return_pct > 0:
-            is_new, imp, pb.best_single_trade = _check_record(return_pct, pb.best_single_trade, ticker)
-            bonus, msg = _record_bonus(is_new, imp, _near_record(return_pct, pb.best_single_trade))
+            old_best = pb.best_single_trade
+            is_new, imp, pb.best_single_trade = _check_record(return_pct, old_best, ticker)
+            bonus, msg = _record_bonus(is_new, imp, _near_record(return_pct, old_best))
             if msg:
                 record_bonus += bonus
                 record_msgs.append(f"Bester Trade: {msg} {return_pct:.1f}%")
@@ -282,8 +283,9 @@ class BotScorer:
             if len(recent) >= 5:
                 # Win-Rate letzte 20
                 wr = _win_rate_from_list(recent) * 100
-                is_new, imp, pb.best_win_rate_20 = _check_record(wr, pb.best_win_rate_20)
-                bonus, msg = _record_bonus(is_new, imp, _near_record(wr, pb.best_win_rate_20))
+                old_wr = pb.best_win_rate_20
+                is_new, imp, pb.best_win_rate_20 = _check_record(wr, old_wr)
+                bonus, msg = _record_bonus(is_new, imp, _near_record(wr, old_wr))
                 if msg:
                     record_bonus += bonus
                     record_msgs.append(f"Win-Rate: {msg} {wr:.0f}%")
@@ -291,8 +293,9 @@ class BotScorer:
                 # Ø-Rendite letzte 20
                 avg_r = sum(t.get("actual_return_pct") or 0 for t in recent) / len(recent)
                 if avg_r > 0:
-                    is_new, imp, pb.best_avg_return_20 = _check_record(avg_r, pb.best_avg_return_20)
-                    bonus, msg = _record_bonus(is_new, imp, _near_record(avg_r, pb.best_avg_return_20))
+                    old_avg = pb.best_avg_return_20
+                    is_new, imp, pb.best_avg_return_20 = _check_record(avg_r, old_avg)
+                    bonus, msg = _record_bonus(is_new, imp, _near_record(avg_r, old_avg))
                     if msg:
                         record_bonus += bonus
                         record_msgs.append(f"Ø-Rendite: {msg} {avg_r:.1f}%")
@@ -300,8 +303,9 @@ class BotScorer:
             # Gewinnserie
             streak = _current_streak(tracker.get_recent_trades(n=50))
             if streak > 0:
-                is_new, imp, pb.best_streak = _check_record(float(streak), pb.best_streak)
-                bonus, msg = _record_bonus(is_new, imp, _near_record(streak, pb.best_streak))
+                old_streak = pb.best_streak
+                is_new, imp, pb.best_streak = _check_record(float(streak), old_streak)
+                bonus, msg = _record_bonus(is_new, imp, _near_record(streak, old_streak))
                 if msg:
                     record_bonus += bonus
                     record_msgs.append(f"Gewinnserie: {msg} {streak} Trades")
@@ -311,8 +315,9 @@ class BotScorer:
             old_s = self._state.history[-10].score_after
             velocity = self._state.current - old_s + delta   # inkl. aktueller Trade
             if velocity > 0:
-                is_new, imp, pb.best_score_velocity = _check_record(velocity, pb.best_score_velocity)
-                bonus, msg = _record_bonus(is_new, imp, _near_record(velocity, pb.best_score_velocity))
+                old_vel = pb.best_score_velocity
+                is_new, imp, pb.best_score_velocity = _check_record(velocity, old_vel)
+                bonus, msg = _record_bonus(is_new, imp, _near_record(velocity, old_vel))
                 if msg:
                     record_bonus += bonus
                     record_msgs.append(f"Score-Anstieg: {msg} +{velocity:.1f} Pkt")

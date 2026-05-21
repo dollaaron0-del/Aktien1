@@ -21,7 +21,6 @@ _KNOWN_INSTITUTIONS = {
     "0000102909": "Vanguard Group",
     "0000884217": "BlackRock",
     "0001336528": "Pershing Square (Ackman)",
-    "0001336528": "Pershing Square",
     "0001603466": "Duquesne (Druckenmiller)",
 }
 

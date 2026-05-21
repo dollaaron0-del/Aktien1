@@ -32,11 +32,9 @@ log = get_logger(__name__)
 
 
 def _subtract_minutes(hhmm: str, minutes: int) -> str:
-    """Zieht N Minuten von einem HH:MM String ab. Ergebnis bleibt im selben Tag."""
-    from datetime import timedelta as _td
+    """Zieht N Minuten von einem HH:MM String ab. Wrap-around über Mitternacht wird verhindert (auf 00:00 begrenzt)."""
     h, m = map(int, hhmm.split(":"))
-    total = h * 60 + m - minutes
-    total = max(0, total)
+    total = max(0, h * 60 + m - minutes)
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
@@ -100,7 +98,7 @@ def _check_goal_reached(
         total = portfolio.total_value(prices)
         if total < goal_risk.target_value:
             return
-        assessment = goal_risk.assess(total, tracker.get_stats())
+        assessment = goal_risk.assess(total, tracker.get_accuracy_report())
         if assessment and assessment.goal_reached:
             _notified.append(True)
             notifier.send(

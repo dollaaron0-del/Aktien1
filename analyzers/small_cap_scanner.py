@@ -118,12 +118,8 @@ class SmallCapScanner:
 
         return SmallCapScanResult(
             scan_date=datetime.utcnow().isoformat(),
-            trending_sectors=[s for _, (s, _) in _SECTOR_MAP.items()
-                              if any(etf == _ for etf, _ in trending)
-                              for _ in [list(_SECTOR_MAP.keys())[
-                                  [k for k in _SECTOR_MAP].index(_)
-                              ]] if False] or [s for etf, (s, _) in _SECTOR_MAP.items()
-                                               if any(e == etf for e, _ in trending)],
+            trending_sectors=[s for etf, (s, _) in _SECTOR_MAP.items()
+                              if any(e == etf for e, _ in trending)],
             candidates=candidates,
             skipped_count=skipped,
             scan_duration_s=round(time.monotonic() - t0, 1),

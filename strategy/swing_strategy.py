@@ -113,6 +113,12 @@ class SwingStrategy:
             return self._check_exit(existing_position, current_price, analysis)
 
         if analysis.recommendation != "BUY":
+            # Short-Modus: SELL-Signal mit hoher Konfidenz → Short-Position prüfen
+            if analysis.recommendation == "SELL" and analysis.confidence in ("HIGH", "MEDIUM"):
+                if hasattr(self, '_short_strategy') and self._short_strategy:
+                    short_result = self._short_strategy.evaluate_short(analysis)
+                    if short_result:
+                        return short_result
             return None
         if analysis.confidence == "LOW":
             return f"[{ticker}] BUY-Signal, aber Konfidenz zu niedrig – übersprungen."
@@ -243,13 +249,6 @@ class SwingStrategy:
 
         result = self._open_position(ticker, current_price, analysis, portfolio_value, sources_breakdown or {},
                                      score_mod=_smod, current_score=_current_score, rl_modifier=rl_modifier)
-
-        # Short-Modus: SELL-Signal mit hoher Konfidenz → Short-Position prüfen
-        if analysis.recommendation == "SELL" and analysis.confidence in ("HIGH", "MEDIUM"):
-            if hasattr(self, '_short_strategy') and self._short_strategy:
-                short_result = self._short_strategy.evaluate_short(analysis)
-                if short_result:
-                    return short_result
 
         # If capital was insufficient, save signal for later execution
         if result and "Nicht genug freies Kapital" in result and self.signal_queue:
@@ -556,6 +555,7 @@ class SwingStrategy:
             regime_tp_pct = regime_params.tp_pct
             regime_pos_mult = regime_params.position_size_mult
         except Exception:
+            regime_params = None
             regime_sl_pct = config.stop_loss_pct
             regime_tp_pct = config.take_profit_pct
             regime_pos_mult = 1.0
@@ -638,7 +638,8 @@ class SwingStrategy:
             take_profit = fixed_tp
             tp_source = f"Regime {tp_pct*100:.0f}% → TP ${take_profit:.2f}"
 
-        raw_hold    = round(analysis.suggested_hold_days * _score_mod.hold_days_mult * regime_params.hold_days_mult)
+        hold_regime_mult = regime_params.hold_days_mult if regime_params else 1.0
+        raw_hold    = round(analysis.suggested_hold_days * _score_mod.hold_days_mult * hold_regime_mult)
         capped_hold = self.focus.cap_hold_days(raw_hold)
 
         position = Position(
@@ -730,7 +731,7 @@ class SwingStrategy:
             days_held=days_held,
         )
         # Einmalig letzten Trade lesen – wird an beide Methoden weitergegeben
-        last_trade: dict = {}
+        last_trade: Optional[dict] = None
         try:
             recent = self.tracker.get_recent_trades(n=1)
             last_trade = recent[0] if recent else {}
@@ -764,8 +765,9 @@ class SwingStrategy:
         return pnl
 
     def _run_score_update(self, ticker: str, entry_price: float, exit_price: float, reason: str,
-                          last_trade: dict = {}) -> None:
+                          last_trade: Optional[dict] = None) -> None:
         """Bot-Score nach Trade aktualisieren und bei Meilensteinen benachrichtigen."""
+        last_trade = last_trade or {}
         try:
             return_pct = (exit_price - entry_price) / entry_price * 100
             tier = 0
@@ -814,9 +816,10 @@ class SwingStrategy:
             log.warning("Score-Update fehlgeschlagen: %s", e)
 
     def _run_post_close_learning(
-        self, ticker: str, entry_price: float, exit_price: float, reason: str, last_trade: dict = {}
+        self, ticker: str, entry_price: float, exit_price: float, reason: str, last_trade: Optional[dict] = None
     ) -> None:
         """SentimentMemory + ReEntryTracker nach Trade-Abschluss aktualisieren."""
+        last_trade = last_trade or {}
         return_pct = (exit_price - entry_price) / entry_price * 100
         confidence = (last_trade.get("confidence") or "MEDIUM").upper()
 
@@ -846,7 +849,7 @@ class SwingStrategy:
         try:
             prices = self.broker.get_prices(list(self.portfolio.all_positions().keys()))
             portfolio_value = self.portfolio.total_value(prices)
-            stats = self.tracker.get_stats()
+            stats = self.tracker.get_accuracy_report()
             assessment = self.goal_risk.assess(portfolio_value, stats)
             if assessment is None:
                 return
@@ -873,6 +876,8 @@ class SwingStrategy:
     @staticmethod
     def _update_trailing_stop(pos: Position, current_price: float) -> bool:
         """Zieht den Stop-Loss nach oben wenn der Kurs steigt. Gibt True zurück wenn aktualisiert."""
+        if pos.entry_price <= 0:
+            return False
         gain = (current_price - pos.entry_price) / pos.entry_price
         best_stop = pos.stop_loss
         for min_gain, trail_pct in _TRAILING_STEPS:

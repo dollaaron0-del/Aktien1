@@ -84,7 +84,7 @@ def _run_server(signal_queue, port: int, secret: str) -> None:
         return
 
     app = Flask("tradingview_webhook")
-    log.getLogger("werkzeug").setLevel(logging.WARNING)  # Flask-Logs reduzieren
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)  # Flask-Logs reduzieren
 
     def _auth(data: dict) -> bool:
         return not secret or data.get("secret") == secret

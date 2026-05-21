@@ -402,6 +402,7 @@ class ShortStrategy:
         """Schließt Short-Position (verkauft den Inverse ETF)."""
         pnl = 0.0
         try:
+            self.broker.sell(short.inverse_ticker, short.shares, inverse_price)
             pnl = self.portfolio.close_position(short.inverse_ticker, inverse_price, reason)
         except Exception as e:
             log.error("[SHORT] Fehler beim Schließen von %s: %s", short.inverse_ticker, e)

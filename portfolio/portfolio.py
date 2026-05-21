@@ -52,6 +52,7 @@ class Portfolio:
     def __init__(self, initial_capital: float = 10000.0):
         os.makedirs(os.path.dirname(PORTFOLIO_DB), exist_ok=True)
         self._conn = sqlite3.connect(PORTFOLIO_DB, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._setup_schema(initial_capital)

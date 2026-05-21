@@ -133,7 +133,9 @@ def get_current_regime(force_refresh: bool = False) -> str:
         # Lazy import um zirkuläre Abhängigkeiten zu vermeiden
         from analyzers.recession_detector import RecessionDetector  # type: ignore
         detector = RecessionDetector()
-        regime, score = detector.detect()
+        result = detector.analyze()
+        regime = result.get("regime", NEUTRAL)
+        score  = result.get("recession_score", 0.0)
         log.info("Regime neu berechnet: %s (score=%.3f)", regime, score)
     except Exception as exc:
         log.warning("RecessionDetector fehlgeschlagen, Fallback NEUTRAL: %s", exc)

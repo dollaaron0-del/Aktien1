@@ -137,7 +137,7 @@ class OnChainSignalAnalyzer:
                 score -= 6
                 key_signals.append(
                     f"Hash Rate: {hr_ehs:.0f} EH/s → gesunken "
-                    "(< {_BTC_HR_WEAK} EH/s) – Miner-Abwanderung möglich"
+                    f"(< {_BTC_HR_WEAK} EH/s) – Miner-Abwanderung möglich"
                 )
             else:
                 key_signals.append(f"Hash Rate: {hr_ehs:.0f} EH/s – normal")
