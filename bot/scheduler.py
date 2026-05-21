@@ -67,47 +67,89 @@ def _run_post_cb_reflection(
 ) -> None:
     """
     Wird einmalig ausgelöst wenn der Circuit Breaker den Handelstag sperrt.
-    Lässt Claude die letzten Trades analysieren und erklärt warum die Strategie
-    heute nicht funktioniert hat. Sendet Ergebnis per Telegram.
+    Analysiert konkret warum die Strategie heute versagt hat und sendet es per Telegram.
     """
     try:
+        import datetime as _dt
         prices = broker.get_prices(list(portfolio.all_positions().keys()))
         current_value = portfolio.total_value(prices)
         cb_status = circuit_breaker.status(current_value)
+        cb_status["current_value"] = current_value
 
         daily_loss = cb_status.get("daily_pct", 0.0)
         drawdown   = cb_status.get("drawdown_pct", 0.0)
 
-        # Letzte 10 abgeschlossene Trades für die Analyse
-        report = tracker.get_accuracy_report()
-        recent = report.get("recent_trades", []) if isinstance(report, dict) else []
-        recent_closed = [t for t in recent if t.get("sell_price")][:10]
+        # Alle heutigen Trades aus dem Tracker holen
+        all_recent = tracker.get_recent_trades(n=20)
+        today_str  = _dt.date.today().isoformat()
 
+        # Verlust-Trades von heute (nach sell_date filtern, Fallback: alle letzten)
+        today_losers = [
+            t for t in all_recent
+            if (t.get("actual_return_pct") or 0) < 0
+            and (t.get("sell_date") or "").startswith(today_str)
+        ]
+        # Wenn keine Trades explizit von heute, nimm die letzten Verlusttrades
+        if not today_losers:
+            today_losers = [t for t in all_recent if (t.get("actual_return_pct") or 0) < 0][:8]
+
+        # Entry-Rationale aus dem Journal nachladen
+        for t in today_losers:
+            try:
+                stories = reflection.journal.get_trade_story(t.get("ticker", ""), limit_trades=1)
+                if stories:
+                    t["entry_rationale"] = stories[0].get("entry_rationale", "")
+                    t["catalysts"]       = stories[0].get("catalysts", [])
+            except Exception:
+                pass
+
+        # Exit-Kategorie-Zusammenfassung für heute
+        cat_counts: dict = {}
+        for t in today_losers:
+            cat = t.get("sell_reason_category") or "unbekannt"
+            cat_counts[cat] = cat_counts.get(cat, 0) + 1
+
+        # Blöcke für die Telegram-Nachricht
         trade_lines = []
-        for t in recent_closed:
+        for t in today_losers:
             ret = t.get("actual_return_pct") or 0.0
-            sign = "+" if ret >= 0 else ""
+            cat = t.get("sell_reason_category") or "?"
+            reason = (t.get("sell_reason") or "?")[:55]
+            rationale = (t.get("entry_rationale") or "–")[:90]
             trade_lines.append(
-                f"  {t.get('ticker','?')}: {sign}{ret:.1f}% | Grund: {t.get('sell_reason','?')}"
+                f"  <b>{t.get('ticker','?')}</b>: {ret:+.1f}% [{cat}]\n"
+                f"  Ausstieg: {reason}\n"
+                f"  Kauf-Begründung: {rationale}"
             )
-        trades_text = "\n".join(trade_lines) if trade_lines else "  (keine Trades verfügbar)"
+        trades_block = "\n\n".join(trade_lines) if trade_lines else "  (keine Trades heute)"
 
-        memo = reflection.generate_memo()
-        memo_section = f"\n\n<b>KI-Lernnotiz:</b>\n{memo}" if memo else ""
+        cat_summary = " | ".join(f"{k}: {v}×" for k, v in cat_counts.items()) or "–"
 
-        trigger = "Tagesverlust" if abs(daily_loss) >= 5.0 else "Drawdown"
+        # Gesamt-Fehler-Statistik
+        exit_stats = tracker.get_exit_reason_stats()
+        worst_cat  = min(exit_stats, key=lambda e: e["avg_return_pct"], default=None)
+        worst_line = (
+            f"{worst_cat['category']} (Ø {worst_cat['avg_return_pct']:+.2f}%, "
+            f"Win-Rate {worst_cat['win_rate_pct']}%)"
+            if worst_cat else "–"
+        )
+
+        # Claude-Fehleranalyse
+        ai_analysis = reflection.generate_post_cb_analysis(today_losers, cb_status)
+        ai_section  = f"\n\n🤖 <b>KI-Fehleranalyse:</b>\n{ai_analysis}" if ai_analysis else ""
+
+        trigger  = "Tagesverlust" if abs(daily_loss) >= 5.0 else "Drawdown"
         loss_val = daily_loss if trigger == "Tagesverlust" else drawdown
 
         msg = (
-            f"⛔ <b>CIRCUIT BREAKER AUSGELÖST – Handel für heute gesperrt</b>\n\n"
-            f"Auslöser: {trigger} <b>{loss_val:.1f}%</b>\n"
-            f"Portfolio-Wert: ${current_value:,.2f}\n"
-            f"Tagesperformance: {daily_loss:+.1f}%\n"
-            f"Drawdown vom ATH: {drawdown:.1f}%\n\n"
-            f"<b>Letzte Trades heute:</b>\n{trades_text}"
-            f"{memo_section}\n\n"
-            f"<i>Morgen früh wird das Limit zurückgesetzt. "
-            f"Neues Regime wird vor Handelsbeginn neu berechnet.</i>"
+            f"⛔ <b>CIRCUIT BREAKER – Handel für heute gesperrt</b>\n\n"
+            f"Auslöser: {trigger} <b>{loss_val:+.1f}%</b>\n"
+            f"Portfolio: ${current_value:,.2f} | Drawdown ATH: {drawdown:.1f}%\n\n"
+            f"<b>Exit-Kategorien heute:</b> {cat_summary}\n"
+            f"<b>Historisch schlechteste Kategorie:</b> {worst_line}\n\n"
+            f"<b>Heutige Verlust-Trades:</b>\n\n{trades_block}"
+            f"{ai_section}\n\n"
+            f"<i>Morgen: Limit zurückgesetzt. Regime wird neu berechnet.</i>"
         )
         notifier.send(msg)
         log.warning("Circuit-Breaker-Reflection gesendet. Tagesverlust: %.1f%%", daily_loss)

@@ -54,6 +54,18 @@ mit konkreten Beispielen aus den Trades. Struktur:
 Antworte als strukturierter Text mit den 5 Abschnitten, max 600 Wörter.
 """
 
+_SYSTEM_PROMPT_POST_CB = """Du bist ein strenger Trading-Coach. Der Bot hat heute einen
+Circuit Breaker ausgelöst (zu viel Tagesverlust). Analysiere die konkreten Fehler dieser
+Trades und erkläre dem Bot-Betreiber auf Deutsch:
+
+1. FEHLER-MUSTER: Was haben die Verlust-Trades gemeinsam? (Sektor, Einstiegszeitpunkt, Sentiment-Fehler, zu breite Stops?)
+2. WURZELURSACHEN: Warum hat der Bot gekauft obwohl das Ergebnis schlecht war? (falsche Thesis, zu optimistisches Sentiment, falscher Marktkontext?)
+3. KONKRETE EMPFEHLUNG: Was sollte beim nächsten Analyse-Zyklus anders gemacht werden?
+
+Sei direkt und konkret. Nenne spezifische Ticker wenn möglich. Max 250 Wörter.
+Antworte als reiner Text, keine Markdown-Header.
+"""
+
 
 class ReflectionEngine:
     def __init__(
@@ -118,6 +130,68 @@ class ReflectionEngine:
         )
         row = cursor.fetchone()
         return row["content"] if row else None
+
+    def generate_post_cb_analysis(self, losing_trades: List[Dict], cb_status: Dict) -> Optional[str]:
+        """
+        Gezielte Fehleranalyse nach Circuit-Breaker-Auslösung.
+        losing_trades: Liste von get_recent_trades()-Dicts der heutigen Verlusttrades.
+        Gibt Claude-Text zurück oder None wenn nicht verfügbar.
+        """
+        if not self._client or not losing_trades:
+            return None
+
+        exit_stats  = self.tracker.get_exit_reason_stats()
+        overall     = self.tracker.get_accuracy_report()
+
+        lines = [
+            f"=== HEUTIGER SCHADEN ===",
+            f"Tagesverlust:   {cb_status.get('daily_pct', 0):+.1f}%",
+            f"Drawdown ATH:   {cb_status.get('drawdown_pct', 0):.1f}%",
+            f"Portfolio:      ${cb_status.get('current_value', 0):,.0f}",
+            "",
+            "=== HEUTIGE VERLUST-TRADES ===",
+        ]
+        for t in losing_trades:
+            entry_r = (t.get("entry_rationale") or t.get("rationale") or "–")[:120]
+            catalysts = t.get("catalysts") or []
+            cat_str = ", ".join(str(c) for c in catalysts[:3]) if catalysts else "–"
+            ret = t.get("actual_return_pct") or 0.0
+            lines.append(
+                f"  {t.get('ticker','?')}: {ret:+.1f}% | "
+                f"Kategorie: {t.get('sell_reason_category','?')} | "
+                f"Grund: {t.get('sell_reason','?')[:60]}\n"
+                f"    Kauf-Begründung: {entry_r}\n"
+                f"    Katalysatoren: {cat_str}"
+            )
+
+        lines += [
+            "",
+            "=== EXIT-KATEGORIEN (gesamt, letzte 60 Tage) ===",
+        ]
+        for e in exit_stats:
+            lines.append(
+                f"  {e['category']:20s}: {e['trades']} Trades, "
+                f"Ø {e['avg_return_pct']:+.2f}%, Win-Rate {e['win_rate_pct']}%"
+            )
+        lines += [
+            "",
+            f"=== GESAMTSTATISTIK ===",
+            f"Win-Rate: {overall.get('win_rate_pct', 0)}% | "
+            f"Richtungsgenauigkeit: {overall.get('direction_accuracy_pct', 0)}% | "
+            f"Ø Rendite: {overall.get('avg_return_pct', 0):+.2f}%",
+        ]
+
+        prompt = "\n".join(lines)
+        try:
+            msg = self._client.messages.create(
+                model=config.claude_model,
+                max_tokens=700,
+                system=_SYSTEM_PROMPT_POST_CB,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return msg.content[0].text.strip()
+        except Exception:
+            return None
 
     def _build_memo_prompt(self, trades: List[Dict]) -> str:
         acc = self.tracker.get_accuracy_report()
