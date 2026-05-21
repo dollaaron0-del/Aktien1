@@ -56,21 +56,63 @@ class TelegramNotifier:
         hold_days: int,
         rationale: str,
         sentiment_score: float,
+        confidence: str = "MEDIUM",
+        direction: str = "BULLISH",
+        target_price: Optional[float] = None,
+        key_catalysts: Optional[list] = None,
+        risk_factors: Optional[list] = None,
+        sources_breakdown: Optional[dict] = None,
     ):
         invested = shares * price
-        msg = (
-            f"🟢 <b>KAUF: {ticker}</b>\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"📈 Preis:        <b>${price:.2f}</b>\n"
-            f"🔢 Stück:        {shares:.2f}\n"
-            f"💰 Investiert:   ${invested:,.2f}\n"
-            f"🛑 Stop-Loss:    ${stop_loss:.2f}\n"
-            f"🎯 Take-Profit:  ${take_profit:.2f}\n"
-            f"📅 Haltedauer:   {hold_days} Tage\n"
-            f"🧠 Sentiment:    {sentiment_score:.2f}\n"
-            f"📝 Grund: <i>{rationale[:200]}</i>"
-        )
-        self.send(msg)
+        sl_pct  = (price - stop_loss) / price * 100
+        tp_pct  = (take_profit - price) / price * 100
+        conf_icon = {"HIGH": "🔥", "MEDIUM": "✅", "LOW": "⚠️"}.get(confidence, "✅")
+        dir_icon  = "📈" if direction == "BULLISH" else "📉"
+
+        lines = [
+            f"🟢 <b>KAUF: {ticker}</b>  ·  {conf_icon} {confidence}  ·  {dir_icon} {direction}",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"📈 Einstiegspreis:   <b>${price:.2f}</b>",
+            f"🔢 Anteile:          {shares:.4f}  <i>(investiert: ${invested:,.2f})</i>",
+        ]
+        if target_price and target_price > price:
+            lines.append(f"🎯 Kursziel (Claude): <b>${target_price:.2f}  (+{(target_price/price-1)*100:.1f}%)</b>")
+        lines += [
+            f"🎯 Take-Profit:      ${take_profit:.2f}  (<b>+{tp_pct:.1f}%</b>)",
+            f"🛑 Stop-Loss:        ${stop_loss:.2f}  (−{sl_pct:.1f}%)",
+            f"📅 Ziel-Haltedauer:  {hold_days} Tage",
+            f"🧠 Sentiment-Score:  <b>{sentiment_score:.2f}</b>",
+            "",
+        ]
+
+        # Analyse-Begründung (erste 450 Zeichen)
+        if rationale:
+            short = rationale.strip()[:450]
+            if len(rationale) > 450:
+                short += "…"
+            lines += ["📋 <b>Analyse-Begründung:</b>", f"<i>{short}</i>", ""]
+
+        # Kaufkatalysatoren
+        if key_catalysts:
+            lines.append("⚡ <b>Kaufkatalysatoren:</b>")
+            for c in key_catalysts[:4]:
+                lines.append(f"  • {c}")
+            lines.append("")
+
+        # Risiken
+        if risk_factors:
+            lines.append("⚠️ <b>Risiken:</b>")
+            for r in risk_factors[:3]:
+                lines.append(f"  • {r}")
+            lines.append("")
+
+        # Quellen
+        if sources_breakdown:
+            src_parts = [f"{k.capitalize()} ({v})" for k, v in sources_breakdown.items() if v]
+            if src_parts:
+                lines.append(f"📊 <b>Quellen:</b>  {' · '.join(src_parts)}")
+
+        self.send("\n".join(lines))
 
     def notify_sell(
         self,
@@ -81,20 +123,52 @@ class TelegramNotifier:
         pnl: float,
         reason: str,
         thesis_broken: bool = False,
+        days_held: int = 0,
+        target_hold_days: int = 0,
+        entry_catalysts: Optional[list] = None,
+        entry_rationale: str = "",
     ):
         pnl_pct = (price - entry_price) / entry_price * 100
         icon = "🔴" if pnl < 0 else "🟩"
-        warn = "⚠️ <b>THESE GEBROCHEN</b>\n" if thesis_broken else ""
-        msg = (
-            f"{icon} <b>VERKAUF: {ticker}</b>\n"
-            f"{warn}"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"📉 Verkaufspreis: <b>${price:.2f}</b>\n"
-            f"📊 Einstieg:      ${entry_price:.2f}\n"
-            f"💹 P&L:           <b>{'+'if pnl>=0 else ''}{pnl:.2f} USD ({pnl_pct:+.1f}%)</b>\n"
-            f"📝 Grund: <i>{reason[:200]}</i>"
-        )
-        self.send(msg)
+        result_word = "VERLUST" if pnl < 0 else "GEWINN"
+        pnl_sign = "+" if pnl >= 0 else ""
+
+        hold_note = ""
+        if days_held and target_hold_days:
+            hold_note = f"  <i>(Ziel: {target_hold_days} Tage)</i>"
+        elif days_held:
+            hold_note = ""
+
+        lines = [f"{icon} <b>VERKAUF: {ticker}</b>  ·  {result_word}"]
+        if thesis_broken:
+            lines.append("⚠️ <b>THESE GEBROCHEN – Position aufgelöst</b>")
+        lines += [
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"📉 Verkaufspreis:    <b>${price:.2f}</b>",
+            f"📊 Einstiegspreis:   ${entry_price:.2f}",
+            f"💹 P&L:              <b>{pnl_sign}{pnl:.2f} USD  ({pnl_pct:+.1f}%)</b>",
+        ]
+        if days_held:
+            lines.append(f"⏱ Gehalten:          <b>{days_held} Tage</b>{hold_note}")
+        lines += [
+            "",
+            f"📝 <b>Ausstiegsgrund:</b>  <i>{reason}</i>",
+        ]
+
+        # Ursprüngliche Kaufgründe
+        if entry_catalysts:
+            lines += ["", "💡 <b>Ursprüngliche Kaufgründe:</b>"]
+            for c in entry_catalysts[:4]:
+                lines.append(f"  • {c}")
+
+        # Kurze Begründung aus Erstanalyse (falls vorhanden)
+        if entry_rationale and not entry_catalysts:
+            short = entry_rationale.strip()[:300]
+            if len(entry_rationale) > 300:
+                short += "…"
+            lines += ["", f"💡 <b>Kaufbegründung war:</b>", f"<i>{short}</i>"]
+
+        self.send("\n".join(lines))
 
     def notify_thesis_warning(self, ticker: str, break_reason: str, confidence: str):
         msg = (

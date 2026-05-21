@@ -366,8 +366,14 @@ class SwingStrategy:
                 stop_loss=round(current_price * (1 - self.focus.get_stop_loss_pct()), 2),
                 take_profit=round(current_price * (1 + self.focus.get_take_profit_pct()), 2),
                 hold_days=self.focus.cap_hold_days(signal["suggested_hold_days"]),
-                rationale=f"[Warteschlange vom {created_at}] {signal.get('entry_rationale', '')}",
+                rationale=f"[Signal vom {created_at}] {signal.get('entry_rationale', '')}",
                 sentiment_score=signal["sentiment_score"],
+                confidence=signal.get("confidence", "MEDIUM"),
+                direction=signal.get("direction", "BULLISH"),
+                target_price=signal.get("target_price"),
+                key_catalysts=signal.get("key_catalysts", [])[:4],
+                risk_factors=signal.get("risk_factors", [])[:3],
+                sources_breakdown=signal.get("sources_breakdown", {}),
             )
         return results
 
@@ -458,6 +464,10 @@ class SwingStrategy:
                 ticker=ticker, shares=pos.shares, price=price,
                 entry_price=pos.entry_price, pnl=pnl,
                 reason=reason, thesis_broken=thesis_broken,
+                days_held=days_held,
+                target_hold_days=pos.target_hold_days,
+                entry_catalysts=pos.entry_catalysts,
+                entry_rationale=pos.rationale or "",
             )
             return f"[{ticker}] VERKAUFT{thesis_tag} – {reason} | P&L: {sign}{pnl:.2f} USD"
 
@@ -653,8 +663,14 @@ class SwingStrategy:
             ticker=ticker, shares=shares, price=price,
             stop_loss=stop_loss, take_profit=take_profit,
             hold_days=capped_hold,
-            rationale=analysis.entry_rationale,
+            rationale=analysis.entry_rationale or "",
             sentiment_score=analysis.sentiment_score,
+            confidence=analysis.confidence,
+            direction=analysis.direction,
+            target_price=analysis.target_price,
+            key_catalysts=analysis.key_catalysts[:4],
+            risk_factors=analysis.risk_factors[:3],
+            sources_breakdown=sources_breakdown,
         )
         self.tracker.record_prediction(
             ticker=ticker,
