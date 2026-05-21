@@ -413,17 +413,34 @@ def run_bot_loop(
                     comp_lines.append(f"  • {label}: Score {sc:.2f}")
             comp_text = "\n".join(comp_lines) if comp_lines else "  (keine Daten)"
 
+            is_ranging   = latest.get("market_is_ranging", False)
+            sideways_info = latest.get("sideways_info", {})
+            sideways_note = ""
+            if is_ranging:
+                net_m = sideways_info.get("net_move_pct", "?")
+                rng   = sideways_info.get("total_range_pct", "?")
+                ratio = sideways_info.get("range_ratio", "?")
+                sideways_note = (
+                    f"\n\n⚠️ <b>SEITWÄRTSMARKT erkannt</b>\n"
+                    f"  20-Tage-Bewegung: {net_m}% bei Spanne {rng}% (Ratio {ratio})\n"
+                    f"  → Positionsgröße zusätzlich –20%, Kaufhürde +5%"
+                )
+
             crash_note = f"\n⚡ Auslöser: SPY {spy_change:.1f}% intraday" if crashed else ""
             msg = (
                 f"{emoji} <b>REGIME GEWECHSELT: {prev_regime} → {regime}</b>{crash_note}\n\n"
                 f"Rezessions-Score: <b>{score}</b> (0=sicher, 1=Krise)\n"
                 f"VIX: {vix}\n\n"
-                f"<b>Komponenten:</b>\n{comp_text}\n\n"
+                f"<b>Komponenten:</b>\n{comp_text}"
+                f"{sideways_note}\n\n"
                 f"<b>Neue Parameter:</b>\n"
-                f"  • Positionsgröße: {_regime_config_pct(regime)}\n"
-                f"  • Stop-Loss: {_regime_sl(regime)}\n"
-                f"  • Take-Profit: {_regime_tp(regime)}\n"
-                f"  • Kaufhürde: {_regime_buy_adj(regime)}"
+                f"  • Positionsgröße: {_regime_config_pct(regime)}"
+                + (" (–20% Seitwärts-Malus)" if is_ranging else "") +
+                f"\n  • Stop-Loss: {_regime_sl(regime)}\n"
+                f"  • Take-Profit: {_regime_tp(regime)}"
+                + (" (–15% Seitwärts-Malus)" if is_ranging else "") +
+                f"\n  • Kaufhürde: {_regime_buy_adj(regime)}"
+                + (" (+5% Seitwärts-Malus)" if is_ranging else "")
             )
             notifier.send(msg)
             console.print(f"\n  [bold magenta]{emoji} Regime-Wechsel: {prev_regime} → {regime}[/bold magenta]")

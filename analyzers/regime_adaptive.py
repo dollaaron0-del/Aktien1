@@ -145,15 +145,36 @@ def get_current_regime(force_refresh: bool = False) -> str:
     return regime
 
 
-def get_adaptive_params(regime: Optional[str] = None) -> RegimeParams:
+def get_adaptive_params(
+    regime: Optional[str] = None,
+    market_is_ranging: bool = False,
+) -> RegimeParams:
     """
     Gibt die aktuellen RegimeParams zurück.
-    Wenn kein Regime übergeben, wird get_current_regime() aufgerufen.
+    Wenn market_is_ranging=True und Regime BEAR/CRISIS: zusätzliche Seitwärts-Anpassung:
+      - Positionsgröße nochmals –20% (auf max 40% bei BEAR, 20% bei CRISIS)
+      - Kaufhürde +5% (noch selektiver)
+      - Take-Profit leicht enger (Seitwärts-Markt vergibt weniger Luft nach oben)
     """
     if regime is None:
         regime = get_current_regime()
     params = _regime_config.get(regime)
-    log.info("Regime-Parameter: %s", _regime_config.summary(regime))
+
+    if market_is_ranging and regime in (BEAR, CRISIS):
+        from dataclasses import replace as _replace
+        params = _replace(
+            params,
+            position_size_mult = round(params.position_size_mult * 0.80, 2),
+            buy_threshold_adj  = round(params.buy_threshold_adj + 0.05, 2),
+            tp_pct             = round(params.tp_pct * 0.85, 3),
+            label              = params.label + " + Seitwärts",
+        )
+        log.info(
+            "Seitwärtsmarkt erkannt: Positionsgröße ×0.8, Kaufhürde +5%%, TP –15%% → %s",
+            _regime_config.summary(regime),
+        )
+
+    log.info("Regime-Parameter: %s", params.label)
     return params
 
 

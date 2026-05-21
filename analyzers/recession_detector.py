@@ -168,6 +168,17 @@ class RecessionDetector:
         recession_score = round(min(max(recession_score, 0.0), 1.0), 3)
         regime = self._score_to_regime(recession_score)
 
+        # Sideways detection (only relevant in BEAR/CRISIS)
+        market_is_ranging = False
+        sideways_info: Dict = {}
+        if regime in (BEAR, CRISIS):
+            market_is_ranging, sideways_info = self._sideways_signal()
+            if market_is_ranging:
+                components["sideways"] = {
+                    **sideways_info,
+                    "label": "⚠ Seitwärtsmarkt – hohe Vola ohne Trend",
+                }
+
         # Determine which hedges to recommend
         recommended_hedges, hedge_intensity = self._recommend_hedges(
             regime, components, macro_summary
@@ -176,6 +187,8 @@ class RecessionDetector:
         result = {
             "regime": regime,
             "recession_score": recession_score,
+            "market_is_ranging": market_is_ranging,
+            "sideways_info": sideways_info,
             "components": components,
             "macro_summary": macro_summary,
             "recommended_hedges": recommended_hedges,
@@ -268,6 +281,43 @@ class RecessionDetector:
         except Exception:
             pass
         return None, 0.2
+
+    def _sideways_signal(self) -> Tuple[bool, Dict]:
+        """
+        Erkennt Seitwärtsmärkte: hohe Volatilität (VIX > 20) aber kein klarer Trend.
+        Messung: 20-Tage-Netto-Bewegung des S&P500 relativ zur 20-Tage-Handelsspanne.
+        Gibt (is_ranging, info_dict) zurück.
+        """
+        try:
+            hist = yf.Ticker("^GSPC").history(period="2mo")
+            if len(hist) < 25:
+                return False, {}
+
+            closes = hist["Close"].tail(20)
+            highs  = hist["High"].tail(20)
+            lows   = hist["Low"].tail(20)
+
+            net_move  = abs(float(closes.iloc[-1]) - float(closes.iloc[0])) / float(closes.iloc[0])
+            total_range = (float(highs.max()) - float(lows.min())) / float(closes.iloc[0])
+
+            # Ranging wenn Netto-Bewegung < 30% der Gesamtspanne (viel Hin-und-Her)
+            range_ratio = net_move / total_range if total_range > 0 else 1.0
+            is_ranging  = range_ratio < 0.30 and total_range > 0.05
+
+            vix_hist = yf.Ticker("^VIX").history(period="2d")
+            vix_now  = float(vix_hist["Close"].iloc[-1]) if not vix_hist.empty else 0.0
+
+            # Nur als Seitwärts werten wenn VIX auch erhöht (sonst ruhige Konsolidierung)
+            is_volatile_sideways = is_ranging and vix_now > 20
+
+            return is_volatile_sideways, {
+                "net_move_pct":  round(net_move * 100, 2),
+                "total_range_pct": round(total_range * 100, 2),
+                "range_ratio":   round(range_ratio, 3),
+                "vix":           round(vix_now, 1),
+            }
+        except Exception:
+            return False, {}
 
     # ── Claude qualitative signal ─────────────────────────────────────────────
 

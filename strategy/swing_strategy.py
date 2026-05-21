@@ -550,7 +550,15 @@ class SwingStrategy:
 
         # Regime-adaptive Parameter (BULL/NEUTRAL/BEAR/CRISIS)
         try:
-            regime_params = get_adaptive_params()
+            # Seitwärts-Flag aus letztem Detector-Ergebnis holen (kein extra API-Call)
+            _is_ranging = False
+            try:
+                from analyzers.recession_detector import RecessionDetector as _RD
+                _latest = _RD().get_latest()
+                _is_ranging = bool(_latest and _latest.get("market_is_ranging"))
+            except Exception:
+                pass
+            regime_params = get_adaptive_params(market_is_ranging=_is_ranging)
             regime_sl_pct = regime_params.sl_pct
             regime_tp_pct = regime_params.tp_pct
             regime_pos_mult = regime_params.position_size_mult
