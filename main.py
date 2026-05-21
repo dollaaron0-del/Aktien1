@@ -38,6 +38,10 @@ Starten:  python main.py
           python main.py --eu-scan                          (EU-Aktien: XETRA/CAC40/SMI/FTSE/AEX)
           python main.py --eu-scan --eu-country DE FR       (nur Deutschland + Frankreich)
           python main.py --eu-scan --eu-sector Technologie  (nur Technologie-Sektor)
+          python main.py --risk-metrics                     (Sharpe, Sortino, Calmar, Max Drawdown)
+          python main.py --tax [--tax-year 2025] [--tax-csv] (Abgeltungssteuer-Report)
+          python main.py --dividends [--dividend-ticker AAPL] (Dividenden-Übersicht + Ex-Div-Termine)
+          python main.py --fx-pnl                          (P&L aufgeschlüsselt nach Währung)
 
 Analyse-Zeitplan (.env):
   MARKET_EXCHANGES=XETRA,NYSE,TSE    # Vollanalyse 30 Min vor Börseneröffnung
@@ -99,6 +103,9 @@ from cli.commands import (
     run_small_cap_scan, run_crypto_scan, run_eu_scan,
     _run_optimizer, _handle_exploration_command, _apply_exploration_overrides,
 )
+from cli.tax_commands import (
+    run_risk_metrics, run_tax_report, run_dividend_overview, run_fx_pnl,
+)
 
 console = Console()
 log = get_logger(__name__)
@@ -149,6 +156,13 @@ def main():
     parser.add_argument("--eu-country", nargs="+", metavar="DE|FR|NL|CH|GB|DK|ES", help="Länderfilter für EU-Scan (z.B. --eu-country DE FR)")
     parser.add_argument("--eu-sector", nargs="+", metavar="SEKTOR", help="Sektorfilter für EU-Scan (z.B. --eu-sector Technologie Halbleiter)")
     parser.add_argument("--fx-status", action="store_true", help="Wechselkurs-Signale für EU-Aktien anzeigen (GBP/CHF/SEK Gegenwind)")
+    parser.add_argument("--risk-metrics", action="store_true", help="Sharpe, Sortino, Calmar Ratio + Max Drawdown anzeigen")
+    parser.add_argument("--tax", action="store_true", help="Abgeltungssteuer-Report anzeigen")
+    parser.add_argument("--tax-year", type=int, default=None, metavar="YYYY", help="Jahr für Steuer-Report (Standard: aktuelles Jahr)")
+    parser.add_argument("--tax-csv", action="store_true", help="Steuer-Report als CSV exportieren (data/steuerbericht_YYYY.csv)")
+    parser.add_argument("--dividends", action="store_true", help="Dividenden-Übersicht und bevorstehende Ex-Div-Termine")
+    parser.add_argument("--dividend-ticker", metavar="TICKER", help="Dividenden nur für einen bestimmten Ticker anzeigen")
+    parser.add_argument("--fx-pnl", action="store_true", help="Unrealisierten P&L nach Handelswährung aufschlüsseln")
     args = parser.parse_args()
 
     if args.exploration is not None:
@@ -157,6 +171,22 @@ def main():
 
     if args.fx_status:
         show_fx_status()
+        return
+
+    if args.risk_metrics:
+        run_risk_metrics()
+        return
+
+    if args.tax:
+        run_tax_report(year=args.tax_year, export_csv=args.tax_csv)
+        return
+
+    if args.dividends:
+        run_dividend_overview(ticker=args.dividend_ticker)
+        return
+
+    if args.fx_pnl:
+        run_fx_pnl()
         return
 
     if args.small_cap_scan:

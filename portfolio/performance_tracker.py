@@ -326,6 +326,72 @@ class PerformanceTracker:
         )
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_risk_metrics(self, risk_free_rate: float = 0.045) -> Dict:
+        """
+        Sharpe, Sortino, Calmar Ratio + Max Drawdown aus portfolio_snapshots.
+        risk_free_rate: annualisierter risikofreier Zins (Standard 4,5 %).
+        """
+        import math
+        history = list(reversed(self.get_value_history(days=365)))
+        if len(history) < 10:
+            return {"message": "Zu wenig Portfolio-Snapshots für Risikometriken (min. 10 nötig)."}
+
+        values = [h["total_value"] for h in history]
+        returns = [
+            (values[i] / values[i - 1]) - 1
+            for i in range(1, len(values))
+            if values[i - 1] > 0
+        ]
+        if not returns:
+            return {"message": "Keine Renditen berechenbar."}
+
+        n = len(returns)
+        rf_daily = risk_free_rate / 252
+        mean_r = sum(returns) / n
+        excess = [r - rf_daily for r in returns]
+        mean_excess = sum(excess) / n
+
+        variance = sum((r - mean_r) ** 2 for r in returns) / max(n - 1, 1)
+        std = math.sqrt(variance)
+
+        downside = [r - rf_daily for r in returns if r < rf_daily]
+        downside_std = math.sqrt(sum(d ** 2 for d in downside) / max(len(downside) - 1, 1)) if len(downside) > 1 else std
+
+        sharpe = round(mean_excess / std * math.sqrt(252), 3) if std > 0 else 0.0
+        sortino = round(mean_excess / downside_std * math.sqrt(252), 3) if downside_std > 0 else 0.0
+
+        # Max Drawdown
+        peak = values[0]
+        max_dd = 0.0
+        dd_start_idx = 0
+        max_dd_days = 0
+        for i, v in enumerate(values):
+            if v >= peak:
+                peak = v
+                dd_start_idx = i
+            else:
+                dd = (v - peak) / peak
+                if dd < max_dd:
+                    max_dd = dd
+                    max_dd_days = i - dd_start_idx
+
+        # Calmar: annualisierte Rendite / |Max Drawdown|
+        total_ret = (values[-1] / values[0] - 1) if values[0] > 0 else 0
+        years = n / 252
+        ann_ret = (1 + total_ret) ** (1 / years) - 1 if years > 0 else 0
+        calmar = round(ann_ret / abs(max_dd), 3) if max_dd < 0 else 0.0
+
+        return {
+            "sharpe_ratio": sharpe,
+            "sortino_ratio": sortino,
+            "calmar_ratio": calmar,
+            "max_drawdown_pct": round(max_dd * 100, 2),
+            "max_drawdown_duration_days": max_dd_days,
+            "annualized_return_pct": round(ann_ret * 100, 2),
+            "volatility_annual_pct": round(std * math.sqrt(252) * 100, 2),
+            "total_snapshots": n + 1,
+        }
+
 
 def _categorize_exit(reason: str) -> str:
     r = reason.lower()

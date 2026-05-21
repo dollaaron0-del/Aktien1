@@ -27,6 +27,8 @@ class Position:
     rationale: str = ""
     # Thesis tracking: used daily to detect if the original buy reason is still valid
     entry_catalysts: List[str] = field(default_factory=list)
+    currency: str = "USD"           # Handelswährung (EUR/GBP/CHF/USD)
+    fx_rate_at_entry: float = 1.0   # FX-Rate zur Basiswährung bei Kauf
 
     @property
     def entry_value(self) -> float:
@@ -42,6 +44,8 @@ class Trade:
     timestamp: str
     pnl: float = 0.0
     reason: str = ""
+    currency: str = "USD"
+    fx_rate: float = 1.0
 
 
 class Portfolio:
@@ -51,6 +55,7 @@ class Portfolio:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._setup_schema(initial_capital)
+        self._migrate_schema()
         self._migrate_from_json()
 
     def _setup_schema(self, initial_capital: float) -> None:
@@ -70,7 +75,9 @@ class Portfolio:
                     take_profit REAL NOT NULL,
                     target_hold_days INTEGER NOT NULL,
                     rationale TEXT DEFAULT '',
-                    entry_catalysts TEXT DEFAULT '[]'
+                    entry_catalysts TEXT DEFAULT '[]',
+                    currency TEXT DEFAULT 'USD',
+                    fx_rate_at_entry REAL DEFAULT 1.0
                 );
 
                 CREATE TABLE IF NOT EXISTS trades (
@@ -81,7 +88,9 @@ class Portfolio:
                     price REAL NOT NULL,
                     timestamp TEXT NOT NULL,
                     pnl REAL DEFAULT 0.0,
-                    reason TEXT DEFAULT ''
+                    reason TEXT DEFAULT '',
+                    currency TEXT DEFAULT 'USD',
+                    fx_rate REAL DEFAULT 1.0
                 );
             """)
             # Only insert default cash if portfolio_meta is empty
@@ -97,6 +106,20 @@ class Portfolio:
                     "INSERT INTO portfolio_meta (key, value) VALUES ('created_at', ?)",
                     (datetime.utcnow().isoformat(),),
                 )
+
+    def _migrate_schema(self) -> None:
+        """Adds new columns to existing DBs without breaking old installs."""
+        for stmt in [
+            "ALTER TABLE positions ADD COLUMN currency TEXT DEFAULT 'USD'",
+            "ALTER TABLE positions ADD COLUMN fx_rate_at_entry REAL DEFAULT 1.0",
+            "ALTER TABLE trades ADD COLUMN currency TEXT DEFAULT 'USD'",
+            "ALTER TABLE trades ADD COLUMN fx_rate REAL DEFAULT 1.0",
+        ]:
+            try:
+                self._conn.execute(stmt)
+            except Exception:
+                pass  # Column already exists
+        self._conn.commit()
 
     def _migrate_from_json(self) -> None:
         json_file = os.path.join(os.path.dirname(PORTFOLIO_DB), "portfolio.json")
@@ -198,7 +221,8 @@ class Portfolio:
         row = self._conn.execute(
             """
             SELECT ticker, shares, entry_price, entry_date, stop_loss,
-                   take_profit, target_hold_days, rationale, entry_catalysts
+                   take_profit, target_hold_days, rationale, entry_catalysts,
+                   currency, fx_rate_at_entry
             FROM positions WHERE ticker=?
             """,
             (ticker,),
@@ -211,7 +235,8 @@ class Portfolio:
         rows = self._conn.execute(
             """
             SELECT ticker, shares, entry_price, entry_date, stop_loss,
-                   take_profit, target_hold_days, rationale, entry_catalysts
+                   take_profit, target_hold_days, rationale, entry_catalysts,
+                   currency, fx_rate_at_entry
             FROM positions
             """
         ).fetchall()
@@ -231,8 +256,9 @@ class Portfolio:
                     """
                     INSERT OR REPLACE INTO positions
                         (ticker, shares, entry_price, entry_date, stop_loss,
-                         take_profit, target_hold_days, rationale, entry_catalysts)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         take_profit, target_hold_days, rationale, entry_catalysts,
+                         currency, fx_rate_at_entry)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         position.ticker,
@@ -244,6 +270,8 @@ class Portfolio:
                         position.target_hold_days,
                         position.rationale,
                         json.dumps(position.entry_catalysts),
+                        position.currency,
+                        position.fx_rate_at_entry,
                     ),
                 )
                 self._insert_trade(
@@ -254,6 +282,8 @@ class Portfolio:
                     timestamp=datetime.utcnow().isoformat(),
                     pnl=0.0,
                     reason=position.rationale,
+                    currency=position.currency,
+                    fx_rate=position.fx_rate_at_entry,
                 )
 
     def close_position(self, ticker: str, current_price: float, reason: str = "") -> float:
@@ -274,6 +304,8 @@ class Portfolio:
                     timestamp=datetime.utcnow().isoformat(),
                     pnl=pnl,
                     reason=reason,
+                    currency=pos.currency,
+                    fx_rate=pos.fx_rate_at_entry,
                 )
         return pnl
 
@@ -287,7 +319,7 @@ class Portfolio:
     def trade_history(self) -> List[Trade]:
         rows = self._conn.execute(
             """
-            SELECT ticker, action, shares, price, timestamp, pnl, reason
+            SELECT ticker, action, shares, price, timestamp, pnl, reason, currency, fx_rate
             FROM trades ORDER BY id ASC
             """
         ).fetchall()
@@ -300,9 +332,52 @@ class Portfolio:
                 timestamp=row[4],
                 pnl=row[5],
                 reason=row[6],
+                currency=row[7] or "USD",
+                fx_rate=float(row[8] or 1.0),
             )
             for row in rows
         ]
+
+    def get_multicurrency_summary(self, prices: Dict[str, float]) -> Dict:
+        """Unrealized P&L aufgeschlüsselt nach Handelswährung."""
+        try:
+            import yfinance as yf
+            fx: Dict[str, float] = {"USD": 1.0}
+            for ccy, sym in [("EUR", "EURUSD=X"), ("GBP", "GBPUSD=X"),
+                              ("CHF", "CHFUSD=X"), ("SEK", "SEKUSD=X"),
+                              ("NOK", "NOKUSD=X"), ("DKK", "DKKUSD=X")]:
+                try:
+                    fx[ccy] = float(yf.Ticker(sym).info.get("regularMarketPrice") or 1.0)
+                except Exception:
+                    fx[ccy] = 1.0
+        except ImportError:
+            fx = {"USD": 1.0, "EUR": 1.08, "GBP": 1.27, "CHF": 1.12, "SEK": 0.095}
+
+        by_ccy: Dict[str, Dict] = {}
+        for ticker, pos in self.all_positions().items():
+            price = prices.get(ticker, pos.entry_price)
+            pnl_local = (price - pos.entry_price) * pos.shares
+            ccy = pos.currency or "USD"
+            rate = fx.get(ccy, 1.0)
+            if ccy not in by_ccy:
+                by_ccy[ccy] = {"pnl_local": 0.0, "pnl_usd": 0.0, "tickers": [], "fx_rate": rate}
+            by_ccy[ccy]["pnl_local"] += pnl_local
+            by_ccy[ccy]["pnl_usd"] += pnl_local * rate
+            by_ccy[ccy]["tickers"].append(ticker)
+
+        return {
+            "fx_rates": {k: round(v, 4) for k, v in fx.items()},
+            "by_currency": {
+                ccy: {
+                    "pnl_local": round(d["pnl_local"], 2),
+                    "pnl_usd": round(d["pnl_usd"], 2),
+                    "fx_rate": round(d["fx_rate"], 4),
+                    "tickers": d["tickers"],
+                }
+                for ccy, d in by_ccy.items()
+            },
+            "total_pnl_usd": round(sum(d["pnl_usd"] for d in by_ccy.values()), 2),
+        }
 
     def _insert_trade(
         self,
@@ -313,13 +388,15 @@ class Portfolio:
         timestamp: str,
         pnl: float,
         reason: str,
+        currency: str = "USD",
+        fx_rate: float = 1.0,
     ) -> None:
         self._conn.execute(
             """
-            INSERT INTO trades (ticker, action, shares, price, timestamp, pnl, reason)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO trades (ticker, action, shares, price, timestamp, pnl, reason, currency, fx_rate)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (ticker, action, shares, price, timestamp, pnl, reason),
+            (ticker, action, shares, price, timestamp, pnl, reason, currency, fx_rate),
         )
 
     @staticmethod
@@ -327,11 +404,14 @@ class Portfolio:
         (
             ticker, shares, entry_price, entry_date, stop_loss,
             take_profit, target_hold_days, rationale, entry_catalysts_json,
-        ) = row
+        ) = row[:9]
         try:
             catalysts = json.loads(entry_catalysts_json) if entry_catalysts_json else []
         except (json.JSONDecodeError, TypeError):
             catalysts = []
+        col_names = row.keys() if hasattr(row, "keys") else []
+        currency = row["currency"] if "currency" in col_names else "USD"
+        fx_rate = row["fx_rate_at_entry"] if "fx_rate_at_entry" in col_names else 1.0
         return Position(
             ticker=ticker,
             shares=shares,
@@ -342,4 +422,6 @@ class Portfolio:
             target_hold_days=int(target_hold_days),
             rationale=rationale or "",
             entry_catalysts=catalysts,
+            currency=currency or "USD",
+            fx_rate_at_entry=float(fx_rate or 1.0),
         )
