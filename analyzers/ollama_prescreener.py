@@ -1,5 +1,5 @@
 """
-Ollama Pre-Screener – lokale KI-Vorfilterung auf Apple Silicon (Mac mini M5).
+Ollama Pre-Screener – lokale KI-Vorfilterung (Linux/macOS, CPU oder GPU).
 
 Funktionsweise:
   1. Ollama liest alle Nachrichtenartikel für einen Ticker
@@ -7,12 +7,11 @@ Funktionsweise:
   3. Nur wenn Signal unklar ODER bullisch → Claude wird gerufen
   4. Klar bearisch/neutral mit hoher Konfidenz → Claude wird GESPART
 
-Kompatibilität:
-  - Mac mini M5 (Apple Silicon, Metal GPU-Beschleunigung automatisch)
-  - Empfohlene Modelle:
-      16 GB RAM: llama3.1:8b      (~4 GB, ~3–5s pro Analyse)
-      24 GB RAM: qwen2.5:14b      (~9 GB, ~5–8s pro Analyse)
-      32 GB RAM: llama3.3:70b     (~40 GB, ~15–25s pro Analyse, near-Claude Qualität)
+Empfohlene Modelle:
+  CPU-only, < 16 GB RAM : llama3.2:3b     (~2 GB,  ~5–15s pro Analyse)
+  CPU-only, 16–24 GB    : llama3.1:8b     (~5 GB,  ~30–60s pro Analyse)
+  CPU-only, 24+ GB      : qwen2.5:14b     (~9 GB,  ~60–90s pro Analyse)
+  GPU (8+ GB VRAM)      : llama3.3:70b    (~40 GB, ~5–10s pro Analyse)
 
 Fallback:
   - Ollama offline / Timeout → Claude übernimmt automatisch
