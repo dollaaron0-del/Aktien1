@@ -14,7 +14,7 @@ import os
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from logger import get_logger
 
@@ -155,3 +155,42 @@ def get_adaptive_params(regime: Optional[str] = None) -> RegimeParams:
     params = _regime_config.get(regime)
     log.info("Regime-Parameter: %s", _regime_config.summary(regime))
     return params
+
+
+def get_last_cached_regime() -> Optional[str]:
+    """Gibt das zuletzt gecachte Regime zurück, ohne TTL-Prüfung (für Vergleich)."""
+    try:
+        with open(_CACHE_FILE) as f:
+            return json.load(f).get("regime")
+    except Exception:
+        return None
+
+
+def invalidate_cache_if_crash(threshold_pct: float = 3.0) -> Tuple[bool, float]:
+    """
+    Prüft ob SPY intraday um mehr als threshold_pct% gefallen ist.
+    Falls ja: Regime-Cache löschen → nächster get_current_regime()-Aufruf neu berechnen.
+    Gibt (invalidated, intraday_change_pct) zurück.
+    """
+    try:
+        import yfinance as yf
+        hist = yf.Ticker("SPY").history(period="1d", interval="5m")
+        if hist.empty or len(hist) < 2:
+            return False, 0.0
+        day_open = float(hist["Open"].iloc[0])
+        current  = float(hist["Close"].iloc[-1])
+        if day_open <= 0:
+            return False, 0.0
+        change_pct = (current - day_open) / day_open * 100
+        if change_pct <= -threshold_pct:
+            if os.path.exists(_CACHE_FILE):
+                os.remove(_CACHE_FILE)
+                log.warning(
+                    "Flash-Crash erkannt: SPY %.1f%% intraday – Regime-Cache invalidiert.",
+                    change_pct,
+                )
+            return True, change_pct
+        return False, change_pct
+    except Exception as exc:
+        log.debug("invalidate_cache_if_crash fehlgeschlagen: %s", exc)
+        return False, 0.0

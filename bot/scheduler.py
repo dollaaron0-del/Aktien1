@@ -18,7 +18,9 @@ from portfolio import Portfolio
 from portfolio.performance_tracker import PerformanceTracker
 from portfolio.phase_controller import PhaseController
 from portfolio.goal_risk_assessor import GoalRiskAssessor
+from portfolio.circuit_breaker import CircuitBreaker
 from analyzers.reflection_engine import ReflectionEngine
+from analyzers.regime_adaptive import invalidate_cache_if_crash, get_last_cached_regime
 from collectors.news_archive import NewsArchive
 from analyzers.market_schedule import MarketSchedule
 from analyzers.weekend_prep import WeekendPrep
@@ -36,6 +38,81 @@ def _subtract_minutes(hhmm: str, minutes: int) -> str:
     h, m = map(int, hhmm.split(":"))
     total = max(0, h * 60 + m - minutes)
     return f"{total // 60:02d}:{total % 60:02d}"
+
+
+def _regime_config_pct(regime: str) -> str:
+    m = {"BULL": "100%", "NEUTRAL": "80%", "BEAR": "50%", "CRISIS": "25%"}
+    return m.get(regime, "?")
+
+def _regime_sl(regime: str) -> str:
+    m = {"BULL": "6%", "NEUTRAL": "7%", "BEAR": "5%", "CRISIS": "4%"}
+    return m.get(regime, "?")
+
+def _regime_tp(regime: str) -> str:
+    m = {"BULL": "22%", "NEUTRAL": "18%", "BEAR": "12%", "CRISIS": "8%"}
+    return m.get(regime, "?")
+
+def _regime_buy_adj(regime: str) -> str:
+    m = {"BULL": "–3% (lockerer)", "NEUTRAL": "normal", "BEAR": "+5% (strenger)", "CRISIS": "+10% (sehr streng)"}
+    return m.get(regime, "?")
+
+
+def _run_post_cb_reflection(
+    circuit_breaker: CircuitBreaker,
+    portfolio: Portfolio,
+    broker,
+    tracker: PerformanceTracker,
+    reflection: ReflectionEngine,
+    notifier: TelegramNotifier,
+) -> None:
+    """
+    Wird einmalig ausgelöst wenn der Circuit Breaker den Handelstag sperrt.
+    Lässt Claude die letzten Trades analysieren und erklärt warum die Strategie
+    heute nicht funktioniert hat. Sendet Ergebnis per Telegram.
+    """
+    try:
+        prices = broker.get_prices(list(portfolio.all_positions().keys()))
+        current_value = portfolio.total_value(prices)
+        cb_status = circuit_breaker.status(current_value)
+
+        daily_loss = cb_status.get("daily_pct", 0.0)
+        drawdown   = cb_status.get("drawdown_pct", 0.0)
+
+        # Letzte 10 abgeschlossene Trades für die Analyse
+        report = tracker.get_accuracy_report()
+        recent = report.get("recent_trades", []) if isinstance(report, dict) else []
+        recent_closed = [t for t in recent if t.get("sell_price")][:10]
+
+        trade_lines = []
+        for t in recent_closed:
+            ret = t.get("actual_return_pct") or 0.0
+            sign = "+" if ret >= 0 else ""
+            trade_lines.append(
+                f"  {t.get('ticker','?')}: {sign}{ret:.1f}% | Grund: {t.get('sell_reason','?')}"
+            )
+        trades_text = "\n".join(trade_lines) if trade_lines else "  (keine Trades verfügbar)"
+
+        memo = reflection.generate_memo()
+        memo_section = f"\n\n<b>KI-Lernnotiz:</b>\n{memo}" if memo else ""
+
+        trigger = "Tagesverlust" if abs(daily_loss) >= 5.0 else "Drawdown"
+        loss_val = daily_loss if trigger == "Tagesverlust" else drawdown
+
+        msg = (
+            f"⛔ <b>CIRCUIT BREAKER AUSGELÖST – Handel für heute gesperrt</b>\n\n"
+            f"Auslöser: {trigger} <b>{loss_val:.1f}%</b>\n"
+            f"Portfolio-Wert: ${current_value:,.2f}\n"
+            f"Tagesperformance: {daily_loss:+.1f}%\n"
+            f"Drawdown vom ATH: {drawdown:.1f}%\n\n"
+            f"<b>Letzte Trades heute:</b>\n{trades_text}"
+            f"{memo_section}\n\n"
+            f"<i>Morgen früh wird das Limit zurückgesetzt. "
+            f"Neues Regime wird vor Handelsbeginn neu berechnet.</i>"
+        )
+        notifier.send(msg)
+        log.warning("Circuit-Breaker-Reflection gesendet. Tagesverlust: %.1f%%", daily_loss)
+    except Exception as e:
+        log.warning("Post-CB-Reflection fehlgeschlagen: %s", e)
 
 
 def _auto_optimize_check(tracker, notifier: TelegramNotifier) -> None:
@@ -255,12 +332,66 @@ def run_bot_loop(
         console.print(f"\n[bold cyan]📅 Wochenvorbereitung startet...[/bold cyan]")
         run_weekend_prep(weekend_prep_inst)
 
+    _last_regime: list = [get_last_cached_regime()]   # [0] = vorheriges Regime
+
     def _run_regime_check():
+        prev_regime = _last_regime[0]
+
+        # 1. Flash-Crash: Cache invalidieren bevor evaluate_regime() läuft
+        crashed, spy_change = invalidate_cache_if_crash(threshold_pct=3.0)
+        if crashed:
+            console.print(
+                f"\n  [bold red]⚡ FLASH-CRASH: SPY {spy_change:.1f}% – Regime-Neuberechnung erzwungen.[/bold red]"
+            )
+
+        # 2. Regime evaluieren (lädt frisch wenn Cache leer)
         regime, actions = hedge_strategy_inst.evaluate_regime()
+        _last_regime[0] = regime
+
+        notifier = TelegramNotifier()
+
+        # 3. Regime-Wechsel-Benachrichtigung
+        if prev_regime is not None and regime != prev_regime:
+            latest = hedge_strategy_inst.regime_summary() or {}
+            score  = latest.get("recession_score", "?")
+            comps  = latest.get("components", {})
+            vix    = latest.get("vix", "?")
+
+            _REGIME_EMOJI = {"BULL": "🟢", "NEUTRAL": "🟡", "BEAR": "🟠", "CRISIS": "🔴"}
+            emoji = _REGIME_EMOJI.get(regime, "⚪")
+
+            comp_lines = []
+            for name, data in comps.items():
+                label = data.get("label") or name
+                val   = data.get("value")
+                sc    = data.get("score")
+                if val is not None and sc is not None:
+                    comp_lines.append(f"  • {label}: {val} (Score {sc:.2f})")
+                elif sc is not None:
+                    comp_lines.append(f"  • {label}: Score {sc:.2f}")
+            comp_text = "\n".join(comp_lines) if comp_lines else "  (keine Daten)"
+
+            crash_note = f"\n⚡ Auslöser: SPY {spy_change:.1f}% intraday" if crashed else ""
+            msg = (
+                f"{emoji} <b>REGIME GEWECHSELT: {prev_regime} → {regime}</b>{crash_note}\n\n"
+                f"Rezessions-Score: <b>{score}</b> (0=sicher, 1=Krise)\n"
+                f"VIX: {vix}\n\n"
+                f"<b>Komponenten:</b>\n{comp_text}\n\n"
+                f"<b>Neue Parameter:</b>\n"
+                f"  • Positionsgröße: {_regime_config_pct(regime)}\n"
+                f"  • Stop-Loss: {_regime_sl(regime)}\n"
+                f"  • Take-Profit: {_regime_tp(regime)}\n"
+                f"  • Kaufhürde: {_regime_buy_adj(regime)}"
+            )
+            notifier.send(msg)
+            console.print(f"\n  [bold magenta]{emoji} Regime-Wechsel: {prev_regime} → {regime}[/bold magenta]")
+            log.info("Regime-Wechsel: %s → %s (Score: %s)", prev_regime, regime, score)
+
+        # 4. Hedge-Aktionen senden
         if actions:
             for a in actions:
                 console.print(f"\n  [magenta]{a}[/magenta]")
-            TelegramNotifier().notify_daily_summary(
+            notifier.notify_daily_summary(
                 total_value=portfolio.total_value(broker.get_prices(list(portfolio.all_positions().keys()))),
                 cash=portfolio.cash,
                 open_positions=len(portfolio.all_positions()),
@@ -335,6 +466,28 @@ def run_bot_loop(
         schedule.every().hour.do(
             lambda: _check_goal_reached(goal_risk, portfolio, broker, tracker, TelegramNotifier(), _goal_notified)
         )
+
+    # Circuit-Breaker-Monitor: einmalige Reflexion wenn CB heute ausgelöst wird
+    _cb_triggered_today: list = []
+    _circuit_breaker = CircuitBreaker()
+
+    def _cb_monitor_job():
+        prices = broker.get_prices(list(portfolio.all_positions().keys()))
+        current_value = portfolio.total_value(prices)
+        _circuit_breaker.register_day_open(current_value)
+        allowed, reason = _circuit_breaker.check_buy_allowed(current_value)
+        if not allowed and not _cb_triggered_today:
+            _cb_triggered_today.append(True)
+            console.print(f"\n  [bold red]⛔ CIRCUIT BREAKER: {reason}[/bold red]")
+            _run_post_cb_reflection(
+                _circuit_breaker, portfolio, broker, tracker, reflection, TelegramNotifier()
+            )
+        # Tages-Reset: neuer Tag → CB-Status zurücksetzen
+        today = __import__("datetime").date.today().isoformat()
+        if _cb_triggered_today and _circuit_breaker._state.get("day") != today:
+            _cb_triggered_today.clear()
+
+    schedule.every(15).minutes.do(_cb_monitor_job)
 
     # Periodic regime check + hedge exit monitoring
     if hedge_strategy_inst:
