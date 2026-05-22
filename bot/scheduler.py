@@ -25,6 +25,7 @@ from collectors.news_archive import NewsArchive
 from analyzers.market_schedule import MarketSchedule
 from analyzers.weekend_prep import WeekendPrep
 from analyzers.parameter_optimizer import ParameterOptimizer, _MIN_TRADES
+from analyzers.turbo_learner import TurboLearner
 from bot.pre_market_scanner import PreMarketScanner
 from bot.runner import run_analysis_cycle, _print_portfolio_summary
 from cli.commands import run_social_scan, run_weekend_prep
@@ -558,6 +559,27 @@ def run_bot_loop(
 
     # Tägliche Datenbankwartung: 02:00 UTC (außerhalb aller Handelszeiten)
     schedule.every().day.at("02:00").do(_daily_maintenance_job)
+
+    # Turbo-Lernauswertung: täglich um 02:30 UTC (nur wenn Turbo-Modus aktiv)
+    if config.turbo_mode and config.broker_mode == "paper":
+        def _turbo_learn_job():
+            try:
+                learner = TurboLearner()
+                result  = learner.analyze_and_save()
+                if result:
+                    notifier = TelegramNotifier()
+                    notifier.send(learner.summary_text(result))
+                    changes = learner.apply_to_config(config)
+                    if changes:
+                        notifier.send(
+                            "⚙️ <b>Turbo-Lernwerte angewendet:</b>\n"
+                            + "\n".join(f"• {c}" for c in changes)
+                        )
+                    log.info("Turbo-Lernauswertung abgeschlossen: %d Trades", result["turbo_trades_total"])
+            except Exception as exc:
+                log.exception("Turbo-Lernauswertung fehlgeschlagen: %s", exc)
+
+        schedule.every().day.at("02:30").do(_turbo_learn_job)
 
     # Hourly tasks (7 days a week)
     schedule.every().hour.do(strategy.check_open_positions)

@@ -34,7 +34,8 @@ class PerformanceTracker:
                 actual_hold_days      INTEGER,
                 actual_return_pct     REAL,
                 direction_correct     INTEGER,
-                target_hit            INTEGER
+                target_hit            INTEGER,
+                mode                  TEXT DEFAULT 'normal'  -- 'normal'|'exploration'|'turbo'
             );
             CREATE TABLE IF NOT EXISTS portfolio_snapshots (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,7 +46,12 @@ class PerformanceTracker:
                 phase           TEXT NOT NULL
             );
         """)
-        self._conn.commit()
+        # Migrate existing DBs: add mode column if missing
+        try:
+            self._conn.execute("ALTER TABLE predictions ADD COLUMN mode TEXT DEFAULT 'normal'")
+            self._conn.commit()
+        except Exception:
+            pass  # column already exists
 
     def record_prediction(
         self,
@@ -58,14 +64,15 @@ class PerformanceTracker:
         confidence: str,
         sources_used: int,
         sources_breakdown: Optional[Dict[str, int]] = None,
+        mode: str = "normal",
     ) -> int:
         import json as _json
         cursor = self._conn.execute(
             """INSERT INTO predictions
                (ticker, entry_date, entry_price, predicted_target_price,
                 predicted_hold_days, predicted_direction, sentiment_score,
-                confidence, sources_used, sources_breakdown)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                confidence, sources_used, sources_breakdown, mode)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 ticker,
                 datetime.utcnow().isoformat(),
@@ -77,6 +84,7 @@ class PerformanceTracker:
                 confidence,
                 sources_used,
                 _json.dumps(sources_breakdown or {}),
+                mode,
             ),
         )
         self._conn.commit()

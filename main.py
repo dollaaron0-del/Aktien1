@@ -69,6 +69,7 @@ from portfolio.trade_journal import TradeJournal
 from portfolio.signal_queue import SignalQueue
 from portfolio.goal_risk_assessor import GoalRiskAssessor
 from analyzers.reflection_engine import ReflectionEngine
+from analyzers.turbo_learner import TurboLearner
 from analyzers.earnings_filter import EarningsFilter
 from analyzers.correlation_check import CorrelationChecker
 from analyzers.kelly_sizing import KellySizer
@@ -222,9 +223,13 @@ def main():
     # Konfiguration validieren – bricht bei fatalen Fehlern ab
     validate_config()
 
+    # Turbo-Modus aktiviert Exploration automatisch als Basis-Stufe
+    if config.turbo_mode and config.broker_mode == "paper":
+        config.exploration_mode = True
+
     # Exploration-Mode: lockere Parameter für Datensammlung (vor allem anderen!)
     _apply_exploration_overrides()
-    if config.exploration_mode:
+    if config.exploration_mode and not config.turbo_mode:
         console.print(Panel(
             "[bold yellow]EXPLORATION MODE AKTIV[/bold yellow]  –  "
             f"Kaufschwelle={config.buy_threshold}  |  "
@@ -233,6 +238,27 @@ def main():
             f"CB-Verlust={config.expl_max_daily_loss*100:.0f}%\n"
             "[dim]Deaktivieren: python main.py --exploration off[/dim]",
             title="⚠  Exploration Mode", border_style="yellow",
+        ))
+
+    # Turbo-Mode Banner + gelernte Parameter laden
+    if config.turbo_mode and config.broker_mode == "paper":
+        learner = TurboLearner()
+        learned = learner.load()
+        learned_info = ""
+        if learned:
+            changes = learner.apply_to_config(config)
+            if changes:
+                learned_info = "\n[dim]Gelernte Werte aktiv: " + " | ".join(changes) + "[/dim]"
+        console.print(Panel(
+            "[bold red]🚀 TURBO MODE AKTIV[/bold red]  –  Alle Sicherheitsfilter deaktiviert!\n"
+            f"Kaufschwelle={config.turbo_buy_threshold}  |  "
+            f"MaxPos={config.turbo_max_position_pct*100:.0f}%  |  "
+            f"SL={config.turbo_stop_loss_pct*100:.0f}%  |  "
+            f"TP={config.turbo_take_profit_pct*100:.0f}%  |  "
+            f"MaxPositionen={config.turbo_max_positions}\n"
+            f"Exploration-Basis aktiv | Lernauswertung täglich 02:30 UTC"
+            f"{learned_info}",
+            title="⚠  TURBO MODE – NUR PAPER TRADING", border_style="red",
         ))
 
     # Select broker based on config

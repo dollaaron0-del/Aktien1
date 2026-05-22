@@ -409,6 +409,7 @@ class SwingStrategy:
             confidence=analysis.confidence,
             sources_used=analysis.sources_used,
             sources_breakdown=sources_breakdown or {},
+            mode="turbo",
         )
         self.journal.log_entry(
             ticker=ticker,
@@ -590,6 +591,7 @@ class SwingStrategy:
             confidence=signal["confidence"],
             sources_used=signal.get("sources_used", 0),
             sources_breakdown=signal.get("sources_breakdown", {}),
+            mode="exploration" if config.exploration_mode else "normal",
         )
         self.journal.log_entry(
             ticker=ticker,
@@ -880,6 +882,7 @@ class SwingStrategy:
             confidence=analysis.confidence,
             sources_used=analysis.sources_used,
             sources_breakdown=sources_breakdown,
+            mode="exploration" if config.exploration_mode else "normal",
         )
         self.journal.log_entry(
             ticker=ticker,
