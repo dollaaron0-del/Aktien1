@@ -220,6 +220,34 @@ class Config:
     expl_max_position_pct: float = field(default_factory=lambda: float(os.getenv("EXPL_MAX_POSITION_PCT", "0.25")))
     expl_max_daily_loss:   float = field(default_factory=lambda: float(os.getenv("EXPL_MAX_DAILY_LOSS",   "0.08")))
 
+    # ── Turbo Mode (nur Paper-Trading!) ──────────────────────────────────────
+    # Maximaler Gewinnversuch ohne Sicherheitsgrenzen – nur zur Analyse ob
+    # aggressive Strategien profitabel sind. NUR mit BROKER_MODE=paper nutzbar.
+    # Ein: TURBO_MODE=true in .env
+    turbo_mode: bool = field(
+        default_factory=lambda: os.getenv("TURBO_MODE", "false").lower() in ("1", "true", "yes")
+    )
+    # Wie viel % des Portfolios pro Position (aggressiv: 40 %)
+    turbo_max_position_pct: float = field(
+        default_factory=lambda: float(os.getenv("TURBO_MAX_POSITION_PCT", "0.40"))
+    )
+    # Kaufschwelle Sentiment (aggressiv: 0.45 – auch schwache Signale kaufen)
+    turbo_buy_threshold: float = field(
+        default_factory=lambda: float(os.getenv("TURBO_BUY_THRESHOLD", "0.45"))
+    )
+    # Stop-Loss enger (aggressiv: 12 % um Gewinne laufen zu lassen)
+    turbo_stop_loss_pct: float = field(
+        default_factory=lambda: float(os.getenv("TURBO_STOP_LOSS_PCT", "0.12"))
+    )
+    # Take-Profit weiter (aggressiv: 40 %)
+    turbo_take_profit_pct: float = field(
+        default_factory=lambda: float(os.getenv("TURBO_TAKE_PROFIT_PCT", "0.40"))
+    )
+    # Max. gleichzeitige Positionen
+    turbo_max_positions: int = field(
+        default_factory=lambda: int(os.getenv("TURBO_MAX_POSITIONS", "15"))
+    )
+
     # ── Krypto ───────────────────────────────────────────────────────────────
     # Krypto-Handel via Alpaca (gleiche API-Credentials, kein Extra-Account nötig).
     # CRYPTO_ENABLED=true  aktiviert Krypto im normalen Bot-Zyklus.

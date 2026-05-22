@@ -142,6 +142,13 @@ class SwingStrategy:
                 return scale_result
             return self._check_exit(existing_position, current_price, analysis)
 
+        # ── Turbo-Modus: Maximale Aggressivität (nur Paper-Trading) ──────────
+        if config.turbo_mode:
+            if config.broker_mode != "paper":
+                log.error("TURBO_MODE ist nur mit BROKER_MODE=paper erlaubt – ignoriert.")
+            else:
+                return self._evaluate_turbo(ticker, current_price, analysis, sources_breakdown)
+
         if analysis.recommendation != "BUY":
             # Short-Modus: SELL-Signal mit hoher Konfidenz → Short-Position prüfen
             if analysis.recommendation == "SELL" and analysis.confidence in ("HIGH", "MEDIUM"):
@@ -301,6 +308,132 @@ class SwingStrategy:
                 f"wird ausgeführt sobald Kapital frei ist."
             )
         return result
+
+    def _evaluate_turbo(
+        self,
+        ticker: str,
+        current_price: float,
+        analysis: AnalysisResult,
+        sources_breakdown: Optional[Dict[str, int]],
+    ) -> Optional[str]:
+        """
+        Turbo-Modus: Maximale Aggressivität für Paper-Trading-Experimente.
+        Alle normalen Filter (Konfidenz, Schwelle, CircuitBreaker, Makro, Sektor)
+        werden umgangen. Ziel: herausfinden ob rücksichtslose Gewinnoptimierung
+        tatsächlich mehr Rendite bringt oder das Kapital vernichtet.
+        """
+        # Kein BUY-Signal → trotzdem prüfen ob SHORT sinnvoll wäre
+        if analysis.recommendation != "BUY":
+            if analysis.recommendation == "SELL" and hasattr(self, '_short_strategy') and self._short_strategy:
+                short_result = self._short_strategy.evaluate_short(analysis)
+                if short_result:
+                    return short_result
+            return None
+
+        portfolio_value = self.portfolio.total_value(
+            self.broker.get_prices(list(self.portfolio.all_positions().keys()) + [ticker])
+        )
+
+        # Positionslimit (Turbo hat eigenes höheres Limit)
+        open_count = len(self.portfolio.all_positions())
+        if open_count >= config.turbo_max_positions:
+            return (
+                f"[TURBO][{ticker}] Positionslimit {config.turbo_max_positions} erreicht – übersprungen."
+            )
+
+        # Kapitalcheck: mind. $50 Cash verfügbar
+        invest = portfolio_value * config.turbo_max_position_pct
+        invest = min(invest, self.portfolio.cash * 0.95)
+        if invest < 50:
+            return f"[TURBO][{ticker}] Nicht genug Kapital (${self.portfolio.cash:.0f}) – übersprungen."
+
+        shares = math.floor(invest / current_price * 100) / 100
+        if shares <= 0:
+            return f"[TURBO][{ticker}] Zu teuer für verfügbares Kapital – übersprungen."
+
+        sl_pct = config.turbo_stop_loss_pct
+        tp_pct = config.turbo_take_profit_pct
+        stop_loss  = round(current_price * (1 - sl_pct), 2)
+        take_profit = round(current_price * (1 + tp_pct), 2)
+        if analysis.target_price and analysis.target_price > current_price:
+            take_profit = max(take_profit, analysis.target_price)
+
+        fill = self.broker.buy(ticker, shares, current_price)
+        ok, actual_price, warn = _check_fill(fill, ticker, "buy")
+        if not ok:
+            return f"[TURBO][{ticker}] ⛔ BUY-Order fehlgeschlagen: {warn}"
+        if not actual_price:
+            actual_price = current_price
+        if warn:
+            self._notifier.send(warn)
+
+        # SL/TP auf tatsächlichen Fill-Preis anpassen
+        stop_loss   = round(actual_price * (1 - sl_pct), 2)
+        take_profit = round(actual_price * (1 + tp_pct), 2)
+        if analysis.target_price and analysis.target_price > actual_price:
+            take_profit = max(take_profit, analysis.target_price)
+
+        position = Position(
+            ticker=ticker,
+            shares=shares,
+            entry_price=actual_price,
+            entry_date=datetime.utcnow().isoformat(),
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            target_hold_days=analysis.suggested_hold_days or 14,
+            rationale=f"[TURBO] {analysis.entry_rationale or ''}",
+            entry_catalysts=analysis.key_catalysts[:5],
+        )
+        self.portfolio.open_position(position)
+
+        self._notifier.notify_buy(
+            ticker=ticker, shares=shares, price=actual_price,
+            stop_loss=stop_loss, take_profit=take_profit,
+            hold_days=analysis.suggested_hold_days or 14,
+            rationale=f"🚀 TURBO-MODUS | {analysis.entry_rationale or ''}",
+            sentiment_score=analysis.sentiment_score,
+            confidence=analysis.confidence,
+            direction=analysis.direction,
+            target_price=analysis.target_price,
+            key_catalysts=analysis.key_catalysts[:4],
+            risk_factors=analysis.risk_factors[:3],
+            sources_breakdown=sources_breakdown or {},
+        )
+        self.tracker.record_prediction(
+            ticker=ticker,
+            entry_price=actual_price,
+            predicted_target_price=analysis.target_price,
+            predicted_hold_days=analysis.suggested_hold_days or 14,
+            predicted_direction=analysis.direction,
+            sentiment_score=analysis.sentiment_score,
+            confidence=analysis.confidence,
+            sources_used=analysis.sources_used,
+            sources_breakdown=sources_breakdown or {},
+        )
+        self.journal.log_entry(
+            ticker=ticker,
+            price=actual_price,
+            sentiment=analysis.sentiment_score,
+            confidence=analysis.confidence,
+            direction=analysis.direction,
+            rationale=f"[TURBO] {analysis.entry_rationale or ''}",
+            catalysts=analysis.key_catalysts[:5],
+            risks=analysis.risk_factors[:5],
+            sources=sources_breakdown or {},
+            target_price=analysis.target_price,
+            hold_days=analysis.suggested_hold_days or 14,
+        )
+        log.info(
+            "[TURBO][%s] GEKAUFT %.2f Stück @ $%.2f | SL $%.2f | TP $%.2f | Conf: %s | Score: %.2f",
+            ticker, shares, actual_price, stop_loss, take_profit,
+            analysis.confidence, analysis.sentiment_score,
+        )
+        return (
+            f"[TURBO][{ticker}] 🚀 GEKAUFT – {shares} Stück @ ${actual_price:.2f} "
+            f"| SL: ${stop_loss} | TP: ${take_profit} "
+            f"| Investiert: ${shares * actual_price:.2f} "
+            f"| Konfidenz: {analysis.confidence} | Score: {analysis.sentiment_score:.2f}"
+        )
 
     def check_open_positions(self) -> List[str]:
         actions = []
