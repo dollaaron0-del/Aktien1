@@ -395,10 +395,14 @@ class SwingStrategy:
         take_profit = min(tp, fixed_tp) if (tp and tp > price) else fixed_tp
         capped_hold = self.focus.cap_hold_days(signal.get("suggested_hold_days") or 14)
 
+        fill = self.broker.buy(ticker, shares, price)
+        actual_price = fill.get("fill_price") or price
+        stop_loss = round(actual_price * (1 - sl_pct), 2)
+        take_profit = min(tp, round(actual_price * (1 + tp_pct), 2)) if (tp and tp > actual_price) else round(actual_price * (1 + tp_pct), 2)
         position = Position(
             ticker=ticker,
             shares=shares,
-            entry_price=price,
+            entry_price=actual_price,
             entry_date=datetime.utcnow().isoformat(),
             stop_loss=stop_loss,
             take_profit=take_profit,
@@ -406,11 +410,10 @@ class SwingStrategy:
             rationale=signal.get("entry_rationale"),
             entry_catalysts=signal.get("key_catalysts", []),
         )
-        self.broker.buy(ticker, shares, price)
         self.portfolio.open_position(position)
         self.tracker.record_prediction(
             ticker=ticker,
-            entry_price=price,
+            entry_price=actual_price,
             predicted_target_price=signal.get("target_price"),
             predicted_hold_days=capped_hold,
             predicted_direction=signal.get("direction", "BULLISH"),
@@ -421,7 +424,7 @@ class SwingStrategy:
         )
         self.journal.log_entry(
             ticker=ticker,
-            price=price,
+            price=actual_price,
             sentiment=signal["sentiment_score"],
             confidence=signal["confidence"],
             direction=signal.get("direction", "BULLISH"),
@@ -433,9 +436,9 @@ class SwingStrategy:
             hold_days=capped_hold,
         )
         return (
-            f"{shares} Stück @ ${price:.2f} "
+            f"{shares} Stück @ ${actual_price:.2f} "
             f"| SL: ${stop_loss} | TP: ${take_profit} "
-            f"| Investiert: ${shares * price:.2f}"
+            f"| Investiert: ${shares * actual_price:.2f}"
         )
 
     def _check_exit(self, pos: Position, price: float, analysis: AnalysisResult) -> Optional[str]:
@@ -650,10 +653,26 @@ class SwingStrategy:
         raw_hold    = round(analysis.suggested_hold_days * _score_mod.hold_days_mult * hold_regime_mult)
         capped_hold = self.focus.cap_hold_days(raw_hold)
 
+        if _is_crypto(ticker):
+            fill = self.broker.buy_crypto(ticker, invest)
+        else:
+            fill = self.broker.buy(ticker, shares, price)
+        actual_price = fill.get("fill_price") or price
+        # Recalculate SL/TP from actual fill price to keep levels accurate
+        if actual_price != price:
+            stop_loss = round(actual_price * (1 - sl_pct), 2)
+            fixed_tp2 = round(actual_price * (1 + tp_pct), 2)
+            if analysis.target_price and analysis.target_price > actual_price:
+                take_profit = min(analysis.target_price, fixed_tp2)
+                tp_source = f"Claude ${analysis.target_price:.2f} → TP ${take_profit:.2f}"
+            else:
+                take_profit = fixed_tp2
+                tp_source = f"Regime {tp_pct*100:.0f}% → TP ${take_profit:.2f}"
+
         position = Position(
             ticker=ticker,
             shares=shares,
-            entry_price=price,
+            entry_price=actual_price,
             entry_date=datetime.utcnow().isoformat(),
             stop_loss=stop_loss,
             take_profit=take_profit,
@@ -661,15 +680,10 @@ class SwingStrategy:
             rationale=analysis.entry_rationale,
             entry_catalysts=analysis.key_catalysts[:5],
         )
-
-        if _is_crypto(ticker):
-            self.broker.buy_crypto(ticker, invest)
-        else:
-            self.broker.buy(ticker, shares, price)
         self.portfolio.open_position(position)
 
         self._notifier.notify_buy(
-            ticker=ticker, shares=shares, price=price,
+            ticker=ticker, shares=shares, price=actual_price,
             stop_loss=stop_loss, take_profit=take_profit,
             hold_days=capped_hold,
             rationale=analysis.entry_rationale or "",
@@ -683,7 +697,7 @@ class SwingStrategy:
         )
         self.tracker.record_prediction(
             ticker=ticker,
-            entry_price=price,
+            entry_price=actual_price,
             predicted_target_price=analysis.target_price,
             predicted_hold_days=capped_hold,
             predicted_direction=analysis.direction,
@@ -694,7 +708,7 @@ class SwingStrategy:
         )
         self.journal.log_entry(
             ticker=ticker,
-            price=price,
+            price=actual_price,
             sentiment=analysis.sentiment_score,
             confidence=analysis.confidence,
             direction=analysis.direction,
@@ -712,28 +726,29 @@ class SwingStrategy:
         margin_tag = f" | ⚡ MARGIN {margin_factor:.1f}×" if using_margin else ""
         score_tag  = f" | Score {current_score:.0f} ({_score_mod.score_range})"
         return (
-            f"[{ticker}] GEKAUFT – {shares} Stück @ ${price:.2f} "
+            f"[{ticker}] GEKAUFT – {shares} Stück @ ${actual_price:.2f} "
             f"| SL: ${stop_loss} | {tp_source} "
             f"| Haltedauer: {capped_hold}d "
-            f"| Investiert: ${shares * price:.2f}"
+            f"| Investiert: ${shares * actual_price:.2f}"
             f"{earn_tag}{margin_tag}{score_tag}"
         )
 
     def _do_close(self, ticker: str, pos: Position, price: float, reason: str, days_held: int = 0) -> float:
+        if _is_crypto(ticker):
+            fill = self.broker.sell_crypto(ticker, pos.shares)
+        else:
+            fill = self.broker.sell(ticker, pos.shares, price)
+        actual_price = fill.get("fill_price") or price
         self.tracker.record_outcome(
             ticker=ticker,
             entry_price=pos.entry_price,
             entry_date=pos.entry_date,
-            sell_price=price,
+            sell_price=actual_price,
             sell_reason=reason,
         )
-        if _is_crypto(ticker):
-            self.broker.sell_crypto(ticker, pos.shares)
-        else:
-            self.broker.sell(ticker, pos.shares, price)
-        pnl = self.portfolio.close_position(ticker, price, reason)
+        pnl = self.portfolio.close_position(ticker, actual_price, reason)
         self.journal.log_exit(
-            ticker=ticker, price=price,
+            ticker=ticker, price=actual_price,
             entry_price=pos.entry_price,
             pnl=pnl, reason=reason,
             days_held=days_held,
@@ -939,20 +954,21 @@ class SwingStrategy:
         if add_shares <= 0:
             return None
 
-        self.broker.buy(ticker, add_shares, current_price)
+        fill = self.broker.buy(ticker, add_shares, current_price)
+        actual_add_price = fill.get("fill_price") or current_price
         # Durchschnittskurs berechnen
         new_total_shares = pos.shares + add_shares
-        avg_price = (pos.shares * pos.entry_price + add_shares * current_price) / new_total_shares
+        avg_price = (pos.shares * pos.entry_price + add_shares * actual_add_price) / new_total_shares
         pos.shares = new_total_shares
         pos.entry_price = round(avg_price, 4)
 
         self._notifier.send(
             f"📈 <b>Scale-In {ticker}</b>\n"
-            f"+{add_shares} Stück @ ${current_price:.2f}\n"
+            f"+{add_shares} Stück @ ${actual_add_price:.2f}\n"
             f"Ø Einstieg jetzt: ${avg_price:.2f} | Gesamt: {new_total_shares:.2f} Stück"
         )
         return (
-            f"[{ticker}] 📈 SCALE-IN +{add_shares} Stück @ ${current_price:.2f} "
+            f"[{ticker}] 📈 SCALE-IN +{add_shares} Stück @ ${actual_add_price:.2f} "
             f"| Ø ${avg_price:.2f} | Gesamt: {new_total_shares:.2f} Stück"
         )
 
