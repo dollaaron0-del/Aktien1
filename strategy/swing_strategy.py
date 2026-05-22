@@ -46,6 +46,36 @@ def _is_crypto(ticker: str) -> bool:
         return False
 
 
+_FAILED_STATUSES = {"error", "canceled", "cancelled", "expired", "rejected"}
+
+
+def _check_fill(fill: dict, ticker: str, side: str) -> Tuple[bool, float, str]:
+    """
+    Returns (ok, fill_price, warning_msg).
+    ok=False means the order definitively failed and the position must NOT be recorded.
+    ok=True with warning_msg != '' means 'pending' — position recorded but operator must verify.
+    """
+    status = fill.get("status", "")
+    fill_price = fill.get("fill_price")
+    order_id = fill.get("order_id", "?")
+
+    if status in _FAILED_STATUSES:
+        reason = fill.get("reason", status)
+        log.error("[%s] %s order FAILED: %s (order_id=%s)", ticker, side.upper(), reason, order_id)
+        return False, 0.0, reason
+
+    if status == "pending":
+        msg = (
+            f"⚠️ <b>{ticker} {side.upper()}-Order UNBESTÄTIGT</b>\n"
+            f"Order-ID: <code>{order_id}</code>\n"
+            f"Position wird vorläufig eingebucht — bitte manuell im Broker prüfen!"
+        )
+        log.warning("[%s] %s order pending after timeout (order_id=%s)", ticker, side.upper(), order_id)
+        return True, fill_price or 0.0, msg
+
+    return True, fill_price or 0.0, ""
+
+
 # Confidence → Positionsgröße-Multiplikator
 _CONFIDENCE_SIZING = {"HIGH": 1.0, "MEDIUM": 0.70, "LOW": 0.45}
 
@@ -396,7 +426,13 @@ class SwingStrategy:
         capped_hold = self.focus.cap_hold_days(signal.get("suggested_hold_days") or 14)
 
         fill = self.broker.buy(ticker, shares, price)
-        actual_price = fill.get("fill_price") or price
+        ok, actual_price, warn = _check_fill(fill, ticker, "buy")
+        if not ok:
+            return f"[{ticker}] ⛔ BUY-Order fehlgeschlagen: {warn}"
+        if not actual_price:
+            actual_price = price
+        if warn:
+            self._notifier.send(warn)
         stop_loss = round(actual_price * (1 - sl_pct), 2)
         take_profit = min(tp, round(actual_price * (1 + tp_pct), 2)) if (tp and tp > actual_price) else round(actual_price * (1 + tp_pct), 2)
         position = Position(
@@ -657,7 +693,13 @@ class SwingStrategy:
             fill = self.broker.buy_crypto(ticker, invest)
         else:
             fill = self.broker.buy(ticker, shares, price)
-        actual_price = fill.get("fill_price") or price
+        ok, actual_price, warn = _check_fill(fill, ticker, "buy")
+        if not ok:
+            return f"[{ticker}] ⛔ BUY-Order fehlgeschlagen: {warn}"
+        if not actual_price:
+            actual_price = price
+        if warn:
+            self._notifier.send(warn)
         # Recalculate SL/TP from actual fill price to keep levels accurate
         if actual_price != price:
             stop_loss = round(actual_price * (1 - sl_pct), 2)
@@ -738,7 +780,20 @@ class SwingStrategy:
             fill = self.broker.sell_crypto(ticker, pos.shares)
         else:
             fill = self.broker.sell(ticker, pos.shares, price)
-        actual_price = fill.get("fill_price") or price
+        ok, actual_price, warn = _check_fill(fill, ticker, "sell")
+        if not ok:
+            # SELL failed — log and keep position open; notifier alert so operator can intervene
+            self._notifier.send(
+                f"🚨 <b>{ticker} SELL-Order FEHLGESCHLAGEN</b> ({reason})\n"
+                f"Position bleibt offen — bitte manuell im Broker prüfen!\n"
+                f"Fehler: {warn}"
+            )
+            log.error("[%s] SELL failed (%s) – position kept open", ticker, warn)
+            return 0.0
+        if not actual_price:
+            actual_price = price
+        if warn:
+            self._notifier.send(warn)
         self.tracker.record_outcome(
             ticker=ticker,
             entry_price=pos.entry_price,
@@ -955,7 +1010,14 @@ class SwingStrategy:
             return None
 
         fill = self.broker.buy(ticker, add_shares, current_price)
-        actual_add_price = fill.get("fill_price") or current_price
+        ok, actual_add_price, warn = _check_fill(fill, ticker, "buy")
+        if not ok:
+            log.warning("[%s] Scale-In BUY fehlgeschlagen: %s", ticker, warn)
+            return None
+        if not actual_add_price:
+            actual_add_price = current_price
+        if warn:
+            self._notifier.send(warn)
         # Durchschnittskurs berechnen
         new_total_shares = pos.shares + add_shares
         avg_price = (pos.shares * pos.entry_price + add_shares * actual_add_price) / new_total_shares
