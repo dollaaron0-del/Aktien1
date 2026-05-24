@@ -30,6 +30,48 @@ log = get_logger(__name__)
 _signal_expander = SignalDrivenExpander()
 
 
+def _md_to_html(text: str) -> str:
+    """Convert basic markdown bold/italic to Telegram HTML."""
+    import re
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
+    return text
+
+
+def _send_briefing_telegram(briefing: str, earnings: dict):
+    """Split briefing into sections and send each as a separate Telegram message."""
+    import re
+    notifier = TelegramNotifier()
+    week = earnings.get("week", "")
+
+    # Header
+    notifier.send(f"📋 <b>Wochenbriefing {week}</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+    # Split on section headers (numbered bold lines)
+    sections = re.split(r'(?=\*\*\d+\.)', briefing.strip())
+    sections = [s.strip() for s in sections if s.strip()]
+
+    section_icons = {
+        "1": "🌍", "2": "📊", "3": "🏦", "4": "📅", "5": "⚠️", "6": "🎯",
+    }
+
+    if not sections:
+        # Fallback: no section markers found, send in chunks
+        for i in range(0, len(briefing), 4000):
+            notifier.send(_md_to_html(briefing[i:i+4000]))
+        return
+
+    for section in sections:
+        # Determine icon
+        m = re.match(r'\*\*(\d+)\.', section)
+        icon = section_icons.get(m.group(1), "•") if m else "•"
+        msg = f"{icon} {_md_to_html(section)}"
+        # Telegram limit: 4096 chars
+        if len(msg) > 4096:
+            msg = msg[:4090] + "…"
+        notifier.send(msg)
+
+
 def _get_watchlist_for_scan(portfolio: Optional[Portfolio] = None):
     """Returns watchlist for social scan; imports from runner to avoid duplication."""
     from bot.runner import _get_watchlist
@@ -149,9 +191,7 @@ def run_weekend_prep(wp: WeekendPrep):
     briefing = wp.generate_briefing(newsapi_key=config.newsapi_key)
     if briefing:
         console.print(Panel(briefing, title="Wochenbriefing für die nächste Handelswoche", border_style="cyan"))
-        # Send via Telegram
-        notifier = TelegramNotifier()
-        notifier.send(f"📋 <b>Wochenbriefing</b>\n\n{briefing[:3000]}")
+        _send_briefing_telegram(briefing, earnings)
     else:
         console.print("[red]Briefing konnte nicht generiert werden (API-Fehler oder kein Key).[/red]")
 

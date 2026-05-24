@@ -329,7 +329,7 @@ class WeekendPrep:
             client = anthropic.Anthropic(api_key=self.api_key)
             response = client.messages.create(
                 model="claude-opus-4-7",
-                max_tokens=1500,
+                max_tokens=3500,
                 messages=[{"role": "user", "content": prompt}],
             )
             briefing = response.content[0].text.strip()
@@ -513,33 +513,43 @@ class WeekendPrep:
 
 ---
 
-Erstelle ein strukturiertes **Wochenvorbereitungs-Briefing** mit genau diesen 6 Abschnitten:
+Erstelle ein ausführliches **Wochenvorbereitungs-Briefing** mit genau diesen 6 Abschnitten.
+Erkläre bei jedem Punkt WARUM und WAS ES BEDEUTET – nicht nur was passiert ist.
+Wiederhole keine Information die bereits in einem anderen Abschnitt steht.
+Schreib auf Deutsch, direkt und klar. Mindestens 120 Wörter pro Abschnitt.
 
 **1. MARKTLAGE (US + EU + Krypto)**
-Wie ist die allgemeine Stimmung global? Risk-on oder Risk-off? VIX-Signal?
-Unterschiede zwischen US, EU und Krypto-Markt?
+Beschreibe die globale Stimmung: Risk-on oder Risk-off? Erkläre warum der VIX auf diesem Niveau ist und was das konkret bedeutet.
+Analysiere die Divergenzen zwischen US, EU und Asien – warum performen sie unterschiedlich?
+Was sagt die Krypto-Performance über die Risikobereitschaft der Märkte aus?
 
 **2. SEKTOREN DER WOCHE**
-Welche US- und EU-Sektoren bieten die besten Chancen? Welche meiden?
-Rotation erkennbar?
+Erkläre für jeden der Top-3 Sektoren WARUM er outperformt – ist es strukturell oder kurzfristig?
+Welche US- und EU-Sektoren konkret kaufen, welche meiden und warum?
+Beschreibe erkennbare Rotationen und was diese über die Markterwartungen aussagen.
 
 **3. ZENTRALBANK-RISIKEN**
-Falls EZB oder BoE nächste Woche tagen: konkrete Auswirkungen auf EU-Positionen.
-FOMC-Status und allgemeine Zinspolitik.
+Erkläre den aktuellen Zinspolitik-Status der Fed, EZB und BoE und warum das relevant ist.
+Falls EZB oder BoE nächste Woche tagen: konkrete Auswirkungen auf welche Positionen/Sektoren und warum?
+Was erwartet der Markt aktuell von der Zinspolitik und wo liegen die Überraschungsrisiken?
 
-**4. EARNINGS-RISIKEN**
-Ticker mit Quartalszahlen = erhöhtes Risiko.
-Empfehlung: kaufen/halten/meiden für Earnings-Woche (US und EU).
+**4. QUARTALSZAHLEN DER WOCHE**
+Für JEDEN Ticker mit Earnings nächste Woche: Was erwartet der Markt (Konsensschätzung), welche Überraschungen sind möglich und warum?
+Erkläre welche Sektoren durch diese Earnings bewegt werden könnten (auch indirekte Effekte).
+Konkrete Empfehlung: vor Earnings kaufen / halten / meiden – mit Begründung für jeden Ticker.
+Wenn keine Earnings: warum ist das gut/schlecht für diese Woche?
 
 **5. MAKRO-RISIKEN**
-Die 2–3 wichtigsten Makro-Themen die den Markt nächste Woche bewegen könnten.
+Die 3 wichtigsten Makro-Themen die den Markt nächste Woche bewegen könnten.
+Erkläre für jedes Thema: Was ist das Szenario, warum ist es relevant, und wie reagiert der Markt wenn es eintritt?
+Unterscheide zwischen wahrscheinlichen und Tail-Risk-Szenarien.
 
 **6. HANDLUNGSEMPFEHLUNG**
-Konkrete Positionierungs-Empfehlung für die Woche:
-- Aggressiver / defensiver als normal?
-- Stop-Losses enger/weiter?
-- Sektoren übergewichten/untergewichten?
-- Krypto: bullisch/bärisch für nächste Woche?
+Konkrete Positionierungs-Empfehlung für die Woche mit Begründung:
+- Aggressiver oder defensiver als normal – und warum?
+- Stop-Losses enger oder weiter stellen – basierend auf welcher Begründung?
+- Welche Sektoren konkret übergewichten/untergewichten und warum gerade jetzt?
+- Krypto: bullisch oder bärisch für nächste Woche – Begründung?
+- Ein konkreter Trade-Setup den du für diese Woche besonders interessant findest.
 
-Schreib kompakt (max. 500 Wörter), direkt, auf Deutsch.
-Vermeide Floskeln. Fokus auf actionable Insights für einen Swing-Trader."""
+Schreib klar und direkt, auf Deutsch. Keine Floskeln. Jeder Satz muss einen Informationswert haben."""
