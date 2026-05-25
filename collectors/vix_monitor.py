@@ -32,7 +32,11 @@ def get_vix() -> Optional[float]:
         data = yf.download("^VIX", period="1d", interval="5m", progress=False, auto_adjust=True)
         if data.empty:
             return None
-        val = float(data["Close"].iloc[-1])
+        raw = data["Close"].iloc[-1]
+        # yfinance may return a Series with MultiIndex columns — extract scalar
+        if hasattr(raw, "__len__"):
+            raw = raw.iloc[0]
+        val = float(raw)
         _vix_cache["value"] = val
         _vix_cache["ts"] = now
         log.info("VIX aktuell: %.2f", val)

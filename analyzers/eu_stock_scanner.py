@@ -86,7 +86,7 @@ EU_UNIVERSE: Dict[str, tuple] = {
     "KER.PA":    ("Kering",            "FR", "Luxus"),
     # Schweiz (SMI .SW)
     "NESN.SW":   ("Nestlé",            "CH", "Konsum"),
-    "ROG.SW":    ("Roche",             "CH", "Healthcare"),
+    "RO.SW":     ("Roche",             "CH", "Healthcare"),
     "NOVN.SW":   ("Novartis",          "CH", "Healthcare"),
     "ABBN.SW":   ("ABB Ltd",           "CH", "Industrie"),
     # UK (FTSE .L)

@@ -1,18 +1,21 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# systemd Service-Datei für den Aktien-Bot Watchdog
+# systemd Service-Datei für den Aktien-Bot
 #
-# Installation (als root oder mit sudo):
-#   sudo cp scripts/aktien_bot.service /etc/systemd/system/
-#   sudo systemctl daemon-reload
-#   sudo systemctl enable aktien_bot
-#   sudo systemctl start aktien_bot
+# Installation auf dem Server (einmalig als root):
+#   cp /opt/Aktien/scripts/aktien_bot.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable aktien_bot
+#   systemctl start aktien_bot
 #
 # Status prüfen:
-#   sudo systemctl status aktien_bot
-#   sudo journalctl -u aktien_bot -f
+#   systemctl status aktien_bot
+#   journalctl -u aktien_bot -f
+#
+# Bot stoppen:
+#   systemctl stop aktien_bot
 # ─────────────────────────────────────────────────────────────────────────────
 [Unit]
-Description=Aktien-Bot Trading Watchdog
+Description=Aktien Sentiment Bot
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=600
@@ -20,18 +23,16 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-# !! Pfad und User anpassen !!
-User=user
-WorkingDirectory=/home/user/Aktien
-ExecStart=/home/user/Aktien/scripts/watchdog.sh
+User=root
+WorkingDirectory=/opt/Aktien
+ExecStart=/opt/Aktien/venv/bin/python /opt/Aktien/main.py
 Restart=always
 RestartSec=30
+Environment=PYTHONUNBUFFERED=1
 
-# Logs
-StandardOutput=append:/home/user/Aktien/logs/systemd.log
-StandardError=append:/home/user/Aktien/logs/systemd.log
+StandardOutput=append:/opt/Aktien/logs/bot.log
+StandardError=append:/opt/Aktien/logs/bot.log
 
-# Sicherheit: Prozess isolieren
 NoNewPrivileges=true
 PrivateTmp=true
 

@@ -86,11 +86,20 @@ _XETRA_HOLIDAYS: Set[str] = {
 _ALL_HOLIDAYS: Set[str] = _NYSE_HOLIDAYS | _XETRA_HOLIDAYS
 
 
-def is_market_holiday(d: Optional[date_type] = None) -> bool:
-    """Returns True if the given date (default today) is a market holiday."""
+_EXCHANGE_HOLIDAYS: Dict[str, Set[str]] = {
+    "NYSE":   _NYSE_HOLIDAYS,
+    "NASDAQ": _NYSE_HOLIDAYS,
+    "XETRA":  _XETRA_HOLIDAYS,
+    "LSE":    _XETRA_HOLIDAYS,
+}
+
+
+def is_market_holiday(d: Optional[date_type] = None, exchange: str = "") -> bool:
+    """Returns True if the given date is a holiday for the specified exchange."""
     if d is None:
         d = datetime.utcnow().date()
-    return d.isoformat() in _ALL_HOLIDAYS
+    holidays = _EXCHANGE_HOLIDAYS.get(exchange.upper(), _ALL_HOLIDAYS)
+    return d.isoformat() in holidays
 
 
 class MarketSchedule:
@@ -126,7 +135,7 @@ class MarketSchedule:
             open_local = open_local_naive.replace(tzinfo=tz)
             open_utc = open_local.astimezone(ZoneInfo("UTC"))
             analysis_utc = open_utc - timedelta(minutes=self.lead_minutes)
-            is_trading = (date.isoweekday() in _TRADING_DAYS) and not is_market_holiday(date)
+            is_trading = (date.isoweekday() in _TRADING_DAYS) and not is_market_holiday(date, code)
             results.append({
                 "exchange": code,
                 "name": ex["name"],
