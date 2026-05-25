@@ -1,0 +1,113 @@
+"""
+AnalysisLog – persistente SQLite-Datenbank aller Bot-Analysen.
+
+Speichert jede Analyse (BUY, HOLD, SKIP, SELL) mit vollständiger
+Begründung, damit sie im Dashboard eingesehen werden kann.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+from datetime import datetime
+from typing import List, Dict, Optional
+
+DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "analysis_log.db")
+
+
+class AnalysisLog:
+    def __init__(self):
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        self._conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        self._init_db()
+
+    def _init_db(self):
+        self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS analyses (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                analyzed_at      TEXT NOT NULL,
+                ticker           TEXT NOT NULL,
+                recommendation   TEXT NOT NULL,
+                direction        TEXT NOT NULL,
+                sentiment_score  REAL NOT NULL,
+                confidence       TEXT NOT NULL,
+                entry_rationale  TEXT,
+                bull_case        TEXT,
+                bear_case        TEXT,
+                debate_winner    TEXT,
+                key_catalysts    TEXT,
+                risk_factors     TEXT,
+                target_price     REAL,
+                suggested_hold   INTEGER,
+                sources_used     INTEGER,
+                exchange         TEXT DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_al_ticker ON analyses(ticker);
+            CREATE INDEX IF NOT EXISTS idx_al_date   ON analyses(analyzed_at);
+        """)
+        self._conn.commit()
+
+    def store(self, analysis, exchange: str = "") -> None:
+        from analyzers.claude_analyzer import AnalysisResult
+        if not isinstance(analysis, AnalysisResult):
+            return
+        self._conn.execute(
+            """INSERT INTO analyses
+               (analyzed_at, ticker, recommendation, direction, sentiment_score,
+                confidence, entry_rationale, bull_case, bear_case, debate_winner,
+                key_catalysts, risk_factors, target_price, suggested_hold,
+                sources_used, exchange)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                datetime.utcnow().isoformat(),
+                analysis.ticker,
+                analysis.recommendation,
+                analysis.direction,
+                analysis.sentiment_score,
+                analysis.confidence,
+                analysis.entry_rationale or "",
+                analysis.bull_case or "",
+                analysis.bear_case or "",
+                analysis.debate_winner or "",
+                json.dumps(analysis.key_catalysts or []),
+                json.dumps(analysis.risk_factors or []),
+                analysis.target_price,
+                analysis.suggested_hold_days,
+                analysis.sources_used,
+                exchange,
+            ),
+        )
+        self._conn.commit()
+
+    def get_recent(self, limit: int = 100, ticker: Optional[str] = None) -> List[Dict]:
+        if ticker:
+            rows = self._conn.execute(
+                "SELECT * FROM analyses WHERE ticker=? ORDER BY analyzed_at DESC LIMIT ?",
+                (ticker.upper(), limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM analyses ORDER BY analyzed_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["key_catalysts"] = json.loads(d.get("key_catalysts") or "[]")
+            d["risk_factors"]  = json.loads(d.get("risk_factors")  or "[]")
+            result.append(d)
+        return result
+
+    def get_stats(self) -> Dict:
+        row = self._conn.execute("""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN recommendation='BUY'  THEN 1 ELSE 0 END) as buys,
+                SUM(CASE WHEN recommendation='SKIP' THEN 1 ELSE 0 END) as skips,
+                SUM(CASE WHEN recommendation='HOLD' THEN 1 ELSE 0 END) as holds,
+                SUM(CASE WHEN recommendation='SELL' THEN 1 ELSE 0 END) as sells,
+                AVG(sentiment_score) as avg_score
+            FROM analyses
+        """).fetchone()
+        return dict(row) if row else {}

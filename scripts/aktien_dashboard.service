@@ -1,0 +1,31 @@
+# systemd Service für das Web-Dashboard
+#
+# Installation (einmalig als root):
+#   cp /opt/Aktien/scripts/aktien_dashboard.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable aktien_dashboard
+#   systemctl start aktien_dashboard
+#
+# Dashboard erreichbar unter: http://<server-ip>:8501
+#
+# UFW-Port öffnen (einmalig):
+#   ufw allow 8501/tcp
+[Unit]
+Description=Aktien Bot Web-Dashboard
+After=network-online.target aktien_bot.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/Aktien
+ExecStart=/opt/Aktien/venv/bin/streamlit run /opt/Aktien/dashboard/app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --browser.gatherUsageStats=false
+Restart=always
+RestartSec=15
+Environment=PYTHONUNBUFFERED=1
+
+StandardOutput=append:/opt/Aktien/logs/dashboard.log
+StandardError=append:/opt/Aktien/logs/dashboard.log
+
+[Install]
+WantedBy=multi-user.target

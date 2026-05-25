@@ -35,6 +35,7 @@ from analyzers.news_velocity import NewsVelocityAnalyzer
 from analyzers.multi_timeframe_sentiment import MultiTimeframeSentiment
 from analyzers.reentry_tracker import ReEntryTracker
 from analyzers.analysis_cache import AnalysisCache
+from analyzers.analysis_log import AnalysisLog
 from analyzers.rl_agent import RLAgent
 from analyzers.earnings_predictor import EarningsPredictor
 from analyzers.cross_asset import CrossAssetSignals
@@ -56,6 +57,7 @@ _earnings_predictor = EarningsPredictor()
 _cross_asset        = CrossAssetSignals()
 _signal_expander    = SignalDrivenExpander()
 _analysis_cache     = AnalysisCache()
+_analysis_log       = AnalysisLog()
 
 _collect_log = get_logger("collectors")
 
@@ -577,6 +579,7 @@ def run_analysis_cycle(
             ticker, analysis.direction, analysis.sentiment_score,
             analysis.confidence, analysis.recommendation,
         )
+        _analysis_log.store(analysis)
 
         action = strategy.evaluate(analysis, sources_breakdown)
         if action:

@@ -169,7 +169,7 @@ st.divider()
 # ═══════════════════════════════════════════════════════════════════════════════
 # TABS
 # ═══════════════════════════════════════════════════════════════════════════════
-tab_portfolio, tab_regime, tab_queue, tab_social, tab_briefing, tab_trades, tab_tech, tab_watchlist = st.tabs([
+tab_portfolio, tab_regime, tab_queue, tab_social, tab_briefing, tab_trades, tab_tech, tab_watchlist, tab_log = st.tabs([
     "📊 Portfolio",
     "🛡 Markt-Regime",
     f"📋 Signal-Queue ({pending_cnt})",
@@ -178,6 +178,7 @@ tab_portfolio, tab_regime, tab_queue, tab_social, tab_briefing, tab_trades, tab_
     "📈 Trades & Lernen",
     "📉 Technicals",
     "🔭 Watchlist",
+    "🔍 Analyse-Log",
 ])
 
 
@@ -1197,3 +1198,96 @@ with st.sidebar:
     if st.button("🔄 Cache leeren & neu laden", use_container_width=True):
         st.cache_resource.clear()
         st.rerun()
+
+
+# ══════════════════════════════════════════════════════════
+# TAB 9 – ANALYSE-LOG
+# ══════════════════════════════════════════════════════════
+with tab_log:
+    from analyzers.analysis_log import AnalysisLog as _AnalysisLog
+    _alog = _AnalysisLog()
+
+    st.subheader("🔍 Analyse-Log – alle betrachteten Aktien")
+    st.caption(
+        "Jede Aktie die der Bot analysiert hat – egal ob gekauft, gehalten oder übersprungen. "
+        "Hier siehst du das vollständige Vorgehen und die Begründung."
+    )
+
+    stats = _alog.get_stats()
+    if stats.get("total", 0) > 0:
+        sc1, sc2, sc3, sc4, sc5 = st.columns(5)
+        sc1.metric("Analysen gesamt",  stats.get("total", 0))
+        sc2.metric("🟢 BUY",           stats.get("buys", 0))
+        sc3.metric("⏭ SKIP",           stats.get("skips", 0))
+        sc4.metric("⏸ HOLD",           stats.get("holds", 0))
+        sc5.metric("Ø Sentiment",      f"{stats.get('avg_score', 0):.2f}")
+        st.divider()
+
+    # Filter controls
+    f1, f2, f3 = st.columns([2, 2, 2])
+    with f1:
+        filter_rec = st.multiselect(
+            "Empfehlung filtern",
+            ["BUY", "SKIP", "HOLD", "SELL"],
+            default=["BUY", "SKIP", "HOLD", "SELL"],
+        )
+    with f2:
+        filter_ticker = st.text_input("Ticker suchen", placeholder="z.B. NVDA")
+    with f3:
+        log_limit = st.selectbox("Anzahl anzeigen", [50, 100, 200, 500], index=0)
+
+    entries = _alog.get_recent(
+        limit=log_limit,
+        ticker=filter_ticker.strip().upper() if filter_ticker.strip() else None,
+    )
+    if filter_rec:
+        entries = [e for e in entries if e["recommendation"] in filter_rec]
+
+    if not entries:
+        st.info("Noch keine Analysen gespeichert. Morgen früh ab 07:30 Uhr beginnt der Bot.")
+    else:
+        _REC_ICON = {"BUY": "🟢", "SKIP": "⏭", "HOLD": "⏸", "SELL": "🔴"}
+        _DIR_ICON = {"BULLISH": "📈", "NEUTRAL": "➡️", "BEARISH": "📉"}
+
+        for entry in entries:
+            rec  = entry["recommendation"]
+            icon = _REC_ICON.get(rec, "•")
+            dir_icon = _DIR_ICON.get(entry["direction"], "")
+            score = entry["sentiment_score"]
+            conf  = entry["confidence"]
+            ts    = entry["analyzed_at"][:16]
+
+            label = (
+                f"{icon} **{entry['ticker']}** · {dir_icon} {entry['direction']} "
+                f"· Score {score:.2f} · {conf} · {ts}"
+            )
+            with st.expander(label):
+                col_l, col_r = st.columns([3, 2])
+                with col_l:
+                    st.markdown("**Begründung:**")
+                    st.info(entry.get("entry_rationale") or "–")
+
+                    if entry.get("bull_case"):
+                        st.markdown(f"🟢 **Bull-Case:** {entry['bull_case']}")
+                    if entry.get("bear_case"):
+                        st.markdown(f"🔴 **Bear-Case:** {entry['bear_case']}")
+                    if entry.get("debate_winner"):
+                        winner = entry["debate_winner"]
+                        w_icon = "🟢" if winner == "BULL" else ("🔴" if winner == "BEAR" else "🟡")
+                        st.markdown(f"**Debatte-Gewinner:** {w_icon} {winner}")
+
+                with col_r:
+                    st.metric("Empfehlung",    f"{icon} {rec}")
+                    st.metric("Sentiment",     f"{score:.2f}")
+                    st.metric("Konfidenz",     conf)
+                    if entry.get("target_price"):
+                        st.metric("Kursziel",  f"${entry['target_price']:.2f}")
+                    if entry.get("suggested_hold"):
+                        st.metric("Haltedauer", f"{entry['suggested_hold']} Tage")
+
+                catalysts = entry.get("key_catalysts", [])
+                risks     = entry.get("risk_factors", [])
+                if catalysts:
+                    st.markdown("**⚡ Kaufkatalysatoren:** " + " · ".join(catalysts[:4]))
+                if risks:
+                    st.markdown("**⚠️ Risiken:** " + " · ".join(risks[:3]))
