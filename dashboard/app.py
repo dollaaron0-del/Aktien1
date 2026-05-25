@@ -1484,6 +1484,9 @@ with tab_settings:
         with col_a:
             st.markdown("#### 🎯 Ziel-Einstellungen")
 
+            new_monthly_eur = float(_env.get("MONTHLY_DISTRIBUTION_EUR", config.monthly_distribution_eur))
+            new_buffer = int(_env.get("DISTRIBUTION_BUFFER_MONTHS", config.distribution_buffer_months))
+
             if _sel_focus == "TARGET_GOAL":
                 new_goal_amount = st.number_input(
                     "Ziel-Betrag ($)",
@@ -1510,7 +1513,22 @@ with tab_settings:
                 new_growth = float(_env.get("GROWTH_TARGET_MULTIPLE", config.growth_target_multiple))
                 new_goal_amount = float(_env.get("TARGET_GOAL_AMOUNT", 0) or 0)
                 new_goal_date   = _env.get("TARGET_GOAL_DATE", "")
-                st.info("Im Ausschüttungs-Modus verteilt der Bot monatlich Gewinne.")
+                new_monthly_eur = st.number_input(
+                    "Gewünschte monatliche Ausschüttung (€)",
+                    min_value=100.0, max_value=50000.0, step=100.0,
+                    value=float(_env.get("MONTHLY_DISTRIBUTION_EUR", config.monthly_distribution_eur)),
+                    help="Der Bot handelt konservativ und versucht diesen Betrag monatlich aus Gewinnen zu erwirtschaften.",
+                )
+                new_buffer = st.slider(
+                    "Sicherheitspuffer (Monate)",
+                    min_value=1, max_value=12, step=1,
+                    value=int(_env.get("DISTRIBUTION_BUFFER_MONTHS", config.distribution_buffer_months)),
+                    help="Wie viele Monatsbeträge als Reserve gehalten werden bevor ausgeschüttet wird.",
+                )
+                st.info(
+                    f"Ziel: **{new_monthly_eur:,.0f} €/Monat** · "
+                    f"Puffer: **{new_buffer} Monate** ({new_monthly_eur * new_buffer:,.0f} €)"
+                )
 
         with col_b:
             st.markdown("#### 🛡 Risikomanagement")
@@ -1622,8 +1640,10 @@ with tab_settings:
             "EU_STOCKS_ENABLED":      "true" if new_eu else "false",
             "EU_WATCHLIST":           ",".join(t.strip().upper() for t in new_eu_wl.split(",") if t.strip()),
             "ENABLE_SOCIAL_SCAN":     "true" if new_social else "false",
-            "TURBO_MODE":             "true" if new_turbo else "false",
-            "EXPLORATION_MODE":       "true" if new_expl else "false",
+            "TURBO_MODE":                "true" if new_turbo else "false",
+            "EXPLORATION_MODE":          "true" if new_expl else "false",
+            "MONTHLY_DISTRIBUTION_EUR":  str(new_monthly_eur),
+            "DISTRIBUTION_BUFFER_MONTHS": str(new_buffer),
         }
         try:
             _write_env(updates)
