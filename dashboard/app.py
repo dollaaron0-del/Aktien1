@@ -1296,71 +1296,61 @@ with tab_log:
 
     # Autocomplete: alle bisher analysierten Ticker laden
     _all_log_tickers = sorted({e["ticker"] for e in _alog.get_recent(limit=2000)})
+    _analyzed_set = set(_all_log_tickers)
 
-    st.markdown("#### Filter & Suche")
+    # Kombinierte Option-Liste: analysierte zuerst, dann alle bekannten
+    _known_unanalyzed = [t for t in sorted(_ALL_NAMES.keys()) if t not in _analyzed_set]
+    _search_opts = [""] + _all_log_tickers + _known_unanalyzed
 
-    # ── Zeile 1: Empfehlung + Anzahl ────────────────────────────────────────
+    def _fmt_search(t: str) -> str:
+        if not t:
+            return "🔍 Aktie suchen oder tippen…"
+        name = _ALL_NAMES.get(t.upper(), "")
+        status = "✅ analysiert" if t in _analyzed_set else "➕ noch nicht analysiert"
+        return f"{t}  ({name})  —  {status}" if name else f"{t}  —  {status}"
+
     with st.form("log_filter_form"):
-        f1, f2 = st.columns([4, 2])
-        with f1:
+        fa, fb = st.columns([4, 2])
+        with fa:
             filter_rec = st.multiselect(
                 "Empfehlung filtern",
                 ["BUY", "SKIP", "HOLD", "SELL"],
                 default=["BUY", "SKIP", "HOLD", "SELL"],
             )
-        with f2:
+        with fb:
             log_limit = st.selectbox("Anzahl anzeigen", [50, 100, 200, 500], index=0)
 
-        # ── Ticker-Auswahl ───────────────────────────────────────────────────
-        st.markdown("**Ticker auswählen** — bereits analysierte Aktien:")
-        _ticker_opts = ["— Alle Analysen anzeigen —"] + _all_log_tickers
-        filter_ticker_sel = st.selectbox(
-            "Aus analysierten Aktien wählen",
-            _ticker_opts,
-            format_func=lambda t: ticker_label(t) if t not in ("— Alle Analysen anzeigen —",) else t,
-            label_visibility="collapsed",
+        selected_opt = st.selectbox(
+            "Aktie suchen",
+            _search_opts,
+            format_func=_fmt_search,
         )
-
-        # ── Neue Aktie anfragen ──────────────────────────────────────────────
-        st.markdown("**Oder neue Aktie anfragen** — Ticker eingeben (z.B. `RHM.DE` für Rheinmetall, `AAPL` für Apple):")
-        _new_ticker_input = st.text_input(
-            "Ticker-Symbol eingeben",
-            placeholder="z.B. RHM.DE, AAPL, SAP.DE …",
-            label_visibility="collapsed",
-        )
-
         _searched = st.form_submit_button("🔍 Suchen / Anfragen", use_container_width=True)
 
     # ── Auswertung ───────────────────────────────────────────────────────────
     from analyzers.user_request_queue import add_ticker as _req_ticker, peek as _peek_requests
 
-    _free_ticker = _new_ticker_input.strip().upper() if _new_ticker_input.strip() else None
-    _filter_ticker = None if filter_ticker_sel == "— Alle Analysen anzeigen —" else filter_ticker_sel
+    _active_ticker = selected_opt if selected_opt else None
 
-    # Neue Ticker-Anfrage verarbeiten (Freitext hat Vorrang)
-    if _searched and _free_ticker:
-        already_pending = _free_ticker in _peek_requests()
-        already_analyzed = _free_ticker in _all_log_tickers
-        if already_analyzed:
-            st.info(f"**{ticker_label(_free_ticker)}** wurde bereits analysiert — Ergebnisse werden unten angezeigt.")
-            _filter_ticker = _free_ticker
-        elif already_pending:
-            st.success(f"**{ticker_label(_free_ticker)}** ist bereits für den nächsten Analysezyklus vorgemerkt.")
+    if _searched and _active_ticker:
+        if _active_ticker in _analyzed_set:
+            st.info(f"**{ticker_label(_active_ticker)}** wurde bereits analysiert — Ergebnisse unten.")
+        elif _active_ticker in _peek_requests():
+            st.success(f"**{ticker_label(_active_ticker)}** ist bereits für den nächsten Zyklus vorgemerkt.")
         else:
-            _req_ticker(_free_ticker)
+            _req_ticker(_active_ticker)
             st.success(
-                f"✅ **{ticker_label(_free_ticker)}** wurde zur Analyse-Queue hinzugefügt.  \n"
-                f"Der Bot analysiert ihn beim nächsten Zyklus (morgen früh ab 07:30 Uhr)."
+                f"✅ **{ticker_label(_active_ticker)}** wurde zur Analyse-Queue hinzugefügt.  \n"
+                f"Der Bot analysiert ihn beim nächsten Morgenzyklus (07:30 Uhr)."
             )
 
-    active_ticker = _free_ticker if _searched and _free_ticker else _filter_ticker
-    entries = _alog.get_recent(limit=log_limit, ticker=active_ticker)
+    entries = _alog.get_recent(limit=log_limit, ticker=_active_ticker)
     if filter_rec:
         entries = [e for e in entries if e["recommendation"] in filter_rec]
 
     if not entries:
-        if active_ticker:
-            st.info(f"Noch keine Analyse für **{ticker_label(active_ticker)}** vorhanden.")
+        if _active_ticker:
+            st.info(f"Noch keine Analyse für **{ticker_label(_active_ticker)}** vorhanden.")
         else:
             st.info("Noch keine Analysen gespeichert. Morgen früh ab 07:30 Uhr beginnt der Bot.")
     else:
@@ -1471,47 +1461,56 @@ with tab_settings:
         "Klicke danach **Bot neu starten** damit sie aktiv werden."
     )
 
-    # ── Ziele & Fokus-Modus ──────────────────────────────────────────────────
-    st.markdown("### 🎯 Ziele & Fokus-Modus")
-    s1, s2 = st.columns(2)
+    # ── Fokus-Modus AUSSERHALB des Formulars (sofortige Reaktion) ────────────
+    _focus_opts   = ["WEALTH_BUILDING", "INCOME", "TARGET_GOAL"]
+    _focus_labels = {
+        "WEALTH_BUILDING": "🚀 Vermögensaufbau – maximales Wachstum",
+        "INCOME":          "💸 Ausschüttung – monatliche Erträge",
+        "TARGET_GOAL":     "🏁 Ziel-Modus – Ziel-Betrag bis Datum",
+    }
+    _cur_focus = _env.get("FOCUS_MODE", config.focus_mode)
+    _live_focus = st.selectbox(
+        "Fokus-Modus",
+        _focus_opts,
+        index=_focus_opts.index(_cur_focus) if _cur_focus in _focus_opts else 0,
+        format_func=lambda x: _focus_labels[x],
+        key="settings_focus_live",
+    )
 
     with st.form("settings_form"):
         col_a, col_b = st.columns(2)
+        _sel_focus = st.session_state.get("settings_focus_live", _cur_focus)
 
         with col_a:
-            st.markdown("#### 🎯 Strategie")
-            focus_opts  = ["WEALTH_BUILDING", "INCOME", "TARGET_GOAL"]
-            focus_labels = {
-                "WEALTH_BUILDING": "🚀 Vermögensaufbau – maximales Wachstum",
-                "INCOME":          "💸 Ausschüttung – monatliche Erträge",
-                "TARGET_GOAL":     "🏁 Ziel-Modus – Betrag bis Datum",
-            }
-            cur_focus = _env.get("FOCUS_MODE", config.focus_mode)
-            new_focus = st.selectbox(
-                "Fokus-Modus",
-                focus_opts,
-                index=focus_opts.index(cur_focus) if cur_focus in focus_opts else 0,
-                format_func=lambda x: focus_labels[x],
-            )
+            st.markdown("#### 🎯 Ziel-Einstellungen")
 
-            new_goal_amount = st.number_input(
-                "Ziel-Betrag ($) — nur bei Ziel-Modus",
-                min_value=0.0, step=1000.0,
-                value=float(_env.get("TARGET_GOAL_AMOUNT", config.target_goal_amount or 0)),
-                disabled=(new_focus != "TARGET_GOAL"),
-            )
-            new_goal_date = st.text_input(
-                "Ziel-Datum (YYYY-MM-DD) — nur bei Ziel-Modus",
-                value=_env.get("TARGET_GOAL_DATE", config.target_goal_date or ""),
-                placeholder="2027-12-31",
-                disabled=(new_focus != "TARGET_GOAL"),
-            )
-            new_growth = st.slider(
-                "Wachstumsziel (× Startkapital)",
-                min_value=1.5, max_value=10.0, step=0.5,
-                value=float(_env.get("GROWTH_TARGET_MULTIPLE", config.growth_target_multiple)),
-                help="Ab diesem Vielfachen wechselt der Bot in die Ausschüttungsphase",
-            )
+            if _sel_focus == "TARGET_GOAL":
+                new_goal_amount = st.number_input(
+                    "Ziel-Betrag ($)",
+                    min_value=0.0, step=1000.0,
+                    value=float(_env.get("TARGET_GOAL_AMOUNT", config.target_goal_amount or 0)),
+                )
+                new_goal_date = st.text_input(
+                    "Ziel-Datum (YYYY-MM-DD)",
+                    value=_env.get("TARGET_GOAL_DATE", config.target_goal_date or ""),
+                    placeholder="2027-12-31",
+                )
+                new_growth = float(_env.get("GROWTH_TARGET_MULTIPLE", config.growth_target_multiple))
+            elif _sel_focus == "WEALTH_BUILDING":
+                new_growth = st.slider(
+                    "Wachstumsziel (× Startkapital)",
+                    min_value=1.5, max_value=10.0, step=0.5,
+                    value=float(_env.get("GROWTH_TARGET_MULTIPLE", config.growth_target_multiple)),
+                    help="Ab diesem Vielfachen des Startkapitals wechselt der Bot in die Ausschüttungsphase (z.B. 3× = $300.000 bei $100k Start)",
+                )
+                new_goal_amount = float(_env.get("TARGET_GOAL_AMOUNT", 0) or 0)
+                new_goal_date   = _env.get("TARGET_GOAL_DATE", "")
+                st.info(f"Ausschüttungsphase ab: **${config.initial_capital * new_growth:,.0f}** ({new_growth:.1f}× Startkapital)")
+            else:  # INCOME
+                new_growth = float(_env.get("GROWTH_TARGET_MULTIPLE", config.growth_target_multiple))
+                new_goal_amount = float(_env.get("TARGET_GOAL_AMOUNT", 0) or 0)
+                new_goal_date   = _env.get("TARGET_GOAL_DATE", "")
+                st.info("Im Ausschüttungs-Modus verteilt der Bot monatlich Gewinne.")
 
         with col_b:
             st.markdown("#### 🛡 Risikomanagement")
@@ -1608,7 +1607,7 @@ with tab_settings:
 
     if save_btn:
         updates = {
-            "FOCUS_MODE":             new_focus,
+            "FOCUS_MODE":             _sel_focus,
             "TARGET_GOAL_AMOUNT":     str(new_goal_amount),
             "TARGET_GOAL_DATE":       new_goal_date,
             "GROWTH_TARGET_MULTIPLE": str(new_growth),
