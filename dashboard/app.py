@@ -311,8 +311,13 @@ with tab_portfolio:
     st.divider()
 
     # Portfolio value chart
-    st.subheader("Portfoliowert – Verlauf (180 Tage)")
-    history = tracker.get_value_history(180)
+    st.subheader("Portfoliowert – Verlauf")
+    _port_range = st.radio(
+        "Zeitraum", ["1 Tag", "1 Woche", "1 Monat", "Alles"],
+        horizontal=True, key="port_range", index=3,
+    )
+    _port_days = {"1 Tag": 1, "1 Woche": 7, "1 Monat": 30, "Alles": 180}[_port_range]
+    history = tracker.get_value_history(_port_days)
     if len(history) >= 2:
         df_hist = pd.DataFrame(history[::-1])
         df_hist["snapshot_date"] = pd.to_datetime(df_hist["snapshot_date"])
@@ -442,8 +447,13 @@ with tab_regime:
         st.divider()
 
         # Regime history chart
-        st.subheader("Regime-Verlauf (30 Tage)")
-        history_r = detector.get_history(30)
+        st.subheader("Regime-Verlauf")
+        _reg_range = st.radio(
+            "Zeitraum", ["1 Woche", "2 Wochen", "1 Monat"],
+            horizontal=True, key="reg_range", index=2,
+        )
+        _reg_days = {"1 Woche": 7, "2 Wochen": 14, "1 Monat": 30}[_reg_range]
+        history_r = detector.get_history(_reg_days)
         if len(history_r) >= 2:
             df_r = pd.DataFrame(history_r[::-1])
             df_r["recorded_at"] = pd.to_datetime(df_r["recorded_at"])
@@ -1252,23 +1262,30 @@ with tab_log:
         sc5.metric("Ø Sentiment",      f"{stats.get('avg_score', 0):.2f}")
         st.divider()
 
-    # Filter controls
-    f1, f2, f3 = st.columns([2, 2, 2])
-    with f1:
-        filter_rec = st.multiselect(
-            "Empfehlung filtern",
-            ["BUY", "SKIP", "HOLD", "SELL"],
-            default=["BUY", "SKIP", "HOLD", "SELL"],
-        )
-    with f2:
-        filter_ticker = st.text_input("Ticker suchen", placeholder="z.B. NVDA")
-    with f3:
-        log_limit = st.selectbox("Anzahl anzeigen", [50, 100, 200, 500], index=0)
+    # Autocomplete: alle bisher analysierten Ticker laden
+    _all_log_tickers = sorted({e["ticker"] for e in _alog.get_recent(limit=2000)})
 
-    entries = _alog.get_recent(
-        limit=log_limit,
-        ticker=filter_ticker.strip().upper() if filter_ticker.strip() else None,
-    )
+    with st.form("log_filter_form"):
+        f1, f2, f3 = st.columns([3, 3, 2])
+        with f1:
+            filter_rec = st.multiselect(
+                "Empfehlung",
+                ["BUY", "SKIP", "HOLD", "SELL"],
+                default=["BUY", "SKIP", "HOLD", "SELL"],
+            )
+        with f2:
+            _ticker_opts = ["Alle"] + _all_log_tickers
+            filter_ticker_sel = st.selectbox(
+                "Ticker",
+                _ticker_opts,
+                format_func=lambda t: ticker_label(t) if t != "Alle" else "— Alle —",
+            )
+        with f3:
+            log_limit = st.selectbox("Anzahl", [50, 100, 200, 500], index=0)
+        _searched = st.form_submit_button("🔍 Suchen", use_container_width=True)
+
+    _filter_ticker = None if filter_ticker_sel == "Alle" else filter_ticker_sel
+    entries = _alog.get_recent(limit=log_limit, ticker=_filter_ticker)
     if filter_rec:
         entries = [e for e in entries if e["recommendation"] in filter_rec]
 
