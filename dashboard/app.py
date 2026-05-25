@@ -1487,6 +1487,8 @@ with tab_settings:
             new_monthly_eur = float(_env.get("MONTHLY_DISTRIBUTION_EUR", config.monthly_distribution_eur))
             new_buffer = int(_env.get("DISTRIBUTION_BUFFER_MONTHS", config.distribution_buffer_months))
 
+            _cap = config.initial_capital  # aktuelles Startkapital
+
             if _sel_focus == "TARGET_GOAL":
                 new_goal_amount = st.number_input(
                     "Ziel-Betrag ($)",
@@ -1499,16 +1501,46 @@ with tab_settings:
                     placeholder="2027-12-31",
                 )
                 new_growth = float(_env.get("GROWTH_TARGET_MULTIPLE", config.growth_target_multiple))
+                # Kapitalempfehlung Ziel-Modus
+                if new_goal_amount > 0 and new_goal_date:
+                    try:
+                        from datetime import date as _date
+                        _days = (_date.fromisoformat(new_goal_date) - _date.today()).days
+                        _years = max(_days / 365, 0.1)
+                        _needed_return = (new_goal_amount / _cap) ** (1 / _years) - 1
+                        _color = "green" if _needed_return < 0.20 else ("orange" if _needed_return < 0.40 else "red")
+                        _verdict = "realistisch" if _needed_return < 0.20 else ("ambitioniert" if _needed_return < 0.40 else "sehr aggressiv")
+                        st.markdown(
+                            f"**Kapitalempfehlung:** Bei **${_cap:,.0f}** Startkapital und "
+                            f"**{_years:.1f} Jahren** bis zum Zieldatum benötigst du "
+                            f"**:{_color}[{_needed_return*100:.1f}% p.a.]** — _{_verdict}_  \n"
+                            f"Empfohlenes Mindestkapital für dieses Ziel: **${new_goal_amount * 0.3:,.0f}**+ "
+                            f"(30% des Zielbetrags als Start).",
+                            unsafe_allow_html=False,
+                        )
+                    except Exception:
+                        pass
+
             elif _sel_focus == "WEALTH_BUILDING":
                 new_growth = st.slider(
                     "Wachstumsziel (× Startkapital)",
                     min_value=1.5, max_value=10.0, step=0.5,
                     value=float(_env.get("GROWTH_TARGET_MULTIPLE", config.growth_target_multiple)),
-                    help="Ab diesem Vielfachen des Startkapitals wechselt der Bot in die Ausschüttungsphase (z.B. 3× = $300.000 bei $100k Start)",
+                    help="Ab diesem Vielfachen des Startkapitals wechselt der Bot in die Ausschüttungsphase",
                 )
                 new_goal_amount = float(_env.get("TARGET_GOAL_AMOUNT", 0) or 0)
                 new_goal_date   = _env.get("TARGET_GOAL_DATE", "")
-                st.info(f"Ausschüttungsphase ab: **${config.initial_capital * new_growth:,.0f}** ({new_growth:.1f}× Startkapital)")
+                _target_val = _cap * new_growth
+                # Jahre bis Ziel bei verschiedenen Renditen
+                import math as _math
+                _y15 = _math.log(new_growth) / _math.log(1.15)
+                _y20 = _math.log(new_growth) / _math.log(1.20)
+                st.info(
+                    f"Ausschüttungsphase ab: **${_target_val:,.0f}** ({new_growth:.1f}× Startkapital)  \n"
+                    f"Zeitrahmen bei 15% p.a.: **{_y15:.1f} Jahre** · bei 20% p.a.: **{_y20:.1f} Jahre**  \n"
+                    f"Empfohlenes Mindestkapital: **$10.000+** (mehr Kapital = besser diversifiziert)"
+                )
+
             else:  # INCOME
                 new_growth = float(_env.get("GROWTH_TARGET_MULTIPLE", config.growth_target_multiple))
                 new_goal_amount = float(_env.get("TARGET_GOAL_AMOUNT", 0) or 0)
@@ -1525,9 +1557,19 @@ with tab_settings:
                     value=int(_env.get("DISTRIBUTION_BUFFER_MONTHS", config.distribution_buffer_months)),
                     help="Wie viele Monatsbeträge als Reserve gehalten werden bevor ausgeschüttet wird.",
                 )
-                st.info(
-                    f"Ziel: **{new_monthly_eur:,.0f} €/Monat** · "
-                    f"Puffer: **{new_buffer} Monate** ({new_monthly_eur * new_buffer:,.0f} €)"
+                # Kapitalempfehlung Ausschüttungs-Modus
+                _annual_eur = new_monthly_eur * 12
+                _rec_cap_15 = _annual_eur / 0.15  # benötigtes Kapital bei 15% Rendite
+                _rec_cap_20 = _annual_eur / 0.20  # bei 20% Rendite
+                _current_usd = _cap
+                _ok = _current_usd >= _rec_cap_20
+                _msg_color = "green" if _ok else ("orange" if _current_usd >= _rec_cap_15 * 0.6 else "red")
+                _verdict2 = "erreichbar" if _ok else ("knapp" if _current_usd >= _rec_cap_20 * 0.6 else "Kapital zu gering")
+                st.markdown(
+                    f"**Kapitalempfehlung für {new_monthly_eur:,.0f} €/Monat:**  \n"
+                    f"• Bei 15% Jahresrendite: **${_rec_cap_15:,.0f}** Mindestkapital  \n"
+                    f"• Bei 20% Jahresrendite: **${_rec_cap_20:,.0f}** Mindestkapital  \n"
+                    f"• Dein Kapital: **${_current_usd:,.0f}** — _{_verdict2}_"
                 )
 
         with col_b:
