@@ -1654,30 +1654,6 @@ with tab_settings:
             st.rerun()
 
     st.divider()
-    st.markdown("### 🗑 Portfolio zurücksetzen")
-    st.warning(
-        "**Achtung:** Löscht die Portfolio-Datenbank vollständig. "
-        "Alle offenen Positionen, Trade-Historie und der Kontostand werden auf das Startkapital zurückgesetzt. "
-        "Dieser Vorgang kann nicht rückgängig gemacht werden."
-    )
-    _reset_confirm = st.checkbox("Ja, ich möchte das Portfolio wirklich zurücksetzen")
-    if st.button("🗑 Portfolio zurücksetzen", disabled=not _reset_confirm, type="secondary"):
-        try:
-            _db_files = [
-                os.path.join(os.path.dirname(__file__), "..", "data", f)
-                for f in ["portfolio.db", "portfolio.db-wal", "portfolio.db-shm"]
-            ]
-            subprocess.run(["systemctl", "stop", "aktien_bot"], timeout=10)
-            for _f in _db_files:
-                if os.path.exists(_f):
-                    os.remove(_f)
-            subprocess.run(["systemctl", "start", "aktien_bot"], timeout=10)
-            st.success("Portfolio wurde zurückgesetzt und Bot neu gestartet.")
-            st.cache_resource.clear()
-        except Exception as e:
-            st.error(f"Fehler beim Zurücksetzen: {e}")
-
-    st.divider()
     st.markdown("### 📋 Aktuelle .env Werte (Übersicht)")
     st.caption("Nur zur Ansicht – Änderungen oben im Formular vornehmen.")
     _display_keys = [
