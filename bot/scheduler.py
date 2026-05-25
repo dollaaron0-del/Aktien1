@@ -581,8 +581,49 @@ def run_bot_loop(
 
         schedule.every().day.at("02:30").do(_turbo_learn_job)
 
+    # ── SL/TP-Check alle 30 Minuten ─────────────────────────────────────────
+    schedule.every(30).minutes.do(strategy.check_open_positions)
+
+    # ── Positions-Aging-Check alle 4 Stunden ────────────────────────────────
+    def _position_aging_job():
+        """Warnt per Telegram wenn eine Position zu lange ohne Gewinn gehalten wird."""
+        try:
+            positions = portfolio.all_positions()
+            if not positions:
+                return
+            prices = broker.get_prices(list(positions.keys()))
+            warnings = []
+            runners = []
+            for ticker, pos in positions.items():
+                price = prices.get(ticker, pos.entry_price)
+                days_held = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
+                pnl_pct = (price - pos.entry_price) / pos.entry_price * 100
+                ratio = days_held / max(pos.target_hold_days, 1)
+                if ratio >= 0.8 and pnl_pct < 0:
+                    warnings.append(
+                        f"  ⚠️ <b>{ticker}</b>: {days_held}/{pos.target_hold_days}d · "
+                        f"P&L {pnl_pct:+.1f}% · Kurs ${price:.2f}"
+                    )
+                elif ratio >= 1.0 and pnl_pct > 0:
+                    runners.append(
+                        f"  🏃 <b>{ticker}</b>: {days_held}d (Ziel {pos.target_hold_days}d überschritten) · "
+                        f"+{pnl_pct:.1f}% · Kurs ${price:.2f}"
+                    )
+            if warnings or runners:
+                parts = []
+                if warnings:
+                    parts.append("⚠️ <b>Aging-Warnung – Positionen ohne Gewinn nahe Halteziel:</b>\n" + "\n".join(warnings))
+                if runners:
+                    parts.append("🏃 <b>Läufer – Haltedauer überschritten, noch im Gewinn:</b>\n" + "\n".join(runners))
+                TelegramNotifier().send("\n\n".join(parts))
+                for line in warnings + runners:
+                    console.print(f"  {line}")
+        except Exception as e:
+            log.warning("Position-Aging-Job fehlgeschlagen: %s", e)
+
+    schedule.every(4).hours.do(_position_aging_job)
+
     # Hourly tasks (7 days a week)
-    schedule.every().hour.do(strategy.check_open_positions)
     if config.enable_social_scan:
         schedule.every().hour.do(_social_scan_job)
 
@@ -663,7 +704,7 @@ def run_bot_loop(
             ]
         )
 
-    console.print(f"[dim]Stop-Loss-Check stündlich. Wochenvorbereitung Sa 09:00 + So 14:00. Ctrl+C zum Beenden.[/dim]")
+    console.print(f"[dim]SL/TP-Check alle 30 Min · Aging-Check alle 4h · Wochenvorbereitung Sa 09:00 + So 14:00 · Ctrl+C zum Beenden.[/dim]")
 
     try:
         while True:

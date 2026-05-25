@@ -307,12 +307,26 @@ with tab_portfolio:
     positions = portfolio.all_positions()
     if positions:
         rows = []
+        _aging_warnings = []
         for ticker, pos in positions.items():
             price   = prices.get(ticker, pos.entry_price)
             pnl     = (price - pos.entry_price) * pos.shares
             pnl_pct = (price - pos.entry_price) / pos.entry_price * 100
             days    = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
             is_hedge = pos.rationale and pos.rationale.startswith("[HEDGE]")
+            age_ratio = days / max(pos.target_hold_days, 1)
+            if age_ratio >= 1.0:
+                age_icon = "🔴"
+            elif age_ratio >= 0.8:
+                age_icon = "🟡"
+            else:
+                age_icon = "🟢"
+            age_str = f"{age_icon} {days}/{pos.target_hold_days}d"
+            if age_ratio >= 0.8 and pnl_pct < 0:
+                _aging_warnings.append(
+                    f"⚠️ **{ticker_label(ticker)}** seit {days}d ohne Gewinn "
+                    f"(Ziel {pos.target_hold_days}d · P&L {pnl_pct:+.1f}%)"
+                )
             rows.append({
                 "Typ":        "🛡 Hedge" if is_hedge else "📈 Long",
                 "Ticker":     ticker,
@@ -323,9 +337,13 @@ with tab_portfolio:
                 "P&L %":      round(pnl_pct, 2),
                 "SL $":       pos.stop_loss,
                 "TP $":       pos.take_profit,
-                "Tage":       days,
+                "Alter":      age_str,
                 "Katalysatoren": ", ".join(pos.entry_catalysts[:2]) if pos.entry_catalysts else "–",
             })
+
+        if _aging_warnings:
+            for _w in _aging_warnings:
+                st.warning(_w)
         df = pd.DataFrame(rows)
 
         def _color_pnl(val):
@@ -1287,6 +1305,8 @@ with st.sidebar:
     st.write(f"**Max Hedge:** {config.max_hedge_pct*100:.0f}%")
     st.write(f"**Börsen:** {', '.join(config.market_exchanges)}")
     st.write(f"**Social Scan:** {'✓' if config.enable_social_scan else '✗'}")
+    st.write(f"**SL/TP-Check:** alle 30 Min")
+    st.write(f"**Aging-Check:** alle 4h")
     st.write(f"**Kelly Sizing:** {'✓' if config.use_kelly_sizing else '✗'}")
     st.divider()
 
