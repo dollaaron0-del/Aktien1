@@ -34,19 +34,41 @@ from portfolio.goal_risk_assessor import GoalRiskAssessor, OK, CAUTION, DANGER, 
 
 # ─── Ticker → Firmenname ──────────────────────────────────────────────────────
 _US_NAMES = {
+    # Mega-Cap Tech
     "AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA", "TSLA": "Tesla",
     "AMZN": "Amazon", "GOOGL": "Alphabet", "GOOG": "Alphabet", "META": "Meta",
-    "NFLX": "Netflix", "AMD": "AMD", "INTC": "Intel", "QCOM": "Qualcomm",
-    "TSM": "TSMC", "ORCL": "Oracle", "CRM": "Salesforce", "ADBE": "Adobe",
-    "SHOP": "Shopify", "SNOW": "Snowflake", "PLTR": "Palantir",
+    "AVGO": "Broadcom", "ORCL": "Oracle", "ADBE": "Adobe", "CRM": "Salesforce",
+    "AMD": "AMD", "INTC": "Intel", "QCOM": "Qualcomm", "CSCO": "Cisco",
+    "TXN": "Texas Instruments", "INTU": "Intuit", "NOW": "ServiceNow",
+    "PANW": "Palo Alto Networks", "SNOW": "Snowflake", "PLTR": "Palantir",
+    "TSM": "TSMC", "ASML": "ASML", "AMAT": "Applied Materials",
+    "LRCX": "Lam Research", "MU": "Micron", "MRVL": "Marvell", "ARM": "ARM Holdings",
+    # Finanzen
     "JPM": "JPMorgan", "BAC": "Bank of America", "GS": "Goldman Sachs",
-    "V": "Visa", "MA": "Mastercard", "PYPL": "PayPal",
-    "JNJ": "J&J", "PFE": "Pfizer", "MRK": "Merck", "ABBV": "AbbVie",
-    "UNH": "UnitedHealth", "LLY": "Eli Lilly",
-    "XOM": "ExxonMobil", "CVX": "Chevron",
+    "MS": "Morgan Stanley", "WFC": "Wells Fargo", "BLK": "BlackRock",
+    "V": "Visa", "MA": "Mastercard", "AXP": "American Express", "PYPL": "PayPal",
+    "COIN": "Coinbase",
+    # Healthcare
+    "LLY": "Eli Lilly", "NVO": "Novo Nordisk", "UNH": "UnitedHealth",
+    "JNJ": "J&J", "MRK": "Merck", "PFE": "Pfizer", "ABBV": "AbbVie",
+    "TMO": "Thermo Fisher", "ABT": "Abbott",
+    # Energie / Industrie
+    "XOM": "ExxonMobil", "CVX": "Chevron", "COP": "ConocoPhillips",
+    "CAT": "Caterpillar", "BA": "Boeing", "GE": "GE Aerospace",
+    "RTX": "Raytheon", "HON": "Honeywell",
+    # Konsum / Retail
+    "WMT": "Walmart", "COST": "Costco", "HD": "Home Depot",
+    "MCD": "McDonald's", "NKE": "Nike", "SBUX": "Starbucks",
+    "DIS": "Disney", "NFLX": "Netflix",
+    # Wachstum
+    "SHOP": "Shopify", "UBER": "Uber", "ABNB": "Airbnb",
+    "RIVN": "Rivian", "LCID": "Lucid", "SOFI": "SoFi", "HOOD": "Robinhood",
+    # ETFs / Inverse
     "SPY": "S&P 500 ETF", "QQQ": "Nasdaq ETF", "VTI": "Total Market ETF",
     "SH": "S&P 500 Inv.", "PSQ": "Nasdaq Inv.", "SQQQ": "Nasdaq 3× Inv.",
+    # Krypto
     "BTC-USD": "Bitcoin", "ETH-USD": "Ethereum", "SOL-USD": "Solana",
+    "BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana",
 }
 _EU_NAMES = {ticker: name for ticker, (name, *_) in EU_UNIVERSE.items()}
 _ALL_NAMES = {**_US_NAMES, **_EU_NAMES}
@@ -1525,6 +1547,26 @@ with tab_settings:
                 value=_env.get("ENABLE_SOCIAL_SCAN", "false").lower() in ("1","true","yes"),
             )
 
+        st.markdown("#### ⚡ Spezial-Modi")
+        st.caption("Diese Modi überschreiben die Risiko-Einstellungen oben.")
+        m1, m2 = st.columns(2)
+        with m1:
+            new_turbo = st.toggle(
+                "🚀 Turbo-Modus",
+                value=_env.get("TURBO_MODE", "false").lower() in ("1","true","yes"),
+                help="Aggressiv: SL 12%, TP 40%, Positionsgröße 40%, Kauf-Schwelle 0.45. Nur für Paper-Trading empfohlen.",
+            )
+            if new_turbo:
+                st.warning("Turbo: SL 12% · TP 40% · Max-Position 40% · Kauf-Score 0.45")
+        with m2:
+            new_expl = st.toggle(
+                "🔬 Explorations-Modus",
+                value=_env.get("EXPLORATION_MODE", "false").lower() in ("1","true","yes"),
+                help="Testet schwächere Signale (Score ab 0.55) mit kleineren Positionen um neue Muster zu entdecken.",
+            )
+            if new_expl:
+                st.info("Exploration: Kauf-Score 0.55 · Min-Quellen 1 · Max-Position 25%")
+
         st.divider()
         save_btn = st.form_submit_button("💾 Einstellungen speichern", use_container_width=True, type="primary")
 
@@ -1545,6 +1587,8 @@ with tab_settings:
             "EU_STOCKS_ENABLED":      "true" if new_eu else "false",
             "EU_WATCHLIST":           ",".join(t.strip().upper() for t in new_eu_wl.split(",") if t.strip()),
             "ENABLE_SOCIAL_SCAN":     "true" if new_social else "false",
+            "TURBO_MODE":             "true" if new_turbo else "false",
+            "EXPLORATION_MODE":       "true" if new_expl else "false",
         }
         try:
             _write_env(updates)
@@ -1553,7 +1597,7 @@ with tab_settings:
             st.error(f"Fehler beim Speichern: {e}")
 
     st.divider()
-    st.markdown("### 🔄 Bot-Dienste")
+    st.markdown("### 🔄 Bot-Dienste & Zurücksetzen")
     r1, r2, r3 = st.columns(3)
     with r1:
         if st.button("▶️ Bot neu starten", use_container_width=True, type="primary"):
@@ -1566,7 +1610,7 @@ with tab_settings:
         if st.button("▶️ Dashboard neu starten", use_container_width=True):
             try:
                 subprocess.run(["systemctl", "restart", "aktien_dashboard"], check=True, timeout=10)
-                st.info("Dashboard-Dienst neu gestartet (Seite lädt gleich neu).")
+                st.info("Dashboard-Dienst neu gestartet.")
             except Exception as e:
                 st.error(f"Fehler: {e}")
     with r3:
@@ -1575,11 +1619,36 @@ with tab_settings:
             st.rerun()
 
     st.divider()
+    st.markdown("### 🗑 Portfolio zurücksetzen")
+    st.warning(
+        "**Achtung:** Löscht die Portfolio-Datenbank vollständig. "
+        "Alle offenen Positionen, Trade-Historie und der Kontostand werden auf das Startkapital zurückgesetzt. "
+        "Dieser Vorgang kann nicht rückgängig gemacht werden."
+    )
+    _reset_confirm = st.checkbox("Ja, ich möchte das Portfolio wirklich zurücksetzen")
+    if st.button("🗑 Portfolio zurücksetzen", disabled=not _reset_confirm, type="secondary"):
+        try:
+            _db_files = [
+                os.path.join(os.path.dirname(__file__), "..", "data", f)
+                for f in ["portfolio.db", "portfolio.db-wal", "portfolio.db-shm"]
+            ]
+            subprocess.run(["systemctl", "stop", "aktien_bot"], timeout=10)
+            for _f in _db_files:
+                if os.path.exists(_f):
+                    os.remove(_f)
+            subprocess.run(["systemctl", "start", "aktien_bot"], timeout=10)
+            st.success("Portfolio wurde zurückgesetzt und Bot neu gestartet.")
+            st.cache_resource.clear()
+        except Exception as e:
+            st.error(f"Fehler beim Zurücksetzen: {e}")
+
+    st.divider()
     st.markdown("### 📋 Aktuelle .env Werte (Übersicht)")
     st.caption("Nur zur Ansicht – Änderungen oben im Formular vornehmen.")
     _display_keys = [
         "FOCUS_MODE","TARGET_GOAL_AMOUNT","TARGET_GOAL_DATE","GROWTH_TARGET_MULTIPLE",
         "STOP_LOSS_PCT","TAKE_PROFIT_PCT","MAX_POSITION_PCT","BUY_THRESHOLD","SELL_THRESHOLD",
+        "TURBO_MODE","EXPLORATION_MODE",
         "WATCHLIST","AUTO_SCAN_WATCHLIST","SCAN_MAX_PICKS","EU_STOCKS_ENABLED","EU_WATCHLIST",
         "ENABLE_SOCIAL_SCAN","INITIAL_CAPITAL","BROKER_MODE",
     ]
