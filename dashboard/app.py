@@ -195,7 +195,7 @@ st.divider()
 # ═══════════════════════════════════════════════════════════════════════════════
 # TABS
 # ═══════════════════════════════════════════════════════════════════════════════
-tab_portfolio, tab_regime, tab_queue, tab_social, tab_briefing, tab_trades, tab_tech, tab_watchlist, tab_log = st.tabs([
+tab_portfolio, tab_regime, tab_queue, tab_social, tab_briefing, tab_trades, tab_tech, tab_watchlist, tab_log, tab_settings = st.tabs([
     "📊 Portfolio",
     "🛡 Markt-Regime",
     f"📋 Signal-Queue ({pending_cnt})",
@@ -205,6 +205,7 @@ tab_portfolio, tab_regime, tab_queue, tab_social, tab_briefing, tab_trades, tab_
     "📉 Technicals",
     "🔭 Watchlist",
     "🔍 Analyse-Log",
+    "⚙️ Einstellungen",
 ])
 
 
@@ -1351,3 +1352,236 @@ with tab_log:
                     st.markdown("**⚡ Kaufkatalysatoren:** " + " · ".join(catalysts[:4]))
                 if risks:
                     st.markdown("**⚠️ Risiken:** " + " · ".join(risks[:3]))
+
+
+# ══════════════════════════════════════════════════════════
+# TAB 10 – EINSTELLUNGEN
+# ══════════════════════════════════════════════════════════
+with tab_settings:
+    import subprocess
+    import re as _re
+
+    _ENV_PATH = os.path.join(os.path.dirname(__file__), "..", ".env")
+
+    def _read_env() -> dict:
+        """Liest .env als dict."""
+        result = {}
+        try:
+            with open(_ENV_PATH) as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, _, v = line.partition("=")
+                        result[k.strip()] = v.strip()
+        except Exception:
+            pass
+        return result
+
+    def _write_env(updates: dict) -> None:
+        """Schreibt einzelne Keys in die .env, fügt fehlende am Ende ein."""
+        try:
+            with open(_ENV_PATH) as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            lines = []
+
+        written = set()
+        new_lines = []
+        for line in lines:
+            if line.strip().startswith("#") or "=" not in line:
+                new_lines.append(line)
+                continue
+            key = line.split("=", 1)[0].strip()
+            if key in updates:
+                new_lines.append(f"{key}={updates[key]}\n")
+                written.add(key)
+            else:
+                new_lines.append(line)
+
+        for key, val in updates.items():
+            if key not in written:
+                new_lines.append(f"{key}={val}\n")
+
+        with open(_ENV_PATH, "w") as f:
+            f.writelines(new_lines)
+
+    _env = _read_env()
+
+    st.subheader("⚙️ Bot-Einstellungen")
+    st.caption(
+        "Änderungen werden sofort in die `.env` geschrieben. "
+        "Klicke danach **Bot neu starten** damit sie aktiv werden."
+    )
+
+    # ── Ziele & Fokus-Modus ──────────────────────────────────────────────────
+    st.markdown("### 🎯 Ziele & Fokus-Modus")
+    s1, s2 = st.columns(2)
+
+    with st.form("settings_form"):
+        col_a, col_b = st.columns(2)
+
+        with col_a:
+            st.markdown("#### 🎯 Strategie")
+            focus_opts  = ["WEALTH_BUILDING", "INCOME", "TARGET_GOAL"]
+            focus_labels = {
+                "WEALTH_BUILDING": "🚀 Vermögensaufbau – maximales Wachstum",
+                "INCOME":          "💸 Ausschüttung – monatliche Erträge",
+                "TARGET_GOAL":     "🏁 Ziel-Modus – Betrag bis Datum",
+            }
+            cur_focus = _env.get("FOCUS_MODE", config.focus_mode)
+            new_focus = st.selectbox(
+                "Fokus-Modus",
+                focus_opts,
+                index=focus_opts.index(cur_focus) if cur_focus in focus_opts else 0,
+                format_func=lambda x: focus_labels[x],
+            )
+
+            new_goal_amount = st.number_input(
+                "Ziel-Betrag ($) — nur bei Ziel-Modus",
+                min_value=0.0, step=1000.0,
+                value=float(_env.get("TARGET_GOAL_AMOUNT", config.target_goal_amount or 0)),
+                disabled=(new_focus != "TARGET_GOAL"),
+            )
+            new_goal_date = st.text_input(
+                "Ziel-Datum (YYYY-MM-DD) — nur bei Ziel-Modus",
+                value=_env.get("TARGET_GOAL_DATE", config.target_goal_date or ""),
+                placeholder="2027-12-31",
+                disabled=(new_focus != "TARGET_GOAL"),
+            )
+            new_growth = st.slider(
+                "Wachstumsziel (× Startkapital)",
+                min_value=1.5, max_value=10.0, step=0.5,
+                value=float(_env.get("GROWTH_TARGET_MULTIPLE", config.growth_target_multiple)),
+                help="Ab diesem Vielfachen wechselt der Bot in die Ausschüttungsphase",
+            )
+
+        with col_b:
+            st.markdown("#### 🛡 Risikomanagement")
+            new_sl = st.slider(
+                "Stop-Loss %",
+                min_value=3, max_value=20, step=1,
+                value=int(round(float(_env.get("STOP_LOSS_PCT", config.stop_loss_pct)) * 100)),
+                help="Position wird automatisch verkauft wenn Verlust diesen Wert erreicht",
+            )
+            new_tp = st.slider(
+                "Take-Profit %",
+                min_value=10, max_value=60, step=5,
+                value=int(round(float(_env.get("TAKE_PROFIT_PCT", config.take_profit_pct)) * 100)),
+                help="Position wird automatisch verkauft wenn Gewinn diesen Wert erreicht",
+            )
+            new_maxpos_pct = st.slider(
+                "Max. Positionsgröße % des Portfolios",
+                min_value=5, max_value=30, step=1,
+                value=int(round(float(_env.get("MAX_POSITION_PCT", config.max_position_pct)) * 100)),
+            )
+            new_buy_thr = st.slider(
+                "Kauf-Schwelle (Sentiment-Score)",
+                min_value=0.50, max_value=0.95, step=0.05,
+                value=float(_env.get("BUY_THRESHOLD", config.buy_threshold)),
+                help="Nur Aktien mit Sentiment-Score ≥ diesem Wert werden gekauft",
+            )
+            new_sell_thr = st.slider(
+                "Verkauf-Schwelle (Sentiment-Score)",
+                min_value=0.10, max_value=0.50, step=0.05,
+                value=float(_env.get("SELL_THRESHOLD", config.sell_threshold)),
+                help="Positionen werden verkauft wenn der Score unter diesen Wert fällt",
+            )
+
+        st.markdown("#### 📋 Watchlist & Scanning")
+        w1, w2 = st.columns(2)
+        with w1:
+            cur_wl = ",".join(config.watchlist)
+            new_wl_raw = st.text_area(
+                "Watchlist (Komma-getrennt)",
+                value=_env.get("WATCHLIST", cur_wl),
+                height=80,
+                help="Ticker die immer analysiert werden, z.B. AAPL,MSFT,NVDA",
+            )
+            new_auto_scan = st.toggle(
+                "Dynamische Watchlist (AUTO_SCAN)",
+                value=_env.get("AUTO_SCAN_WATCHLIST", "false").lower() in ("1","true","yes"),
+                help="Bot wählt täglich automatisch die vielversprechendsten Aktien",
+            )
+            new_scan_picks = st.slider(
+                "Max. Auto-Scan Picks",
+                min_value=3, max_value=20, step=1,
+                value=int(_env.get("SCAN_MAX_PICKS", config.scan_max_picks or 3)),
+            )
+        with w2:
+            new_eu = st.toggle(
+                "EU-Aktien aktivieren",
+                value=_env.get("EU_STOCKS_ENABLED", "false").lower() in ("1","true","yes"),
+            )
+            cur_eu_wl = ",".join(config.eu_watchlist) if config.eu_watchlist else ""
+            new_eu_wl = st.text_area(
+                "EU-Watchlist (leer = Auto-Scan)",
+                value=_env.get("EU_WATCHLIST", cur_eu_wl),
+                height=80,
+                placeholder="SAP.DE,ASML.AS,MC.PA",
+                disabled=not new_eu,
+            )
+            new_social = st.toggle(
+                "Social Scan (Reddit/StockTwits)",
+                value=_env.get("ENABLE_SOCIAL_SCAN", "false").lower() in ("1","true","yes"),
+            )
+
+        st.divider()
+        save_btn = st.form_submit_button("💾 Einstellungen speichern", use_container_width=True, type="primary")
+
+    if save_btn:
+        updates = {
+            "FOCUS_MODE":             new_focus,
+            "TARGET_GOAL_AMOUNT":     str(new_goal_amount),
+            "TARGET_GOAL_DATE":       new_goal_date,
+            "GROWTH_TARGET_MULTIPLE": str(new_growth),
+            "STOP_LOSS_PCT":          str(new_sl / 100),
+            "TAKE_PROFIT_PCT":        str(new_tp / 100),
+            "MAX_POSITION_PCT":       str(new_maxpos_pct / 100),
+            "BUY_THRESHOLD":          str(new_buy_thr),
+            "SELL_THRESHOLD":         str(new_sell_thr),
+            "WATCHLIST":              ",".join(t.strip().upper() for t in new_wl_raw.split(",") if t.strip()),
+            "AUTO_SCAN_WATCHLIST":    "true" if new_auto_scan else "false",
+            "SCAN_MAX_PICKS":         str(new_scan_picks),
+            "EU_STOCKS_ENABLED":      "true" if new_eu else "false",
+            "EU_WATCHLIST":           ",".join(t.strip().upper() for t in new_eu_wl.split(",") if t.strip()),
+            "ENABLE_SOCIAL_SCAN":     "true" if new_social else "false",
+        }
+        try:
+            _write_env(updates)
+            st.success("✅ Einstellungen gespeichert! Bitte Bot neu starten.")
+        except Exception as e:
+            st.error(f"Fehler beim Speichern: {e}")
+
+    st.divider()
+    st.markdown("### 🔄 Bot-Dienste")
+    r1, r2, r3 = st.columns(3)
+    with r1:
+        if st.button("▶️ Bot neu starten", use_container_width=True, type="primary"):
+            try:
+                subprocess.run(["systemctl", "restart", "aktien_bot"], check=True, timeout=10)
+                st.success("Bot wurde neu gestartet.")
+            except Exception as e:
+                st.error(f"Fehler: {e}")
+    with r2:
+        if st.button("▶️ Dashboard neu starten", use_container_width=True):
+            try:
+                subprocess.run(["systemctl", "restart", "aktien_dashboard"], check=True, timeout=10)
+                st.info("Dashboard-Dienst neu gestartet (Seite lädt gleich neu).")
+            except Exception as e:
+                st.error(f"Fehler: {e}")
+    with r3:
+        if st.button("🔄 Cache leeren & neu laden", use_container_width=True):
+            st.cache_resource.clear()
+            st.rerun()
+
+    st.divider()
+    st.markdown("### 📋 Aktuelle .env Werte (Übersicht)")
+    st.caption("Nur zur Ansicht – Änderungen oben im Formular vornehmen.")
+    _display_keys = [
+        "FOCUS_MODE","TARGET_GOAL_AMOUNT","TARGET_GOAL_DATE","GROWTH_TARGET_MULTIPLE",
+        "STOP_LOSS_PCT","TAKE_PROFIT_PCT","MAX_POSITION_PCT","BUY_THRESHOLD","SELL_THRESHOLD",
+        "WATCHLIST","AUTO_SCAN_WATCHLIST","SCAN_MAX_PICKS","EU_STOCKS_ENABLED","EU_WATCHLIST",
+        "ENABLE_SOCIAL_SCAN","INITIAL_CAPITAL","BROKER_MODE",
+    ]
+    env_rows = [{"Einstellung": k, "Wert": _env.get(k, "–")} for k in _display_keys]
+    st.dataframe(pd.DataFrame(env_rows), use_container_width=True, hide_index=True)
