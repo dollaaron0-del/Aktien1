@@ -36,6 +36,7 @@ from analyzers.multi_timeframe_sentiment import MultiTimeframeSentiment
 from analyzers.reentry_tracker import ReEntryTracker
 from analyzers.analysis_cache import AnalysisCache
 from analyzers.analysis_log import AnalysisLog
+import analyzers.user_request_queue as _urq
 from analyzers.rl_agent import RLAgent
 from analyzers.earnings_predictor import EarningsPredictor
 from analyzers.cross_asset import CrossAssetSignals
@@ -113,6 +114,13 @@ def _get_watchlist(portfolio: Portfolio) -> List[str]:
         for t in config.crypto_watchlist:
             if t not in base:
                 base.append(t)
+
+    # Vom Dashboard manuell angeforderte Ticker einmalig analysieren
+    requested = _urq.consume_all()
+    for t in requested:
+        if t not in base:
+            log.info("Nutzeranfrage: %s wird in diesem Zyklus analysiert", t)
+            base.append(t)
 
     return base
 

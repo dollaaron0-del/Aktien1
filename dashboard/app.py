@@ -1290,7 +1290,20 @@ with tab_log:
         entries = [e for e in entries if e["recommendation"] in filter_rec]
 
     if not entries:
-        st.info("Noch keine Analysen gespeichert. Morgen früh ab 07:30 Uhr beginnt der Bot.")
+        from analyzers.user_request_queue import add_ticker as _req_ticker, peek as _peek_requests
+        if _filter_ticker:
+            already_pending = _filter_ticker in _peek_requests()
+            if already_pending:
+                st.success(f"**{ticker_label(_filter_ticker)}** ist bereits für den nächsten Analysezyklus vorgemerkt.")
+            else:
+                st.warning(
+                    f"**{ticker_label(_filter_ticker)}** wurde noch nicht analysiert."
+                )
+                if st.button(f"➕ {_filter_ticker} im nächsten Zyklus analysieren lassen", use_container_width=False):
+                    _req_ticker(_filter_ticker)
+                    st.success(f"**{_filter_ticker}** wurde zur Analyse-Queue hinzugefügt. Der Bot analysiert ihn beim nächsten Zyklus.")
+        else:
+            st.info("Noch keine Analysen gespeichert. Morgen früh ab 07:30 Uhr beginnt der Bot.")
     else:
         _REC_ICON = {"BUY": "🟢", "SKIP": "⏭", "HOLD": "⏸", "SELL": "🔴"}
         _DIR_ICON = {"BULLISH": "📈", "NEUTRAL": "➡️", "BEARISH": "📉"}
