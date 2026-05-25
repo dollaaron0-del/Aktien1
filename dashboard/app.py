@@ -485,17 +485,32 @@ with tab_regime:
 
         # Regime history chart
         st.subheader("Regime-Verlauf")
+
+        # Alle vorhandenen Daten laden um Verfügbarkeit anzuzeigen
+        _all_history_r = detector.get_history(365)
+        _avail_days = 0
+        if _all_history_r:
+            from datetime import timezone as _tz
+            _oldest = pd.to_datetime(_all_history_r[-1]["recorded_at"])
+            _avail_days = max(1, (datetime.utcnow() - _oldest.replace(tzinfo=None)).days + 1)
+
         _reg_range = st.radio(
             "Zeitraum", ["1 Woche", "2 Wochen", "1 Monat"],
             horizontal=True, key="reg_range", index=2,
         )
         _reg_days = {"1 Woche": 7, "2 Wochen": 14, "1 Monat": 30}[_reg_range]
+
+        if _avail_days < _reg_days:
+            st.caption(
+                f"Daten vorhanden seit: **{_avail_days} Tag(e)** — "
+                f"der gewählte Zeitraum wird mit mehr Daten gefüllt sobald der Bot länger läuft."
+            )
+
         history_r = detector.get_history(_reg_days)
         if len(history_r) >= 2:
             import altair as _alt
             df_r = pd.DataFrame(history_r[::-1])
             df_r["recorded_at"] = pd.to_datetime(df_r["recorded_at"])
-            _reg_color_map = {"BULL": "#00e676", "NEUTRAL": "#ffd740", "BEAR": "#ff7043", "CRISIS": "#f44336"}
             _reg_chart = _alt.Chart(df_r).mark_line(color="#4fc3f7", strokeWidth=2).encode(
                 x=_alt.X("recorded_at:T", title="Datum"),
                 y=_alt.Y("recession_score:Q", title="Rezessions-Score", scale=_alt.Scale(domain=[0, 1])),
