@@ -382,12 +382,30 @@ with tab_portfolio:
         import altair as _alt
         df_hist = pd.DataFrame(history[::-1])
         df_hist["snapshot_date"] = pd.to_datetime(df_hist["snapshot_date"])
-        _port_chart = _alt.Chart(df_hist).mark_line(color="#00e676").encode(
+        _start_val = float(df_hist["total_value"].iloc[0])
+        _port_line = _alt.Chart(df_hist).mark_line(color="#00e676", strokeWidth=2).encode(
             x=_alt.X("snapshot_date:T", title="Datum"),
-            y=_alt.Y("total_value:Q", title="Portfoliowert ($)", scale=_alt.Scale(zero=False)),
-            tooltip=[_alt.Tooltip("snapshot_date:T", title="Datum"), _alt.Tooltip("total_value:Q", title="Wert $", format=",.2f")],
-        ).properties(height=280)
-        st.altair_chart(_port_chart, use_container_width=True)
+            y=_alt.Y("total_value:Q", title="Wert ($)", scale=_alt.Scale(zero=False)),
+            tooltip=[_alt.Tooltip("snapshot_date:T", title="Datum"), _alt.Tooltip("total_value:Q", title="Portfolio $", format=",.2f")],
+        )
+        # SPY Benchmark overlay
+        _spy_df = _get_spy_benchmark(_port_days, _start_val)
+        if not _spy_df.empty:
+            _spy_df = _spy_df[_spy_df["snapshot_date"] >= df_hist["snapshot_date"].min()]
+            _spy_line = _alt.Chart(_spy_df).mark_line(
+                color="#888888", strokeDash=[6, 3], strokeWidth=1.5
+            ).encode(
+                x=_alt.X("snapshot_date:T"),
+                y=_alt.Y("spy_value:Q", scale=_alt.Scale(zero=False)),
+                tooltip=[_alt.Tooltip("snapshot_date:T", title="Datum"), _alt.Tooltip("spy_value:Q", title="S&P 500 (normiert $)", format=",.2f")],
+            )
+            st.altair_chart(
+                _alt.layer(_port_line, _spy_line).properties(height=280).resolve_scale(y="shared"),
+                use_container_width=True,
+            )
+            st.caption("🟢 Portfolio  ·  ╌╌╌ S&P 500 (normiert auf Startkapital)")
+        else:
+            st.altair_chart(_port_line.properties(height=280), use_container_width=True)
     else:
         st.info("Noch keine Chart-Daten — erscheint nach dem ersten Analysezyklus.")
 
@@ -404,7 +422,15 @@ with tab_portfolio:
                 "P&L $":   round(t.pnl, 2) if t.pnl else 0,
                 "Grund":   (t.reason or "")[:60],
             } for t in reversed(trades)]
-            st.dataframe(pd.DataFrame(trade_rows), use_container_width=True, hide_index=True)
+            _df_all_trades = pd.DataFrame(trade_rows)
+            st.dataframe(_df_all_trades, use_container_width=True, hide_index=True)
+            st.download_button(
+                "📥 CSV exportieren",
+                _df_all_trades.to_csv(index=False).encode("utf-8"),
+                f"trades_{datetime.now().strftime('%Y%m%d')}.csv",
+                "text/csv",
+                use_container_width=True,
+            )
         else:
             st.info("Noch keine Transaktionen.")
 
@@ -903,6 +929,17 @@ with tab_trades:
                 ),
                 use_container_width=True, hide_index=True,
             )
+            # Full export: all closed trades
+            _all_closed = tracker.get_recent_trades(500)
+            if _all_closed:
+                _df_export = pd.DataFrame(_all_closed)
+                st.download_button(
+                    "📥 Alle Trades als CSV exportieren",
+                    _df_export.to_csv(index=False).encode("utf-8"),
+                    f"closed_trades_{datetime.now().strftime('%Y%m%d')}.csv",
+                    "text/csv",
+                    use_container_width=True,
+                )
 
     st.divider()
 
@@ -1204,6 +1241,92 @@ with tab_watchlist:
             "Social-Spikes und Options-Flow während des Betriebs."
         )
 
+    st.divider()
+
+    # ── Watchlist bearbeiten ─────────────────────────────────────────────────
+    st.subheader("✏️ Watchlist bearbeiten")
+    st.caption("Änderungen werden sofort in die .env geschrieben. Bot danach neu starten.")
+
+    def _wl_read() -> list:
+        try:
+            _p = os.path.join(os.path.dirname(__file__), "..", ".env")
+            with open(_p) as _f:
+                for _l in _f:
+                    if _l.strip().startswith("WATCHLIST="):
+                        return [t.strip().upper() for t in _l.strip().split("=", 1)[1].split(",") if t.strip()]
+        except Exception:
+            pass
+        return list(config.watchlist)
+
+    def _wl_write(tickers: list) -> None:
+        _p = os.path.join(os.path.dirname(__file__), "..", ".env")
+        _val = ",".join(tickers)
+        try:
+            with open(_p) as _f:
+                _lines = _f.readlines()
+        except FileNotFoundError:
+            _lines = []
+        _written = False
+        _new = []
+        for _l in _lines:
+            if _l.strip().startswith("WATCHLIST="):
+                _new.append(f"WATCHLIST={_val}\n")
+                _written = True
+            else:
+                _new.append(_l)
+        if not _written:
+            _new.append(f"WATCHLIST={_val}\n")
+        with open(_p, "w") as _f:
+            _f.writelines(_new)
+
+    _cur_wl = _wl_read()
+    _wl_all_opts = sorted(set(list(_ALL_NAMES.keys()) + _cur_wl))
+
+    _wl_col1, _wl_col2 = st.columns([3, 2])
+    with _wl_col1:
+        _keep = st.multiselect(
+            "Aktuelle Watchlist (Häkchen entfernen = löschen)",
+            options=_cur_wl,
+            default=_cur_wl,
+            format_func=ticker_label,
+            key="wl_keep_ms",
+        )
+    with _wl_col2:
+        _add_opt = st.selectbox(
+            "Ticker hinzufügen",
+            options=[""] + _wl_all_opts,
+            index=0,
+            format_func=lambda x: "— Ticker auswählen —" if x == "" else ticker_label(x),
+            key="wl_add_select",
+        )
+        _add_manual = st.text_input(
+            "… oder manuell eingeben",
+            placeholder="z.B. TSLA oder BMW.DE",
+            key="wl_add_manual",
+        ).strip().upper()
+
+    _wl_save_col, _wl_restart_col = st.columns(2)
+    with _wl_save_col:
+        if st.button("💾 Watchlist speichern", use_container_width=True, type="primary", key="wl_save_btn"):
+            _final_wl = list(_keep)
+            for _t in [_add_opt, _add_manual]:
+                if _t and _t not in _final_wl:
+                    _final_wl.append(_t)
+            if _final_wl:
+                _wl_write(_final_wl)
+                st.success(f"✅ Gespeichert: {', '.join(ticker_label(t) for t in _final_wl)}")
+                st.info("Bot neu starten damit die neue Watchlist aktiv wird.")
+            else:
+                st.error("Watchlist darf nicht leer sein.")
+    with _wl_restart_col:
+        if st.button("▶️ Bot neu starten", use_container_width=True, key="wl_restart_btn"):
+            try:
+                import subprocess as _wl_sp
+                _wl_sp.run(["systemctl", "restart", "aktien_bot"], check=True, timeout=10)
+                st.success("Bot wurde neu gestartet.")
+            except Exception as _wl_e:
+                st.error(f"Fehler: {_wl_e}")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
@@ -1339,6 +1462,30 @@ with st.sidebar:
     if st.button("🔄 Cache leeren & neu laden", use_container_width=True):
         st.cache_resource.clear()
         st.rerun()
+
+
+@st.cache_data(ttl=3600)
+def _get_spy_benchmark(days: int, start_value: float) -> "pd.DataFrame":
+    """SPY-Kursverlauf normiert auf start_value für Benchmark-Overlay."""
+    try:
+        import yfinance as _yf
+        from datetime import timedelta as _td2
+        _end = datetime.utcnow()
+        _start = _end - _td2(days=days + 5)
+        _spy = _yf.Ticker("SPY").history(
+            start=_start.strftime("%Y-%m-%d"),
+            end=_end.strftime("%Y-%m-%d"),
+        )
+        if _spy.empty:
+            return pd.DataFrame()
+        _spy = _spy.reset_index()[["Date", "Close"]].rename(
+            columns={"Date": "snapshot_date", "Close": "spy_value"}
+        )
+        _spy["snapshot_date"] = pd.to_datetime(_spy["snapshot_date"]).dt.tz_localize(None)
+        _spy["spy_value"] = _spy["spy_value"] / _spy["spy_value"].iloc[0] * start_value
+        return _spy
+    except Exception:
+        return pd.DataFrame()
 
 
 @st.cache_data(ttl=3600)
