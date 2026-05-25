@@ -1125,6 +1125,67 @@ with tab_tech:
 # TAB 8 – DYNAMISCHE WATCHLIST
 # ══════════════════════════════════════════════════════════
 with tab_watchlist:
+    # ── IPO-Pipeline ─────────────────────────────────────────────────────────
+    st.subheader("🚀 IPO-Pipeline – Demnächst an der Börse")
+    st.caption(
+        "Nur Unternehmen mit Bewertung ≥ $10 Mrd. werden verfolgt. "
+        "Ab $25 Mrd. werden sie bei IPO-Erkennung automatisch zur Analyse-Queue hinzugefügt."
+    )
+
+    try:
+        from analyzers.ipo_tracker import IPOTracker as _IPOTracker, CANDIDATES as _IPO_CANDS
+        _ipo = _IPOTracker()
+        _pipeline = _ipo.get_pipeline()
+        if _pipeline:
+            _ipo_rows = []
+            for _c in _pipeline:
+                _hype = _c["hype_score"]
+                _hype_str = f"{_hype:.0%}" if _hype is not None else "–"
+                _hype_icon = (
+                    "🟢" if (_hype or 0) >= 0.6
+                    else "🟡" if (_hype or 0) >= 0.4
+                    else "🔴" if _hype is not None
+                    else "⚪"
+                )
+                _status = (
+                    f"✅ LIVE ({_c['live_ticker']})"
+                    if _c["is_live"]
+                    else "⏳ Pre-IPO"
+                )
+                _ipo_rows.append({
+                    "Status":         _status,
+                    "Unternehmen":    _c["name"],
+                    "Sektor":         _c["sector"],
+                    "Bew. ($Mrd.)":   _c["valuation_b"],
+                    "Hype-Score":     f"{_hype_icon} {_hype_str}",
+                    "Artikel/Woche":  _c["articles_7d"],
+                    "Auto-Watchlist": "✅" if _c["auto_eligible"] else "❌",
+                    "Zuletzt geprüft": _c["last_checked"],
+                    "Info":           _c["notes"],
+                })
+            st.dataframe(pd.DataFrame(_ipo_rows), use_container_width=True, hide_index=True)
+
+            # Detail-Expander mit Headlines
+            _live_cands  = [c for c in _pipeline if c["is_live"]]
+            _pre_cands   = [c for c in _pipeline if not c["is_live"] and c["articles_7d"] > 0]
+            if _live_cands:
+                st.success(
+                    "🎉 **Neue Börsengänge erkannt:** "
+                    + ", ".join(f"{c['name']} ({c['live_ticker']})" for c in _live_cands)
+                )
+            for _c in _pre_cands[:4]:
+                with st.expander(f"📰 Headlines – {_c['name']} (letzte 7 Tage)"):
+                    for _h in _c["headlines"]:
+                        st.markdown(f"• {_h}")
+                    if not _c["headlines"]:
+                        st.caption("Noch keine Artikel gefunden.")
+        else:
+            st.info("Noch keine IPO-Daten. Wird täglich um 06:00 UTC aktualisiert.")
+    except Exception as _ipo_err:
+        st.caption(f"IPO-Tracker nicht verfügbar: {_ipo_err}")
+
+    st.divider()
+
     st.subheader("🔭 Dynamische Watchlist")
     st.caption(
         "Der Bot scannt täglich ~80 Aktien und wählt automatisch die vielversprechendsten aus. "

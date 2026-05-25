@@ -560,6 +560,39 @@ def run_bot_loop(
     # Tägliche Datenbankwartung: 02:00 UTC (außerhalb aller Handelszeiten)
     schedule.every().day.at("02:00").do(_daily_maintenance_job)
 
+    # IPO-Tracker: täglich um 06:00 UTC (vor dem Analysezyklus)
+    def _ipo_check_job():
+        try:
+            from analyzers.ipo_tracker import IPOTracker
+            tracker_ipo = IPOTracker()
+            new_ipos = tracker_ipo.run_daily_check()
+            for event in new_ipos:
+                cand = event["candidate"]
+                ticker = event["live_ticker"]
+                notifier_ipo = TelegramNotifier()
+                eligible_txt = (
+                    f"✅ Ticker <b>{ticker}</b> wurde zur Analyse-Queue hinzugefügt."
+                    if cand.auto_watchlist_eligible
+                    else f"⚠️ Bewertung unter $25 Mrd. → Ticker NICHT automatisch aufgenommen."
+                )
+                notifier_ipo.send(
+                    f"🚀 <b>IPO ERKANNT: {cand.name}</b>\n\n"
+                    f"Ticker: <b>{ticker}</b>\n"
+                    f"Sektor: {cand.sector}\n"
+                    f"Bewertung: ~${cand.expected_valuation_b:.0f} Mrd.\n"
+                    f"{cand.notes}\n\n"
+                    f"{eligible_txt}\n\n"
+                    f"<i>Erster Handelstag – noch wenig Daten vorhanden.</i>"
+                )
+                tracker_ipo.mark_notified(event["slug"])
+                console.print(
+                    f"  [bold magenta]🚀 IPO erkannt: {cand.name} ({ticker})[/bold magenta]"
+                )
+        except Exception as e:
+            log.warning("IPO-Check fehlgeschlagen: %s", e)
+
+    schedule.every().day.at("06:00").do(_ipo_check_job)
+
     # Turbo-Lernauswertung: täglich um 02:30 UTC (nur wenn Turbo-Modus aktiv)
     if config.turbo_mode and config.broker_mode == "paper":
         def _turbo_learn_job():
