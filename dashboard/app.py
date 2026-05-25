@@ -71,6 +71,15 @@ _US_NAMES = {
     "BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana",
 }
 _EU_NAMES = {ticker: name for ticker, (name, *_) in EU_UNIVERSE.items()}
+# Bekannte EU-Ticker die nicht im EU_UNIVERSE sind
+_EU_NAMES.update({
+    "RHM.DE": "Rheinmetall", "DB1.DE": "Deutsche Börse", "MTX.DE": "MTU Aero",
+    "SHL.DE": "Siemens Healthineers", "ZAL.DE": "Zalando", "ENR.DE": "Siemens Energy",
+    "DHL.DE": "DHL Group", "HFG.DE": "HelloFresh", "WAF.DE": "Siltronic",
+    "DHER.DE": "Delivery Hero", "O2D.DE": "Telefónica DE",
+    "NDA-SE.ST": "Nordea", "ERIC-B.ST": "Ericsson",
+    "NOVO-B.CO": "Novo Nordisk B", "ORSTED.CO": "Ørsted",
+})
 _ALL_NAMES = {**_US_NAMES, **_EU_NAMES}
 
 
@@ -1288,43 +1297,70 @@ with tab_log:
     # Autocomplete: alle bisher analysierten Ticker laden
     _all_log_tickers = sorted({e["ticker"] for e in _alog.get_recent(limit=2000)})
 
+    st.markdown("#### Filter & Suche")
+
+    # ── Zeile 1: Empfehlung + Anzahl ────────────────────────────────────────
     with st.form("log_filter_form"):
-        f1, f2, f3 = st.columns([3, 3, 2])
+        f1, f2 = st.columns([4, 2])
         with f1:
             filter_rec = st.multiselect(
-                "Empfehlung",
+                "Empfehlung filtern",
                 ["BUY", "SKIP", "HOLD", "SELL"],
                 default=["BUY", "SKIP", "HOLD", "SELL"],
             )
         with f2:
-            _ticker_opts = ["Alle"] + _all_log_tickers
-            filter_ticker_sel = st.selectbox(
-                "Ticker",
-                _ticker_opts,
-                format_func=lambda t: ticker_label(t) if t != "Alle" else "— Alle —",
-            )
-        with f3:
-            log_limit = st.selectbox("Anzahl", [50, 100, 200, 500], index=0)
-        _searched = st.form_submit_button("🔍 Suchen", use_container_width=True)
+            log_limit = st.selectbox("Anzahl anzeigen", [50, 100, 200, 500], index=0)
 
-    _filter_ticker = None if filter_ticker_sel == "Alle" else filter_ticker_sel
-    entries = _alog.get_recent(limit=log_limit, ticker=_filter_ticker)
+        # ── Ticker-Auswahl ───────────────────────────────────────────────────
+        st.markdown("**Ticker auswählen** — bereits analysierte Aktien:")
+        _ticker_opts = ["— Alle Analysen anzeigen —"] + _all_log_tickers
+        filter_ticker_sel = st.selectbox(
+            "Aus analysierten Aktien wählen",
+            _ticker_opts,
+            format_func=lambda t: ticker_label(t) if t not in ("— Alle Analysen anzeigen —",) else t,
+            label_visibility="collapsed",
+        )
+
+        # ── Neue Aktie anfragen ──────────────────────────────────────────────
+        st.markdown("**Oder neue Aktie anfragen** — Ticker eingeben (z.B. `RHM.DE` für Rheinmetall, `AAPL` für Apple):")
+        _new_ticker_input = st.text_input(
+            "Ticker-Symbol eingeben",
+            placeholder="z.B. RHM.DE, AAPL, SAP.DE …",
+            label_visibility="collapsed",
+        )
+
+        _searched = st.form_submit_button("🔍 Suchen / Anfragen", use_container_width=True)
+
+    # ── Auswertung ───────────────────────────────────────────────────────────
+    from analyzers.user_request_queue import add_ticker as _req_ticker, peek as _peek_requests
+
+    _free_ticker = _new_ticker_input.strip().upper() if _new_ticker_input.strip() else None
+    _filter_ticker = None if filter_ticker_sel == "— Alle Analysen anzeigen —" else filter_ticker_sel
+
+    # Neue Ticker-Anfrage verarbeiten (Freitext hat Vorrang)
+    if _searched and _free_ticker:
+        already_pending = _free_ticker in _peek_requests()
+        already_analyzed = _free_ticker in _all_log_tickers
+        if already_analyzed:
+            st.info(f"**{ticker_label(_free_ticker)}** wurde bereits analysiert — Ergebnisse werden unten angezeigt.")
+            _filter_ticker = _free_ticker
+        elif already_pending:
+            st.success(f"**{ticker_label(_free_ticker)}** ist bereits für den nächsten Analysezyklus vorgemerkt.")
+        else:
+            _req_ticker(_free_ticker)
+            st.success(
+                f"✅ **{ticker_label(_free_ticker)}** wurde zur Analyse-Queue hinzugefügt.  \n"
+                f"Der Bot analysiert ihn beim nächsten Zyklus (morgen früh ab 07:30 Uhr)."
+            )
+
+    active_ticker = _free_ticker if _searched and _free_ticker else _filter_ticker
+    entries = _alog.get_recent(limit=log_limit, ticker=active_ticker)
     if filter_rec:
         entries = [e for e in entries if e["recommendation"] in filter_rec]
 
     if not entries:
-        from analyzers.user_request_queue import add_ticker as _req_ticker, peek as _peek_requests
-        if _filter_ticker:
-            already_pending = _filter_ticker in _peek_requests()
-            if already_pending:
-                st.success(f"**{ticker_label(_filter_ticker)}** ist bereits für den nächsten Analysezyklus vorgemerkt.")
-            else:
-                st.warning(
-                    f"**{ticker_label(_filter_ticker)}** wurde noch nicht analysiert."
-                )
-                if st.button(f"➕ {_filter_ticker} im nächsten Zyklus analysieren lassen", use_container_width=False):
-                    _req_ticker(_filter_ticker)
-                    st.success(f"**{_filter_ticker}** wurde zur Analyse-Queue hinzugefügt. Der Bot analysiert ihn beim nächsten Zyklus.")
+        if active_ticker:
+            st.info(f"Noch keine Analyse für **{ticker_label(active_ticker)}** vorhanden.")
         else:
             st.info("Noch keine Analysen gespeichert. Morgen früh ab 07:30 Uhr beginnt der Bot.")
     else:
