@@ -1300,11 +1300,9 @@ with tab_log:
 
     # Kombinierte Option-Liste: analysierte zuerst, dann alle bekannten
     _known_unanalyzed = [t for t in sorted(_ALL_NAMES.keys()) if t not in _analyzed_set]
-    _search_opts = [""] + _all_log_tickers + _known_unanalyzed
+    _search_opts = _all_log_tickers + _known_unanalyzed
 
     def _fmt_search(t: str) -> str:
-        if not t:
-            return "🔍 Aktie suchen oder tippen…"
         name = _ALL_NAMES.get(t.upper(), "")
         status = "✅ analysiert" if t in _analyzed_set else "➕ noch nicht analysiert"
         return f"{t}  ({name})  —  {status}" if name else f"{t}  —  {status}"
@@ -1323,6 +1321,8 @@ with tab_log:
         selected_opt = st.selectbox(
             "Aktie suchen",
             _search_opts,
+            index=None,
+            placeholder="Ticker oder Name tippen, z.B. AAPL, RHM.DE …",
             format_func=_fmt_search,
         )
         _searched = st.form_submit_button("🔍 Suchen / Anfragen", use_container_width=True)
