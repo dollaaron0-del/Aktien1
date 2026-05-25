@@ -351,12 +351,17 @@ with tab_portfolio:
     _port_days = {"1 Tag": 1, "1 Woche": 7, "1 Monat": 30, "Alles": 180}[_port_range]
     history = tracker.get_value_history(_port_days)
     if len(history) >= 2:
+        import altair as _alt
         df_hist = pd.DataFrame(history[::-1])
         df_hist["snapshot_date"] = pd.to_datetime(df_hist["snapshot_date"])
-        df_hist = df_hist.set_index("snapshot_date")
-        st.line_chart(df_hist["total_value"], use_container_width=True)
+        _port_chart = _alt.Chart(df_hist).mark_line(color="#00e676").encode(
+            x=_alt.X("snapshot_date:T", title="Datum"),
+            y=_alt.Y("total_value:Q", title="Portfoliowert ($)", scale=_alt.Scale(zero=False)),
+            tooltip=[_alt.Tooltip("snapshot_date:T", title="Datum"), _alt.Tooltip("total_value:Q", title="Wert $", format=",.2f")],
+        ).properties(height=280)
+        st.altair_chart(_port_chart, use_container_width=True)
     else:
-        st.info("Mindestens 2 Analysezyklen nötig.")
+        st.info("Noch keine Chart-Daten — erscheint nach dem ersten Analysezyklus.")
 
     # All transactions
     with st.expander("Alle Transaktionen"):
@@ -487,10 +492,20 @@ with tab_regime:
         _reg_days = {"1 Woche": 7, "2 Wochen": 14, "1 Monat": 30}[_reg_range]
         history_r = detector.get_history(_reg_days)
         if len(history_r) >= 2:
+            import altair as _alt
             df_r = pd.DataFrame(history_r[::-1])
             df_r["recorded_at"] = pd.to_datetime(df_r["recorded_at"])
-            df_r = df_r.set_index("recorded_at")
-            st.line_chart(df_r["recession_score"], use_container_width=True)
+            _reg_color_map = {"BULL": "#00e676", "NEUTRAL": "#ffd740", "BEAR": "#ff7043", "CRISIS": "#f44336"}
+            _reg_chart = _alt.Chart(df_r).mark_line(color="#4fc3f7", strokeWidth=2).encode(
+                x=_alt.X("recorded_at:T", title="Datum"),
+                y=_alt.Y("recession_score:Q", title="Rezessions-Score", scale=_alt.Scale(domain=[0, 1])),
+                tooltip=[
+                    _alt.Tooltip("recorded_at:T", title="Zeit"),
+                    _alt.Tooltip("recession_score:Q", title="Score", format=".3f"),
+                    _alt.Tooltip("regime:N", title="Regime"),
+                ],
+            ).properties(height=260)
+            st.altair_chart(_reg_chart, use_container_width=True)
             # Regime breakdown table
             with st.expander("Datentabelle"):
                 st.dataframe(
