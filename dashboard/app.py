@@ -27,16 +27,42 @@ from analyzers.recession_detector import RecessionDetector, BULL, NEUTRAL, BEAR,
 from analyzers.technical_indicators import TechnicalIndicators
 from analyzers.dynamic_watchlist import DynamicWatchlist
 from analyzers.signal_expander import SignalDrivenExpander
+from analyzers.eu_stock_scanner import EU_UNIVERSE
 from collectors.social_scan import SocialPulseDB
 from analyzers.weekend_prep import WeekendPrep
 from portfolio.goal_risk_assessor import GoalRiskAssessor, OK, CAUTION, DANGER, UNREACHABLE
+
+# ─── Ticker → Firmenname ──────────────────────────────────────────────────────
+_US_NAMES = {
+    "AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA", "TSLA": "Tesla",
+    "AMZN": "Amazon", "GOOGL": "Alphabet", "GOOG": "Alphabet", "META": "Meta",
+    "NFLX": "Netflix", "AMD": "AMD", "INTC": "Intel", "QCOM": "Qualcomm",
+    "TSM": "TSMC", "ORCL": "Oracle", "CRM": "Salesforce", "ADBE": "Adobe",
+    "SHOP": "Shopify", "SNOW": "Snowflake", "PLTR": "Palantir",
+    "JPM": "JPMorgan", "BAC": "Bank of America", "GS": "Goldman Sachs",
+    "V": "Visa", "MA": "Mastercard", "PYPL": "PayPal",
+    "JNJ": "J&J", "PFE": "Pfizer", "MRK": "Merck", "ABBV": "AbbVie",
+    "UNH": "UnitedHealth", "LLY": "Eli Lilly",
+    "XOM": "ExxonMobil", "CVX": "Chevron",
+    "SPY": "S&P 500 ETF", "QQQ": "Nasdaq ETF", "VTI": "Total Market ETF",
+    "SH": "S&P 500 Inv.", "PSQ": "Nasdaq Inv.", "SQQQ": "Nasdaq 3× Inv.",
+    "BTC-USD": "Bitcoin", "ETH-USD": "Ethereum", "SOL-USD": "Solana",
+}
+_EU_NAMES = {ticker: name for ticker, (name, *_) in EU_UNIVERSE.items()}
+_ALL_NAMES = {**_US_NAMES, **_EU_NAMES}
+
+
+def ticker_label(ticker: str) -> str:
+    name = _ALL_NAMES.get(ticker.upper())
+    return f"{ticker} ({name})" if name else ticker
+
 
 # ─── Page config ─────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Stock Sentiment Bot",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",
 )
 
 # ─── Custom CSS ──────────────────────────────────────────────────────────────
@@ -876,6 +902,7 @@ with tab_tech:
     selected_ticker = st.selectbox(
         "Ticker auswählen",
         options=config.watchlist,
+        format_func=ticker_label,
         key="tech_ticker_select",
     )
 
@@ -996,7 +1023,7 @@ with tab_watchlist:
                 current_wl = cached["tickers"]
                 st.markdown("**Aktuelle Watchlist:**")
                 wl_badges = "  ".join(
-                    f"`{t}`" for t in current_wl
+                    f"`{ticker_label(t)}`" for t in current_wl
                 )
                 st.markdown(wl_badges)
             else:
@@ -1011,7 +1038,9 @@ with tab_watchlist:
         candidates = _dw.get_scored_candidates()
 
     if candidates:
-        df_wl = pd.DataFrame(candidates).rename(columns={
+        df_wl = pd.DataFrame(candidates)
+        df_wl.insert(1, "Name", df_wl["ticker"].apply(lambda t: _ALL_NAMES.get(t.upper(), "")))
+        df_wl = df_wl.rename(columns={
             "ticker":       "Ticker",
             "total_score":  "Gesamt-Score",
             "price":        "Kurs $",
@@ -1160,7 +1189,7 @@ with st.sidebar:
     st.write(f"**Claude Modell:** {config.claude_model}")
     st.write(f"**Ollama Modell:** {config.ollama_model if config.ollama_enabled else '–'}")
     st.write(f"**Broker:** {config.broker_mode.upper()}")
-    st.write(f"**Watchlist:** {', '.join(config.watchlist)}")
+    st.write(f"**Watchlist:** {', '.join(ticker_label(t) for t in config.watchlist)}")
     st.write(f"**Kauf-Schwelle:** {config.buy_threshold:.2f}")
     st.write(f"**Hedge ab:** {config.hedge_from_regime}")
     st.write(f"**Max Hedge:** {config.max_hedge_pct*100:.0f}%")
@@ -1257,8 +1286,9 @@ with tab_log:
             conf  = entry["confidence"]
             ts    = entry["analyzed_at"][:16]
 
+            name_suffix = f" ({_ALL_NAMES[entry['ticker'].upper()]})" if entry['ticker'].upper() in _ALL_NAMES else ""
             label = (
-                f"{icon} **{entry['ticker']}** · {dir_icon} {entry['direction']} "
+                f"{icon} **{entry['ticker']}{name_suffix}** · {dir_icon} {entry['direction']} "
                 f"· Score {score:.2f} · {conf} · {ts}"
             )
             with st.expander(label):
