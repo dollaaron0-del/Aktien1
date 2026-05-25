@@ -342,6 +342,16 @@ with tab_portfolio:
 
     st.divider()
 
+    # Win-Rate summary
+    if acc.get("total_closed", 0) > 0:
+        wr1, wr2, wr3, wr4 = st.columns(4)
+        wr1.metric("Win-Rate",          f"{acc['win_rate_pct']}%",
+                   f"{acc['total_closed']} Trades")
+        wr2.metric("Ø Rendite/Trade",   f"{acc['avg_return_pct']:+.2f}%")
+        wr3.metric("Richtungs-Genauigkeit", f"{acc['direction_accuracy_pct']}%")
+        wr4.metric("Zielkurs-Trefferquote", f"{acc['target_hit_pct']}%")
+        st.divider()
+
     # Portfolio value chart
     st.subheader("Portfoliowert – Verlauf")
     _port_range = st.radio(
@@ -1184,6 +1194,16 @@ with st.sidebar:
     st.markdown("## ⚙️ Bot-Status")
     st.caption(f"Stand: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
 
+    # Countdown to next analysis (07:30 daily)
+    from datetime import timedelta as _td
+    _now_loc = datetime.now()
+    _next_run = _now_loc.replace(hour=7, minute=30, second=0, microsecond=0)
+    if _now_loc >= _next_run:
+        _next_run += _td(days=1)
+    _secs_left = int((_next_run - _now_loc).total_seconds())
+    _h_left, _m_left = divmod(_secs_left // 60, 60)
+    st.info(f"⏰ Nächste Analyse in **{_h_left}h {_m_left}min**")
+
     # Live regime badge
     if regime_data:
         r   = regime_data["regime"]
@@ -1301,6 +1321,15 @@ with st.sidebar:
         st.rerun()
 
 
+@st.cache_data(ttl=3600)
+def _get_ticker_news(ticker: str) -> list:
+    try:
+        import yfinance as _yf
+        return (_yf.Ticker(ticker).news or [])[:4]
+    except Exception:
+        return []
+
+
 # ══════════════════════════════════════════════════════════
 # TAB 9 – ANALYSE-LOG
 # ══════════════════════════════════════════════════════════
@@ -1373,6 +1402,20 @@ with tab_log:
                 f"✅ **{ticker_label(_active_ticker)}** wurde zur Analyse-Queue hinzugefügt.  \n"
                 f"Der Bot analysiert ihn beim nächsten Morgenzyklus (07:30 Uhr)."
             )
+
+    # Latest news for selected ticker
+    if _active_ticker:
+        _news = _get_ticker_news(_active_ticker)
+        if _news:
+            with st.expander(f"📰 Aktuelle News — {ticker_label(_active_ticker)}", expanded=True):
+                for _n in _news:
+                    _title     = _n.get("title", "")
+                    _publisher = _n.get("publisher", "")
+                    _pub_ts    = _n.get("providerPublishTime") or _n.get("pubTime") or 0
+                    _pub_str   = datetime.utcfromtimestamp(_pub_ts).strftime("%d.%m.%Y") if _pub_ts else ""
+                    _sentiment = _n.get("overallSentiment", "")
+                    _s_icon    = {"POSITIVE": "🟢", "NEGATIVE": "🔴", "NEUTRAL": "🟡"}.get(_sentiment, "")
+                    st.markdown(f"{_s_icon} **{_title}**  \n_{_publisher}_ · {_pub_str}")
 
     entries = _alog.get_recent(limit=log_limit, ticker=_active_ticker)
     if filter_rec:
