@@ -140,7 +140,44 @@ def _get_watchlist(portfolio: Portfolio) -> List[str]:
     # Opportunity-Scan: bei ≥50% freien Slots nach weiteren Kandidaten suchen
     _opportunity_scan(portfolio, base)
 
-    # Sektor-Stichprobe: 2 neue Aktien aus rotierendem Sektor für Netz-Aufbau
+    # Verwandte Aktien: für jeden BUY/HOLD-Ticker die bekannten Verbindungen einbeziehen
+    _bench_picks = int(os.getenv("ANALYSIS_BENCH_PICKS", "3"))
+    try:
+        from analyzers.stock_relations import StockRelations
+        from analyzers.analysis_cache import AnalysisCache
+        _relations = StockRelations()
+        _cache = AnalysisCache()
+        _active_buys = [t for t in base if _cache.get(t) and _cache.get(t).get("recommendation") in ("BUY", "HOLD")]
+        _related_added = []
+        for _bt in _active_buys:
+            for _rt in _relations.get_related(_bt):
+                if _rt not in base and len(_related_added) < 4:
+                    base.append(_rt)
+                    _related_added.append(_rt)
+        if _related_added:
+            console.print(
+                f"  [cyan]🔗 Verwandte Ticker aus BUY/HOLD-Netz: "
+                f"{', '.join(_related_added)}[/cyan]"
+            )
+    except Exception as e:
+        log.debug("Verwandte-Ticker-Lookup fehlgeschlagen: %s", e)
+
+    # BenchList: Top-Kandidaten immer für Analyse einbeziehen (unabhängig von Slots)
+    try:
+        from analyzers.bench_list import BenchList
+        _bench = BenchList()
+        _bench.cleanup()
+        _bench_candidates = _bench.pop_candidates(_bench_picks, exclude=base)
+        for _bt in _bench_candidates:
+            base.append(_bt)
+        if _bench_candidates:
+            console.print(
+                f"  [magenta]📋 BenchList → Analyse: {', '.join(_bench_candidates)}[/magenta]"
+            )
+    except Exception as e:
+        log.debug("BenchList-Analyse-Pull fehlgeschlagen: %s", e)
+
+    # Sektor-Stichprobe: rotierende Sektor-Aktien für Netz-Aufbau
     try:
         from analyzers.sector_sampler import SectorSampler
         sector_name, sample = SectorSampler().get_sample(exclude=base)
@@ -155,6 +192,7 @@ def _get_watchlist(portfolio: Portfolio) -> List[str]:
     except Exception as e:
         log.debug("Sektor-Sampler fehlgeschlagen: %s", e)
 
+    log.info("Analyse-Watchlist: %d Aktien → %s", len(base), ", ".join(base[:15]))
     return base
 
 

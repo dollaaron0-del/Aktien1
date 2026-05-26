@@ -15,7 +15,7 @@ from logger import get_logger
 log = get_logger(__name__)
 
 _STATE_FILE = os.path.join("data", "sector_sampler_state.json")
-_SAMPLE_PER_CYCLE = 2
+_SAMPLE_PER_CYCLE = int(os.getenv("SECTOR_SAMPLE_COUNT", "4"))
 
 # Sektoren mit repräsentativen Stichproben-Tickern
 _SECTORS: List[Dict] = [
