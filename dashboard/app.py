@@ -223,6 +223,40 @@ k6.metric(
 
 st.divider()
 
+
+@st.cache_data(ttl=3600)
+def _get_spy_benchmark(days: int, start_value: float) -> "pd.DataFrame":
+    """SPY-Kursverlauf normiert auf start_value für Benchmark-Overlay."""
+    try:
+        import yfinance as _yf
+        from datetime import timedelta as _td2
+        _end = datetime.utcnow()
+        _start = _end - _td2(days=days + 5)
+        _spy = _yf.Ticker("SPY").history(
+            start=_start.strftime("%Y-%m-%d"),
+            end=_end.strftime("%Y-%m-%d"),
+        )
+        if _spy.empty:
+            return pd.DataFrame()
+        _spy = _spy.reset_index()[["Date", "Close"]].rename(
+            columns={"Date": "snapshot_date", "Close": "spy_value"}
+        )
+        _spy["snapshot_date"] = pd.to_datetime(_spy["snapshot_date"]).dt.tz_localize(None)
+        _spy["spy_value"] = _spy["spy_value"] / _spy["spy_value"].iloc[0] * start_value
+        return _spy
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=3600)
+def _get_ticker_news(ticker: str) -> list:
+    try:
+        import yfinance as _yf
+        return (_yf.Ticker(ticker).news or [])[:4]
+    except Exception:
+        return []
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # TABS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1563,39 +1597,6 @@ with st.sidebar:
     if st.button("🔄 Cache leeren & neu laden", use_container_width=True):
         st.cache_resource.clear()
         st.rerun()
-
-
-@st.cache_data(ttl=3600)
-def _get_spy_benchmark(days: int, start_value: float) -> "pd.DataFrame":
-    """SPY-Kursverlauf normiert auf start_value für Benchmark-Overlay."""
-    try:
-        import yfinance as _yf
-        from datetime import timedelta as _td2
-        _end = datetime.utcnow()
-        _start = _end - _td2(days=days + 5)
-        _spy = _yf.Ticker("SPY").history(
-            start=_start.strftime("%Y-%m-%d"),
-            end=_end.strftime("%Y-%m-%d"),
-        )
-        if _spy.empty:
-            return pd.DataFrame()
-        _spy = _spy.reset_index()[["Date", "Close"]].rename(
-            columns={"Date": "snapshot_date", "Close": "spy_value"}
-        )
-        _spy["snapshot_date"] = pd.to_datetime(_spy["snapshot_date"]).dt.tz_localize(None)
-        _spy["spy_value"] = _spy["spy_value"] / _spy["spy_value"].iloc[0] * start_value
-        return _spy
-    except Exception:
-        return pd.DataFrame()
-
-
-@st.cache_data(ttl=3600)
-def _get_ticker_news(ticker: str) -> list:
-    try:
-        import yfinance as _yf
-        return (_yf.Ticker(ticker).news or [])[:4]
-    except Exception:
-        return []
 
 
 # ══════════════════════════════════════════════════════════
