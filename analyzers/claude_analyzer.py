@@ -406,7 +406,7 @@ class ClaudeAnalyzer:
 
         message = self._client.messages.create(
             model=config.claude_model,
-            max_tokens=900,
+            max_tokens=1500,
             system=system_blocks,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -496,17 +496,17 @@ class ClaudeAnalyzer:
             return self._empty_result(ticker, f"Parse-Fehler: {raw[:200]}")
 
     def _result_from_prescreen(self, ticker: str, prescreen, sources: int) -> AnalysisResult:
-        """Erzeugt AnalysisResult direkt aus Ollama-Score (kein Claude-Aufruf)."""
+        """Erzeugt AnalysisResult direkt aus Ollama-Score (kein Claude-Aufruf).
+
+        Ollama entscheidet NIE SELL — nur SKIP oder HOLD.
+        SELL erfordert immer Claude (firmenspezifische Analyse).
+        """
         score      = prescreen.score
         direction  = prescreen.direction
         confidence = prescreen.confidence
 
-        if score < 0.35:
-            recommendation = "SELL" if score < 0.25 else "HOLD"
-        elif score > 0.70:
-            recommendation = "HOLD"   # Nie BUY ohne Claude
-        else:
-            recommendation = "HOLD"
+        # Ollama darf nur SKIP oder HOLD empfehlen, niemals SELL oder BUY
+        recommendation = "SKIP" if score < 0.35 else "HOLD"
 
         return AnalysisResult(
             ticker=ticker,
