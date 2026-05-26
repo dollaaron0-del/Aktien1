@@ -21,7 +21,7 @@ from typing import List, Dict, Optional, Set
 
 
 EXCHANGE_DEFS: Dict[str, Dict] = {
-    "XETRA":  {"tz": "Europe/Berlin",      "open": dtime(9, 0),  "name": "Frankfurt / Tradegate"},
+    "XETRA":  {"tz": "Europe/Berlin",      "open": dtime(9, 0),  "name": "Frankfurt / Tradegate", "lead": 90},
     "NYSE":   {"tz": "America/New_York",   "open": dtime(9, 30), "name": "NYSE/NASDAQ New York"},
     "NASDAQ": {"tz": "America/New_York",   "open": dtime(9, 30), "name": "NASDAQ New York"},
     "TSE":    {"tz": "Asia/Tokyo",         "open": dtime(9, 0),  "name": "Tokyo TSE"},
@@ -134,7 +134,8 @@ class MarketSchedule:
             open_local_naive = datetime.combine(date, ex["open"])
             open_local = open_local_naive.replace(tzinfo=tz)
             open_utc = open_local.astimezone(ZoneInfo("UTC"))
-            analysis_utc = open_utc - timedelta(minutes=self.lead_minutes)
+            lead = ex.get("lead", self.lead_minutes)
+            analysis_utc = open_utc - timedelta(minutes=lead)
             is_trading = (date.isoweekday() in _TRADING_DAYS) and not is_market_holiday(date, code)
             results.append({
                 "exchange": code,

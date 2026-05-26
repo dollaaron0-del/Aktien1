@@ -358,8 +358,8 @@ class GeopoliticalRadar:
 
             if event.severity >= _MIN_SEVERITY_FOR_NOTIFY and notify_fn:
                 severity_emoji = {1: "🌐", 2: "⚠️", 3: "🚨"}.get(event.severity, "📡")
-                buy_str  = f"BUY:  {', '.join(buy_tickers[:5])}"  if buy_tickers  else ""
-                sell_str = f"SELL: {', '.join(sell_tickers[:5])}" if sell_tickers else ""
+                buy_str  = f"KAUF:    {', '.join(buy_tickers[:5])}"  if buy_tickers  else ""
+                sell_str = f"VERKAUF: {', '.join(sell_tickers[:5])}" if sell_tickers else ""
                 impact_str = "\n".join(filter(None, [buy_str, sell_str]))
 
                 alerts.append(
