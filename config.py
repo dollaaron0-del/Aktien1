@@ -49,7 +49,7 @@ class Config:
     # Sentiment thresholds (0–1)
     buy_threshold: float = 0.65
     sell_threshold: float = 0.35
-    min_sources: int = 2
+    min_sources: int = field(default_factory=lambda: int(os.getenv("MIN_SOURCES", "1")))
 
     # ── Marktbasierter Analyse-Zeitplan ─────────────────────────────────────
     # Welche Börsen beobachten? Analyse läuft je 30 Min vor Börseneröffnung.

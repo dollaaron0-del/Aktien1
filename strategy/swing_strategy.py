@@ -168,8 +168,19 @@ class SwingStrategy:
 
         # Score-Modifier für Positions-Limit und Kaufschwelle (einmal laden, mehrfach nutzen)
         _bot_scorer = BotScorer()
-        _current_score = _bot_scorer.get().current
+        _bot_score_state = _bot_scorer.get()
+        _current_score = _bot_score_state.current
         _smod = _get_score_mod(_current_score)
+
+        # Score-Malus erst nach 10 bewerteten Trades anwenden (frischer Bot soll starten können)
+        _trades_scored = _bot_score_state.trades_scored
+        if _trades_scored < 10 and _smod.threshold_adj > 0:
+            log.debug(
+                "Score-Malus ausgesetzt (erst %d/10 Trades bewertet) – Threshold unverändert",
+                _trades_scored,
+            )
+            from dataclasses import replace as _dc_replace
+            _smod = _dc_replace(_smod, threshold_adj=0.0, position_count_adj=max(0, _smod.position_count_adj))
 
         # Skalierungs-Check: Positionslimit (Score-adjustiert)
         open_count  = len(self.portfolio.all_positions())
