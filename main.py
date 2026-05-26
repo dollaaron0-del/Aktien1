@@ -152,7 +152,8 @@ def main():
     parser.add_argument("--small-cap-scan", action="store_true", help="Small-Cap Sektor-Follower Scanner (manuell, 200 Mio – 2 Mrd USD)")
     parser.add_argument("--sc-min-gain", type=float, default=1.0, metavar="PCT", help="Mindest-Sektor-Gain in %% für Small-Cap Scan (Standard: 1.0)")
     parser.add_argument("--sc-results", type=int, default=10, metavar="N", help="Maximale Anzahl Ergebnisse im Small-Cap Scan (Standard: 10)")
-    parser.add_argument("--crypto-scan", action="store_true", help="Krypto-Scanner: Momentum, Volatilität und BTC-Korrelation anzeigen")
+    parser.add_argument("--fill-archive", action="store_true",
+                        help="News für alle Watchlist-Aktien sammeln und archivieren (kein Claude, keine Kosten)")
     parser.add_argument("--crypto-results", type=int, default=8, metavar="N", help="Maximale Anzahl Ergebnisse im Krypto-Scan (Standard: 8)")
     parser.add_argument("--eu-scan", action="store_true", help="EU-Aktien Scanner: XETRA/AEX/CAC40/SMI/FTSE Kandidaten")
     parser.add_argument("--eu-country", nargs="+", metavar="DE|FR|NL|CH|GB|DK|ES", help="Länderfilter für EU-Scan (z.B. --eu-country DE FR)")
@@ -168,6 +169,10 @@ def main():
     parser.add_argument("--interessant", action="store_true", help="Watchlist-Status: welche Aktien sind spannend, welche warten auf Einstieg und warum")
     parser.add_argument("--check", action="store_true", help="Startup-Check: alle API-Keys, Verbindungen und Config prüfen vor dem ersten Start")
     args = parser.parse_args()
+
+    if args.fill_archive:
+        _run_fill_archive()
+        return
 
     if args.check:
         from cli.startup_check import run_startup_check
@@ -591,6 +596,49 @@ def main():
         goal_risk=goal_risk,
         hedge_strategy_inst=hedge_strategy_inst,
         mkt_schedule=mkt_schedule,
+    )
+
+
+def _run_fill_archive() -> None:
+    """
+    Sammelt News für alle Watchlist-Aktien und speichert sie im Archiv.
+    Kein Claude-Aufruf, keine Kosten – nur Datenbasis aufbauen.
+    """
+    from collectors.news_archive import NewsArchive
+    from bot.runner import _make_collectors, collect_news, _normalize_ticker
+
+    console.print(
+        "\n[bold cyan]📰 News-Archiv befüllen[/bold cyan]  "
+        "[dim](kein Claude, keine Kosten)[/dim]\n"
+    )
+
+    tickers = list(config.watchlist)
+    if config.eu_stocks_enabled and config.eu_watchlist:
+        tickers += [t for t in config.eu_watchlist if t not in tickers]
+
+    archive = NewsArchive()
+    collectors = _make_collectors()
+    total_new = 0
+
+    for ticker in tickers:
+        ticker = _normalize_ticker(ticker)
+        console.print(f"[cyan]  {ticker}[/cyan] ...", end=" ")
+        try:
+            news, src = collect_news(ticker, archive, collectors)
+            total_new += len(news)
+            console.print(
+                f"[green]{len(news)} Artikel[/green]  "
+                f"(Yahoo:{src.get('yahoo',0)} Reddit:{src.get('reddit',0)} "
+                f"NewsAPI:{src.get('newsapi',0)} Wire:{src.get('wire',0)} "
+                f"EU:{src.get('european_news',0)})"
+            )
+        except Exception as e:
+            console.print(f"[red]Fehler: {e}[/red]")
+
+    console.print(
+        f"\n[bold green]✅ Fertig:[/bold green] {total_new} Artikel für "
+        f"{len(tickers)} Aktien archiviert.\n"
+        f"[dim]Starte jetzt 'python main.py --once' für die erste vollständige Analyse.[/dim]\n"
     )
 
 
