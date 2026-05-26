@@ -706,6 +706,35 @@ def run_bot_loop(
     schedule.every().hour.do(_headline_scan_job)
     _headline_scan_job()   # Einmal sofort beim Start ausführen
 
+    # ── Geopolitischer Radar: alle 2 Stunden ────────────────────────────────
+    def _geopolitical_radar_job():
+        """
+        Scannt Weltpolitik-Feeds auf geopolitische Frühsignale und
+        leitet Marktauswirkungen ab (Rüstung, Öl, Safe-Haven, etc.).
+        Severity 2+ → sofortiger Telegram-Alert.
+        Severity 3  → kritischer Alert (Krieg, Nuklear, Blockade).
+        """
+        try:
+            from analyzers.geopolitical_radar import GeopoliticalRadar
+            radar  = GeopoliticalRadar()
+            events = radar.scan()
+            if events:
+                notifier = TelegramNotifier()
+                added = radar.process_events(
+                    events,
+                    notify_fn=notifier.send,
+                )
+                if added:
+                    console.print(
+                        f"  [bold red]🌍 Geo-Radar: {len(events)} Event(s) – "
+                        f"Ticker → BenchList: {', '.join(added[:8])}[/bold red]"
+                    )
+        except Exception as e:
+            log.warning("Geopolitical-Radar-Job fehlgeschlagen: %s", e)
+
+    schedule.every(2).hours.do(_geopolitical_radar_job)
+    _geopolitical_radar_job()   # Sofort beim Start
+
     # Hourly tasks (7 days a week)
     if config.enable_social_scan:
         schedule.every().hour.do(_social_scan_job)
