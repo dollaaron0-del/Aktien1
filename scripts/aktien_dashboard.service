@@ -18,14 +18,14 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/Aktien
-ExecStart=/opt/Aktien/venv/bin/streamlit run /opt/Aktien/dashboard/app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --browser.gatherUsageStats=false
+WorkingDirectory=/home/user/Aktien
+ExecStart=/usr/local/bin/streamlit run /home/user/Aktien/dashboard/app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --browser.gatherUsageStats=false
 Restart=always
 RestartSec=15
 Environment=PYTHONUNBUFFERED=1
 
-StandardOutput=append:/opt/Aktien/logs/dashboard.log
-StandardError=append:/opt/Aktien/logs/dashboard.log
+StandardOutput=append:/home/user/Aktien/data/logs/dashboard.log
+StandardError=append:/home/user/Aktien/data/logs/dashboard.log
 
 [Install]
 WantedBy=multi-user.target
