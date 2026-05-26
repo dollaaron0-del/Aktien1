@@ -673,7 +673,7 @@ def run_bot_loop(
             lambda: _margin_tier_watch(tracker, TelegramNotifier(), _margin_tier_state)
         )
 
-    # Tägliches Dashboard (21:00 UTC, nach NYSE-Schluss)
+    # Tägliches Dashboard: 20:30 UTC = 22:30 CEST (30 Min nach NYSE-Schluss)
     from analyzers.bot_scorer import BotScorer as _BotScorer
     _dashboard = DailyDashboard()
 
@@ -694,7 +694,7 @@ def run_bot_loop(
         except Exception as e:
             log.warning("Daily Dashboard fehlgeschlagen: %s", e)
 
-    schedule.every().hour.do(_daily_dashboard_job)
+    schedule.every().day.at("20:30").do(_daily_dashboard_job)
 
     # Goal-reached check (einmalige Telegram-Nachricht wenn Ziel erreicht)
     _goal_notified: list = []

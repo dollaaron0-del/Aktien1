@@ -37,8 +37,8 @@ def _atomic_save(path: str, data: dict) -> None:
 class DailyDashboard:
     """Erstellt und versendet die tägliche Portfolio-Zusammenfassung."""
 
-    # UTC-Stunde ab der das Dashboard gesendet werden darf (21 = nach NYSE-Schluss)
-    SEND_HOUR_UTC = 21
+    # UTC-Stunde ab der das Dashboard gesendet werden darf (20 = nach NYSE-Schluss 20:00 UTC)
+    SEND_HOUR_UTC = 20
 
     def should_send(self) -> bool:
         """True wenn es Zeit ist UND heute noch nicht gesendet wurde."""
