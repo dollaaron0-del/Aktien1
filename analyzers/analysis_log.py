@@ -112,7 +112,53 @@ class AnalysisLog:
         """).fetchone()
         return dict(row) if row else {}
 
-    def get_today_stats(self) -> Dict:
+    def get_current_stats(self) -> Dict:
+        """
+        Aktueller Stand: neueste Analyse pro Ticker (dedupliziert).
+        Zeigt wie viele Ticker JETZT auf BUY/SKIP/HOLD stehen.
+        """
+        row = self._conn.execute("""
+            WITH latest AS (
+                SELECT ticker, recommendation, sentiment_score,
+                       ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY analyzed_at DESC) as rn
+                FROM analyses
+            )
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN recommendation='BUY'  THEN 1 ELSE 0 END) as buys,
+                SUM(CASE WHEN recommendation='SKIP' THEN 1 ELSE 0 END) as skips,
+                SUM(CASE WHEN recommendation='HOLD' THEN 1 ELSE 0 END) as holds,
+                SUM(CASE WHEN recommendation='SELL' THEN 1 ELSE 0 END) as sells,
+                AVG(sentiment_score) as avg_score
+            FROM latest WHERE rn = 1
+        """).fetchone()
+        return dict(row) if row else {}
+
+    def get_latest_per_ticker(self, limit: int = 200) -> List[Dict]:
+        """Neueste Analyse pro Ticker – keine Duplikate."""
+        rows = self._conn.execute("""
+            SELECT * FROM analyses
+            WHERE id IN (
+                SELECT MAX(id) FROM analyses GROUP BY ticker
+            )
+            ORDER BY analyzed_at DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["key_catalysts"] = json.loads(d.get("key_catalysts") or "[]")
+            d["risk_factors"]  = json.loads(d.get("risk_factors")  or "[]")
+            result.append(d)
+        return result
+
+    def get_prev_recommendation(self, ticker: str) -> Optional[str]:
+        """Gibt die vorletzte Empfehlung für einen Ticker zurück (für Trend-Anzeige)."""
+        rows = self._conn.execute(
+            "SELECT recommendation FROM analyses WHERE ticker=? ORDER BY analyzed_at DESC LIMIT 2",
+            (ticker.upper(),),
+        ).fetchall()
+        return rows[1]["recommendation"] if len(rows) >= 2 else None
         """Statistiken nur für heute (UTC-Datum)."""
         today = __import__("datetime").date.today().isoformat()
         row = self._conn.execute("""

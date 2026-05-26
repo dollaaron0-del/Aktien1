@@ -1612,29 +1612,24 @@ with tab_log:
         "Hier siehst du das vollständige Vorgehen und die Begründung."
     )
 
-    stats       = _alog.get_stats()
-    today_stats = _alog.get_today_stats()
-    last_cycle  = set(_alog.get_last_cycle_tickers())
+    cur_stats  = _alog.get_current_stats()   # neueste Analyse pro Ticker
+    hist_stats = _alog.get_stats()           # alle Einträge (inkl. Duplikate)
+    last_cycle = set(_alog.get_last_cycle_tickers())
 
-    if stats.get("total", 0) > 0:
-        # Heute-Zeile
-        t_total = today_stats.get("total", 0)
-        if t_total > 0:
-            st.markdown("**Heute**")
-            tc1, tc2, tc3, tc4, tc5 = st.columns(5)
-            tc1.metric("Analysen heute",  t_total)
-            tc2.metric("🟢 BUY",          today_stats.get("buys", 0))
-            tc3.metric("⏭ SKIP",          today_stats.get("skips", 0))
-            tc4.metric("⏸ HOLD",          today_stats.get("holds", 0))
-            tc5.metric("Ø Sentiment",     f"{today_stats.get('avg_score', 0):.2f}")
-            st.markdown("**Gesamt**")
-
+    if cur_stats.get("total", 0) > 0:
+        st.caption("**Aktueller Stand** – neueste Analyse pro Aktie (keine Duplikate)")
         sc1, sc2, sc3, sc4, sc5 = st.columns(5)
-        sc1.metric("Analysen gesamt",  stats.get("total", 0))
-        sc2.metric("🟢 BUY",           stats.get("buys", 0))
-        sc3.metric("⏭ SKIP",           stats.get("skips", 0))
-        sc4.metric("⏸ HOLD",           stats.get("holds", 0))
-        sc5.metric("Ø Sentiment",      f"{stats.get('avg_score', 0):.2f}")
+        sc1.metric("Aktien beobachtet", cur_stats.get("total", 0))
+        sc2.metric("🟢 Aktuell BUY",    cur_stats.get("buys", 0))
+        sc3.metric("⏭ Aktuell SKIP",    cur_stats.get("skips", 0))
+        sc4.metric("⏸ Aktuell HOLD",    cur_stats.get("holds", 0))
+        sc5.metric("Ø Sentiment",       f"{cur_stats.get('avg_score', 0):.2f}")
+        with st.expander(f"📊 Gesamthistorie ({hist_stats.get('total', 0)} Analyse-Einträge)", expanded=False):
+            hc1, hc2, hc3, hc4 = st.columns(4)
+            hc1.metric("BUY gesamt",  hist_stats.get("buys", 0))
+            hc2.metric("SKIP gesamt", hist_stats.get("skips", 0))
+            hc3.metric("HOLD gesamt", hist_stats.get("holds", 0))
+            hc4.metric("Ø Sentiment", f"{hist_stats.get('avg_score', 0):.2f}")
         st.divider()
 
     # Autocomplete: alle bisher analysierten Ticker laden
@@ -1660,6 +1655,8 @@ with tab_log:
             )
         with fb:
             log_limit = st.selectbox("Anzahl anzeigen", [50, 100, 200, 500], index=0)
+            show_all_history = st.checkbox("Alle Einträge (inkl. Duplikate)", value=False,
+                                           help="Zeigt jeden Analyse-Lauf einzeln, auch wenn eine Aktie mehrfach analysiert wurde.")
 
         _tc1, _tc2 = st.columns([3, 2])
         with _tc1:
@@ -1728,9 +1725,21 @@ with tab_log:
                     _s_icon    = {"POSITIVE": "🟢", "NEGATIVE": "🔴", "NEUTRAL": "🟡"}.get(_sentiment, "")
                     st.markdown(f"{_s_icon} **{_title}**  \n_{_publisher}_ · {_pub_str}")
 
-    entries = _alog.get_recent(limit=log_limit, ticker=_active_ticker)
+    # Dedupliziert (Standard) oder volle Historie
+    if _active_ticker or show_all_history:
+        entries = _alog.get_recent(limit=log_limit, ticker=_active_ticker)
+    else:
+        entries = _alog.get_latest_per_ticker(limit=log_limit)
     if filter_rec:
         entries = [e for e in entries if e["recommendation"] in filter_rec]
+
+    # Vorherige Empfehlung für Trend-Pfeil vorabladen (nur wenn dedupliziert)
+    _prev_rec: dict = {}
+    if not show_all_history and not _active_ticker:
+        for e in entries:
+            t = e["ticker"]
+            if t not in _prev_rec:
+                _prev_rec[t] = _alog.get_prev_recommendation(t)
 
     if not entries:
         if _active_ticker:
@@ -1763,10 +1772,17 @@ with tab_log:
             else:
                 _age_badge = "⚪ Älter"
 
+            # Trend-Pfeil: hat sich die Empfehlung geändert?
+            _prev = _prev_rec.get(entry["ticker"])
+            if _prev and _prev != rec:
+                _trend = f" ↑ war {_prev}" if rec == "BUY" else f" ↓ war {_prev}" if rec == "SELL" else f" ↔ war {_prev}"
+            else:
+                _trend = ""
+
             name_suffix = f" ({_ALL_NAMES[entry['ticker'].upper()]})" if entry['ticker'].upper() in _ALL_NAMES else ""
             label = (
                 f"{icon} **{entry['ticker']}{name_suffix}** · {dir_icon} {entry['direction']} "
-                f"· Score {score:.2f} · {conf} · {ts} · {_age_badge}"
+                f"· Score {score:.2f} · {conf} · {ts}{_trend} · {_age_badge}"
             )
             with st.expander(label):
                 col_l, col_r = st.columns([3, 2])
