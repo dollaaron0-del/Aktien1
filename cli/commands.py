@@ -18,10 +18,6 @@ from analyzers.backtester import Backtester
 from analyzers.watchlist_scanner import WatchlistScanner
 from analyzers.weekend_prep import WeekendPrep
 from analyzers.signal_expander import SignalDrivenExpander
-from collectors.social_scan import SocialPulseDB
-from collectors.reddit_collector import RedditCollector as _RedditColl
-from collectors.stocktwits_collector import StockTwitsCollector as _TwitsColl
-from collectors.twitter_collector import TwitterCollector as _TwitterColl
 from notifier.telegram_notifier import TelegramNotifier
 
 console = Console()
@@ -70,54 +66,6 @@ def _send_briefing_telegram(briefing: str, earnings: dict):
         if len(msg) > 4096:
             msg = msg[:4090] + "…"
         notifier.send(msg)
-
-
-def _get_watchlist_for_scan(portfolio: Optional[Portfolio] = None):
-    """Returns watchlist for social scan; imports from runner to avoid duplication."""
-    from bot.runner import _get_watchlist
-    return _get_watchlist(portfolio or Portfolio(config.initial_capital))
-
-
-def run_social_scan(pulse_db: SocialPulseDB, strategy=None):
-    """Collects Reddit + StockTwits + Twitter for all watchlist tickers and stores pulse snapshot."""
-    reddit = _RedditColl()
-    twits = _TwitsColl(lookback_hours=2)
-    twitter = _TwitterColl()
-    _scan_portfolio = strategy.portfolio if strategy else None
-    for ticker in _get_watchlist_for_scan(_scan_portfolio):
-        try:
-            r_items = reddit.collect(ticker)
-            t_items = twits.collect(ticker)
-            tw_items = twitter.collect(ticker, max_results=20, hours_back=2) if twitter.available else []
-            if r_items:
-                pulse_db.record(ticker, "reddit", r_items)
-            if t_items:
-                pulse_db.record(ticker, "stocktwits", t_items)
-            if tw_items:
-                pulse_db.record(ticker, "twitter", tw_items)
-        except Exception:
-            continue
-    pulse_db.cleanup(keep_days=7)
-    _signal_expander.cleanup_expired()
-    spikes = pulse_db.get_spikes(hours=2, min_mentions=3)
-    if spikes:
-        # Feed spikes to signal expander for small-cap discovery
-        new_spike_tickers = _signal_expander.process_social_spikes(spikes)
-        if new_spike_tickers:
-            console.print(f"  [magenta]📡 Social-Spike-Ticker hinzugefügt: {', '.join(new_spike_tickers)}[/magenta]")
-        console.print(f"\n[bold yellow]📡 Social-Spike erkannt:[/bold yellow]")
-        for s in spikes:
-            score_label = "🟢 Bullisch" if s["avg_score"] > 0.1 else ("🔴 Bärisch" if s["avg_score"] < -0.1 else "⚪ Neutral")
-            console.print(
-                f"  [cyan]{s['ticker']}[/cyan]: {s['total_mentions']} Erwähnungen "
-                f"(+{s['spike_ratio']}× normal) | {score_label} ({s['avg_score']:+.2f})"
-            )
-        # If strategy is provided, try to process signal queue after a spike
-        if strategy:
-            queued = strategy.process_signal_queue()
-            for q in queued:
-                console.print(f"  [bold green]{q}[/bold green]")
-    return spikes
 
 
 def run_weekend_prep(wp: WeekendPrep):

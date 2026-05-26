@@ -62,10 +62,6 @@ class Config:
         default_factory=lambda: int(os.getenv("MARKET_LEAD_MINUTES", "30"))
     )
 
-    # Stündlicher Social-Scan aktivieren (Reddit + StockTwits, ohne Claude)
-    enable_social_scan: bool = field(
-        default_factory=lambda: os.getenv("ENABLE_SOCIAL_SCAN", "true").lower() in ("1", "true", "yes")
-    )
     # Signale in der Warteschlange: Ablauf nach N Stunden
     signal_queue_max_age_hours: int = field(
         default_factory=lambda: int(os.getenv("SIGNAL_QUEUE_MAX_AGE_HOURS", "48"))

@@ -19,7 +19,6 @@ from portfolio.focus_mode import FocusController, FocusMode
 from portfolio.trade_journal import TradeJournal
 from portfolio.signal_queue import SignalQueue
 from portfolio.goal_risk_assessor import GoalRiskAssessor
-from collectors.social_scan import SocialPulseDB
 from analyzers.reflection_engine import ReflectionEngine
 from analyzers.recession_detector import RecessionDetector
 from analyzers.news_velocity import NewsVelocityAnalyzer
@@ -350,43 +349,6 @@ def show_focus_info(focus_ctrl: FocusController, portfolio: Portfolio, broker):
             f"Status:        [bold]{status}[/bold]  (Urgency {info['urgency']:.2f})",
         ]
     console.print(Panel("\n".join(lines), title="Aktiver Fokus", border_style="cyan"))
-
-
-def show_pulse(pulse_db: SocialPulseDB):
-    """Displays aggregated social pulse for the last 6 hours."""
-    console.rule("[bold blue]Social-Marktpuls (letzte 6h)")
-    summary = pulse_db.get_pulse_summary(hours=6)
-    if not summary:
-        console.print("[dim]Noch keine Social-Scan-Daten.[/dim]")
-        return
-    table = Table(title="Marktpuls per Ticker", box=box.ROUNDED)
-    table.add_column("Ticker", style="cyan")
-    table.add_column("Erwähnungen", justify="right")
-    table.add_column("Bullisch", justify="right")
-    table.add_column("Bärisch", justify="right")
-    table.add_column("Score", justify="right")
-    table.add_column("Trend")
-    for row in summary:
-        score = row["avg_score"]
-        score_str = (
-            f"[green]{score:+.2f}[/green]" if score > 0.1
-            else (f"[red]{score:+.2f}[/red]" if score < -0.1 else f"{score:+.2f}")
-        )
-        trend = "🟢 Bullisch" if score > 0.1 else ("🔴 Bärisch" if score < -0.1 else "⚪ Neutral")
-        table.add_row(
-            row["ticker"],
-            str(row["total_mentions"]),
-            str(row["bull"]),
-            str(row["bear"]),
-            score_str,
-            trend,
-        )
-    console.print(table)
-    spikes = pulse_db.get_spikes(hours=2)
-    if spikes:
-        console.print("\n[bold yellow]Aktuelle Spikes (2h-Fenster):[/bold yellow]")
-        for s in spikes:
-            console.print(f"  {s['ticker']}: {s['spike_ratio']}× normales Volumen")
 
 
 def show_signal_queue(signal_queue: SignalQueue):

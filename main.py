@@ -18,7 +18,6 @@ Starten:  python main.py
           python main.py --export-csv    (Trades als CSV exportieren)
           python main.py --export-pdf    (PDF-Report)
           python main.py --kelly-info    (Kelly-Criterion-Statistik)
-          python main.py --pulse         (Social-Marktpuls der letzten 6h anzeigen)
           python main.py --queue         (Warteschlange ausstehender Signale)
           python main.py --weekend       (Wochenvorbereitung jetzt ausführen)
           python main.py --briefing      (Letztes Wochenbriefing anzeigen)
@@ -47,7 +46,6 @@ Analyse-Zeitplan (.env):
   MARKET_EXCHANGES=XETRA,NYSE,TSE    # Vollanalyse 30 Min vor Börseneröffnung
                                      # Optionen: XETRA NYSE NASDAQ TSE HKEX SSE LSE ASX
   MARKET_LEAD_MINUTES=30             # Vorlauf in Minuten
-  ENABLE_SOCIAL_SCAN=true            # Stündlicher Social-Scan (Reddit+StockTwits)
   SIGNAL_QUEUE_MAX_AGE_HOURS=48      # Signale verfallen nach 48h
 """
 
@@ -77,7 +75,6 @@ from analyzers.market_schedule import MarketSchedule
 from analyzers.weekend_prep import WeekendPrep
 from analyzers.recession_detector import RecessionDetector
 from collectors.news_archive import NewsArchive
-from collectors.social_scan import SocialPulseDB
 from collectors.tradingview_webhook import start_webhook_server
 from collectors.tv_executor import start_tv_executor
 from collectors.earnings_protector import start_earnings_protector
@@ -94,14 +91,14 @@ from bot.runner import (
 from bot.scheduler import run_bot_loop
 from cli.display import (
     show_status, show_report, show_monthly_review, show_trade_journal,
-    show_focus_info, show_pulse, show_signal_queue, show_briefing,
+    show_focus_info, show_signal_queue, show_briefing,
     show_regime, show_goal, show_crash_radar, show_fx_status,
     _run_score_display, _run_margin_check, _run_velocity_display,
     _run_sentiment_memory_display, _run_reentry_display,
     show_watchlist_status,
 )
 from cli.commands import (
-    run_social_scan, run_weekend_prep, run_backtest, run_scan,
+    run_weekend_prep, run_backtest, run_scan,
     run_small_cap_scan, run_crypto_scan, run_eu_scan,
     _run_optimizer, _handle_exploration_command, _apply_exploration_overrides,
 )
@@ -130,7 +127,6 @@ def main():
     parser.add_argument("--export-csv", action="store_true", help="Trades als CSV exportieren")
     parser.add_argument("--export-pdf", action="store_true", help="Monatsbericht als PDF exportieren")
     parser.add_argument("--kelly-info", action="store_true", help="Kelly-Criterion-Statistik anzeigen")
-    parser.add_argument("--pulse", action="store_true", help="Social-Marktpuls anzeigen")
     parser.add_argument("--queue", action="store_true", help="Signal-Warteschlange anzeigen")
     parser.add_argument("--weekend", action="store_true", help="Wochenvorbereitung jetzt ausführen")
     parser.add_argument("--briefing", action="store_true", help="Letztes Wochenbriefing anzeigen")
@@ -334,7 +330,6 @@ def main():
             f"(Port {config.tradingview_webhook_port})"
         )
 
-    pulse_db = SocialPulseDB()
     weekend_prep_inst = WeekendPrep(
         anthropic_api_key=config.anthropic_api_key,
         watchlist=config.watchlist,
@@ -387,10 +382,6 @@ def main():
             "\n".join(f"{k}: {v}" for k, v in info.items()),
             title="Kelly-Criterion-Statistik", border_style="cyan",
         ))
-        return
-
-    if args.pulse:
-        show_pulse(pulse_db)
         return
 
     if args.queue:
@@ -614,7 +605,6 @@ def main():
         archive=archive,
         reflection=reflection,
         signal_queue=signal_queue,
-        pulse_db=pulse_db,
         weekend_prep_inst=weekend_prep_inst,
         goal_risk=goal_risk,
         hedge_strategy_inst=hedge_strategy_inst,

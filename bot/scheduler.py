@@ -28,7 +28,7 @@ from analyzers.parameter_optimizer import ParameterOptimizer, _MIN_TRADES
 from analyzers.turbo_learner import TurboLearner
 from bot.pre_market_scanner import PreMarketScanner
 from bot.runner import run_analysis_cycle, _print_portfolio_summary
-from cli.commands import run_social_scan, run_weekend_prep
+from cli.commands import run_weekend_prep
 
 console = Console()
 log = get_logger(__name__)
@@ -243,7 +243,6 @@ def run_bot_loop(
     archive: NewsArchive,
     reflection: ReflectionEngine,
     signal_queue,
-    pulse_db,
     weekend_prep_inst: WeekendPrep,
     goal_risk: GoalRiskAssessor,
     hedge_strategy_inst,
@@ -257,7 +256,6 @@ def run_bot_loop(
     phase_color = "green" if phase_info["phase"] == "GROWTH" else "magenta"
 
     today_slots = mkt_schedule.get_schedule_strings()
-    social_label = "[green]aktiv[/green]" if config.enable_social_scan else "[dim]deaktiviert[/dim]"
     queue_label = f"{signal_queue.count_pending()} Signal(e) ausstehend"
 
     if today_slots:
@@ -277,7 +275,6 @@ def run_bot_loop(
         f"Fokus: [magenta]{focus_ctrl.profile.label}[/magenta] | "
         f"Nächste Analyse: [bold]{next_str}[/bold]\n"
         f"Heute: {schedule_display} ({config.market_lead_minutes} Min vor Börseneröffnung)\n"
-        f"Social-Scan: {social_label} (stündlich) | "
         f"Signal-Queue: [yellow]{queue_label}[/yellow]\n"
         f"Phase: [{phase_color}]{phase_info['phase']}[/{phase_color}] | "
         f"Kapital: ${total:,.2f} | Ziel: ${phase_info['growth_target']:,.0f}",
@@ -293,27 +290,6 @@ def run_bot_loop(
             content = reflection.generate_monthly_review()
             if content:
                 console.print(Panel(content[:800] + "...", title="Monatsreview erstellt", border_style="magenta"))
-
-    def _social_scan_job():
-        spikes = run_social_scan(pulse_db, strategy)
-        if spikes:
-            notifier = TelegramNotifier()
-            spike_lines = [
-                f"{s['ticker']}: {s['spike_ratio']}× Volumen, Score {s['avg_score']:+.2f}"
-                for s in spikes[:5]
-            ]
-            notifier.notify_daily_summary(
-                total_value=portfolio.total_value(broker.get_prices(list(portfolio.all_positions().keys()))),
-                cash=portfolio.cash,
-                open_positions=len(portfolio.all_positions()),
-                phase=phase_ctrl.current_phase(portfolio.total_value(
-                    broker.get_prices(list(portfolio.all_positions().keys()))
-                )),
-                progress_pct=phase_ctrl.progress_pct(portfolio.total_value(
-                    broker.get_prices(list(portfolio.all_positions().keys()))
-                )),
-                actions_today=[f"📡 Social-Spike: {l}" for l in spike_lines],
-            )
 
     def _reschedule_analysis():
         """Rebuilds analysis schedule for the new day (handles DST changes)."""
@@ -479,15 +455,7 @@ def run_bot_loop(
         except Exception as e:
             report_lines.append(f"⚠️ News-Archiv Cleanup: {e}")
 
-        # 2. Social Pulse: älter als 7 Tage löschen
-        try:
-            from collectors.social_scan import SocialPulseDB
-            SocialPulseDB().cleanup(keep_days=7)
-            report_lines.append("✅ Social-Pulse: Einträge >7 Tage bereinigt")
-        except Exception as e:
-            report_lines.append(f"⚠️ Social-Pulse Cleanup: {e}")
-
-        # 3. Regime-Snapshots: älter als 90 Tage löschen
+        # 2. Regime-Snapshots: älter als 90 Tage löschen
         try:
             from analyzers.recession_detector import RecessionDetector
             n = RecessionDetector().cleanup_old_snapshots(keep_days=90)
@@ -515,7 +483,6 @@ def run_bot_loop(
         # 6. VACUUM auf allen SQLite-Datenbanken (gibt gelöschte Seiten frei)
         db_paths = [
             "data/news_archive.db",
-            "data/social_pulse.db",
             "data/trade_journal.db",
             "data/performance.db",
             "data/reflections.db",
@@ -734,10 +701,6 @@ def run_bot_loop(
 
     schedule.every(2).hours.do(_geopolitical_radar_job)
     _geopolitical_radar_job()   # Sofort beim Start
-
-    # Hourly tasks (7 days a week)
-    if config.enable_social_scan:
-        schedule.every().hour.do(_social_scan_job)
 
     # Auto-Optimierung: nach je 15 abgeschlossenen Trades per Telegram benachrichtigen
     schedule.every(6).hours.do(
