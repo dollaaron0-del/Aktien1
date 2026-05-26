@@ -77,21 +77,50 @@ class PriceCache:
             space_sep = " ".join(tickers)
             df = yf.download(space_sep, period="1d", auto_adjust=True, progress=False)
 
+            if df.empty:
+                return
+
+            # Newer yfinance (≥0.2) always uses multi-level columns
+            # (Ticker as first level) even for a single ticker.
+            # Squeeze to a flat Close Series/DataFrame first.
+            close = df["Close"] if "Close" in df.columns else df
+            import pandas as _pd
+            if isinstance(close, _pd.DataFrame):
+                # Multi-ticker: columns are ticker symbols
+                multi = True
+            else:
+                # Single-ticker legacy: already a Series
+                multi = False
+
             now = time.monotonic()
             with self._lock:
                 if len(tickers) == 1:
-                    if not df.empty:
-                        price = round(float(df["Close"].iloc[-1]), 2)
-                        self._cache[tickers[0]] = (price, now)
-                        result[tickers[0]] = price
-                else:
-                    close = df.get("Close", df)
-                    for t in tickers:
-                        try:
-                            price = round(float(close[t].dropna().iloc[-1]), 2)
+                    t = tickers[0]
+                    try:
+                        if multi:
+                            series = close.iloc[:, 0].dropna()
+                        else:
+                            series = close.dropna()
+                        if not series.empty:
+                            price = round(float(series.iloc[-1]), 2)
                             self._cache[t] = (price, now)
                             result[t] = price
-                        except (KeyError, IndexError):
+                    except (KeyError, IndexError, TypeError):
+                        pass
+                else:
+                    for t in tickers:
+                        try:
+                            if multi and t in close.columns:
+                                series = close[t].dropna()
+                            elif not multi:
+                                series = close.dropna()
+                            else:
+                                continue
+                            if not series.empty:
+                                price = round(float(series.iloc[-1]), 2)
+                                self._cache[t] = (price, now)
+                                result[t] = price
+                        except (KeyError, IndexError, TypeError):
                             pass
         except Exception as e:
             log.warning("PriceCache: Batch-Download fehlgeschlagen (%s): %s", tickers[:3], e)
