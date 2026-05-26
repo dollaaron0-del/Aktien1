@@ -1612,8 +1612,23 @@ with tab_log:
         "Hier siehst du das vollständige Vorgehen und die Begründung."
     )
 
-    stats = _alog.get_stats()
+    stats       = _alog.get_stats()
+    today_stats = _alog.get_today_stats()
+    last_cycle  = set(_alog.get_last_cycle_tickers())
+
     if stats.get("total", 0) > 0:
+        # Heute-Zeile
+        t_total = today_stats.get("total", 0)
+        if t_total > 0:
+            st.markdown("**Heute**")
+            tc1, tc2, tc3, tc4, tc5 = st.columns(5)
+            tc1.metric("Analysen heute",  t_total)
+            tc2.metric("🟢 BUY",          today_stats.get("buys", 0))
+            tc3.metric("⏭ SKIP",          today_stats.get("skips", 0))
+            tc4.metric("⏸ HOLD",          today_stats.get("holds", 0))
+            tc5.metric("Ø Sentiment",     f"{today_stats.get('avg_score', 0):.2f}")
+            st.markdown("**Gesamt**")
+
         sc1, sc2, sc3, sc4, sc5 = st.columns(5)
         sc1.metric("Analysen gesamt",  stats.get("total", 0))
         sc2.metric("🟢 BUY",           stats.get("buys", 0))
@@ -1721,10 +1736,11 @@ with tab_log:
         if _active_ticker:
             st.info(f"Noch keine Analyse für **{ticker_label(_active_ticker)}** vorhanden.")
         else:
-            st.info("Noch keine Analysen gespeichert. Morgen früh ab 07:30 Uhr beginnt der Bot.")
+            st.info("Noch keine Analysen gespeichert. Der Bot beginnt beim nächsten Zyklus.")
     else:
         _REC_ICON = {"BUY": "🟢", "SKIP": "⏭", "HOLD": "⏸", "SELL": "🔴"}
         _DIR_ICON = {"BULLISH": "📈", "NEUTRAL": "➡️", "BEARISH": "📉"}
+        _today_str = datetime.utcnow().strftime("%Y-%m-%d")
 
         for entry in entries:
             rec  = entry["recommendation"]
@@ -1732,12 +1748,25 @@ with tab_log:
             dir_icon = _DIR_ICON.get(entry["direction"], "")
             score = entry["sentiment_score"]
             conf  = entry["confidence"]
-            ts    = entry["analyzed_at"][:16]
+            ts_full = entry["analyzed_at"]
+            ts    = ts_full[:16]
+
+            # Alters-Badge: zeigt wie frisch die Analyse ist
+            _entry_date = ts_full[:10]
+            if entry["ticker"] in last_cycle:
+                _age_badge = "🔵 Letzter Zyklus"
+            elif _entry_date == _today_str:
+                _age_badge = "🟢 Heute"
+            elif _entry_date >= (datetime.utcnow().replace(hour=0,minute=0,second=0) -
+                                  __import__("datetime").timedelta(days=7)).strftime("%Y-%m-%d"):
+                _age_badge = "🟡 Diese Woche"
+            else:
+                _age_badge = "⚪ Älter"
 
             name_suffix = f" ({_ALL_NAMES[entry['ticker'].upper()]})" if entry['ticker'].upper() in _ALL_NAMES else ""
             label = (
                 f"{icon} **{entry['ticker']}{name_suffix}** · {dir_icon} {entry['direction']} "
-                f"· Score {score:.2f} · {conf} · {ts}"
+                f"· Score {score:.2f} · {conf} · {ts} · {_age_badge}"
             )
             with st.expander(label):
                 col_l, col_r = st.columns([3, 2])

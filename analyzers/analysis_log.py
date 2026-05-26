@@ -111,3 +111,34 @@ class AnalysisLog:
             FROM analyses
         """).fetchone()
         return dict(row) if row else {}
+
+    def get_today_stats(self) -> Dict:
+        """Statistiken nur für heute (UTC-Datum)."""
+        today = __import__("datetime").date.today().isoformat()
+        row = self._conn.execute("""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN recommendation='BUY'  THEN 1 ELSE 0 END) as buys,
+                SUM(CASE WHEN recommendation='SKIP' THEN 1 ELSE 0 END) as skips,
+                SUM(CASE WHEN recommendation='HOLD' THEN 1 ELSE 0 END) as holds,
+                SUM(CASE WHEN recommendation='SELL' THEN 1 ELSE 0 END) as sells,
+                AVG(sentiment_score) as avg_score
+            FROM analyses
+            WHERE analyzed_at >= ?
+        """, (today,)).fetchone()
+        return dict(row) if row else {}
+
+    def get_last_cycle_tickers(self) -> List[str]:
+        """Gibt die Ticker des letzten Analyse-Zyklus zurück (letzter Batch innerhalb 2h)."""
+        last_row = self._conn.execute(
+            "SELECT analyzed_at FROM analyses ORDER BY analyzed_at DESC LIMIT 1"
+        ).fetchone()
+        if not last_row:
+            return []
+        last_ts = last_row["analyzed_at"]
+        rows = self._conn.execute("""
+            SELECT DISTINCT ticker FROM analyses
+            WHERE analyzed_at >= datetime(?, '-120 minutes')
+            ORDER BY analyzed_at DESC
+        """, (last_ts,)).fetchall()
+        return [r["ticker"] for r in rows]
