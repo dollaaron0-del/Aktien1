@@ -1646,13 +1646,23 @@ with tab_log:
         with fb:
             log_limit = st.selectbox("Anzahl anzeigen", [50, 100, 200, 500], index=0)
 
-        selected_opt = st.selectbox(
-            "Aktie suchen",
-            _search_opts,
-            index=None,
-            placeholder="Ticker oder Name tippen, z.B. AAPL, RHM.DE …",
-            format_func=_fmt_search,
-        )
+        _tc1, _tc2 = st.columns([3, 2])
+        with _tc1:
+            # Freitext-Eingabe: beliebiger Ticker (auch nicht in der Liste)
+            _ticker_input = st.text_input(
+                "Aktie analysieren lassen",
+                placeholder="Ticker eingeben, z.B. RHM.DE, NVDA, BTC …",
+                help="Gib einen beliebigen Ticker-Symbol ein. Der Bot analysiert ihn beim nächsten Zyklus.",
+            )
+        with _tc2:
+            # Bekannte Ticker aus dem Log filtern
+            selected_opt = st.selectbox(
+                "Oder aus Log filtern",
+                _search_opts,
+                index=None,
+                placeholder="Aus bekannten wählen …",
+                format_func=_fmt_search,
+            )
         _sc1, _sc2 = st.columns(2)
         _searched = _sc1.form_submit_button("🔍 Suchen / Anfragen", use_container_width=True)
         _reset = _sc2.form_submit_button("✖ Filter zurücksetzen", use_container_width=True)
@@ -1660,7 +1670,16 @@ with tab_log:
     # ── Auswertung ───────────────────────────────────────────────────────────
     from analyzers.user_request_queue import add_ticker as _req_ticker, peek as _peek_requests
 
-    _active_ticker = None if _reset else (selected_opt if selected_opt else None)
+    # Freitext hat Vorrang vor Selectbox
+    _raw_input = _ticker_input.strip().upper() if _ticker_input else ""
+    if _reset:
+        _active_ticker = None
+    elif _raw_input:
+        _active_ticker = _raw_input
+    elif selected_opt:
+        _active_ticker = selected_opt
+    else:
+        _active_ticker = None
 
     if _searched and _active_ticker:
         if _active_ticker in _analyzed_set:
@@ -1671,8 +1690,14 @@ with tab_log:
             _req_ticker(_active_ticker)
             st.success(
                 f"✅ **{ticker_label(_active_ticker)}** wurde zur Analyse-Queue hinzugefügt.  \n"
-                f"Der Bot analysiert ihn beim nächsten Morgenzyklus (07:30 Uhr)."
+                f"Der Bot analysiert ihn beim nächsten Zyklus (15:00 Uhr oder beim nächsten Start)."
             )
+
+    # Pending-Queue anzeigen
+    from analyzers.user_request_queue import peek as _peek_queue
+    _pending = _peek_queue()
+    if _pending:
+        st.info(f"⏳ Warteschlange: **{', '.join(_pending)}** — werden beim nächsten Zyklus analysiert.")
 
     # Latest news for selected ticker
     if _active_ticker:
