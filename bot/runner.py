@@ -76,6 +76,21 @@ _EU_SUFFIXES = {
 }
 
 
+# Bekannte falsche Ticker → korrekter Yahoo-Finance-Ticker
+_TICKER_CORRECTIONS: Dict[str, str] = {
+    "LVMH.PA":  "MC.PA",    # LVMH Moët Hennessy
+    "LVMH":     "MC.PA",
+    "VOLKSWAGEN.DE": "VOW3.DE",
+    "VW.DE":    "VOW3.DE",
+    "DAIMLER.DE": "MBG.DE",  # Mercedes-Benz
+}
+
+
+def _normalize_ticker(ticker: str) -> str:
+    """Korrigiert bekannte falsche Ticker-Symbole."""
+    return _TICKER_CORRECTIONS.get(ticker.upper(), ticker)
+
+
 def _is_eu_stock(ticker: str) -> bool:
     upper = ticker.upper()
     return any(upper.endswith(s.upper()) for s in _EU_SUFFIXES)
@@ -514,6 +529,7 @@ def run_analysis_cycle(
             log.debug("EU Marktkontext fehlgeschlagen: %s", e)
 
     for ticker in active_watchlist:
+        ticker = _normalize_ticker(ticker)
         console.print(f"\n[cyan]Sammle Daten für {ticker}...[/cyan]")
 
         news, sources_breakdown = collect_news(ticker, archive, collectors)
@@ -522,6 +538,11 @@ def run_analysis_cycle(
             price_data = {"current_price": crypto_price, "volume": 0}
         else:
             price_data = collectors["yahoo"].get_price_data(ticker)
+
+        # Kurs-Check vor Claude: kein Kurs → Claude-Aufruf sparen
+        if not _is_crypto(ticker) and not price_data.get("current_price"):
+            console.print(f"  [dim]Kein Kurs für {ticker} verfügbar – übersprungen[/dim]")
+            continue
 
         # Feed news items to signal expander – detects unknown small-cap tickers
         new_signal_tickers = _signal_expander.process_news_items(news)
