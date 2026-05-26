@@ -154,6 +154,7 @@ def main():
     parser.add_argument("--sc-results", type=int, default=10, metavar="N", help="Maximale Anzahl Ergebnisse im Small-Cap Scan (Standard: 10)")
     parser.add_argument("--fill-archive", action="store_true",
                         help="News für alle Watchlist-Aktien sammeln und archivieren (kein Claude, keine Kosten)")
+    parser.add_argument("--crypto-scan", action="store_true", help="Krypto-Scanner: BTC/ETH/SOL/... Momentum & Volatilität")
     parser.add_argument("--crypto-results", type=int, default=8, metavar="N", help="Maximale Anzahl Ergebnisse im Krypto-Scan (Standard: 8)")
     parser.add_argument("--eu-scan", action="store_true", help="EU-Aktien Scanner: XETRA/AEX/CAC40/SMI/FTSE Kandidaten")
     parser.add_argument("--eu-country", nargs="+", metavar="DE|FR|NL|CH|GB|DK|ES", help="Länderfilter für EU-Scan (z.B. --eu-country DE FR)")
