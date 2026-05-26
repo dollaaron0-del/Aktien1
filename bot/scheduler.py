@@ -677,6 +677,35 @@ def run_bot_loop(
 
     schedule.every(4).hours.do(_position_aging_job)
 
+    # ── Headline-Signal-Scanner: stündlich ──────────────────────────────────
+    def _headline_scan_job():
+        """
+        Scannt allgemeine Börsennachrichten auf starke Signale (M&A, FDA,
+        Earnings-Beats, etc.) und speist entdeckte Ticker in die BenchList.
+        Sehr starke Signale (Score ≥ 0.85) werden sofort per Telegram gemeldet.
+        """
+        try:
+            from analyzers.headline_signal_detector import HeadlineSignalDetector
+            detector = HeadlineSignalDetector()
+            signals  = detector.scan()
+            if signals:
+                notifier = TelegramNotifier()
+                added = detector.process_signals(
+                    signals,
+                    notify_fn=notifier.send,
+                )
+                if added:
+                    console.print(
+                        f"  [magenta]📰 Headline-Scanner: "
+                        f"{len(added)} neue Kandidaten → BenchList: "
+                        f"{', '.join(added[:6])}[/magenta]"
+                    )
+        except Exception as e:
+            log.warning("Headline-Scan-Job fehlgeschlagen: %s", e)
+
+    schedule.every().hour.do(_headline_scan_job)
+    _headline_scan_job()   # Einmal sofort beim Start ausführen
+
     # Hourly tasks (7 days a week)
     if config.enable_social_scan:
         schedule.every().hour.do(_social_scan_job)
