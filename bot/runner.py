@@ -140,6 +140,21 @@ def _get_watchlist(portfolio: Portfolio) -> List[str]:
     # Opportunity-Scan: bei ≥50% freien Slots nach weiteren Kandidaten suchen
     _opportunity_scan(portfolio, base)
 
+    # Sektor-Stichprobe: 2 neue Aktien aus rotierendem Sektor für Netz-Aufbau
+    try:
+        from analyzers.sector_sampler import SectorSampler
+        sector_name, sample = SectorSampler().get_sample(exclude=base)
+        added_sample = [t for t in sample if t not in base]
+        for t in added_sample:
+            base.append(t)
+        if added_sample:
+            console.print(
+                f"  [blue]🔬 Sektor-Stichprobe ({sector_name}): "
+                f"{', '.join(added_sample)}[/blue]"
+            )
+    except Exception as e:
+        log.debug("Sektor-Sampler fehlgeschlagen: %s", e)
+
     return base
 
 
@@ -687,6 +702,28 @@ def run_analysis_cycle(
             analysis.confidence, analysis.recommendation,
         )
         _analysis_log.store(analysis)
+
+        # Bei BUY: verwandte Aktien ins Netz aufnehmen
+        if analysis.recommendation == "BUY" and analysis.related_tickers:
+            try:
+                from analyzers.stock_relations import StockRelations
+                from analyzers.bench_list import BenchList
+                StockRelations().add_relation(
+                    ticker, analysis.related_tickers, analysis.entry_rationale
+                )
+                bench = BenchList()
+                for rt in analysis.related_tickers:
+                    bench.add(
+                        rt,
+                        score=round(analysis.sentiment_score * 0.85, 3),
+                        reason=f"Verwandt mit {ticker}: {analysis.entry_rationale[:80]}",
+                    )
+                console.print(
+                    f"  [cyan]🔗 Verwandte Aktien → BenchList: "
+                    f"{', '.join(analysis.related_tickers)}[/cyan]"
+                )
+            except Exception as e:
+                log.debug("Stock-Relations Fehler: %s", e)
 
         action = strategy.evaluate(analysis, sources_breakdown)
         if action:

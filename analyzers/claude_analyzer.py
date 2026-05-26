@@ -65,6 +65,12 @@ class AnalysisResult:
     bull_case: str = ""             # Stärkstes Argument FÜR den Trade
     bear_case: str = ""             # Stärkstes Argument GEGEN den Trade
     debate_winner: str = ""         # "BULL" | "BEAR" | "DRAW"
+    # Verwandte Aktien (nur bei BUY): profitieren von derselben These
+    related_tickers: List[str] = None
+
+    def __post_init__(self):
+        if self.related_tickers is None:
+            self.related_tickers = []
 
 
 _SYSTEM_PROMPT = """Du bist ein erfahrener quantitativer Aktienanalyst mit Schwerpunkt auf Swing-Trading (Haltedauer 3–30 Tage).
@@ -139,11 +145,14 @@ SCHRITT 2 – AUSGABE als JSON:
   "target_price_rationale": "<1 Satz Begründung>",
   "thesis_valid": null,
   "thesis_break_reason": "",
+  "related_tickers": [],
   "summary": "<3–5 Sätze Gesamtbewertung>"
 }}
 
 BUY nur wenn BULL-Seite klar überwiegt UND technische Signale bestätigen.
 SKIP wenn DRAW oder wenn BEAR-Argumente das Risiko zu hoch machen.
+Bei BUY: trage in "related_tickers" 2–3 Ticker-Symbole ein die von derselben These profitieren
+(z.B. Zulieferer, Wettbewerber, Abnehmer). Leer lassen bei HOLD/SKIP/SELL.
 """
 
 # Used when an open position EXISTS – Claude must validate the original thesis
@@ -491,6 +500,10 @@ class ClaudeAnalyzer:
                 bull_case=data.get("bull_case", ""),
                 bear_case=data.get("bear_case", ""),
                 debate_winner=data.get("debate_winner", ""),
+                related_tickers=[
+                    t.strip().upper() for t in data.get("related_tickers", [])
+                    if isinstance(t, str) and t.strip()
+                ],
             )
         except (json.JSONDecodeError, KeyError, ValueError):
             return self._empty_result(ticker, f"Parse-Fehler: {raw[:200]}")
