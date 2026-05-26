@@ -1612,12 +1612,14 @@ with tab_log:
             placeholder="Ticker oder Name tippen, z.B. AAPL, RHM.DE …",
             format_func=_fmt_search,
         )
-        _searched = st.form_submit_button("🔍 Suchen / Anfragen", use_container_width=True)
+        _sc1, _sc2 = st.columns(2)
+        _searched = _sc1.form_submit_button("🔍 Suchen / Anfragen", use_container_width=True)
+        _reset = _sc2.form_submit_button("✖ Filter zurücksetzen", use_container_width=True)
 
     # ── Auswertung ───────────────────────────────────────────────────────────
     from analyzers.user_request_queue import add_ticker as _req_ticker, peek as _peek_requests
 
-    _active_ticker = selected_opt if selected_opt else None
+    _active_ticker = None if _reset else (selected_opt if selected_opt else None)
 
     if _searched and _active_ticker:
         if _active_ticker in _analyzed_set:
