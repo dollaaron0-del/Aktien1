@@ -35,10 +35,11 @@ class Config:
     broker_mode: str = field(default_factory=lambda: os.getenv("BROKER_MODE", "paper"))
     initial_capital: float = field(default_factory=lambda: float(os.getenv("INITIAL_CAPITAL", "10000.0")))
 
-    # Watchlist
-    watchlist: List[str] = field(default_factory=lambda: [
-        "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META"
-    ])
+    # Watchlist – aus .env lesen (WATCHLIST=AAPL,MSFT,NVDA,...) oder Standardliste
+    watchlist: List[str] = field(default_factory=lambda: (
+        [t.strip().upper() for t in os.getenv("WATCHLIST", "").split(",") if t.strip()]
+        or ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META"]
+    ))
 
     # Risk management
     max_position_pct: float = 0.20
