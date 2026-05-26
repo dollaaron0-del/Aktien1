@@ -218,6 +218,12 @@ class Portfolio:
     def cash(self) -> float:
         return self._get_cash()
 
+    def set_cash(self, value: float) -> None:
+        """Setzt den Cash-Stand direkt (z.B. nach Alpaca-Sync oder Portfolio-Reset)."""
+        with _db_lock:
+            with self._conn:
+                self._set_cash(max(0.0, value))
+
     def get_position(self, ticker: str) -> Optional[Position]:
         row = self._conn.execute(
             """

@@ -292,6 +292,28 @@ def main():
         broker = PaperBroker()
 
     portfolio = Portfolio(config.initial_capital)
+
+    # Alpaca-Kontostand mit Portfolio synchronisieren
+    if config.broker_mode == "alpaca" and isinstance(broker, AlpacaBroker):
+        try:
+            acct = broker.get_account()
+            if acct:
+                buying_power = float(acct.get("buying_power", 0))
+                equity       = float(acct.get("equity", 0))
+                local_cash   = portfolio.cash
+                if abs(buying_power - local_cash) > 50:
+                    portfolio.set_cash(buying_power)
+                    console.print(
+                        f"[cyan]↕ Alpaca-Sync: Kaufkraft ${buying_power:,.2f} "
+                        f"(vorher lokal ${local_cash:,.2f}) | Eigenkapital ${equity:,.2f}[/cyan]"
+                    )
+                else:
+                    console.print(
+                        f"[dim]Alpaca-Kontostand: ${buying_power:,.2f} Kaufkraft "
+                        f"| ${equity:,.2f} Eigenkapital[/dim]"
+                    )
+        except Exception as e:
+            console.print(f"[yellow]⚠ Alpaca-Kontostand konnte nicht gelesen werden: {e}[/yellow]")
     tracker = PerformanceTracker()
     phase_ctrl = _make_phase_ctrl()
     focus_ctrl = _make_focus_ctrl()
