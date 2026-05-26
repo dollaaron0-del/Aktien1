@@ -32,19 +32,31 @@ _SCALING_TIERS: list[Tuple[float, int, float]] = [
     (500_000, 25, 0.04),   # > $500k  → 25 Positionen à max 4%
     (200_000, 18, 0.05),   # > $200k  → 18 Positionen à max 5%
     ( 75_000, 12, 0.08),   # > $75k   → 12 Positionen à max 8%
-    ( 25_000,  8, 0.12),   # > $25k   →  8 Positionen à max 12%
-    (      0,  5, 0.20),   # bis $25k →  5 Positionen à max 20%
+    ( 25_000, 10, 0.10),   # > $25k   → 10 Positionen à max 10%
+    (      0, 10, 0.10),   # bis $25k → 10 Positionen à max 10%
 ]
 
 
 def get_scaling(portfolio_value: float) -> Tuple[int, float]:
     """
     Gibt (max_positions, max_position_pct) für den aktuellen Portfolio-Wert zurück.
+    MAX_POSITIONS_OVERRIDE in .env überschreibt alle Tiers.
     """
+    import os as _os
+    _override = _os.getenv("MAX_POSITIONS_OVERRIDE")
+    if _override:
+        try:
+            override_pos = int(_override)
+            for min_val, _, max_pct in _SCALING_TIERS:
+                if portfolio_value >= min_val:
+                    return override_pos, max_pct
+            return override_pos, 0.10
+        except ValueError:
+            pass
     for min_val, max_pos, max_pct in _SCALING_TIERS:
         if portfolio_value >= min_val:
             return max_pos, max_pct
-    return 5, 0.20
+    return 10, 0.10
 
 
 @dataclass
