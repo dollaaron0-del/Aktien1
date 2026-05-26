@@ -75,24 +75,39 @@ class YahooCollector:
         return unique
 
     def get_price_data(self, ticker: str, period: str = "1mo") -> Dict:
+        stock = yf.Ticker(ticker)
+
+        # Price history is a separate endpoint – fetch it first so a failed
+        # fundamentals call (HTTP 404 on quoteSummary) never blocks the price.
         try:
-            stock = yf.Ticker(ticker)
             hist = stock.history(period=period)
-            info = stock.info
-            return {
-                "ticker": ticker,
-                "current_price": round(hist["Close"].iloc[-1], 2) if not hist.empty else None,
-                "price_change_1w": self._pct_change(hist, 5),
-                "price_change_1m": self._pct_change(hist, 21),
-                "volume_avg": int(hist["Volume"].mean()) if not hist.empty else None,
-                "market_cap": info.get("marketCap"),
-                "sector": info.get("sector", "Unknown"),
-                "pe_ratio": info.get("trailingPE"),
-                "52w_high": info.get("fiftyTwoWeekHigh"),
-                "52w_low": info.get("fiftyTwoWeekLow"),
-            }
         except Exception:
-            return {"ticker": ticker, "current_price": None}
+            hist = None
+
+        current_price = None
+        if hist is not None and not hist.empty:
+            try:
+                current_price = round(float(hist["Close"].iloc[-1]), 2)
+            except Exception:
+                pass
+
+        try:
+            info = stock.info or {}
+        except Exception:
+            info = {}
+
+        return {
+            "ticker": ticker,
+            "current_price": current_price,
+            "price_change_1w": self._pct_change(hist, 5) if hist is not None else None,
+            "price_change_1m": self._pct_change(hist, 21) if hist is not None else None,
+            "volume_avg": int(hist["Volume"].mean()) if hist is not None and not hist.empty else None,
+            "market_cap": info.get("marketCap"),
+            "sector": info.get("sector", "Unknown"),
+            "pe_ratio": info.get("trailingPE"),
+            "52w_high": info.get("fiftyTwoWeekHigh"),
+            "52w_low": info.get("fiftyTwoWeekLow"),
+        }
 
     def _pct_change(self, hist, days: int) -> float | None:
         if hist.empty or len(hist) < days:

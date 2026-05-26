@@ -692,6 +692,8 @@ def run_analysis_cycle(
         if action:
             color = "bold red" if "VERKAUFT" in action else "bold green"
             console.print(f"  [{color}]{action}[/{color}]")
+        elif analysis.recommendation == "BUY":
+            console.print(f"  [dim][{ticker}] BUY-Signal vorhanden, aber Trade nicht ausgeführt (alle Filter gepasst? Prüfe Logs)[/dim]")
             # Only material trades go into the Telegram summary, not skip/hold notices
             if "GEKAUFT" in action or "VERKAUFT" in action:
                 cycle_actions.append(action)
