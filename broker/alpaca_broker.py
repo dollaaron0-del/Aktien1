@@ -108,7 +108,8 @@ class AlpacaBroker:
 
             data     = r.json()
             order_id = data.get("id")
-            log.info("Alpaca order submitted: %s %s %.2f shares (id=%s)", side.upper(), ticker, shares, order_id)
+            log.info("Alpaca order submitted: %s %s %.2f shares (id=%s) via %s",
+                     side.upper(), ticker, shares, order_id, self.base_url)
 
             # Poll for fill confirmation
             fill_result = self._wait_for_fill(order_id)

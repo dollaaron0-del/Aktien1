@@ -314,8 +314,10 @@ def run_bot_loop(
             log.warning("Pre-Market-Job %s fehlgeschlagen: %s", exchange, e)
 
     def _register_analysis_jobs():
-        slots = mkt_schedule.get_schedule_strings()
-        is_weekend = datetime.utcnow().weekday() >= 5
+        # Use LOCAL date (not UTC) so midnight reschedule doesn't get "yesterday"
+        local_date = datetime.now().date()
+        slots = mkt_schedule.get_schedule_strings(date=local_date)
+        is_weekend = local_date.weekday() >= 5
         if not slots or is_weekend:
             if is_weekend:
                 console.print("[dim]Wochenende – keine Vollanalysen geplant (nur Wochenvorbereitung).[/dim]")

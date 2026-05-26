@@ -124,7 +124,7 @@ class MarketSchedule:
         If `date` is None, uses today in UTC.
         """
         if date is None:
-            date = datetime.utcnow().date()
+            date = datetime.now().date()
 
         results = []
         for code in self.exchanges:
@@ -178,9 +178,10 @@ class MarketSchedule:
     def next_window(self) -> Optional[Dict]:
         """Returns the next upcoming analysis window from now."""
         now_utc = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC"))
-        # Check today and tomorrow
+        now_local = datetime.now()
+        # Check today and tomorrow (use local date to avoid UTC-date mismatch at midnight)
         for delta in (0, 1):
-            date = (now_utc + timedelta(days=delta)).date()
+            date = (now_local + timedelta(days=delta)).date()
             for entry in self.get_analysis_times_utc(date):
                 if entry["is_trading_day"] and entry["analysis_utc"] > now_utc:
                     local_dt = entry["analysis_utc"].astimezone()
@@ -194,7 +195,7 @@ class MarketSchedule:
         """Human-readable schedule description for the given date."""
         entries = self.get_schedule_strings(date)
         if not entries:
-            day = (date or datetime.utcnow().date())
+            day = (date or datetime.now().date())
             return f"Kein Handel am {day.strftime('%A, %d.%m.%Y')}."
         lines = []
         for e in entries:

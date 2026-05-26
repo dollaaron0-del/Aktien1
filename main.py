@@ -270,7 +270,18 @@ def main():
             console.print("[yellow]⚠ Alpaca-Credentials fehlen – Fallback auf Paper-Broker.[/yellow]")
             broker = PaperBroker()
         else:
-            console.print("[green]✓ Alpaca-Broker aktiv[/green]")
+            is_paper_endpoint = "paper-api" in config.alpaca_base_url
+            endpoint_color = "yellow" if is_paper_endpoint else "green"
+            endpoint_label = "PAPER-API (Simulation)" if is_paper_endpoint else "LIVE-API (echte Orders)"
+            console.print(
+                f"[green]✓ Alpaca-Broker aktiv[/green]  "
+                f"[{endpoint_color}]Endpoint: {endpoint_label}[/{endpoint_color}]"
+            )
+            if is_paper_endpoint:
+                console.print(
+                    "[yellow]  ⚠ Trades gehen an Alpaca PAPER-Konto, nicht an echtes Konto!\n"
+                    "    Für echte Orders: ALPACA_BASE_URL=https://api.alpaca.markets in .env setzen[/yellow]"
+                )
     elif config.broker_mode == "ibkr":
         broker = IBKRBroker()
         if broker.is_connected():
