@@ -122,7 +122,71 @@ def _get_watchlist(portfolio: Portfolio) -> List[str]:
             log.info("Nutzeranfrage: %s wird in diesem Zyklus analysiert", t)
             base.append(t)
 
+    # Opportunity-Scan: bei ≥50% freien Slots nach weiteren Kandidaten suchen
+    _opportunity_scan(portfolio, base)
+
     return base
+
+
+def _opportunity_scan(portfolio: "Portfolio", base: List[str]) -> None:
+    """
+    Erweitert die Watchlist wenn mehr als die Hälfte der Positions-Slots frei ist.
+    Verhindert verschwendetes Kapital wenn alle Watchlist-Aktien kein Signal liefern.
+    """
+    try:
+        from portfolio.focus_mode import get_scaling
+        prices = {t: pos.entry_price for t, pos in portfolio.all_positions().items()}
+        portfolio_value = portfolio.cash + sum(
+            pos.shares * pos.entry_price for pos in portfolio.all_positions().values()
+        )
+        max_pos, _ = get_scaling(portfolio_value)
+        open_count = len(portfolio.all_positions())
+        free_slots = max_pos - open_count
+
+        if free_slots < max(2, max_pos // 2):
+            return  # Portfolio ist gut gefüllt – kein Scan nötig
+
+        extra_needed = min(free_slots, 8)
+        active = list(portfolio.all_positions().keys())
+
+        log.info(
+            "Opportunity-Scan: %d/%d Slots frei – suche bis zu %d neue Kandidaten",
+            free_slots, max_pos, extra_needed,
+        )
+
+        added = []
+
+        # US-Momentum Scan (DynamicWatchlist)
+        try:
+            from analyzers.dynamic_watchlist import DynamicWatchlist as _DWL
+            scan_tickers = _DWL(max_picks=extra_needed).get_watchlist(active_tickers=active)
+            for t in scan_tickers:
+                if t not in base:
+                    base.append(t)
+                    added.append(t)
+        except Exception as e:
+            log.debug("Opportunity US-Scan fehlgeschlagen: %s", e)
+
+        # EU-Scan wenn noch Slots frei (und EU aktiviert oder immer als Ergänzung)
+        remaining = extra_needed - len(added)
+        if remaining > 0:
+            try:
+                from analyzers.eu_stock_scanner import EUStockScanner
+                eu_scan = EUStockScanner(max_results=min(remaining, 4)).scan()
+                for c in eu_scan.candidates:
+                    if c.ticker not in base:
+                        base.append(c.ticker)
+                        added.append(c.ticker)
+            except Exception as e:
+                log.debug("Opportunity EU-Scan fehlgeschlagen: %s", e)
+
+        if added:
+            console.print(
+                f"  [magenta]🔍 Opportunity-Scan: {len(added)} neue Kandidaten → "
+                f"{', '.join(added[:6])}{'...' if len(added) > 6 else ''}[/magenta]"
+            )
+    except Exception as e:
+        log.debug("Opportunity-Scan Fehler: %s", e)
 
 
 def _make_phase_ctrl() -> PhaseController:
