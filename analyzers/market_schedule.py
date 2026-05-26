@@ -21,7 +21,7 @@ from typing import List, Dict, Optional, Set
 
 
 EXCHANGE_DEFS: Dict[str, Dict] = {
-    "XETRA":  {"tz": "Europe/Berlin",      "open": dtime(8, 0),  "name": "Frankfurt / Tradegate"},
+    "XETRA":  {"tz": "Europe/Berlin",      "open": dtime(9, 0),  "name": "Frankfurt / Tradegate"},
     "NYSE":   {"tz": "America/New_York",   "open": dtime(9, 30), "name": "NYSE/NASDAQ New York"},
     "NASDAQ": {"tz": "America/New_York",   "open": dtime(9, 30), "name": "NASDAQ New York"},
     "TSE":    {"tz": "Asia/Tokyo",         "open": dtime(9, 0),  "name": "Tokyo TSE"},
