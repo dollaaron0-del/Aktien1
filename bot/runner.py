@@ -156,18 +156,32 @@ def _opportunity_scan(portfolio: "Portfolio", base: List[str]) -> None:
 
         added = []
 
-        # US-Momentum Scan (DynamicWatchlist)
+        # 1. Zuerst aus der BenchList schöpfen (vom Bot bereits entdeckte Kandidaten)
         try:
-            from analyzers.dynamic_watchlist import DynamicWatchlist as _DWL
-            scan_tickers = _DWL(max_picks=extra_needed).get_watchlist(active_tickers=active)
-            for t in scan_tickers:
-                if t not in base:
-                    base.append(t)
-                    added.append(t)
+            from analyzers.bench_list import BenchList
+            bench_picks = BenchList().pop_candidates(extra_needed, exclude=base)
+            for t in bench_picks:
+                base.append(t)
+                added.append(t)
+            if bench_picks:
+                log.info("BenchList: %d Kandidaten geholt: %s", len(bench_picks), ", ".join(bench_picks))
         except Exception as e:
-            log.debug("Opportunity US-Scan fehlgeschlagen: %s", e)
+            log.debug("BenchList-Abruf fehlgeschlagen: %s", e)
 
-        # EU-Scan wenn noch Slots frei (und EU aktiviert oder immer als Ergänzung)
+        # 2. US-Momentum Scan wenn noch Slots offen
+        remaining = extra_needed - len(added)
+        if remaining > 0:
+            try:
+                from analyzers.dynamic_watchlist import DynamicWatchlist as _DWL
+                scan_tickers = _DWL(max_picks=remaining).get_watchlist(active_tickers=active)
+                for t in scan_tickers:
+                    if t not in base:
+                        base.append(t)
+                        added.append(t)
+            except Exception as e:
+                log.debug("Opportunity US-Scan fehlgeschlagen: %s", e)
+
+        # 3. EU-Scan wenn noch Slots frei
         remaining = extra_needed - len(added)
         if remaining > 0:
             try:

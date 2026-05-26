@@ -205,7 +205,6 @@ class SignalDrivenExpander:
             if not self._is_valid_ticker(ticker):
                 continue
             if ticker in data:
-                # Bestehendem Eintrag das Ablaufdatum verlängern
                 data[ticker]["expires_at"] = expires
                 data[ticker]["signals"]    = data[ticker].get("signals", 1) + 1
                 data[ticker]["reason"]     = reason
@@ -219,6 +218,17 @@ class SignalDrivenExpander:
                 newly_added.append(ticker)
 
         self._save(data)
+
+        # Neu entdeckte Ticker auch in BenchList merken
+        if newly_added:
+            try:
+                from analyzers.bench_list import BenchList
+                bench = BenchList()
+                for ticker in newly_added:
+                    bench.add(ticker, reason=found.get(ticker, "Signal-Expander"), score=0.5)
+            except Exception:
+                pass
+
         return newly_added
 
     @staticmethod

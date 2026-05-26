@@ -1388,6 +1388,46 @@ with tab_watchlist:
             except Exception as _wl_e:
                 st.error(f"Fehler: {_wl_e}")
 
+    # ── Warteliste (BenchList) ───────────────────────────────────────────────
+    st.divider()
+    st.subheader("⏳ Warteliste")
+    st.caption(
+        "Aktien die der Bot aus News, Reddit oder Signal-Scans aufgeschnappt hat. "
+        "Bei freien Positions-Slots werden sie automatisch priorisiert analysiert."
+    )
+    try:
+        from analyzers.bench_list import BenchList as _BenchList
+        _bench = _BenchList()
+        _bench_entries = _bench.get_all()
+        if not _bench_entries:
+            st.info("Noch keine Kandidaten in der Warteliste. Der Bot füllt sie automatisch beim nächsten Zyklus.")
+        else:
+            _b_cols = st.columns([1, 3, 1, 1])
+            _b_cols[0].markdown("**Ticker**")
+            _b_cols[1].markdown("**Grund**")
+            _b_cols[2].markdown("**Score**")
+            _b_cols[3].markdown("**Signale**")
+            for _be in sorted(_bench_entries, key=lambda x: (-x["score"], -x["signal_count"]))[:15]:
+                _bc = st.columns([1, 3, 1, 1])
+                _bc[0].markdown(f"`{_be['ticker']}`")
+                _bc[1].caption(_be["reason"][:60])
+                _score_color = "🟢" if _be["score"] >= 0.6 else "🟡" if _be["score"] >= 0.4 else "🔴"
+                _bc[2].markdown(f"{_score_color} {_be['score']:.2f}")
+                _bc[3].markdown(str(_be["signal_count"]))
+
+            # Ticker manuell zur Warteliste hinzufügen
+            with st.expander("➕ Ticker manuell zur Warteliste hinzufügen"):
+                _manual_bench_col1, _manual_bench_col2 = st.columns([3, 1])
+                _manual_bench_ticker = _manual_bench_col1.text_input(
+                    "Ticker", placeholder="z.B. PLTR oder SIE.DE", key="bench_add_input"
+                ).strip().upper()
+                if _manual_bench_col2.button("Hinzufügen", key="bench_add_btn") and _manual_bench_ticker:
+                    _bench.add(_manual_bench_ticker, reason="Manuell hinzugefügt", score=0.5)
+                    st.success(f"{_manual_bench_ticker} zur Warteliste hinzugefügt.")
+                    st.rerun()
+    except Exception as _bench_err:
+        st.caption(f"Warteliste nicht verfügbar: {_bench_err}")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
