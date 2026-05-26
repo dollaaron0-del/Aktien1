@@ -614,6 +614,27 @@ def run_bot_loop(
 
         schedule.every().day.at("02:30").do(_turbo_learn_job)
 
+    # ── Nutzeranfragen-Job: alle 15 Minuten prüfen ──────────────────────────
+    def _user_request_job():
+        """Sofort-Analyse wenn Nutzer Ticker über das Dashboard angefordert hat."""
+        from analyzers import user_request_queue as _urq
+        pending = _urq.peek()
+        if not pending:
+            return
+        log.info(
+            "Nutzeranfrage-Job: %d Ticker sofort analysieren: %s",
+            len(pending), pending,
+        )
+        console.print(
+            f"\n[bold cyan]📬 Nutzeranfrage – sofortige Analyse: {', '.join(pending)}[/bold cyan]"
+        )
+        run_analysis_cycle(
+            portfolio, broker, strategy, tracker, phase_ctrl,
+            archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+        )
+
+    schedule.every(15).minutes.do(_user_request_job)
+
     # ── SL/TP-Check alle 30 Minuten ─────────────────────────────────────────
     schedule.every(30).minutes.do(strategy.check_open_positions)
 
