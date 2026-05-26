@@ -765,19 +765,29 @@ def run_analysis_cycle(
 
         action = strategy.evaluate(analysis, sources_breakdown)
         if action:
-            color = "bold red" if "VERKAUFT" in action else "bold green"
+            if "GEKAUFT" in action:
+                color = "bold green"
+            elif "VERKAUFT" in action:
+                color = "bold red"
+            elif "übersprungen" in action or "Limit" in action or "Schwelle" in action or "übersprungen" in action:
+                color = "yellow"
+            else:
+                color = "dim"
             console.print(f"  [{color}]{action}[/{color}]")
-        elif analysis.recommendation == "BUY":
-            console.print(f"  [dim][{ticker}] BUY-Signal vorhanden, aber Trade nicht ausgeführt (alle Filter gepasst? Prüfe Logs)[/dim]")
-            # Only material trades go into the Telegram summary, not skip/hold notices
+            # Nur echte Käufe/Verkäufe in die Tages-Zusammenfassung
             if "GEKAUFT" in action or "VERKAUFT" in action:
                 cycle_actions.append(action)
-                # Refresh continuous learning memo after each closed trade
+                # Lessons-Memo nach jedem Verkauf aktualisieren
                 if reflection and "VERKAUFT" in action:
                     new_memo = reflection.generate_memo()
                     if new_memo:
                         console.print("  [dim]📚 Lessons-Memo aktualisiert[/dim]")
                         lessons_memo = new_memo
+        elif analysis.recommendation == "BUY":
+            console.print(
+                f"  [dim][{ticker}] BUY-Signal vorhanden, aber kein Trade "
+                f"(Konfidenz/Schwelle/Filter – Logs prüfen)[/dim]"
+            )
 
     # Record portfolio snapshot
     prices = broker.get_prices(list(portfolio.all_positions().keys()))
