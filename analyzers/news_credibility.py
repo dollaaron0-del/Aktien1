@@ -100,12 +100,15 @@ _AI_GEN_PATTERNS = [
     r"(this article (was|is) (generated|written|produced) (by|with) (ai|artificial intelligence))",
 ]
 
-# Minimaler Trust-Score damit ein Artikel an Claude weitergegeben wird
-_MIN_TRUST_SCORE = float(os.getenv("NEWS_MIN_TRUST_SCORE", "0.25"))
 # Ab wie vielen gleichen Quellen in einem Batch gilt es als Koordinierung
 _COORDINATION_THRESHOLD = int(os.getenv("NEWS_COORDINATION_THRESHOLD", "5"))
 # Max. Alter eines Artikels in Stunden (ältere = möglicherweise recycelt)
 _MAX_AGE_HOURS = float(os.getenv("NEWS_MAX_AGE_HOURS", "72"))
+
+
+def _min_trust_score() -> float:
+    """Liest NEWS_MIN_TRUST_SCORE dynamisch – reagiert auf .env-Änderungen ohne Neustart."""
+    return float(os.getenv("NEWS_MIN_TRUST_SCORE", "0.15"))
 
 
 class NewsTrustFilter:
@@ -141,8 +144,9 @@ class NewsTrustFilter:
         # Einzelquellen-Alarm: Behauptungen die nur 1 Quelle hat werden abgewertet
         scored = self._penalize_single_source(scored)
 
-        kept    = [(item, s) for item, s in scored if s >= _MIN_TRUST_SCORE]
-        dropped = [(item, s) for item, s in scored if s < _MIN_TRUST_SCORE]
+        _threshold = _min_trust_score()
+        kept    = [(item, s) for item, s in scored if s >= _threshold]
+        dropped = [(item, s) for item, s in scored if s < _threshold]
 
         spoof_titles   = [item.get("title", "")[:60] for item, s in scored
                           if self._is_domain_spoof(item)]
@@ -152,7 +156,7 @@ class NewsTrustFilter:
         if dropped:
             log.info(
                 "NewsTrust: %d/%d Artikel gefiltert (Trust < %.2f): %s",
-                len(dropped), len(items), _MIN_TRUST_SCORE,
+                len(dropped), len(items), _threshold,
                 ", ".join((item.get("title") or "")[:40] for item, _ in dropped[:3]),
             )
         if spoof_titles:

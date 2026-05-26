@@ -224,12 +224,12 @@ class OllamaPrescreener:
         if confidence == "LOW":
             return True, ""
 
-        # Klar bearisch mit hoher/mittlerer Konfidenz → Claude sparen (nur SKIP, nie SELL)
-        # Schwelle bewusst niedrig (0.25) damit nur glasklare Fälle Ollama-only bleiben
-        if score < 0.25 and confidence in ("HIGH", "MEDIUM"):
-            return False, f"Ollama: klar BEARISH ({score:.2f}) – SKIP ohne Claude"
+        # Nur bei HIGH confidence UND glasklarem BEARISH (< 0.20) Claude sparen
+        # MEDIUM confidence immer an Claude weitergeben – Ollama-Unsicherheit zu hoch
+        if score < 0.20 and confidence == "HIGH":
+            return False, f"Ollama: klar BEARISH ({score:.2f}, HIGH) – SKIP ohne Claude"
 
-        # Klar neutral mit hoher Konfidenz → Claude sparen
+        # Klar neutral mit sehr hoher Konfidenz → Claude sparen
         if score < self.neutral_skip and confidence == "HIGH":
             return False, f"Ollama: NEUTRAL ({score:.2f}, HIGH) – kein Trade-Signal"
 
