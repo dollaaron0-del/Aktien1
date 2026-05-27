@@ -2390,7 +2390,12 @@ with tab_settings:
         }
         try:
             _write_env(updates)
-            st.success("✅ Einstellungen gespeichert! Bitte Bot neu starten.")
+            try:
+                subprocess.run(["systemctl", "restart", "aktien_bot"], check=True, timeout=15)
+                st.success("✅ Einstellungen gespeichert und Bot neu gestartet.")
+            except Exception as _re:
+                st.success("✅ Einstellungen gespeichert.")
+                st.warning(f"Bot-Neustart fehlgeschlagen (manuell starten): {_re}")
         except Exception as e:
             st.error(f"Fehler beim Speichern: {e}")
 
