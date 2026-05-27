@@ -1672,7 +1672,7 @@ with st.sidebar:
     st.write(f"**Hedge ab:** {config.hedge_from_regime}")
     st.write(f"**Max Hedge:** {config.max_hedge_pct*100:.0f}%")
     st.write(f"**Börsen:** {', '.join(config.market_exchanges)}")
-    st.write(f"**Social Scan:** {'✓' if config.enable_social_scan else '✗'}")
+    st.write(f"**Social Scan:** ✗ (deaktiviert)")
     st.write(f"**SL/TP-Check:** alle 30 Min")
     st.write(f"**Aging-Check:** alle 4h")
     st.write(f"**Kelly Sizing:** {'✓' if config.use_kelly_sizing else '✗'}")
@@ -2161,10 +2161,6 @@ with tab_settings:
                 placeholder="SAP.DE,ASML.AS,MC.PA",
                 disabled=not new_eu,
             )
-            new_social = st.toggle(
-                "Social Scan (Reddit/StockTwits)",
-                value=_env.get("ENABLE_SOCIAL_SCAN", "false").lower() in ("1","true","yes"),
-            )
 
         st.markdown("#### ⚡ Spezial-Modi")
         st.caption("Diese Modi überschreiben die Risiko-Einstellungen oben.")
@@ -2205,7 +2201,7 @@ with tab_settings:
             "SCAN_MAX_PICKS":         str(new_scan_picks),
             "EU_STOCKS_ENABLED":      "true" if new_eu else "false",
             "EU_WATCHLIST":           ",".join(t.strip().upper() for t in new_eu_wl.split(",") if t.strip()),
-            "ENABLE_SOCIAL_SCAN":     "true" if new_social else "false",
+            "ENABLE_SOCIAL_SCAN":     "false",
             "TURBO_MODE":                "true" if new_turbo else "false",
             "EXPLORATION_MODE":          "true" if new_expl else "false",
             "MONTHLY_DISTRIBUTION_EUR":  str(new_monthly_eur),
