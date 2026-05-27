@@ -144,15 +144,18 @@ def _get_watchlist(portfolio: Portfolio) -> List[str]:
             if t not in base:
                 base.append(t)
 
-    # Vom Dashboard manuell angeforderte Ticker einmalig analysieren
+    # Vom Dashboard manuell angeforderte + Headline-Signal-Ticker analysieren
     # force_claude=True: Ollama-Prescreen + Budget-Check werden übersprungen
-    requested = _urq.consume_all()
+    requested = _urq.consume_all()  # returns List[(ticker, meta)]
     _force_claude_tickers: set = set()
-    for t in requested:
+    _headline_meta: Dict[str, dict] = {}  # ticker → Signal-Metadaten für Follow-Up
+    for t, meta in requested:
         if t not in base:
             log.info("Nutzeranfrage: %s wird in diesem Zyklus analysiert", t)
             base.append(t)
         _force_claude_tickers.add(t)
+        if meta.get("from_headline"):
+            _headline_meta[t] = meta
 
     # Opportunity-Scan: bei ≥50% freien Slots nach weiteren Kandidaten suchen
     _opportunity_scan(portfolio, base)
@@ -770,9 +773,46 @@ def run_analysis_cycle(
         _print_analysis(analysis)
         _analysis_cache.store(
             ticker, analysis.direction, analysis.sentiment_score,
-            analysis.confidence, analysis.recommendation,
+            analysis.recommendation, analysis.confidence,
         )
         _analysis_log.store(analysis)
+
+        # Follow-Up für Headline-Signal-Ticker: Ergebnis per Telegram
+        if ticker in _headline_meta:
+            try:
+                _sig = _headline_meta[ticker]
+                _cur = price_data.get("current_price") if price_data else None
+                _price_str = f" @ ${_cur:.2f}" if _cur else ""
+                if analysis.recommendation == "BUY":
+                    _followup = (
+                        f"✅ <b>Analyse-Ergebnis: {ticker}</b>{_price_str}\n\n"
+                        f"📰 Signal: {_sig.get('signal_type','')} (Score {_sig.get('score',0):.2f})\n"
+                        f"🟢 Empfehlung: <b>KAUFEN</b> (Score {analysis.sentiment_score:.2f}, {analysis.confidence})\n\n"
+                        f"<b>Begründung:</b> {analysis.entry_rationale[:200]}\n\n"
+                        f"<b>Bull-Case:</b> {analysis.bull_case[:150]}"
+                        + (f"\n\n⚠️ Bear-Case: {analysis.bear_case[:120]}" if analysis.bear_case else "")
+                        + (f"\n🎯 Kursziel: ${analysis.target_price:.2f}" if analysis.target_price else "")
+                    )
+                elif analysis.recommendation == "SKIP":
+                    _followup = (
+                        f"⏭️ <b>Analyse-Ergebnis: {ticker}</b>{_price_str}\n\n"
+                        f"📰 Signal: {_sig.get('signal_type','')} (Score {_sig.get('score',0):.2f})\n"
+                        f"🔵 Empfehlung: <b>SKIP</b> (Score {analysis.sentiment_score:.2f}, {analysis.confidence})\n\n"
+                        f"<b>Begründung:</b> {analysis.entry_rationale[:200]}"
+                        + (f"\n\n⚠️ Bear-Case: {analysis.bear_case[:150]}" if analysis.bear_case else "")
+                        + (f"\n\n💡 Einstieg bei: ${analysis.entry_trigger_price:.2f}" if analysis.entry_trigger_price else "")
+                    )
+                else:
+                    _followup = (
+                        f"ℹ️ <b>Analyse-Ergebnis: {ticker}</b>{_price_str}\n\n"
+                        f"📰 Signal: {_sig.get('signal_type','')} (Score {_sig.get('score',0):.2f})\n"
+                        f"Empfehlung: <b>{analysis.recommendation}</b> "
+                        f"(Score {analysis.sentiment_score:.2f}, {analysis.confidence})\n\n"
+                        f"{analysis.entry_rationale[:250]}"
+                    )
+                TelegramNotifier().send(_followup)
+            except Exception as _fu_err:
+                log.debug("Follow-Up-Nachricht fehlgeschlagen: %s", _fu_err)
 
         # Bei SKIP mit bullischem Potential: Conditional Entry speichern
         if (

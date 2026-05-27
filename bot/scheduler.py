@@ -757,8 +757,8 @@ def run_bot_loop(
         """
         Scannt allgemeine Börsennachrichten auf starke Signale (M&A, FDA,
         Earnings-Beats, etc.) und speist entdeckte Ticker in die BenchList.
-        Sehr starke Signale (Score ≥ 0.85) → Telegram sofort.
-        Extrem starke Signale (Score ≥ 0.90) für Watchlist-Ticker → sofortige Analyse.
+        Sehr starke Signale (Score ≥ 0.85) → Telegram + sofortige Analyse (alle Ticker).
+        Follow-Up nach der Analyse: Telegram mit Kauf-/Skip-Ergebnis.
         """
         try:
             from analyzers.headline_signal_detector import HeadlineSignalDetector
@@ -776,32 +776,34 @@ def run_bot_loop(
                         f"{len(added)} neue Kandidaten → BenchList: "
                         f"{', '.join(added[:6])}[/magenta]"
                     )
-                # Watchlist-Ticker mit sehr hohem Score sofort analysieren
-                watchlist_set = {t.upper() for t in config.watchlist}
+                # Alle starken Signale (≥ SIGNAL_TRIGGER_SCORE) sofort analysieren
+                # – unabhängig ob Watchlist oder nicht
                 urgent = [
-                    sig.ticker for sig in signals
+                    sig for sig in signals
                     if sig.score >= _SIGNAL_TRIGGER_SCORE
-                    and sig.ticker.upper() in watchlist_set
                 ]
                 if urgent:
                     from analyzers.user_request_queue import add_ticker as _req_ticker_inline
-                    for t in urgent:
-                        _req_ticker_inline(t)
+                    for sig in urgent:
+                        _req_ticker_inline(sig.ticker, meta={
+                            "signal_type":  sig.signal_type,
+                            "score":        sig.score,
+                            "headline":     getattr(sig, "headline", ""),
+                            "from_headline": True,
+                        })
+                    tickers_str = ", ".join(sig.ticker for sig in urgent)
                     console.print(
                         f"  [bold yellow]⚡ Signal-Trigger ({_SIGNAL_TRIGGER_SCORE:.0%}): "
-                        f"Sofort-Analyse ausgelöst: {', '.join(urgent)}[/bold yellow]"
+                        f"Sofort-Analyse ausgelöst: {tickers_str}[/bold yellow]"
                     )
                     notifier.send(
                         f"⚡ <b>Signal-Trigger</b>\n\n"
-                        f"Sehr starkes Headline-Signal für Watchlist-Ticker:\n"
                         + "\n".join(
                             f"  • <b>{sig.ticker}</b> – {sig.signal_type} "
                             f"(Score {sig.score:.2f})"
-                            for sig in signals
-                            if sig.score >= _SIGNAL_TRIGGER_SCORE
-                            and sig.ticker.upper() in watchlist_set
+                            for sig in urgent
                         )
-                        + "\n\nAnalyse läuft innerhalb der nächsten 15 Minuten."
+                        + "\n\n🔍 Vollanalyse läuft – Ergebnis folgt in wenigen Minuten."
                     )
         except Exception as e:
             log.warning("Headline-Scan-Job fehlgeschlagen: %s", e)
