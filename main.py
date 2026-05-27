@@ -278,6 +278,7 @@ def main():
             broker = PaperBroker()
     else:
         broker = PaperBroker()
+    portfolio = Portfolio(initial_capital=config.initial_capital)
     tracker = PerformanceTracker()
     phase_ctrl = _make_phase_ctrl()
     focus_ctrl = _make_focus_ctrl()
