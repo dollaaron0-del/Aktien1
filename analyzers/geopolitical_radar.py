@@ -341,6 +341,15 @@ class GeopoliticalRadar:
         for event in events:
             buy_tickers = []
             sell_tickers = []
+            sell_reasons = []
+
+            # Geo-Kontext der für Claude mitgegeben wird
+            geo_ctx = {
+                "kategorie":  event.category,
+                "schwere":    event.severity,
+                "schlagzeile": event.headline[:200],
+                "quelle":     event.source,
+            }
 
             for impact in event.impacts:
                 if impact.direction == "BUY":
@@ -350,24 +359,40 @@ class GeopoliticalRadar:
                                 t,
                                 score=impact.score,
                                 reason=f"Geo:{event.category} – {impact.reason}",
+                                geo_context={**geo_ctx, "marktthese": impact.reason},
                             )
                             added.append(t)
                             buy_tickers.append(t)
                 elif impact.direction == "SELL":
                     sell_tickers.extend(impact.tickers)
+                    sell_reasons.append(impact.reason)
 
             if event.severity >= _MIN_SEVERITY_FOR_NOTIFY and notify_fn:
                 severity_emoji = {1: "🌐", 2: "⚠️", 3: "🚨"}.get(event.severity, "📡")
-                severity_label = {1: "Niedrig", 2: "Mittel", 3: "Kritisch"}.get(event.severity, "")
-                buy_str  = f"📈 KAUF:    {', '.join(buy_tickers[:5])}"  if buy_tickers  else ""
-                sell_str = f"📉 VERKAUF: {', '.join(sell_tickers[:5])}" if sell_tickers else ""
-                impact_str = "\n".join(filter(None, [buy_str, sell_str]))
+                severity_label = {1: "Gering", 2: "Mittel", 3: "Kritisch"}.get(event.severity, "")
+
+                buy_lines = []
+                for t, impact in zip(
+                    buy_tickers[:5],
+                    [i for i in event.impacts if i.direction == "BUY"][:5]
+                ):
+                    buy_lines.append(f"  • {t} – {impact.reason}")
+                sell_lines = []
+                for t, reason in zip(sell_tickers[:3], sell_reasons[:3]):
+                    sell_lines.append(f"  • {t} – {reason}")
+
+                abschnitte = []
+                if buy_lines:
+                    abschnitte.append("📈 <b>Kaufkandidaten:</b>\n" + "\n".join(buy_lines))
+                if sell_lines:
+                    abschnitte.append("📉 <b>Verkaufsrisiken:</b>\n" + "\n".join(sell_lines))
 
                 alerts.append(
-                    f"{severity_emoji} <b>GEOPOLITIK: {event.category}</b>  [{severity_label}]\n"
+                    f"{severity_emoji} <b>Geopolitik: {event.category}</b>  "
+                    f"[Schwere: {severity_label}]\n"
                     f"<i>{event.headline[:140]}</i>\n"
                     f"Quelle: {event.source}\n\n"
-                    f"{impact_str}"
+                    + "\n\n".join(abschnitte)
                 )
 
         if alerts and notify_fn:

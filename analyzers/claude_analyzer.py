@@ -82,6 +82,20 @@ Beachte besonders Volumen-Anomalien (ungewöhnlich hohes/niedriges Handelsvolume
 Antworte IMMER ausschließlich mit einem validen JSON-Objekt ohne Markdown-Fences oder zusätzlichen Text.
 """
 
+_GEO_CONTEXT_BLOCK = """
+=== GEOPOLITISCHER AUSLÖSER (Bot-Frühsignal) ===
+Kategorie:   {kategorie}
+Schwere:     {schwere_label} (Stufe {schwere}/3)
+Schlagzeile: {schlagzeile}
+Quelle:      {quelle}
+Marktthese:  {marktthese}
+
+⚠️  Dieser Ticker wurde vom Geopolitischen Radar identifiziert – BEVOR der Mainstream reagiert hat.
+Bewerte ob die geopolitische These den Kauf rechtfertigt. Falls technisch NICHT bestätigt
+(RSI überkauft, kein Volumen-Anstieg, Kurs bereits stark gestiegen), bevorzuge SKIP.
+=== ENDE GEOPOLITISCHER KONTEXT ===
+"""
+
 def _is_crypto(ticker: str) -> bool:
     try:
         from analyzers.crypto_universe import CRYPTO_UNIVERSE
@@ -294,6 +308,7 @@ class ClaudeAnalyzer:
         pattern_result=None,    # Optional[PatternResult] – lazy-imported to avoid circular dep
         onchain_snapshot=None,  # Optional[OnChainSnapshot]
         eu_market_snapshot=None,  # Optional[EUMarketSnapshot]
+        geo_context: Optional[Dict] = None,  # Geopolitischer Auslöser aus GeopoliticalRadar
     ) -> AnalysisResult:
         if not news_items:
             return self._empty_result(ticker, "Keine Nachrichtenartikel verfügbar")
@@ -424,6 +439,17 @@ class ClaudeAnalyzer:
                 + "\n=== ENDE WOCHENBRIEFING ===\n"
                 "Berücksichtige diesen Wochenkontext (Earnings-Risiken, Sektorstimmung, Makro) "
                 "bei deiner Analyse und Empfehlung.\n"
+            )
+        if geo_context:
+            _schwere = geo_context.get("schwere", 1)
+            _schwere_label = {1: "Gering", 2: "Mittel", 3: "Kritisch"}.get(_schwere, "Unbekannt")
+            system_prompt = system_prompt + _GEO_CONTEXT_BLOCK.format(
+                kategorie=geo_context.get("kategorie", "Unbekannt"),
+                schwere=_schwere,
+                schwere_label=_schwere_label,
+                schlagzeile=geo_context.get("schlagzeile", "–"),
+                quelle=geo_context.get("quelle", "–"),
+                marktthese=geo_context.get("marktthese", "–"),
             )
 
         # Prompt caching: system_prompt is identical across all tickers in a cycle.

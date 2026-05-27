@@ -176,6 +176,8 @@ def _get_watchlist(portfolio: Portfolio) -> List[str]:
         log.debug("Verwandte-Ticker-Lookup fehlgeschlagen: %s", e)
 
     # BenchList: Top-Kandidaten immer für Analyse einbeziehen (unabhängig von Slots)
+    # _bench_geo_contexts: ticker → geo_context Dict (für Claude-Analyse)
+    _bench_geo_contexts: dict = {}
     try:
         from analyzers.bench_list import BenchList
         _bench = BenchList()
@@ -183,9 +185,14 @@ def _get_watchlist(portfolio: Portfolio) -> List[str]:
         _bench_candidates = _bench.pop_candidates(_bench_picks, exclude=base)
         for _bt in _bench_candidates:
             base.append(_bt)
+            ctx = _bench.get_context(_bt)
+            if ctx and ctx.get("geo_context"):
+                _bench_geo_contexts[_bt] = ctx["geo_context"]
         if _bench_candidates:
+            geo_flagged = [t for t in _bench_candidates if t in _bench_geo_contexts]
+            flag_str = f" (🌍 Geo: {', '.join(geo_flagged)})" if geo_flagged else ""
             console.print(
-                f"  [magenta]📋 BenchList → Analyse: {', '.join(_bench_candidates)}[/magenta]"
+                f"  [magenta]📋 BenchList → Analyse: {', '.join(_bench_candidates)}{flag_str}[/magenta]"
             )
     except Exception as e:
         log.debug("BenchList-Analyse-Pull fehlgeschlagen: %s", e)
@@ -734,6 +741,10 @@ def run_analysis_cycle(
                 log.debug("[%s] On-Chain-Analyse fehlgeschlagen: %s", ticker, e)
 
         console.print(f"  [cyan]Analysiere mit Claude ({config.claude_model})...[/cyan]")
+        _geo_ctx = _bench_geo_contexts.get(ticker) if "_bench_geo_contexts" in dir() else None
+        if _geo_ctx:
+            log.info("[%s] Geopolitischer Kontext wird an Claude übergeben: %s",
+                     ticker, _geo_ctx.get("kategorie", ""))
         analysis = analyzer.analyze(
             ticker=ticker,
             news_items=news,
@@ -745,6 +756,7 @@ def run_analysis_cycle(
             pattern_result=pattern_result,
             onchain_snapshot=onchain_snapshot,
             eu_market_snapshot=_eu_market_ctx if _is_eu_stock(ticker) else None,
+            geo_context=_geo_ctx,
         )
 
         _print_analysis(analysis)
