@@ -1742,18 +1742,9 @@ with tab_log:
             hc4.metric("Ø Sentiment", f"{hist_stats.get('avg_score', 0):.2f}")
         st.divider()
 
-    # Autocomplete: alle bisher analysierten Ticker laden
+    # Alle bisher analysierten Ticker laden (für Queue-Logik)
     _all_log_tickers = sorted({e["ticker"] for e in _alog.get_recent(limit=2000)})
     _analyzed_set = set(_all_log_tickers)
-
-    # Kombinierte Option-Liste: analysierte zuerst, dann alle bekannten
-    _known_unanalyzed = [t for t in sorted(_ALL_NAMES.keys()) if t not in _analyzed_set]
-    _search_opts = _all_log_tickers + _known_unanalyzed
-
-    def _fmt_search(t: str) -> str:
-        name = _ALL_NAMES.get(t.upper(), "")
-        status = "✅ analysiert" if t in _analyzed_set else "➕ noch nicht analysiert"
-        return f"{t}  ({name})  —  {status}" if name else f"{t}  —  {status}"
 
     with st.form("log_filter_form"):
         fa, fb = st.columns([4, 2])
@@ -1768,23 +1759,11 @@ with tab_log:
             show_all_history = st.checkbox("Alle Einträge (inkl. Duplikate)", value=False,
                                            help="Zeigt jeden Analyse-Lauf einzeln, auch wenn eine Aktie mehrfach analysiert wurde.")
 
-        _tc1, _tc2 = st.columns([3, 2])
-        with _tc1:
-            # Freitext-Eingabe: beliebiger Ticker (auch nicht in der Liste)
-            _ticker_input = st.text_input(
-                "Aktie analysieren lassen",
-                placeholder="Ticker eingeben, z.B. RHM.DE, NVDA, BTC …",
-                help="Gib einen beliebigen Ticker-Symbol ein. Der Bot analysiert ihn beim nächsten Zyklus.",
-            )
-        with _tc2:
-            # Bekannte Ticker aus dem Log filtern
-            selected_opt = st.selectbox(
-                "Oder aus Log filtern",
-                _search_opts,
-                index=None,
-                placeholder="Aus bekannten wählen …",
-                format_func=_fmt_search,
-            )
+        ticker_search = st.text_input(
+            "Aktie suchen oder zur Analyse vormerken",
+            placeholder="Ticker oder Name, z.B. BYD, NVDA, Rheinmetall …",
+            help="Sucht in Ticker-Symbol und Aktienname. Unbekannte Ticker werden beim nächsten Zyklus analysiert.",
+        )
         _sc1, _sc2 = st.columns(2)
         _searched = _sc1.form_submit_button("🔍 Suchen / Anfragen", use_container_width=True)
         _reset = _sc2.form_submit_button("✖ Filter zurücksetzen", use_container_width=True)
@@ -1792,28 +1771,40 @@ with tab_log:
     # ── Auswertung ───────────────────────────────────────────────────────────
     from analyzers.user_request_queue import add_ticker as _req_ticker, peek as _peek_requests
 
-    # Freitext hat Vorrang vor Selectbox
-    _raw_input = _ticker_input.strip().upper() if _ticker_input else ""
-    if _reset:
-        _active_ticker = None
-    elif _raw_input:
-        _active_ticker = _raw_input
-    elif selected_opt:
-        _active_ticker = selected_opt
-    else:
-        _active_ticker = None
+    _search_filter = "" if _reset else ticker_search.strip().upper()
 
-    if _searched and _active_ticker:
-        if _active_ticker in _analyzed_set:
-            st.info(f"**{ticker_label(_active_ticker)}** wurde bereits analysiert — Ergebnisse unten.")
-        elif _active_ticker in _peek_requests():
-            st.success(f"**{ticker_label(_active_ticker)}** ist bereits für den nächsten Zyklus vorgemerkt.")
+    # Resolve to exact ticker if input matches a log ticker directly
+    _active_ticker: str | None = None
+    if _search_filter:
+        if _search_filter in _analyzed_set:
+            _active_ticker = _search_filter
         else:
-            _req_ticker(_active_ticker)
-            st.success(
-                f"✅ **{ticker_label(_active_ticker)}** wurde zur Analyse-Queue hinzugefügt.  \n"
-                f"Der Bot analysiert ihn beim nächsten Zyklus (15:00 Uhr oder beim nächsten Start)."
-            )
+            _exact = [t for t in _all_log_tickers if t.upper() == _search_filter]
+            if _exact:
+                _active_ticker = _exact[0]
+
+    if _searched and _search_filter:
+        # Check how many log entries match the search term (ticker or name substring)
+        _log_matches = [
+            t for t in _all_log_tickers
+            if _search_filter in t.upper()
+            or _search_filter in _ALL_NAMES.get(t.upper(), "").upper()
+        ]
+        if _log_matches:
+            if len(_log_matches) == 1:
+                st.info(f"**{ticker_label(_log_matches[0])}** — Ergebnis unten.")
+            else:
+                st.info(f"{len(_log_matches)} Aktien gefunden — Ergebnisse unten.")
+        else:
+            # No log match → queue the input as a ticker for analysis
+            if _search_filter in _peek_requests():
+                st.success(f"**{_search_filter}** ist bereits für den nächsten Zyklus vorgemerkt.")
+            else:
+                _req_ticker(_search_filter)
+                st.success(
+                    f"✅ **{_search_filter}** wurde zur Analyse-Queue hinzugefügt.  \n"
+                    f"Der Bot analysiert ihn beim nächsten Zyklus (15:00 Uhr oder beim nächsten Start)."
+                )
 
     # Pending-Queue anzeigen
     from analyzers.user_request_queue import peek as _peek_queue
@@ -1842,6 +1833,13 @@ with tab_log:
         entries = _alog.get_latest_per_ticker(limit=log_limit)
     if filter_rec:
         entries = [e for e in entries if e["recommendation"] in filter_rec]
+    # Substring-Filter: Ticker oder Name enthält Suchbegriff
+    if _search_filter and not _active_ticker:
+        entries = [
+            e for e in entries
+            if _search_filter in e["ticker"].upper()
+            or _search_filter in _ALL_NAMES.get(e["ticker"].upper(), "").upper()
+        ]
 
     # Vorherige Empfehlung für Trend-Pfeil vorabladen (nur wenn dedupliziert)
     _prev_rec: dict = {}
@@ -1854,6 +1852,8 @@ with tab_log:
     if not entries:
         if _active_ticker:
             st.info(f"Noch keine Analyse für **{ticker_label(_active_ticker)}** vorhanden.")
+        elif _search_filter:
+            st.info(f"Keine Analyse-Einträge für **{_search_filter}** gefunden.")
         else:
             st.info("Noch keine Analysen gespeichert. Der Bot beginnt beim nächsten Zyklus.")
     else:
