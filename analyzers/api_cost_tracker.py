@@ -19,10 +19,9 @@ log = get_logger(__name__)
 _FILE = os.path.join(os.path.dirname(__file__), "..", "data", "api_savings.json")
 
 # Geschätzte Kosten pro Claude-API-Aufruf (claude-opus-4-7, ~1200 Tokens Output)
-# Input: ~3000 Tokens × $0.015/1k = $0.045
-# Output: ~1200 Tokens × $0.075/1k = $0.090
-# Gesamt: ~$0.135 pro Aufruf (konservative Schätzung)
-_COST_PER_CLAUDE_CALL = float(os.getenv("CLAUDE_COST_PER_CALL", "0.135"))
+# Sonnet 4.6: Input ~3000 Tokens × $0.003/1k = $0.009, Output ~1200 × $0.015/1k = $0.018
+# Gesamt: ~$0.027 pro Aufruf (Sonnet 4.6) – war $0.135 mit Opus 4.7 (5× teurer)
+_COST_PER_CLAUDE_CALL = float(os.getenv("CLAUDE_COST_PER_CALL", "0.027"))
 # Prompt caching: cached tokens cost ~10% of normal input price
 _CACHE_DISCOUNT = 0.90  # 90% saved on cached tokens (~3000 tokens × $0.015/1k × 0.9 ≈ $0.04/call)
 # Maximale tägliche Claude-Kosten (Schutz vor Runaway-Kosten)

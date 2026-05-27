@@ -93,7 +93,7 @@ class OllamaPrescreener:
         timeout: int = 30,
         # Schwellen für "Claude überspringen"
         bearish_skip_threshold: float = 0.35,   # Score unter diesem Wert = klar bearish
-        neutral_skip_threshold: float = 0.55,   # Score unter diesem Wert = neutral
+        neutral_skip_threshold: float = 0.60,   # Score unter diesem Wert = neutral → Claude sparen
     ):
         self.base_url         = base_url.rstrip("/")
         self.model            = model

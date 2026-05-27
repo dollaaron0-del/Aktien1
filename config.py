@@ -76,7 +76,9 @@ class Config:
     )
 
     # Claude model
-    claude_model: str = "claude-opus-4-7"
+    claude_model: str = field(
+        default_factory=lambda: os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
+    )
 
     # Telegram notifications (optional)
     telegram_bot_token: str = field(default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", ""))
