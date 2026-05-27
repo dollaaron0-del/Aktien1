@@ -2279,7 +2279,7 @@ with tab_settings:
 
         st.markdown("#### ⚡ Spezial-Modi")
         st.caption("Diese Modi überschreiben die Risiko-Einstellungen oben.")
-        m1, m2 = st.columns(2)
+        m1, m2, m3 = st.columns(3)
         with m1:
             new_turbo = st.toggle(
                 "🚀 Turbo-Modus",
@@ -2296,6 +2296,21 @@ with tab_settings:
             )
             if new_expl:
                 st.info("Exploration: Kauf-Score 0.55 · Min-Quellen 1 · Max-Position 25%")
+        with m3:
+            new_intraday = st.toggle(
+                "🕐 Intraday-Scan (3. Analyse)",
+                value=_env.get("INTRADAY_SCAN_ENABLED", "false").lower() in ("1","true","yes"),
+                help="Führt täglich einen dritten Analyse-Zyklus durch – ideal während der US-Session.",
+            )
+            new_intraday_time = st.text_input(
+                "Uhrzeit (UTC)",
+                value=_env.get("INTRADAY_SCAN_TIME", "17:30"),
+                placeholder="17:30",
+                disabled=not new_intraday,
+                help="17:30 UTC = 19:30 MESZ (mitten in der US-Session)",
+            )
+            if new_intraday:
+                st.info(f"3. Analyse täglich um {new_intraday_time} UTC")
 
         st.divider()
         save_btn = st.form_submit_button("💾 Einstellungen speichern", use_container_width=True, type="primary")
@@ -2319,6 +2334,8 @@ with tab_settings:
             "ENABLE_SOCIAL_SCAN":     "false",
             "TURBO_MODE":                "true" if new_turbo else "false",
             "EXPLORATION_MODE":          "true" if new_expl else "false",
+            "INTRADAY_SCAN_ENABLED":     "true" if new_intraday else "false",
+            "INTRADAY_SCAN_TIME":        new_intraday_time.strip() or "17:30",
             "MONTHLY_DISTRIBUTION_EUR":  str(new_monthly_eur),
             "DISTRIBUTION_BUFFER_MONTHS": str(new_buffer),
         }
@@ -2356,7 +2373,7 @@ with tab_settings:
     _display_keys = [
         "FOCUS_MODE","TARGET_GOAL_AMOUNT","TARGET_GOAL_DATE","GROWTH_TARGET_MULTIPLE",
         "STOP_LOSS_PCT","TAKE_PROFIT_PCT","MAX_POSITION_PCT","BUY_THRESHOLD","SELL_THRESHOLD",
-        "TURBO_MODE","EXPLORATION_MODE",
+        "TURBO_MODE","EXPLORATION_MODE","INTRADAY_SCAN_ENABLED","INTRADAY_SCAN_TIME",
         "WATCHLIST","AUTO_SCAN_WATCHLIST","SCAN_MAX_PICKS","EU_STOCKS_ENABLED","EU_WATCHLIST",
         "ENABLE_SOCIAL_SCAN","INITIAL_CAPITAL","BROKER_MODE",
     ]
