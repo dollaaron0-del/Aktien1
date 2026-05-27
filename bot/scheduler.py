@@ -808,8 +808,122 @@ def run_bot_loop(
         except Exception as e:
             log.warning("Headline-Scan-Job fehlgeschlagen: %s", e)
 
-    schedule.every().hour.do(_headline_scan_job)
+    schedule.every(20).minutes.do(_headline_scan_job)
     _headline_scan_job()   # Einmal sofort beim Start ausführen
+
+    # ── Kursbewegungs-Alarm: alle 5 Minuten während Handelszeiten ───────────
+    _price_move_last: dict = {}   # ticker → letzter bekannter Kurs
+
+    def _price_move_job():
+        """
+        Prüft alle 5 Min ob eine Watchlist-Aktie um ≥ PRICE_MOVE_THRESHOLD
+        gestiegen/gefallen ist. Bei Ausschlag: sofortige Claude-Analyse +
+        Telegram-Alert. Läuft nur an Handelstagen während der Kernzeiten.
+        """
+        _MOVE_THRESHOLD = float(os.getenv("PRICE_MOVE_THRESHOLD", "0.02"))  # 2%
+        try:
+            local_now = datetime.now()
+            # Nur wochentags zwischen 08:00 und 22:00 Lokalzeit prüfen
+            if local_now.weekday() >= 5 or not (8 <= local_now.hour < 22):
+                return
+            watchlist = list(config.watchlist)
+            if not watchlist:
+                return
+            prices = broker.get_prices(watchlist)
+            triggered = []
+            for ticker, price in prices.items():
+                if not price or price <= 0:
+                    continue
+                last = _price_move_last.get(ticker)
+                if last and last > 0:
+                    move = (price - last) / last
+                    if abs(move) >= _MOVE_THRESHOLD:
+                        direction = "📈" if move > 0 else "📉"
+                        triggered.append((ticker, price, last, move, direction))
+                _price_move_last[ticker] = price
+            if not triggered:
+                return
+            notifier = TelegramNotifier()
+            from analyzers.user_request_queue import add_ticker as _add_req
+            for ticker, price, last_p, move, icon in triggered:
+                console.print(
+                    f"  [bold {'green' if move > 0 else 'red'}]"
+                    f"{icon} Kursalarm {ticker}: {move:+.1%} "
+                    f"(${last_p:.2f} → ${price:.2f})[/bold {'green' if move > 0 else 'red'}]"
+                )
+                # Options-Flow als Bestätigung prüfen
+                options_note = ""
+                try:
+                    from collectors.options_flow_collector import OptionsFlowCollector
+                    flow = OptionsFlowCollector().collect(ticker)
+                    bullish = [f for f in flow if f.get("signal") == "BULLISCH"]
+                    bearish = [f for f in flow if f.get("signal") == "BÄRISCH"]
+                    if bullish:
+                        options_note = f"\n📊 Options-Flow bestätigt: {bullish[0]['title']}"
+                    elif bearish:
+                        options_note = f"\n📊 Options-Flow warnt: {bearish[0]['title']}"
+                except Exception:
+                    pass
+                notifier.send(
+                    f"{icon} <b>Kursalarm: {ticker}</b>\n\n"
+                    f"Bewegung: <b>{move:+.1%}</b> in den letzten 5 Min\n"
+                    f"Kurs: ${last_p:.2f} → <b>${price:.2f}</b>"
+                    f"{options_note}\n\n"
+                    f"🔍 Vollanalyse läuft – Ergebnis folgt in wenigen Minuten."
+                )
+                _add_req(ticker, meta={
+                    "signal_type":   "PRICE_MOVE",
+                    "score":         min(0.95, 0.70 + abs(move) * 5),
+                    "headline":      f"{icon} {ticker} {move:+.1%} in 5 Min",
+                    "from_headline": True,
+                    "move_pct":      round(move * 100, 2),
+                })
+                log.info("Kursalarm %s: %+.1f%% → Sofort-Analyse ausgelöst", ticker, move * 100)
+        except Exception as e:
+            log.debug("Kursbewegungs-Job fehlgeschlagen: %s", e)
+
+    schedule.every(5).minutes.do(_price_move_job)
+
+    # ── Options-Flow-Scan: stündlich für Watchlist ───────────────────────────
+    def _options_flow_job():
+        """
+        Scannt Options-Flow der gesamten Watchlist auf ungewöhnliche
+        Call/Put-Aktivität. C/P-Ratio ≥ 3 oder P/C-Ratio ≥ 3 → Sofort-Analyse.
+        """
+        _OPT_RATIO = float(os.getenv("OPTIONS_FLOW_RATIO", "3.0"))
+        try:
+            local_now = datetime.now()
+            if local_now.weekday() >= 5 or not (14 <= local_now.hour < 21):
+                return   # Nur während NYSE-Handelszeiten sinnvoll
+            from collectors.options_flow_collector import OptionsFlowCollector
+            from analyzers.user_request_queue import add_ticker as _add_req
+            collector = OptionsFlowCollector(min_volume_ratio=_OPT_RATIO)
+            notifier = TelegramNotifier()
+            for ticker in config.watchlist:
+                try:
+                    signals = collector.collect(ticker)
+                    bullish = [s for s in signals if s.get("signal") == "BULLISCH"]
+                    if not bullish:
+                        continue
+                    headline = bullish[0]["title"]
+                    console.print(f"  [cyan]📊 Options-Flow: {headline}[/cyan]")
+                    notifier.send(
+                        f"📊 <b>Options-Flow Signal: {ticker}</b>\n\n"
+                        f"{headline}\n\n"
+                        f"🔍 Analyse läuft – Ergebnis folgt in wenigen Minuten."
+                    )
+                    _add_req(ticker, meta={
+                        "signal_type":   "OPTIONS_FLOW",
+                        "score":         0.80,
+                        "headline":      headline,
+                        "from_headline": True,
+                    })
+                except Exception:
+                    continue
+        except Exception as e:
+            log.debug("Options-Flow-Job fehlgeschlagen: %s", e)
+
+    schedule.every().hour.do(_options_flow_job)
 
     # ── Geopolitischer Radar: alle 2 Stunden ────────────────────────────────
     def _geopolitical_radar_job():
