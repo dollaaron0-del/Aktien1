@@ -365,8 +365,10 @@ class ClaudeAnalyzer:
                 technical = None
 
         # Ollama-Komprimierung: fasst News zusammen → ~50% weniger Claude-Tokens
+        # Erst ab 8 Artikeln sinnvoll – bei weniger Artikeln ist der Komprimierungs-Overhead
+        # größer als der Gewinn durch kürzere Claude-Prompts.
         _comp_prescreener = _get_prescreener()
-        if _comp_prescreener and len(news_items) >= 3:
+        if _comp_prescreener and len(news_items) >= 8:
             compressed = _comp_prescreener.compress_news(ticker, news_items)
             if compressed:
                 current_news_text = (
