@@ -316,6 +316,7 @@ class ClaudeAnalyzer:
         onchain_snapshot=None,  # Optional[OnChainSnapshot]
         eu_market_snapshot=None,  # Optional[EUMarketSnapshot]
         geo_context: Optional[Dict] = None,  # Geopolitischer Auslöser aus GeopoliticalRadar
+        force_claude: bool = False,  # True = Ollama-Prescreen + Budget-Check überspringen (manuelle Anfragen)
     ) -> AnalysisResult:
         if not news_items:
             return self._empty_result(ticker, "Keine Nachrichtenartikel verfügbar")
@@ -338,13 +339,14 @@ class ClaudeAnalyzer:
         if not news_items:
             return self._empty_result(ticker, "Alle Artikel nach Glaubwürdigkeits-Filter entfernt")
 
-        # ── API-Kosten-Limit ─────────────────────────────────────────────────
-        cost_ok, cost_reason = cost_tracker.check_daily_limit()
-        if not cost_ok:
-            log.warning("[%s] %s", ticker, cost_reason)
-            return self._empty_result(ticker, cost_reason)
+        # ── API-Kosten-Limit (übersprungen bei manueller Anfrage) ───────────────
+        if not force_claude:
+            cost_ok, cost_reason = cost_tracker.check_daily_limit()
+            if not cost_ok:
+                log.warning("[%s] %s", ticker, cost_reason)
+                return self._empty_result(ticker, cost_reason)
 
-        if prescreener:
+        if prescreener and not force_claude:
             prescreen = prescreener.prescreen(
                 ticker=ticker,
                 news_items=news_items,

@@ -145,11 +145,14 @@ def _get_watchlist(portfolio: Portfolio) -> List[str]:
                 base.append(t)
 
     # Vom Dashboard manuell angeforderte Ticker einmalig analysieren
+    # force_claude=True: Ollama-Prescreen + Budget-Check werden übersprungen
     requested = _urq.consume_all()
+    _force_claude_tickers: set = set()
     for t in requested:
         if t not in base:
             log.info("Nutzeranfrage: %s wird in diesem Zyklus analysiert", t)
             base.append(t)
+        _force_claude_tickers.add(t)
 
     # Opportunity-Scan: bei ≥50% freien Slots nach weiteren Kandidaten suchen
     _opportunity_scan(portfolio, base)
@@ -761,6 +764,7 @@ def run_analysis_cycle(
             onchain_snapshot=onchain_snapshot,
             eu_market_snapshot=_eu_market_ctx if _is_eu_stock(ticker) else None,
             geo_context=_geo_ctx,
+            force_claude=ticker in _force_claude_tickers,
         )
 
         _print_analysis(analysis)
