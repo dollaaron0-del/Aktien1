@@ -161,6 +161,8 @@ phase_info  = phase_ctrl.get_info(total_value)
 acc         = tracker.get_accuracy_report()
 regime_data = detector.get_latest()
 pending_cnt = sig_queue.count_pending()
+from analyzers.user_request_queue import peek as _peek_analysis_queue
+_analysis_queue = _peek_analysis_queue()
 
 # ─── Helper: regime color / label ────────────────────────────────────────────
 _REGIME_COLOR = {BULL: "#00e676", NEUTRAL: "#ffd740", BEAR: "#ff7043", CRISIS: "#f44336"}
@@ -263,7 +265,7 @@ def _get_ticker_news(ticker: str) -> list:
 tab_portfolio, tab_regime, tab_queue, tab_network, tab_briefing, tab_trades, tab_tech, tab_watchlist, tab_log, tab_settings = st.tabs([
     "📊 Portfolio",
     "🛡 Markt-Regime",
-    f"📋 Signal-Queue ({pending_cnt})",
+    f"📋 Signal-Queue ({pending_cnt})" + (f" · 🔍{len(_analysis_queue)}" if _analysis_queue else ""),
     "🕸 Aktien-Netzwerk",
     "📰 Wochenbriefing",
     "📈 Trades & Lernen",
@@ -746,6 +748,35 @@ with tab_regime:
 # TAB 3 – SIGNAL-QUEUE
 # ══════════════════════════════════════════════════════════
 with tab_queue:
+    # ── Analyse-Warteschlange (user_request_queue) ────────────────────────────
+    st.subheader("🔍 Nächste Analyse-Runde")
+    st.caption(
+        "Ticker die vom Headline-Scanner, Geopolitik-Radar oder manuell vorgemerkt wurden "
+        "und beim nächsten Analyse-Zyklus zusätzlich untersucht werden."
+    )
+    if _analysis_queue:
+        _aq_cols = st.columns(min(len(_analysis_queue), 6))
+        for _i, _aq_t in enumerate(_analysis_queue):
+            _aq_cols[_i % 6].info(f"🔍 **{_aq_t}**")
+        st.caption(f"{len(_analysis_queue)} Ticker warten auf Analyse – Queue wird beim nächsten Zyklus geleert.")
+    else:
+        st.success("Keine Ticker in der Analyse-Warteschlange.")
+
+    from analyzers.user_request_queue import add_ticker as _urq_add
+    _manual_ticker = st.text_input(
+        "Ticker manuell zur Analyse vormerken",
+        placeholder="z.B. CRM oder SAP.DE",
+        key="manual_analysis_ticker",
+    ).strip().upper()
+    if st.button("➕ Zur nächsten Analyse hinzufügen", key="btn_add_analysis"):
+        if _manual_ticker:
+            _urq_add(_manual_ticker)
+            st.success(f"{_manual_ticker} wird beim nächsten Zyklus analysiert.")
+            st.rerun()
+        else:
+            st.warning("Bitte einen Ticker eingeben.")
+
+    st.divider()
     st.subheader("Ausstehende BUY-Signale")
     st.caption(
         "Wenn ein starkes BUY-Signal eintrifft aber kein Kapital frei ist, "
