@@ -14,3 +14,5 @@ reportlab>=4.0.0
 flask>=3.0.0
 prometheus_client>=0.20.0
 ib_insync>=0.9.86
+plotly>=5.18.0
+networkx>=3.2

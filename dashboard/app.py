@@ -29,6 +29,7 @@ from analyzers.dynamic_watchlist import DynamicWatchlist
 from analyzers.signal_expander import SignalDrivenExpander
 from analyzers.eu_stock_scanner import EU_UNIVERSE
 from analyzers.weekend_prep import WeekendPrep
+from analyzers.analysis_log import AnalysisLog
 from portfolio.goal_risk_assessor import GoalRiskAssessor, OK, CAUTION, DANGER, UNREACHABLE
 
 # ─── Ticker → Firmenname ──────────────────────────────────────────────────────
@@ -258,10 +259,11 @@ def _get_ticker_news(ticker: str) -> list:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TABS
 # ═══════════════════════════════════════════════════════════════════════════════
-tab_portfolio, tab_regime, tab_queue, tab_briefing, tab_trades, tab_tech, tab_watchlist, tab_log, tab_settings = st.tabs([
+tab_portfolio, tab_regime, tab_queue, tab_network, tab_briefing, tab_trades, tab_tech, tab_watchlist, tab_log, tab_settings = st.tabs([
     "📊 Portfolio",
     "🛡 Markt-Regime",
     f"📋 Signal-Queue ({pending_cnt})",
+    "🕸 Aktien-Netzwerk",
     "📰 Wochenbriefing",
     "📈 Trades & Lernen",
     "📉 Technicals",
@@ -720,7 +722,203 @@ with tab_queue:
 
 
 # ══════════════════════════════════════════════════════════
-# TAB 4 – WOCHENBRIEFING
+# TAB 4 – AKTIEN-NETZWERK
+# ══════════════════════════════════════════════════════════
+with tab_network:
+    st.subheader("🕸 Aktien-Netzwerk")
+    st.caption("Alle vom Bot analysierten Aktien und ihre thematischen Verbindungen.")
+
+    try:
+        import math
+        import plotly.graph_objects as go
+        from analyzers.stock_relations import StockRelations
+
+        _net_log     = AnalysisLog()
+        _net_rel     = StockRelations()
+        _net_entries = _net_log.get_latest_per_ticker(limit=300)
+
+        if not _net_entries:
+            st.info("Noch keine Analyse-Daten. Der Bot muss mindestens einen Analyse-Zyklus abgeschlossen haben.")
+        else:
+            # ── Filter ──────────────────────────────────────────────────────────
+            _net_col1, _net_col2 = st.columns([2, 3])
+            with _net_col1:
+                _rec_filter = st.multiselect(
+                    "Empfehlung filtern",
+                    ["BUY", "HOLD", "SELL", "SKIP"],
+                    default=["BUY", "HOLD", "SELL", "SKIP"],
+                )
+            with _net_col2:
+                _show_isolated = st.checkbox("Ticker ohne Verbindungen anzeigen", value=True)
+
+            # ── Node-Daten aufbauen ──────────────────────────────────────────────
+            _rec_color = {"BUY": "#00cc66", "HOLD": "#f0a500", "SELL": "#ff4444", "SKIP": "#888888"}
+            _nodes: dict = {}
+            for e in _net_entries:
+                rec = (e.get("recommendation") or "SKIP").upper()
+                if rec not in _rec_filter:
+                    continue
+                ticker = e["ticker"]
+                _nodes[ticker] = {
+                    "rec":     rec,
+                    "score":   round(e.get("sentiment_score") or 0.0, 2),
+                    "date":    (e.get("analyzed_at") or "")[:10],
+                    "color":   _rec_color.get(rec, "#888888"),
+                }
+
+            # ── Kanten aus StockRelations ────────────────────────────────────────
+            _edges: list = []
+            _edge_labels: list = []
+            for from_t, entries in _net_rel._graph.items():
+                if from_t not in _nodes:
+                    continue
+                for entry in entries[:2]:
+                    for to_t in entry["related"]:
+                        if to_t in _nodes:
+                            _edges.append((from_t, to_t))
+                            _edge_labels.append(entry["reason"][:60])
+
+            # Isolierte Knoten herausfiltern wenn gewünscht
+            if not _show_isolated:
+                _connected = {t for edge in _edges for t in edge}
+                _nodes = {t: v for t, v in _nodes.items() if t in _connected}
+
+            if not _nodes:
+                st.info("Keine Daten für die gewählten Filter.")
+            else:
+                # ── Spring-Layout (ohne networkx): Knoten kreisförmig ──────────
+                _ticker_list = list(_nodes.keys())
+                _n = len(_ticker_list)
+                _pos: dict = {}
+
+                # Cluster nach Empfehlung anordnen
+                _clusters = {"BUY": [], "HOLD": [], "SELL": [], "SKIP": []}
+                for t in _ticker_list:
+                    _clusters[_nodes[t]["rec"]].append(t)
+
+                _cluster_centers = {
+                    "BUY":  (0.0,  0.7),
+                    "HOLD": (0.7,  0.0),
+                    "SELL": (0.0, -0.7),
+                    "SKIP": (-0.7, 0.0),
+                }
+                for rec, tickers in _clusters.items():
+                    cx, cy = _cluster_centers[rec]
+                    m = len(tickers)
+                    for i, t in enumerate(tickers):
+                        angle = 2 * math.pi * i / max(m, 1)
+                        r = 0.25 + 0.08 * math.sqrt(m)
+                        _pos[t] = (cx + r * math.cos(angle), cy + r * math.sin(angle))
+
+                # ── Kanten zeichnen ──────────────────────────────────────────────
+                _edge_x, _edge_y = [], []
+                for (src, dst) in _edges:
+                    if src in _pos and dst in _pos:
+                        x0, y0 = _pos[src]
+                        x1, y1 = _pos[dst]
+                        _edge_x += [x0, x1, None]
+                        _edge_y += [y0, y1, None]
+
+                _edge_trace = go.Scatter(
+                    x=_edge_x, y=_edge_y,
+                    mode="lines",
+                    line=dict(width=0.8, color="#555555"),
+                    hoverinfo="none",
+                    showlegend=False,
+                )
+
+                # ── Knoten zeichnen ──────────────────────────────────────────────
+                _node_x = [_pos[t][0] for t in _ticker_list]
+                _node_y = [_pos[t][1] for t in _ticker_list]
+                _node_colors = [_nodes[t]["color"] for t in _ticker_list]
+                _node_text = [
+                    f"<b>{t}</b><br>Empfehlung: {_nodes[t]['rec']}<br>"
+                    f"Score: {_nodes[t]['score']}<br>Zuletzt: {_nodes[t]['date']}<br>"
+                    f"Verbindungen: {sum(1 for e in _edges if t in e)}"
+                    for t in _ticker_list
+                ]
+                _node_sizes = [
+                    14 + 6 * sum(1 for e in _edges if t in e)
+                    for t in _ticker_list
+                ]
+
+                _node_trace = go.Scatter(
+                    x=_node_x, y=_node_y,
+                    mode="markers+text",
+                    hoverinfo="text",
+                    hovertext=_node_text,
+                    text=_ticker_list,
+                    textposition="top center",
+                    textfont=dict(size=9, color="#dddddd"),
+                    marker=dict(
+                        size=_node_sizes,
+                        color=_node_colors,
+                        line=dict(width=1, color="#222222"),
+                    ),
+                    showlegend=False,
+                )
+
+                # ── Legende ──────────────────────────────────────────────────────
+                _legend_traces = [
+                    go.Scatter(
+                        x=[None], y=[None], mode="markers",
+                        marker=dict(size=10, color=_rec_color[r]),
+                        name=r, showlegend=True,
+                    )
+                    for r in ["BUY", "HOLD", "SELL", "SKIP"]
+                ]
+
+                fig = go.Figure(
+                    data=[_edge_trace, _node_trace] + _legend_traces,
+                    layout=go.Layout(
+                        paper_bgcolor="#0e1117",
+                        plot_bgcolor="#0e1117",
+                        font=dict(color="#dddddd"),
+                        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                        hovermode="closest",
+                        height=620,
+                        margin=dict(l=10, r=10, t=10, b=10),
+                        legend=dict(
+                            bgcolor="#1a1a2e",
+                            bordercolor="#444",
+                            borderwidth=1,
+                            font=dict(color="#dddddd"),
+                        ),
+                    ),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                # ── Kennzahlen unter der Map ─────────────────────────────────────
+                _kpi1, _kpi2, _kpi3, _kpi4 = st.columns(4)
+                _kpi1.metric("Analysierte Ticker", len(_nodes))
+                _kpi2.metric("Verbindungen", len(_edges))
+                _buy_cnt = sum(1 for v in _nodes.values() if v["rec"] == "BUY")
+                _kpi3.metric("BUY-Signale", _buy_cnt)
+                _most_connected = max(_ticker_list, key=lambda t: sum(1 for e in _edges if t in e), default="–")
+                _kpi4.metric("Am stärksten vernetzt", _most_connected)
+
+                # ── Verbindungstabelle ───────────────────────────────────────────
+                if _edges:
+                    st.divider()
+                    st.subheader("Verbindungen")
+                    _conn_rows = [
+                        {"Von": src, "Nach": dst, "These": lbl}
+                        for (src, dst), lbl in zip(_edges, _edge_labels)
+                    ]
+                    st.dataframe(
+                        pd.DataFrame(_conn_rows),
+                        use_container_width=True, hide_index=True
+                    )
+
+    except ImportError:
+        st.warning("Plotly nicht installiert. Bitte auf dem Server ausführen: `pip install plotly networkx`")
+    except Exception as _e:
+        st.error(f"Netzwerk-Fehler: {_e}")
+
+
+# ══════════════════════════════════════════════════════════
+# TAB 5 – WOCHENBRIEFING
 # ══════════════════════════════════════════════════════════
 with tab_briefing:
     st.subheader("📰 Wochenbriefing")
