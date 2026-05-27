@@ -109,16 +109,8 @@ def check_env() -> List[CheckResult]:
     results.append(_check_key("NEWSAPI_KEY",         config.newsapi_key,         required=False))
     results.append(_check_key("REDDIT_CLIENT_ID",    config.reddit_client_id,    required=False))
     results.append(_check_key("REDDIT_CLIENT_SECRET",config.reddit_client_secret,required=False))
-    results.append(_check_key("ALPACA_API_KEY",      config.alpaca_api_key,      required=False))
-    results.append(_check_key("ALPACA_SECRET_KEY",   config.alpaca_secret_key,   required=False))
-
     # Broker-Mode
-    if config.broker_mode == "alpaca":
-        if config.alpaca_api_key and config.alpaca_secret_key:
-            results.append(_ok("  Broker-Mode", "alpaca (Paper/Live)"))
-        else:
-            results.append(_fail("  Broker-Mode", "alpaca gesetzt aber Keys fehlen"))
-    elif config.broker_mode == "ibkr":
+    if config.broker_mode == "ibkr":
         results.append(_ok("  Broker-Mode", f"ibkr @ {config.ibkr_host}:{config.ibkr_port}"))
     else:
         results.append(_ok("  Broker-Mode", "paper (kein echtes Kapital)"))

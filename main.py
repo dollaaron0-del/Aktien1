@@ -59,7 +59,6 @@ from rich.panel import Panel
 from config import config, validate_config
 from logger import get_logger
 from broker.paper_broker import PaperBroker
-from broker.alpaca_broker import AlpacaBroker
 from broker.ibkr_broker import IBKRBroker
 from portfolio import Portfolio
 from portfolio.performance_tracker import PerformanceTracker
@@ -264,25 +263,7 @@ def main():
         ))
 
     # Select broker based on config
-    if config.broker_mode == "alpaca":
-        broker = AlpacaBroker()
-        if not broker._check_creds():
-            console.print("[yellow]⚠ Alpaca-Credentials fehlen – Fallback auf Paper-Broker.[/yellow]")
-            broker = PaperBroker()
-        else:
-            is_paper_endpoint = "paper-api" in config.alpaca_base_url
-            endpoint_color = "yellow" if is_paper_endpoint else "green"
-            endpoint_label = "PAPER-API (Simulation)" if is_paper_endpoint else "LIVE-API (echte Orders)"
-            console.print(
-                f"[green]✓ Alpaca-Broker aktiv[/green]  "
-                f"[{endpoint_color}]Endpoint: {endpoint_label}[/{endpoint_color}]"
-            )
-            if is_paper_endpoint:
-                console.print(
-                    "[yellow]  ⚠ Trades gehen an Alpaca PAPER-Konto, nicht an echtes Konto!\n"
-                    "    Für echte Orders: ALPACA_BASE_URL=https://api.alpaca.markets in .env setzen[/yellow]"
-                )
-    elif config.broker_mode == "ibkr":
+    if config.broker_mode == "ibkr":
         broker = IBKRBroker()
         if broker.is_connected():
             console.print(
@@ -297,30 +278,6 @@ def main():
             broker = PaperBroker()
     else:
         broker = PaperBroker()
-
-    portfolio = Portfolio(config.initial_capital)
-
-    # Alpaca-Kontostand mit Portfolio synchronisieren
-    if config.broker_mode == "alpaca" and isinstance(broker, AlpacaBroker):
-        try:
-            acct = broker.get_account()
-            if acct:
-                buying_power = float(acct.get("buying_power", 0))
-                equity       = float(acct.get("equity", 0))
-                local_cash   = portfolio.cash
-                if abs(buying_power - local_cash) > 50:
-                    portfolio.set_cash(buying_power)
-                    console.print(
-                        f"[cyan]↕ Alpaca-Sync: Kaufkraft ${buying_power:,.2f} "
-                        f"(vorher lokal ${local_cash:,.2f}) | Eigenkapital ${equity:,.2f}[/cyan]"
-                    )
-                else:
-                    console.print(
-                        f"[dim]Alpaca-Kontostand: ${buying_power:,.2f} Kaufkraft "
-                        f"| ${equity:,.2f} Eigenkapital[/dim]"
-                    )
-        except Exception as e:
-            console.print(f"[yellow]⚠ Alpaca-Kontostand konnte nicht gelesen werden: {e}[/yellow]")
     tracker = PerformanceTracker()
     phase_ctrl = _make_phase_ctrl()
     focus_ctrl = _make_focus_ctrl()

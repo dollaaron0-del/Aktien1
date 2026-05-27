@@ -560,7 +560,7 @@ def _run_margin_check(tracker) -> None:
             "  [cyan]USE_MARGIN=true[/cyan]\n"
             "  [cyan]MARGIN_MIN_CONFIDENCE=HIGH[/cyan]\n"
             "[dim]Der Bot bestimmt den Hebel dann selbst anhand seiner Performance.[/dim]\n"
-            "[dim]⚠ Erfordert Alpaca Margin-Account (nicht Cash-Account)![/dim]"
+            "[dim]⚠ Erfordert Margin-Account beim Broker![/dim]"
         )
     elif result.active_tier.level == 0 and result.downgrade_reason:
         console.print(f"\n[bold red]⚠ Hebel pausiert:[/bold red] {result.downgrade_reason}")

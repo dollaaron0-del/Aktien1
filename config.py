@@ -21,17 +21,13 @@ class Config:
     reddit_user_agent: str = field(default_factory=lambda: os.getenv("REDDIT_USER_AGENT", "StockSentimentBot/1.0"))
     newsapi_key: str = field(default_factory=lambda: os.getenv("NEWSAPI_KEY", ""))
     twitter_bearer_token: str = field(default_factory=lambda: os.getenv("TWITTER_BEARER_TOKEN", ""))
-    alpaca_api_key: str = field(default_factory=lambda: os.getenv("ALPACA_API_KEY", ""))
-    alpaca_secret_key: str = field(default_factory=lambda: os.getenv("ALPACA_SECRET_KEY", ""))
-    alpaca_base_url: str = field(default_factory=lambda: os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets"))
-
     # Interactive Brokers (TWS / IB Gateway)
     ibkr_host:      str = field(default_factory=lambda: os.getenv("IBKR_HOST",      "127.0.0.1"))
     ibkr_port:      int = field(default_factory=lambda: int(os.getenv("IBKR_PORT",  "7497")))
     ibkr_client_id: int = field(default_factory=lambda: int(os.getenv("IBKR_CLIENT_ID", "1")))
     ibkr_account:   str = field(default_factory=lambda: os.getenv("IBKR_ACCOUNT",   ""))
 
-    # Broker mode: "paper", "alpaca", "ibkr"
+    # Broker mode: "paper", "ibkr"
     broker_mode: str = field(default_factory=lambda: os.getenv("BROKER_MODE", "paper"))
     initial_capital: float = field(default_factory=lambda: float(os.getenv("INITIAL_CAPITAL", "10000.0")))
 
@@ -297,12 +293,6 @@ def validate_config() -> None:
         errors.append("ANTHROPIC_API_KEY fehlt – Claude-Analyse nicht möglich.")
 
     # ── Broker-spezifisch ─────────────────────────────────────────────────────
-    if config.broker_mode == "alpaca":
-        if not config.alpaca_api_key or not config.alpaca_secret_key:
-            errors.append(
-                "BROKER_MODE=alpaca, aber ALPACA_API_KEY / ALPACA_SECRET_KEY fehlen."
-            )
-
     if config.broker_mode == "ibkr":
         try:
             import ib_insync  # noqa: F401

@@ -369,27 +369,9 @@ class ShortStrategy:
         Strike: 95% des aktuellen Preises (leicht OTM)
         Expiry: 30 Tage
         """
-        if os.getenv("ALPACA_OPTIONS_ENABLED", "false").lower() not in ("1", "true", "yes"):
-            log.debug(
-                "[%s] Kein Inverse ETF und Options deaktiviert – Short übersprungen.", ticker
-            )
-            return None
-        try:
-            from broker.alpaca_broker import AlpacaBroker
-            broker = AlpacaBroker()
-            # Alpaca Options endpoint: /v2/options/contracts
-            # Strike: 95% des aktuellen Preises (leicht OTM)
-            # Expiry: heute + 30 Tage
-            # side=buy, type=limit, option_type=put
-            # Platzhalter-Implementierung – konkrete API-Calls wenn Broker aktiviert
-            log.info(
-                "[%s] PUT-Option via Alpaca würde geöffnet: Strike=$%.2f, Expiry=+30d",
-                ticker, price * 0.95,
-            )
-            return None  # Placeholder – vollständige Implementierung nach Alpaca-Freischaltung
-        except Exception as e:
-            log.debug("Options-API fehlgeschlagen: %s – Fallback auf Inverse ETF", e)
-            return None
+        # Options-Handel nicht implementiert
+        log.debug("[%s] Kein Inverse ETF und Options nicht aktiviert – Short übersprungen.", ticker)
+        return None
 
     def _close_short(
         self,
