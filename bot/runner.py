@@ -19,7 +19,7 @@ from collectors import (
     SEC8KCollector, ShortInterestCollector, InstitutionalCollector,
     AnalystCollector, EarningsTranscriptCollector, PatentCollector,
     JobListingsCollector, CEOInterviewCollector, EURegulationCollector,
-    ChineseMediaCollector, WebTrafficCollector,
+    ChineseMediaCollector, WebTrafficCollector, GermanMediaCollector,
 )
 from collectors.news_archive import NewsArchive
 from collectors.crypto_news_collector import CryptoNewsCollector
@@ -346,6 +346,7 @@ def _make_collectors() -> Dict:
         "chinese_media":     ChineseMediaCollector(),
         "web_traffic":       WebTrafficCollector(),
         "crypto_news":       CryptoNewsCollector(),
+        "german_media":      GermanMediaCollector(lookback_hours=48),
     }
 
 

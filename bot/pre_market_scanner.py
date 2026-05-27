@@ -76,6 +76,7 @@ class PreMarketBriefing:
     futures: List[IndexSnapshot] = field(default_factory=list)
     macro_events_today: List[str] = field(default_factory=list)
     overall_tone: str = "NEUTRAL"    # BULLISH | NEUTRAL | BEARISH
+    german_headlines: List[str] = field(default_factory=list)   # ARD/Handelsblatt
 
     def to_telegram(self) -> str:
         lines = [
@@ -119,6 +120,13 @@ class PreMarketBriefing:
             lines.append("")
         else:
             lines.append("📊 Keine signifikanten Pre-Market-Bewegungen")
+            lines.append("")
+
+        # Deutsche Schlagzeilen (ARD / Handelsblatt)
+        if self.german_headlines:
+            lines.append("🗞 *Schlagzeilen (DE):*")
+            for hl in self.german_headlines[:5]:
+                lines.append(f"  • {hl}")
             lines.append("")
 
         # Ton
@@ -176,7 +184,10 @@ class PreMarketScanner:
         # 4. Pre-Market Movers aus Watchlist
         briefing.movers = self._get_premarket_movers(watchlist)
 
-        # 5. Gesamt-Ton berechnen
+        # 5. Deutsche Schlagzeilen (ARD Tagesschau / Handelsblatt)
+        briefing.german_headlines = self._get_german_headlines()
+
+        # 6. Gesamt-Ton berechnen
         briefing.overall_tone = self._calc_tone(briefing)
 
         dur = time.monotonic() - t0
@@ -214,6 +225,20 @@ class PreMarketScanner:
             pass
 
         return events or ["Keine High-Impact Events heute"]
+
+    # ── Deutsche Schlagzeilen ─────────────────────────────────────────────────
+
+    def _get_german_headlines(self) -> List[str]:
+        try:
+            from collectors.german_media_collector import GermanMediaCollector
+            items = GermanMediaCollector(lookback_hours=24).collect_market_context()
+            return [
+                f"{it['source']}: {it['title']}"
+                for it in items[:5]
+            ]
+        except Exception as e:
+            log.debug("Deutsche Schlagzeilen fehlgeschlagen: %s", e)
+            return []
 
     # ── Index-Snapshots ───────────────────────────────────────────────────────
 
