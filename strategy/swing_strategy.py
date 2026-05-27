@@ -26,6 +26,7 @@ from analyzers.bot_scorer import BotScorer, get_modifiers as _get_score_mod
 from analyzers.sentiment_memory import SentimentMemory
 from analyzers.margin_readiness import MarginTierTracker
 from analyzers.reentry_tracker import ReEntryTracker
+from analyzers.sl_cooldown import StopLossCooldown
 from analyzers.regime_adaptive import RegimeAdaptiveConfig, get_adaptive_params
 from analyzers.sharpe_sizer import SharpeSizer
 from analyzers.cross_asset import CrossAssetSignals
@@ -124,6 +125,7 @@ class SwingStrategy:
         self.cross_asset     = CrossAssetSignals()
         self.options_intel   = OptionsIntelligence()
         self.rl_agent        = RLAgent()
+        self.sl_cooldown     = StopLossCooldown(cooldown_days=config.sl_cooldown_days)
         # Short-Strategy (optional, wird von main.py gesetzt)
         self._short_strategy: Optional["ShortStrategy"] = None
 
@@ -190,6 +192,13 @@ class SwingStrategy:
                 f"[{ticker}] Positionslimit erreicht ({open_count}/{max_allowed} bei "
                 f"${portfolio_value:,.0f} Portfolio, Score-Mod: {_smod.position_count_adj:+d}) – kein neuer Kauf."
             )
+
+        # Stop-Loss Cooldown: kein Re-Entry N Tage nach SL-Auslösung
+        sl_blocked, sl_reason = self.sl_cooldown.is_blocked(ticker)
+        if sl_blocked:
+            log.info("[%s] SL-Sperre: %s", ticker, sl_reason)
+            return f"[{ticker}] 🔒 {sl_reason} – übersprungen."
+
         adaptive_threshold = self.tracker.get_adaptive_threshold(config.buy_threshold)
         phase_modifier = self.phase_ctrl.get_entry_threshold_modifier(portfolio_value)
 
@@ -466,8 +475,8 @@ class SwingStrategy:
 
             days_held = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
 
-            # ── Partial Take-Profit (einmalig bei +10%) ──────────────────────
-            if not pos.partial_tp_taken:
+            # ── Partial Take-Profit (Stufe 1: +10% / Stufe 2: +20%) ─────────
+            if pos.partial_tp_count < 2:
                 partial_msg = self._check_partial_tp(ticker, pos, price)
                 if partial_msg:
                     actions.append(partial_msg)
@@ -1001,6 +1010,13 @@ class SwingStrategy:
             sell_price=actual_price,
             sell_reason=reason,
         )
+        # SL-Sperre setzen wenn Stop-Loss ausgelöst wurde
+        if "stop" in reason.lower():
+            try:
+                self.sl_cooldown.record(ticker, actual_price)
+            except Exception as _sle:
+                log.debug("sl_cooldown.record fehlgeschlagen: %s", _sle)
+
         pnl = self.portfolio.close_position(ticker, actual_price, reason)
         self.journal.log_exit(
             ticker=ticker, price=actual_price,
@@ -1152,13 +1168,27 @@ class SwingStrategy:
             pass
 
     def _check_partial_tp(self, ticker: str, pos: Position, price: float) -> Optional[str]:
-        """Verkauft partial_tp_sell_frac der Position wenn Gewinn >= partial_tp_pct erreicht.
-        Setzt SL danach auf Breakeven – Rest läuft mit Trailing weiter."""
+        """
+        Zweistufiger Partial Take-Profit:
+          Stufe 1 (count=0): Bei +partial_tp_pct% → sell_frac% verkaufen, SL → Breakeven
+          Stufe 2 (count=1): Bei +partial_tp2_pct% → 50% der verbleibenden Shares verkaufen
+        """
         gain = (price - pos.entry_price) / pos.entry_price
-        if gain < config.partial_tp_pct:
+        count = pos.partial_tp_count
+
+        if count == 0 and gain >= config.partial_tp_pct:
+            sell_frac = config.partial_tp_sell_frac
+            new_sl = max(round(pos.entry_price * 1.005, 2), pos.stop_loss)
+            level_label = f"Stufe 1 ({sell_frac*100:.0f}% bei +{gain*100:.1f}%)"
+            sl_note = f"SL → Breakeven ${new_sl:.2f}"
+        elif count == 1 and gain >= config.partial_tp2_pct:
+            sell_frac = 0.50  # 50% der verbleibenden Shares (= 25% der ursprünglichen)
+            new_sl = pos.stop_loss  # Trailing hält bereits; SL nicht senken
+            level_label = f"Stufe 2 (25% bei +{gain*100:.1f}%)"
+            sl_note = f"SL bleibt ${new_sl:.2f} (Trailing)"
+        else:
             return None
 
-        sell_frac = config.partial_tp_sell_frac
         sell_shares = math.floor(pos.shares * sell_frac * 100) / 100
         if sell_shares <= 0:
             return None
@@ -1178,8 +1208,7 @@ class SwingStrategy:
 
         remaining_shares = round(pos.shares - sell_shares, 4)
         pnl_partial = (actual_price - pos.entry_price) * sell_shares
-        # SL auf Breakeven + kleiner Puffer (nie unter bisherigem SL)
-        new_sl = max(round(pos.entry_price * 1.005, 2), pos.stop_loss)
+        new_count = count + 1
 
         self.portfolio.update_partial_tp(
             ticker=ticker,
@@ -1188,35 +1217,35 @@ class SwingStrategy:
             sell_shares=sell_shares,
             sell_price=actual_price,
             pnl=pnl_partial,
+            new_count=new_count,
             currency=pos.currency,
             fx_rate=pos.fx_rate_at_entry,
         )
         pos.shares = remaining_shares
         pos.stop_loss = new_sl
-        pos.partial_tp_taken = True
+        pos.partial_tp_count = new_count
 
         days_held = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
         self.journal.log_exit(
             ticker=ticker, price=actual_price,
             entry_price=pos.entry_price,
             pnl=pnl_partial,
-            reason=f"Partial-TP ({sell_frac*100:.0f}%) bei +{gain*100:.1f}%",
+            reason=f"Partial-TP {level_label}",
             days_held=days_held,
         )
         self._notifier.send(
-            f"💰 <b>Partial Take-Profit {ticker}</b>\n"
-            f"Verkauft: {sell_shares:.2f} Stück ({sell_frac*100:.0f}%) @ ${actual_price:.2f} "
-            f"(+{gain*100:.1f}%)\n"
+            f"💰 <b>Partial Take-Profit {ticker} – {level_label}</b>\n"
+            f"Verkauft: {sell_shares:.2f} Stück @ ${actual_price:.2f} (+{gain*100:.1f}%)\n"
             f"Realisierter Gewinn: +${pnl_partial:.2f}\n"
-            f"Verbleibend: {remaining_shares:.2f} Stück | SL → Breakeven ${new_sl:.2f}"
+            f"Verbleibend: {remaining_shares:.2f} Stück | {sl_note}"
         )
         log.info(
-            "[%s] Partial-TP: %.2f Stück @ $%.2f (+%.1f%%) | SL→$%.2f | verbleibend %.2f",
-            ticker, sell_shares, actual_price, gain * 100, new_sl, remaining_shares,
+            "[%s] Partial-TP %s: %.2f Stück @ $%.2f (+%.1f%%) | verbleibend %.2f",
+            ticker, level_label, sell_shares, actual_price, gain * 100, remaining_shares,
         )
         return (
-            f"[{ticker}] 💰 Partial-TP {sell_shares:.2f}×${actual_price:.2f} "
-            f"(+{gain*100:.1f}%) | SL→${new_sl:.2f} | Rest {remaining_shares:.2f} Stück"
+            f"[{ticker}] 💰 Partial-TP {level_label} | "
+            f"{sell_shares:.2f}×${actual_price:.2f} | Rest {remaining_shares:.2f} Stück | {sl_note}"
         )
 
     @staticmethod

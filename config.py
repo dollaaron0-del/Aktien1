@@ -168,6 +168,14 @@ class Config:
     partial_tp_sell_frac: float = field(
         default_factory=lambda: float(os.getenv("PARTIAL_TP_SELL_FRAC", "0.50"))
     )
+    # Zweite Partial-TP-Stufe: bei X% Gewinn weitere 50% der verbleibenden Shares verkaufen
+    partial_tp2_pct: float = field(
+        default_factory=lambda: float(os.getenv("PARTIAL_TP2_PCT", "0.20"))
+    )
+    # Stop-Loss Re-Entry Sperre: N Tage nach SL-Auslösung kein Wiederkauf
+    sl_cooldown_days: int = field(
+        default_factory=lambda: int(os.getenv("SL_COOLDOWN_DAYS", "5"))
+    )
 
     # ── Hedge / Rezessions-Absicherung ───────────────────────────────────────
     # Inverse ETFs kaufen wenn Marktregime BEAR oder CRISIS erreicht

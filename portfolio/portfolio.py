@@ -29,7 +29,7 @@ class Position:
     entry_catalysts: List[str] = field(default_factory=list)
     currency: str = "USD"           # Handelswährung (EUR/GBP/CHF/USD)
     fx_rate_at_entry: float = 1.0   # FX-Rate zur Basiswährung bei Kauf
-    partial_tp_taken: bool = False  # True nach erstem Teilverkauf (50% TP)
+    partial_tp_count: int = 0       # Anzahl ausgelöster Partial-TP-Stufen (0/1/2)
 
     @property
     def entry_value(self) -> float:
@@ -281,7 +281,7 @@ class Portfolio:
                         json.dumps(position.entry_catalysts),
                         position.currency,
                         position.fx_rate_at_entry,
-                        int(position.partial_tp_taken),
+                        position.partial_tp_count,
                     ),
                 )
                 self._insert_trade(
@@ -327,15 +327,16 @@ class Portfolio:
         sell_shares: float,
         sell_price: float,
         pnl: float,
+        new_count: int = 1,
         currency: str = "USD",
         fx_rate: float = 1.0,
     ) -> None:
-        """Partial Take-Profit: reduziert Position, setzt SL auf Breakeven, bucht Erlös."""
+        """Partial Take-Profit: reduziert Position, aktualisiert SL, bucht Erlös."""
         with _db_lock:
             with self._conn:
                 self._conn.execute(
-                    "UPDATE positions SET shares=?, stop_loss=?, partial_tp_taken=1 WHERE ticker=?",
-                    (new_shares, new_stop_loss, ticker),
+                    "UPDATE positions SET shares=?, stop_loss=?, partial_tp_taken=? WHERE ticker=?",
+                    (new_shares, new_stop_loss, new_count, ticker),
                 )
                 self._set_cash(self._get_cash() + sell_shares * sell_price)
                 self._insert_trade(
@@ -453,7 +454,7 @@ class Portfolio:
         col_names = row.keys() if hasattr(row, "keys") else []
         currency = row["currency"] if "currency" in col_names else "USD"
         fx_rate = row["fx_rate_at_entry"] if "fx_rate_at_entry" in col_names else 1.0
-        partial_tp = bool(row["partial_tp_taken"]) if "partial_tp_taken" in col_names else False
+        partial_tp_count = int(row["partial_tp_taken"] or 0) if "partial_tp_taken" in col_names else 0
         return Position(
             ticker=ticker,
             shares=shares,
@@ -466,5 +467,5 @@ class Portfolio:
             entry_catalysts=catalysts,
             currency=currency or "USD",
             fx_rate_at_entry=float(fx_rate or 1.0),
-            partial_tp_taken=partial_tp,
+            partial_tp_count=partial_tp_count,
         )
