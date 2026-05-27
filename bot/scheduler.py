@@ -515,6 +515,44 @@ def run_bot_loop(
     # Register today's analysis jobs (weekdays only)
     _register_analysis_jobs()
 
+    # ── Catch-up: verpasstes Analyse-Fenster nachholen ─────────────────────
+    # Wenn der Bot nach dem geplanten Zeitfenster startet (z.B. nach Neustart),
+    # wird die Analyse sofort nachgeholt – bis zu 60 Minuten nach dem Fenster.
+    _CATCHUP_MAX_MINUTES = 60
+
+    def _catchup_missed_window():
+        now_local = datetime.now()
+        local_date = now_local.date()
+        if local_date.weekday() >= 5:
+            return
+        slots = mkt_schedule.get_schedule_strings(date=local_date)
+        for slot in slots:
+            try:
+                h, m = map(int, slot["hhmm"].split(":"))
+                slot_dt = now_local.replace(hour=h, minute=m, second=0, microsecond=0)
+                diff = (now_local - slot_dt).total_seconds() / 60
+                if 0 < diff <= _CATCHUP_MAX_MINUTES:
+                    console.print(
+                        f"\n[bold yellow]⏰ Analyse-Fenster {slot['hhmm']} ({slot['exchange']}) "
+                        f"um {diff:.0f} Min verpasst – hole jetzt nach...[/bold yellow]"
+                    )
+                    TelegramNotifier().send(
+                        f"⏰ <b>Nachhol-Analyse</b>\n\n"
+                        f"Bot wurde nach dem geplanten Fenster gestartet "
+                        f"({slot['hhmm']} {slot['exchange']} vor {diff:.0f} Min).\n"
+                        f"Starte Pre-Market Briefing und Analyse jetzt..."
+                    )
+                    _pre_market_job(slot["exchange"])
+                    run_analysis_cycle(
+                        portfolio, broker, strategy, tracker, phase_ctrl,
+                        archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+                    )
+                    break
+            except Exception as e:
+                log.warning("Catch-up-Check fehlgeschlagen: %s", e)
+
+    _catchup_missed_window()
+
     # Reschedule every day at 00:01 (picks up DST changes and weekday/weekend transitions)
     schedule.every().day.at("00:01").do(_reschedule_analysis)
 
