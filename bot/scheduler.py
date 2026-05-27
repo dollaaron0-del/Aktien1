@@ -643,6 +643,71 @@ def run_bot_loop(
 
     schedule.every(15).minutes.do(_user_request_job)
 
+    # ── Conditional Entry Preis-Check: alle 15 Minuten ──────────────────────
+    def _conditional_entry_job():
+        """Führt ausstehende bedingte Einstiege aus sobald der Trigger-Kurs erreicht ist."""
+        try:
+            from analyzers.conditional_entry import ConditionalEntryWatcher
+            from analyzers import AnalysisResult
+            watcher = ConditionalEntryWatcher()
+            active = watcher.get_active()
+            if not active:
+                return
+            prices = broker.get_prices([e.ticker for e in active])
+            triggered = watcher.check_triggered(prices)
+            if not triggered:
+                return
+            notifier = TelegramNotifier()
+            for entry in triggered:
+                price = prices.get(entry.ticker, entry.trigger_price)
+                console.print(
+                    f"\n[bold green]📌 Conditional Entry ausgelöst: "
+                    f"{entry.ticker} @ ${price:.2f} "
+                    f"(Trigger war: ${entry.trigger_price:.2f})[/bold green]"
+                )
+                analysis = AnalysisResult(
+                    ticker=entry.ticker,
+                    sentiment_score=entry.sentiment_score,
+                    direction="BULLISH",
+                    confidence=entry.confidence,
+                    recommendation="BUY",
+                    entry_rationale=(
+                        f"[Conditional Entry @ ${price:.2f}] {entry.entry_rationale}"
+                    ),
+                    risk_factors=entry.risk_factors,
+                    key_catalysts=entry.key_catalysts,
+                    suggested_hold_days=entry.suggested_hold_days,
+                    target_price=entry.target_price,
+                    target_price_rationale=entry.target_price_rationale,
+                    thesis_valid=None,
+                    thesis_break_reason="",
+                    sources_used=0,
+                    raw_summary="",
+                    bull_case=entry.bull_case,
+                    bear_case=entry.bear_case,
+                    debate_winner="BULL",
+                )
+                action = strategy.evaluate(analysis, {})
+                watcher.remove(entry.ticker)
+                if action and ("GEKAUFT" in action or "kaufen" in action.lower()):
+                    notifier.send(
+                        f"📌 <b>Conditional Entry ausgeführt: {entry.ticker}</b>\n\n"
+                        f"Kurs ${price:.2f} hat den Trigger ${entry.trigger_price:.2f} erreicht.\n\n"
+                        f"<b>Bull-Case:</b> {entry.bull_case}\n"
+                        f"<b>Halteziel:</b> {entry.suggested_hold_days}d"
+                        + (f"\n<b>Kursziel:</b> ${entry.target_price:.2f}" if entry.target_price else "")
+                    )
+                    log.info("Conditional Entry ausgeführt: %s @ $%.2f", entry.ticker, price)
+                else:
+                    log.info(
+                        "Conditional Entry ausgelöst aber kein Trade: %s (Strategy-Filter)",
+                        entry.ticker,
+                    )
+        except Exception as _e:
+            log.warning("Conditional-Entry-Job fehlgeschlagen: %s", _e)
+
+    schedule.every(15).minutes.do(_conditional_entry_job)
+
     # ── SL/TP-Check alle 30 Minuten ─────────────────────────────────────────
     schedule.every(30).minutes.do(strategy.check_open_positions)
 

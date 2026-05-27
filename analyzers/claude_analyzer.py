@@ -67,6 +67,8 @@ class AnalysisResult:
     debate_winner: str = ""         # "BULL" | "BEAR" | "DRAW"
     # Verwandte Aktien (nur bei BUY): profitieren von derselben These
     related_tickers: List[str] = None
+    # Bedingter Einstieg (nur bei SKIP mit bullischem Potential)
+    entry_trigger_price: Optional[float] = None
 
     def __post_init__(self):
         if self.related_tickers is None:
@@ -160,6 +162,7 @@ SCHRITT 2 – AUSGABE als JSON:
   "suggested_hold_days": <integer 3–30>,
   "target_price": <float Zielkurs USD, oder null>,
   "target_price_rationale": "<1 Satz Begründung>",
+  "entry_trigger_price": <float oder null>,
   "thesis_valid": null,
   "thesis_break_reason": "",
   "related_tickers": [],
@@ -167,6 +170,10 @@ SCHRITT 2 – AUSGABE als JSON:
 }}
 
 BUY nur wenn BULL-Seite klar überwiegt UND technische Signale bestätigen.
+entry_trigger_price: NUR bei SKIP mit bullischem Potential (score ≥ 0.50, direction BULLISH/NEUTRAL):
+  Der technische Kurs-Level bei dem das Risk/Reward zu einem BUY kippt.
+  Verwende EMA21, unteres Bollinger Band oder nächste Unterstützungszone.
+  Null wenn klar BEARISH, zu unklar, oder offene Position vorhanden.
 SKIP wenn DRAW oder wenn BEAR-Argumente das Risiko zu hoch machen.
 Bei BUY: trage in "related_tickers" 2–3 Ticker-Symbole ein die von derselben These profitieren
 (z.B. Zulieferer, Wettbewerber, Abnehmer). Leer lassen bei HOLD/SKIP/SELL.
@@ -578,6 +585,8 @@ class ClaudeAnalyzer:
         try:
             raw_target = data.get("target_price")
             target_price = float(raw_target) if raw_target is not None else None
+            raw_trigger = data.get("entry_trigger_price")
+            entry_trigger_price = float(raw_trigger) if raw_trigger is not None else None
             thesis_valid_raw = data.get("thesis_valid")
             thesis_valid = (
                 bool(thesis_valid_raw) if thesis_valid_raw is not None else None
@@ -605,6 +614,7 @@ class ClaudeAnalyzer:
                     t.strip().upper() for t in data.get("related_tickers", [])
                     if isinstance(t, str) and t.strip()
                 ],
+                entry_trigger_price=entry_trigger_price,
             )
         except (KeyError, ValueError, TypeError) as exc:
             log.warning("[%s] AnalysisResult-Aufbau fehlgeschlagen: %s", ticker, exc)

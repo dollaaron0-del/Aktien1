@@ -777,6 +777,55 @@ with tab_queue:
             st.warning("Bitte einen Ticker eingeben.")
 
     st.divider()
+
+    # ── Bedingte Einstiege (Conditional Entries) ──────────────────────────────
+    st.subheader("📌 Bedingte Einstiege")
+    st.caption(
+        "Aktien die Claude als SKIP bewertet hat, aber bei einem günstigeren "
+        "Kurs automatisch gekauft werden. Der Bot prüft alle 15 Min ob der "
+        "Trigger-Kurs erreicht wurde."
+    )
+    try:
+        from analyzers.conditional_entry import ConditionalEntryWatcher
+        _ce_watcher = ConditionalEntryWatcher()
+        _ce_active = _ce_watcher.get_active()
+        if _ce_active:
+            _ce_prices = {
+                e.ticker: broker.get_price(e.ticker) or e.price_at_creation
+                for e in _ce_active
+            }
+            for ce in _ce_active:
+                _cur = _ce_prices.get(ce.ticker, ce.price_at_creation)
+                _pct_away = (_cur - ce.trigger_price) / _cur * 100 if _cur else 0
+                _triggered = _cur <= ce.trigger_price if _cur else False
+                _icon = "🟢" if _triggered else ("🟡" if _pct_away < 3 else "⚪")
+                with st.expander(
+                    f"{_icon} **{ce.ticker}** – Trigger ${ce.trigger_price:.2f} "
+                    f"· Aktuell ${_cur:.2f} "
+                    f"· {'🔥 AUSGELÖST' if _triggered else f'{_pct_away:.1f}% entfernt'}"
+                    f" · läuft ab {ce.expires_at[:10]}",
+                    expanded=_triggered,
+                ):
+                    _cc1, _cc2, _cc3 = st.columns(3)
+                    _cc1.metric("Trigger-Kurs",    f"${ce.trigger_price:.2f}",
+                                f"{ce.pct_to_trigger:.1f}% unter Analyse-Kurs")
+                    _cc2.metric("Aktueller Kurs",  f"${_cur:.2f}",
+                                f"{'🔥 Trigger erreicht!' if _triggered else f'noch {_pct_away:.1f}% bis Trigger'}")
+                    _cc3.metric("Kursziel (Claude)", f"${ce.target_price:.2f}" if ce.target_price else "–")
+                    st.markdown(f"**Bull-Case:** {ce.bull_case}")
+                    st.markdown(f"**Bear-Case:** {ce.bear_case}")
+                    st.markdown(f"**Begründung:** {ce.entry_rationale}")
+                    if ce.key_catalysts:
+                        st.markdown("**Katalysatoren:** " + " · ".join(ce.key_catalysts))
+                    if st.button(f"🗑 {ce.ticker} entfernen", key=f"rm_ce_{ce.ticker}"):
+                        _ce_watcher.remove(ce.ticker)
+                        st.rerun()
+        else:
+            st.info("Keine aktiven bedingten Einstiege.")
+    except Exception as _ce_dash_err:
+        st.caption(f"Conditional Entries nicht verfügbar: {_ce_dash_err}")
+
+    st.divider()
     st.subheader("Ausstehende BUY-Signale")
     st.caption(
         "Wenn ein starkes BUY-Signal eintrifft aber kein Kapital frei ist, "

@@ -770,6 +770,30 @@ def run_analysis_cycle(
         )
         _analysis_log.store(analysis)
 
+        # Bei SKIP mit bullischem Potential: Conditional Entry speichern
+        if (
+            analysis.recommendation == "SKIP"
+            and analysis.entry_trigger_price
+            and analysis.sentiment_score >= 0.50
+            and analysis.direction in ("BULLISH", "NEUTRAL")
+        ):
+            try:
+                from analyzers.conditional_entry import ConditionalEntryWatcher
+                _cur_price = price_data.get("current_price", 0) if price_data else 0
+                if _cur_price and analysis.entry_trigger_price < _cur_price:
+                    _ce = ConditionalEntryWatcher.build(
+                        ticker, analysis.entry_trigger_price, _cur_price, analysis
+                    )
+                    ConditionalEntryWatcher().add(_ce)
+                    console.print(
+                        f"  [yellow]📌 Conditional Entry gesetzt: {ticker} – "
+                        f"Kauf bei ${analysis.entry_trigger_price:.2f} "
+                        f"({_ce.pct_to_trigger:.1f}% unter aktuellem Kurs, "
+                        f"Ablauf {_ce.expires_at[:10]})[/yellow]"
+                    )
+            except Exception as _ce_err:
+                log.debug("Conditional Entry konnte nicht gespeichert werden: %s", _ce_err)
+
         # Bei BUY: verwandte Aktien ins Netz aufnehmen
         if analysis.recommendation == "BUY" and analysis.related_tickers:
             try:
