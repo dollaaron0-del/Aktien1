@@ -30,6 +30,7 @@ from analyzers.signal_expander import SignalDrivenExpander
 from analyzers.eu_stock_scanner import EU_UNIVERSE
 from analyzers.weekend_prep import WeekendPrep
 from analyzers.analysis_log import AnalysisLog
+from analyzers.bot_scorer import BotScorer, MILESTONES, get_modifiers
 from portfolio.goal_risk_assessor import GoalRiskAssessor, OK, CAUTION, DANGER, UNREACHABLE
 
 # ─── Ticker → Firmenname ──────────────────────────────────────────────────────
@@ -402,6 +403,89 @@ with tab_portfolio:
         wr3.metric("Richtungs-Genauigkeit", f"{acc['direction_accuracy_pct']}%")
         wr4.metric("Zielkurs-Trefferquote", f"{acc['target_hit_pct']}%")
         st.divider()
+
+    # Bot-Score Bewertungsmaßstab
+    try:
+        _bot_score = BotScorer().get()
+        _mod = get_modifiers(_bot_score.current)
+        _score_color = (
+            "🟢" if _bot_score.current >= 75 else
+            "🟡" if _bot_score.current >= 40 else "🔴"
+        )
+        with st.expander(
+            f"{_score_color} **Bot-Score: {_bot_score.current:.1f}/100** — {_bot_score.label}",
+            expanded=True,
+        ):
+            _sc1, _sc2, _sc3, _sc4 = st.columns(4)
+            _sc1.metric("Score",        f"{_bot_score.current:.1f}/100",
+                        f"Peak: {_bot_score.peak:.1f}")
+            _sc2.metric("Trades bewertet", str(_bot_score.trades_scored))
+            _sc3.metric("Verdient",     f"+{_bot_score.total_earned:.1f} Pkt")
+            _sc4.metric("Verloren",     f"-{_bot_score.total_lost:.1f} Pkt")
+
+            st.progress(min(_bot_score.current / 100, 1.0),
+                        text=f"{_bot_score.bar}  {_bot_score.label}")
+
+            st.markdown("**Aktive Verhaltens-Modifier** *(Score-Stufe: " + _mod.score_range + ")*")
+            _m1, _m2, _m3, _m4 = st.columns(4)
+            _thr_sign = f"{_mod.threshold_adj:+.2f}" if _mod.threshold_adj != 0 else "±0.00"
+            _pos_sign = f"{_mod.position_count_adj:+d}" if _mod.position_count_adj != 0 else "±0"
+            _size_pct = f"{(_mod.position_size_mult - 1) * 100:+.0f}%"
+            _hold_pct = f"{(_mod.hold_days_mult - 1) * 100:+.0f}%"
+            _m1.metric("Kaufschwelle",      _thr_sign)
+            _m2.metric("Max. Positionen",   _pos_sign)
+            _m3.metric("Positionsgröße",    _size_pct)
+            _m4.metric("Haltedauer",        _hold_pct)
+            st.caption(_mod.description)
+
+            # Score-Stufen-Übersicht
+            _stages = [
+                (90, "Elite",        "−0.06 Schwelle, +3 Pos., +40% Größe"),
+                (75, "Exzellent",    "−0.04 Schwelle, +2 Pos., +25% Größe"),
+                (60, "Stark",        "−0.02 Schwelle, +1 Pos., +10% Größe"),
+                (40, "Standard",     "Baseline – keine Änderung"),
+                (25, "Lernend",      "+0.03 Schwelle, −1 Pos., −15% Größe"),
+                ( 0, "Eingeschränkt","+0.05 Schwelle, −2 Pos., −30% Größe"),
+            ]
+            st.markdown("**Score-Skala:**")
+            for _thr, _lbl, _desc in _stages:
+                _active = "**►**" if _mod.score_range == _lbl else "  "
+                st.markdown(f"{_active} `{_thr:>3}+` &nbsp; **{_lbl}** — {_desc}")
+
+            # Persönliche Bestleistungen
+            _pb = _bot_score.personal_bests
+            if any(getattr(_pb, f) for f in ("best_win_rate_20", "best_avg_return_20",
+                                              "best_streak", "best_single_trade")):
+                st.markdown("**Persönliche Rekorde:**")
+                _pb_cols = st.columns(4)
+                def _pb_metric(col, label, rec):
+                    if rec:
+                        col.metric(label, f"{rec.value:.1f}", f"{rec.date} (×{rec.times_beaten})")
+                _pb_metric(_pb_cols[0], "Win-Rate 20 Tr.",   _pb.best_win_rate_20)
+                _pb_metric(_pb_cols[1], "Ø-Rendite 20 Tr.",  _pb.best_avg_return_20)
+                _pb_metric(_pb_cols[2], "Gewinnserie",        _pb.best_streak)
+                _pb_metric(_pb_cols[3], "Bester Trade %",     _pb.best_single_trade)
+
+            # Letzte Score-Einträge
+            if _bot_score.history:
+                st.markdown("**Letzte Trades (Score-Punkte):**")
+                _hist_rows = []
+                for _e in reversed(_bot_score.history[-10:]):
+                    _hist_rows.append({
+                        "Datum":    _e.date[:10],
+                        "Ticker":   _e.ticker,
+                        "Δ Punkte": f"{'+' if _e.delta >= 0 else ''}{_e.delta:.1f}",
+                        "Score →":  f"{_e.score_after:.1f}",
+                        "Grund":    _e.reason,
+                    })
+                st.dataframe(pd.DataFrame(_hist_rows), use_container_width=True, hide_index=True)
+
+            # Meilensteine
+            if _bot_score.milestones:
+                _reached = [MILESTONES[m][0] for m in sorted(_bot_score.milestones)]
+                st.markdown("**Meilensteine:** " + "  ·  ".join(_reached))
+    except Exception as _e:
+        st.caption(f"Bot-Score nicht verfügbar: {_e}")
 
     # Portfolio value chart
     st.subheader("Portfoliowert – Verlauf")
