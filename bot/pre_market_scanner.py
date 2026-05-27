@@ -76,7 +76,8 @@ class PreMarketBriefing:
     futures: List[IndexSnapshot] = field(default_factory=list)
     macro_events_today: List[str] = field(default_factory=list)
     overall_tone: str = "NEUTRAL"    # BULLISH | NEUTRAL | BEARISH
-    german_headlines: List[str] = field(default_factory=list)   # ARD/Handelsblatt
+    german_headlines: List[str] = field(default_factory=list)       # ARD/Handelsblatt
+    intl_headlines: List[str] = field(default_factory=list)         # Reuters/BBC/CNBC
 
     def to_telegram(self) -> str:
         lines = [
@@ -122,10 +123,17 @@ class PreMarketBriefing:
             lines.append("📊 Keine signifikanten Pre-Market-Bewegungen")
             lines.append("")
 
+        # Internationale Schlagzeilen (Reuters / BBC / CNBC)
+        if self.intl_headlines:
+            lines.append("🌐 *International (Reuters/BBC/CNBC):*")
+            for hl in self.intl_headlines[:4]:
+                lines.append(f"  • {hl}")
+            lines.append("")
+
         # Deutsche Schlagzeilen (ARD / Handelsblatt)
         if self.german_headlines:
             lines.append("🗞 *Schlagzeilen (DE):*")
-            for hl in self.german_headlines[:5]:
+            for hl in self.german_headlines[:4]:
                 lines.append(f"  • {hl}")
             lines.append("")
 
@@ -187,7 +195,10 @@ class PreMarketScanner:
         # 5. Deutsche Schlagzeilen (ARD Tagesschau / Handelsblatt)
         briefing.german_headlines = self._get_german_headlines()
 
-        # 6. Gesamt-Ton berechnen
+        # 6. Internationale Schlagzeilen (Reuters / BBC / CNBC)
+        briefing.intl_headlines = self._get_intl_headlines()
+
+        # 7. Gesamt-Ton berechnen
         briefing.overall_tone = self._calc_tone(briefing)
 
         dur = time.monotonic() - t0
@@ -238,6 +249,18 @@ class PreMarketScanner:
             ]
         except Exception as e:
             log.debug("Deutsche Schlagzeilen fehlgeschlagen: %s", e)
+            return []
+
+    def _get_intl_headlines(self) -> List[str]:
+        try:
+            from collectors.international_media_collector import InternationalMediaCollector
+            items = InternationalMediaCollector(lookback_hours=24).collect_market_context()
+            return [
+                f"{it['source']}: {it['title']}"
+                for it in items[:4]
+            ]
+        except Exception as e:
+            log.debug("Internationale Schlagzeilen fehlgeschlagen: %s", e)
             return []
 
     # ── Index-Snapshots ───────────────────────────────────────────────────────
