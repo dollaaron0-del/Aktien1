@@ -686,11 +686,14 @@ def run_bot_loop(
     schedule.every(4).hours.do(_position_aging_job)
 
     # ── Headline-Signal-Scanner: stündlich ──────────────────────────────────
+    _SIGNAL_TRIGGER_SCORE = 0.90   # Ab hier sofortige Analyse auslösen
+
     def _headline_scan_job():
         """
         Scannt allgemeine Börsennachrichten auf starke Signale (M&A, FDA,
         Earnings-Beats, etc.) und speist entdeckte Ticker in die BenchList.
-        Sehr starke Signale (Score ≥ 0.85) werden sofort per Telegram gemeldet.
+        Sehr starke Signale (Score ≥ 0.85) → Telegram sofort.
+        Extrem starke Signale (Score ≥ 0.90) für Watchlist-Ticker → sofortige Analyse.
         """
         try:
             from analyzers.headline_signal_detector import HeadlineSignalDetector
@@ -708,6 +711,33 @@ def run_bot_loop(
                         f"{len(added)} neue Kandidaten → BenchList: "
                         f"{', '.join(added[:6])}[/magenta]"
                     )
+                # Watchlist-Ticker mit sehr hohem Score sofort analysieren
+                watchlist_set = {t.upper() for t in config.watchlist}
+                urgent = [
+                    sig.ticker for sig in signals
+                    if sig.score >= _SIGNAL_TRIGGER_SCORE
+                    and sig.ticker.upper() in watchlist_set
+                ]
+                if urgent:
+                    from analyzers.user_request_queue import add_ticker as _req_ticker_inline
+                    for t in urgent:
+                        _req_ticker_inline(t)
+                    console.print(
+                        f"  [bold yellow]⚡ Signal-Trigger ({_SIGNAL_TRIGGER_SCORE:.0%}): "
+                        f"Sofort-Analyse ausgelöst: {', '.join(urgent)}[/bold yellow]"
+                    )
+                    notifier.send(
+                        f"⚡ <b>Signal-Trigger</b>\n\n"
+                        f"Sehr starkes Headline-Signal für Watchlist-Ticker:\n"
+                        + "\n".join(
+                            f"  • <b>{sig.ticker}</b> – {sig.signal_type} "
+                            f"(Score {sig.score:.2f})"
+                            for sig in signals
+                            if sig.score >= _SIGNAL_TRIGGER_SCORE
+                            and sig.ticker.upper() in watchlist_set
+                        )
+                        + "\n\nAnalyse läuft innerhalb der nächsten 15 Minuten."
+                    )
         except Exception as e:
             log.warning("Headline-Scan-Job fehlgeschlagen: %s", e)
 
@@ -720,7 +750,7 @@ def run_bot_loop(
         Scannt Weltpolitik-Feeds auf geopolitische Frühsignale und
         leitet Marktauswirkungen ab (Rüstung, Öl, Safe-Haven, etc.).
         Severity 2+ → sofortiger Telegram-Alert.
-        Severity 3  → kritischer Alert (Krieg, Nuklear, Blockade).
+        Severity 3  → kritischer Alert + Sofort-Analyse für Watchlist-Ticker.
         """
         try:
             from analyzers.geopolitical_radar import GeopoliticalRadar
@@ -737,11 +767,61 @@ def run_bot_loop(
                         f"  [bold red]🌍 Geo-Radar: {len(events)} Event(s) – "
                         f"Ticker → BenchList: {', '.join(added[:8])}[/bold red]"
                     )
+                # Severity-3 Ereignisse: Watchlist-Ticker sofort analysieren
+                watchlist_set = {t.upper() for t in config.watchlist}
+                geo_urgent: list = []
+                for ev in events:
+                    if ev.severity == 3:
+                        for impact in ev.impacts:
+                            for t in impact.tickers:
+                                if t.upper() in watchlist_set and t not in geo_urgent:
+                                    geo_urgent.append(t)
+                if geo_urgent:
+                    from analyzers.user_request_queue import add_ticker as _req_ticker_inline
+                    for t in geo_urgent:
+                        _req_ticker_inline(t)
+                    console.print(
+                        f"  [bold red]🌍 Geo-Severity-3: Sofort-Analyse: "
+                        f"{', '.join(geo_urgent)}[/bold red]"
+                    )
         except Exception as e:
             log.warning("Geopolitical-Radar-Job fehlgeschlagen: %s", e)
 
     schedule.every(2).hours.do(_geopolitical_radar_job)
     _geopolitical_radar_job()   # Sofort beim Start
+
+    # ── Intraday-Scan: optionales drittes Analysefenster ────────────────────
+    if config.intraday_scan_enabled:
+        def _intraday_scan_job():
+            """
+            Drittes Analysefenster (US-Session) – scannt Watchlist + BenchList
+            auf Intraday-Setups. Läuft nur an Handelstagen.
+            """
+            local_date = datetime.now().date()
+            if local_date.weekday() >= 5:
+                return
+            console.rule(
+                f"[bold cyan]Intraday-Scan – {datetime.now().strftime('%H:%M')}[/bold cyan]"
+            )
+            try:
+                run_analysis_cycle(
+                    portfolio, broker, strategy, tracker, phase_ctrl,
+                    archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+                )
+            except Exception as e:
+                log.warning("Intraday-Scan-Job fehlgeschlagen: %s", e)
+
+        intraday_time = config.intraday_scan_time  # z.B. "17:30" UTC
+        schedule.every().day.at(intraday_time).do(_intraday_scan_job)
+        console.print(
+            f"[dim]Intraday-Scan aktiviert: täglich {intraday_time} UTC "
+            f"(= {intraday_time} Serverzeit)[/dim]"
+        )
+    else:
+        console.print(
+            "[dim]Intraday-Scan deaktiviert. Aktivieren: INTRADAY_SCAN_ENABLED=true "
+            "in .env (empfohlen: INTRADAY_SCAN_TIME=17:30)[/dim]"
+        )
 
     # Auto-Optimierung: nach je 15 abgeschlossenen Trades per Telegram benachrichtigen
     schedule.every(6).hours.do(

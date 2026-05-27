@@ -22,6 +22,17 @@ class Config:
     newsapi_key: str = field(default_factory=lambda: os.getenv("NEWSAPI_KEY", ""))
     twitter_bearer_token: str = field(default_factory=lambda: os.getenv("TWITTER_BEARER_TOKEN", ""))
     quiver_api_key: str = field(default_factory=lambda: os.getenv("QUIVER_API_KEY", ""))
+
+    # ── Intraday-Scan (drittes optionales Analysefenster) ────────────────────
+    # Aktivieren: INTRADAY_SCAN_ENABLED=true in .env
+    # Empfehlung: 17:30 UTC = 19:30 MESZ (während der US-Session)
+    # Scannt die volle Watchlist + BenchList ein drittes Mal pro Tag.
+    intraday_scan_enabled: bool = field(
+        default_factory=lambda: os.getenv("INTRADAY_SCAN_ENABLED", "false").lower() in ("1", "true", "yes")
+    )
+    intraday_scan_time: str = field(
+        default_factory=lambda: os.getenv("INTRADAY_SCAN_TIME", "17:30")
+    )
     # Interactive Brokers (TWS / IB Gateway)
     ibkr_host:      str = field(default_factory=lambda: os.getenv("IBKR_HOST",      "127.0.0.1"))
     ibkr_port:      int = field(default_factory=lambda: int(os.getenv("IBKR_PORT",  "7497")))
