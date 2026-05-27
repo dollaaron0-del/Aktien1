@@ -28,7 +28,6 @@ from analyzers.technical_indicators import TechnicalIndicators
 from analyzers.dynamic_watchlist import DynamicWatchlist
 from analyzers.signal_expander import SignalDrivenExpander
 from analyzers.eu_stock_scanner import EU_UNIVERSE
-from collectors.social_scan import SocialPulseDB
 from analyzers.weekend_prep import WeekendPrep
 from portfolio.goal_risk_assessor import GoalRiskAssessor, OK, CAUTION, DANGER, UNREACHABLE
 
@@ -142,17 +141,16 @@ def load_resources():
     reflection   = ReflectionEngine(tracker, journal)
     sig_queue    = SignalQueue(max_age_hours=config.signal_queue_max_age_hours)
     detector     = RecessionDetector(anthropic_api_key=config.anthropic_api_key)
-    social_db    = SocialPulseDB()
     weekend_prep = WeekendPrep(
         anthropic_api_key=config.anthropic_api_key,
         watchlist=config.watchlist,
     )
     return (broker, portfolio, tracker, phase_ctrl, focus_ctrl,
-            journal, reflection, sig_queue, detector, social_db, weekend_prep)
+            journal, reflection, sig_queue, detector, weekend_prep)
 
 
 (broker, portfolio, tracker, phase_ctrl, focus_ctrl,
- journal, reflection, sig_queue, detector, social_db, weekend_prep) = load_resources()
+ journal, reflection, sig_queue, detector, weekend_prep) = load_resources()
 
 # ─── Live data ────────────────────────────────────────────────────────────────
 prices      = broker.get_prices(list(portfolio.all_positions().keys()))
@@ -260,11 +258,10 @@ def _get_ticker_news(ticker: str) -> list:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TABS
 # ═══════════════════════════════════════════════════════════════════════════════
-tab_portfolio, tab_regime, tab_queue, tab_social, tab_briefing, tab_trades, tab_tech, tab_watchlist, tab_log, tab_settings = st.tabs([
+tab_portfolio, tab_regime, tab_queue, tab_briefing, tab_trades, tab_tech, tab_watchlist, tab_log, tab_settings = st.tabs([
     "📊 Portfolio",
     "🛡 Markt-Regime",
     f"📋 Signal-Queue ({pending_cnt})",
-    "📡 Social Pulse",
     "📰 Wochenbriefing",
     "📈 Trades & Lernen",
     "📉 Technicals",
@@ -723,92 +720,7 @@ with tab_queue:
 
 
 # ══════════════════════════════════════════════════════════
-# TAB 4 – SOCIAL PULSE
-# ══════════════════════════════════════════════════════════
-with tab_social:
-    st.subheader("Social-Media Sentiment (letzte 6 Stunden)")
-    st.caption("Stündlicher Scan von Reddit & StockTwits – keyword-basiertes Sentiment ohne Claude-Kosten.")
-
-    # Time window selector
-    tw_col, _ = st.columns([2, 6])
-    with tw_col:
-        hours_sel = st.selectbox("Zeitraum", [2, 6, 12, 24], index=1,
-                                  format_func=lambda h: f"Letzte {h}h")
-
-    # Spikes
-    spikes = social_db.get_spikes(hours=2, min_mentions=3)
-    if spikes:
-        st.markdown("### 🚨 Aktivitäts-Spikes (2h vs. 12h Baseline)")
-        spike_cols = st.columns(min(len(spikes), 4))
-        for i, spike in enumerate(spikes[:4]):
-            pulse  = spike["avg_score"]
-            p_icon = "📈" if pulse > 0.1 else ("📉" if pulse < -0.1 else "➡️")
-            spike_cols[i].metric(
-                label=spike["ticker"],
-                value=f"{spike['spike_ratio']:.1f}× Spike",
-                delta=f"{p_icon} Pulse {pulse:+.2f}",
-                delta_color="normal" if pulse >= 0 else "inverse",
-            )
-        st.divider()
-
-    # Full pulse table
-    pulse_data = social_db.get_pulse_summary(hours=int(hours_sel))
-    if pulse_data:
-        st.subheader(f"Alle gescannten Ticker (letzte {hours_sel}h)")
-        p_rows = []
-        for p in pulse_data:
-            pulse  = p["avg_score"]
-            total  = p["total_mentions"]
-            bull   = p.get("bull", 0)
-            bear   = p.get("bear", 0)
-            p_rows.append({
-                "Ticker":        p["ticker"],
-                "Erwähnungen":   total,
-                "🟢 Bullish":    bull,
-                "🔴 Bearish":    bear,
-                "Pulse-Score":   round(pulse, 3),
-                "Letzte Messung": p["latest"][:16] if p.get("latest") else "–",
-            })
-        df_pulse = pd.DataFrame(p_rows)
-        st.dataframe(
-            df_pulse.style.background_gradient(
-                subset=["Pulse-Score"], cmap="RdYlGn", vmin=-1, vmax=1
-            ),
-            use_container_width=True, hide_index=True,
-        )
-
-        # Per-ticker detail
-        st.divider()
-        st.subheader("Ticker-Detail")
-        selected_ticker = st.selectbox("Ticker auswählen", [p["ticker"] for p in pulse_data])
-        if selected_ticker:
-            recent_scans = social_db.get_recent(selected_ticker, hours=24)
-            if recent_scans:
-                scan_rows = []
-                for r in recent_scans:
-                    top = json.loads(r.get("top_mentions") or "[]") if isinstance(r.get("top_mentions"), str) else (r.get("top_mentions") or [])
-                    scan_rows.append({
-                        "Zeit":       r["scanned_at"][:16],
-                        "Quelle":     r["source"],
-                        "Erwähnungen": r["mention_count"],
-                        "Bullish":    r["bullish_count"],
-                        "Bearish":    r["bearish_count"],
-                        "Pulse":      r["pulse_score"],
-                        "Top-Posts":  " | ".join(top[:2]),
-                    })
-                st.dataframe(pd.DataFrame(scan_rows), use_container_width=True, hide_index=True)
-            else:
-                st.info("Keine Scan-Daten für diesen Ticker im Zeitraum.")
-    else:
-        st.info(
-            "Noch keine Social-Pulse-Daten. "
-            "Der stündliche Scan schreibt Daten sobald der Bot läuft "
-            "(ENABLE_SOCIAL_SCAN=true in .env)."
-        )
-
-
-# ══════════════════════════════════════════════════════════
-# TAB 5 – WOCHENBRIEFING
+# TAB 4 – WOCHENBRIEFING
 # ══════════════════════════════════════════════════════════
 with tab_briefing:
     st.subheader("📰 Wochenbriefing")
