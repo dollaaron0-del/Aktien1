@@ -76,6 +76,8 @@ class AnalysisResult:
 _SYSTEM_PROMPT = """Du bist ein erfahrener quantitativer Aktienanalyst mit Schwerpunkt auf Swing-Trading (Haltedauer 3–30 Tage).
 Du analysierst Nachrichten und Social-Media-Sentiment zu Aktien und gibst strukturierte, konservative Handelsempfehlungen.
 Du berücksichtigst sowohl aktuelle als auch historische Nachrichtenentwicklungen, um Trendwenden frühzeitig zu erkennen.
+Beachte besonders Volumen-Anomalien (ungewöhnlich hohes/niedriges Handelsvolumen als Bestätigungssignal) und Short-Interest
+(hoher Short-Float kann Short-Squeeze-Potential signalisieren oder auf institutionellen Pessimismus hinweisen).
 
 Antworte IMMER ausschließlich mit einem validen JSON-Objekt ohne Markdown-Fences oder zusätzlichen Text.
 """
@@ -103,6 +105,7 @@ _USER_TEMPLATE_STANDARD = """Analysiere folgende Informationen zur Aktie {ticker
 === MARKTDATEN ===
 {price_data}
 
+{volume_block}
 {tech_block}
 
 {eu_market_block}
@@ -363,6 +366,7 @@ class ClaudeAnalyzer:
             current_news_text = self._format_news(news_items, label="aktuell")
         historical_block = self._format_historical_block(historical_news or [], news_items)
         price_text = self._format_price(price_data or {})
+        volume_block  = self._format_volume_block(price_data or {})
         tech_block    = technical.to_prompt_block() if technical else ""
         pattern_block = pattern_result.to_prompt_block() if pattern_result else ""
         onchain_block = onchain_snapshot.to_prompt_block() if onchain_snapshot else ""
@@ -402,6 +406,7 @@ class ClaudeAnalyzer:
             prompt = _USER_TEMPLATE_STANDARD.format(
                 ticker=ticker,
                 price_data=price_text,
+                volume_block=volume_block,
                 tech_block=tech_block,
                 eu_market_block=eu_market_block,
                 current_count=len(news_items),
@@ -484,11 +489,65 @@ class ClaudeAnalyzer:
             f"KGV: {data.get('pe_ratio', 'N/A')}",
             f"52W-Hoch: ${data.get('52w_high', 'N/A')} / 52W-Tief: ${data.get('52w_low', 'N/A')}",
         ]
+        # Volumen-Daten hinzufügen wenn verfügbar
+        volume_today = data.get("volume_today")
+        volume_avg   = data.get("volume_avg")
+        short_interest = data.get("short_interest_pct")
+        if volume_today is not None:
+            lines.append(f"Volumen heute: {int(volume_today):,}")
+        if volume_avg is not None:
+            lines.append(f"Ø Volumen (30d): {int(volume_avg):,}")
+        if short_interest is not None:
+            lines.append(f"Short Interest: {short_interest}%")
+        return "\n".join(lines)
+
+    def _format_volume_block(self, data: Dict) -> str:
+        """Erstellt einen separaten Volume-Block für den Prompt."""
+        volume_today   = data.get("volume_today")
+        volume_avg     = data.get("volume_avg")
+        short_interest = data.get("short_interest_pct")
+        if not any([volume_today is not None, volume_avg is not None, short_interest is not None]):
+            return ""
+        lines = ["=== VOLUMEN & SHORT-INTEREST ==="]
+        if volume_today is not None:
+            lines.append(f"Volumen heute: {int(volume_today):,}")
+        if volume_avg is not None:
+            lines.append(f"Ø Volumen (30d): {int(volume_avg):,}")
+            if volume_today is not None and volume_avg > 0:
+                ratio = volume_today / volume_avg
+                lines.append(f"Volumen-Ratio (heute/30d-Ø): {ratio:.2f}x")
+        if short_interest is not None:
+            lines.append(f"Short Interest: {short_interest}%")
         return "\n".join(lines)
 
     def _parse_response(self, ticker: str, raw: str, sources: int) -> AnalysisResult:
+        def _try_parse(text: str) -> Optional[dict]:
+            """Versucht JSON zu parsen, gibt None bei Fehler zurück."""
+            try:
+                return json.loads(text)
+            except (json.JSONDecodeError, ValueError):
+                return None
+
+        # Erster Versuch: direkt parsen
+        data = _try_parse(raw)
+
+        # Zweiter Versuch: Markdown-Fences entfernen
+        if data is None:
+            cleaned = raw.strip().strip("```json").strip("```").strip()
+            data = _try_parse(cleaned)
+
+        # Dritter Versuch: JSON-Block extrahieren (erstes { bis letztes })
+        if data is None:
+            start = raw.find("{")
+            end   = raw.rfind("}") + 1
+            if start >= 0 and end > start:
+                data = _try_parse(raw[start:end])
+
+        if data is None:
+            log.warning("[%s] JSON-Parse fehlgeschlagen: %s", ticker, raw[:200])
+            return self._empty_result(ticker, f"Parse-Fehler: {raw[:200]}")
+
         try:
-            data = json.loads(raw)
             raw_target = data.get("target_price")
             target_price = float(raw_target) if raw_target is not None else None
             thesis_valid_raw = data.get("thesis_valid")
@@ -519,7 +578,8 @@ class ClaudeAnalyzer:
                     if isinstance(t, str) and t.strip()
                 ],
             )
-        except (json.JSONDecodeError, KeyError, ValueError):
+        except (KeyError, ValueError, TypeError) as exc:
+            log.warning("[%s] AnalysisResult-Aufbau fehlgeschlagen: %s", ticker, exc)
             return self._empty_result(ticker, f"Parse-Fehler: {raw[:200]}")
 
     def _result_from_prescreen(self, ticker: str, prescreen, sources: int) -> AnalysisResult:

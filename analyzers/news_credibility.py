@@ -103,7 +103,63 @@ _AI_GEN_PATTERNS = [
 # Ab wie vielen gleichen Quellen in einem Batch gilt es als Koordinierung
 _COORDINATION_THRESHOLD = int(os.getenv("NEWS_COORDINATION_THRESHOLD", "5"))
 # Max. Alter eines Artikels in Stunden (ältere = möglicherweise recycelt)
-_MAX_AGE_HOURS = float(os.getenv("NEWS_MAX_AGE_HOURS", "72"))
+_MAX_AGE_HOURS = float(os.getenv("NEWS_MAX_AGE_HOURS", "48"))
+# Artikel älter als _STALE_AGE_HOURS bekommen erhöhte Penalty
+_STALE_AGE_HOURS = 48.0
+# Artikel älter als _DEAD_AGE_HOURS werden sofort mit Score 0.0 markiert
+_DEAD_AGE_HOURS = 168.0   # 7 Tage
+
+# Ticker-zu-Firmenname-Mapping für Relevanz-Filter (Top-50 Tickers)
+_TICKER_ALIASES: Dict[str, List[str]] = {
+    "AAPL":  ["Apple"],
+    "MSFT":  ["Microsoft"],
+    "GOOGL": ["Google", "Alphabet"],
+    "GOOG":  ["Google", "Alphabet"],
+    "AMZN":  ["Amazon"],
+    "NVDA":  ["Nvidia", "NVIDIA"],
+    "TSLA":  ["Tesla"],
+    "META":  ["Meta", "Facebook"],
+    "NFLX":  ["Netflix"],
+    "AMD":   ["AMD", "Advanced Micro"],
+    "INTC":  ["Intel"],
+    "QCOM":  ["Qualcomm"],
+    "AVGO":  ["Broadcom"],
+    "ORCL":  ["Oracle"],
+    "CRM":   ["Salesforce"],
+    "ADBE":  ["Adobe"],
+    "IBM":   ["IBM"],
+    "CSCO":  ["Cisco"],
+    "NOW":   ["ServiceNow"],
+    "JPM":   ["JPMorgan", "JP Morgan"],
+    "BAC":   ["Bank of America"],
+    "WFC":   ["Wells Fargo"],
+    "GS":    ["Goldman Sachs", "Goldman"],
+    "MS":    ["Morgan Stanley"],
+    "JNJ":   ["Johnson & Johnson", "Johnson and Johnson"],
+    "PFE":   ["Pfizer"],
+    "MRK":   ["Merck"],
+    "ABBV":  ["AbbVie"],
+    "LLY":   ["Eli Lilly", "Lilly"],
+    "BMY":   ["Bristol-Myers", "Bristol Myers"],
+    "UNH":   ["UnitedHealth", "United Health"],
+    "XOM":   ["ExxonMobil", "Exxon Mobil", "Exxon"],
+    "CVX":   ["Chevron"],
+    "HD":    ["Home Depot"],
+    "WMT":   ["Walmart"],
+    "COST":  ["Costco"],
+    "KO":    ["Coca-Cola", "Coca Cola"],
+    "PEP":   ["PepsiCo", "Pepsi"],
+    "MCD":   ["McDonald's", "McDonalds"],
+    "SBUX":  ["Starbucks"],
+    "NKE":   ["Nike"],
+    "DIS":   ["Disney"],
+    "V":     ["Visa"],
+    "MA":    ["Mastercard"],
+    "PYPL":  ["PayPal"],
+    "SQ":    ["Block", "Square"],
+    "SPY":   ["S&P 500", "SPY"],
+    "QQQ":   ["Nasdaq", "QQQ"],
+}
 
 
 def _min_trust_score() -> float:
@@ -181,6 +237,51 @@ class NewsTrustFilter:
     def score_item(self, item: Dict) -> float:
         return self._score(item)
 
+    def filter_by_relevance(self, items: List[Dict], ticker: str) -> List[Dict]:
+        """
+        Filtert Artikel nach Ticker-Relevanz.
+
+        Behält nur Artikel die den Ticker-Namen oder einen bekannten Firmennamen
+        im Titel oder Text enthalten. Artikel ohne URL werden behalten wenn kein
+        Ticker-Mapping vorhanden ist (fail-safe).
+
+        Args:
+            items:  Liste von Nachrichtenartikeln
+            ticker: Aktien-Ticker (z.B. "AAPL")
+
+        Returns:
+            Gefilterte Liste (nur relevante Artikel)
+        """
+        ticker_upper = ticker.upper()
+        aliases      = _TICKER_ALIASES.get(ticker_upper, [])
+
+        # Alle Suchbegriffe: Ticker selbst + bekannte Firmennamen
+        search_terms = [ticker_upper.lower()] + [a.lower() for a in aliases]
+
+        if not search_terms:
+            # Kein Mapping vorhanden → alle Artikel behalten (fail-safe)
+            return items
+
+        kept: List[Dict] = []
+        for item in items:
+            title = (item.get("title") or "").lower()
+            text  = (item.get("text") or item.get("body") or item.get("summary") or "").lower()
+            combined = title + " " + text
+
+            if any(term in combined for term in search_terms):
+                kept.append(item)
+            elif not item.get("url"):
+                # Artikel ohne URL behalten (kein verlässlicher Relevanz-Check möglich)
+                kept.append(item)
+
+        dropped = len(items) - len(kept)
+        if dropped > 0:
+            log.info(
+                "NewsTrust.filter_by_relevance [%s]: %d/%d Artikel als irrelevant entfernt",
+                ticker, dropped, len(items),
+            )
+        return kept
+
     # ── Intern ───────────────────────────────────────────────────────────────
 
     def _score(self, item: Dict) -> float:
@@ -210,9 +311,11 @@ class NewsTrustFilter:
         if len(title) < 50 and domain not in _SOURCE_SCORES:
             base_score = min(base_score, 0.40)
 
-        # 6. Recycelte News → Abzug
+        # 6. Recycelte News → Abzug; Artikel > 7 Tage → sofort Score 0.0
+        if self._is_dead_old(item):
+            return 0.0
         if self._is_recycled(item):
-            base_score = max(0.0, base_score - 0.25)
+            base_score = max(0.0, base_score - 0.35)
 
         # 7. KI-generierter Text → leichter Abzug
         body = (item.get("body") or item.get("text") or item.get("summary") or "").lower()
@@ -240,13 +343,16 @@ class NewsTrustFilter:
         """
         Erkennt alte Artikel die mit neuem Datum republiziert werden.
         Prüft: published_at vs. fetched_at (wenn vorhanden) > MAX_AGE_HOURS.
+
+        Penalty-Stufen:
+          > 48h:  -0.35 (wird in _score() angewendet)
+          > 7d:   sofort Score 0.0 (direkt hier markiert über _dead_age Flag)
         """
         published = item.get("published_at") or item.get("published") or item.get("date")
         if not published:
             return False
         try:
             if isinstance(published, str):
-                # ISO-Format parsen, Timezone-Handling
                 pub_dt = datetime.fromisoformat(published.replace("Z", "+00:00"))
             else:
                 return False
@@ -255,6 +361,24 @@ class NewsTrustFilter:
                 pub_dt = pub_dt.replace(tzinfo=timezone.utc)
             age_hours = (now - pub_dt).total_seconds() / 3600
             return age_hours > _MAX_AGE_HOURS
+        except Exception:
+            return False
+
+    def _is_dead_old(self, item: Dict) -> bool:
+        """Artikel älter als 7 Tage (168h) werden sofort verworfen (Score 0.0)."""
+        published = item.get("published_at") or item.get("published") or item.get("date")
+        if not published:
+            return False
+        try:
+            if isinstance(published, str):
+                pub_dt = datetime.fromisoformat(published.replace("Z", "+00:00"))
+            else:
+                return False
+            now = datetime.now(timezone.utc)
+            if pub_dt.tzinfo is None:
+                pub_dt = pub_dt.replace(tzinfo=timezone.utc)
+            age_hours = (now - pub_dt).total_seconds() / 3600
+            return age_hours > _DEAD_AGE_HOURS
         except Exception:
             return False
 
