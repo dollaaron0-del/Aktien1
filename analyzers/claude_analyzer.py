@@ -346,7 +346,21 @@ class ClaudeAnalyzer:
             except Exception:
                 technical = None
 
-        current_news_text = self._format_news(news_items, label="aktuell")
+        # Ollama-Komprimierung: fasst News zusammen → ~50% weniger Claude-Tokens
+        _comp_prescreener = _get_prescreener()
+        if _comp_prescreener and len(news_items) >= 3:
+            compressed = _comp_prescreener.compress_news(ticker, news_items)
+            if compressed:
+                current_news_text = (
+                    f"[Ollama-Zusammenfassung aus {len(news_items)} Artikeln]\n\n"
+                    + compressed
+                )
+                log.debug("[%s] News komprimiert: %d → %d chars", ticker, sum(
+                    len(x.get("text") or "") for x in news_items), len(compressed))
+            else:
+                current_news_text = self._format_news(news_items, label="aktuell")
+        else:
+            current_news_text = self._format_news(news_items, label="aktuell")
         historical_block = self._format_historical_block(historical_news or [], news_items)
         price_text = self._format_price(price_data or {})
         tech_block    = technical.to_prompt_block() if technical else ""

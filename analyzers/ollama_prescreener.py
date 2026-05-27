@@ -41,6 +41,20 @@ _ALWAYS_CLAUDE_SOURCES = {
     "Short Interest",
 }
 
+# Komprimierungs-Prompt: News-Artikel → strukturiertes Kurzgutachten für Claude
+_COMPRESS_PROMPT = """Summarize these {count} news articles about {ticker} for a financial analyst.
+
+ARTICLES:
+{articles}
+
+Write a structured summary (max 350 words) with these sections:
+KEY EVENTS: Most important developments with dates and specific numbers (3-5 bullets)
+SENTIMENT: Overall market sentiment and main reason in 1-2 sentences
+RISKS: Main risks or headwinds mentioned (2-3 bullets)
+CATALYSTS: Potential positive triggers (2-3 bullets)
+
+Be precise with numbers, dates, product names. Preserve source names for critical news."""
+
 # Einfacher, zuverlässiger Prompt – kurze Antwort für kleinere Modelle
 _PRESCREEN_PROMPT = """You are a financial news analyst. Analyze these news headlines about {ticker}.
 
@@ -238,7 +252,7 @@ class OllamaPrescreener:
 
     # ── Ollama API ────────────────────────────────────────────────────────────
 
-    def _call_ollama(self, prompt: str) -> Optional[str]:
+    def _call_ollama(self, prompt: str, max_tokens: int = 120) -> Optional[str]:
         try:
             resp = requests.post(
                 f"{self.base_url}/api/generate",
@@ -247,8 +261,8 @@ class OllamaPrescreener:
                     "prompt": prompt,
                     "stream": False,
                     "options": {
-                        "temperature": 0.1,    # Deterministisch für JSON
-                        "num_predict": 120,    # Kurze Antwort reicht
+                        "temperature": 0.1,
+                        "num_predict": max_tokens,
                     },
                 },
                 timeout=self.timeout,
@@ -300,6 +314,39 @@ class OllamaPrescreener:
 
         return {"score": score, "direction": direction,
                 "confidence": confidence, "reason": reason}
+
+    def compress_news(self, ticker: str, news_items: List[Dict], max_items: int = 20) -> Optional[str]:
+        """
+        Fasst News-Artikel mit Ollama zusammen.
+        Gibt kompakten Text zurück (für Claude-Prompt), oder None bei Fehler.
+        """
+        if not self.is_available() or not news_items:
+            return None
+        articles = self._format_articles_for_compression(news_items[:max_items])
+        prompt = _COMPRESS_PROMPT.format(
+            count=min(len(news_items), max_items),
+            ticker=ticker,
+            articles=articles,
+        )
+        t0 = time.monotonic()
+        raw = self._call_ollama(prompt, max_tokens=500)
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        if raw:
+            log.debug("Ollama compress [%s]: %d chars in %dms", ticker, len(raw), latency_ms)
+            return raw.strip()
+        return None
+
+    def _format_articles_for_compression(self, news_items: List[Dict]) -> str:
+        """Artikel mit Titel + Kurztext für Komprimierungs-Prompt."""
+        lines = []
+        for i, item in enumerate(news_items, 1):
+            title  = (item.get("title") or "")[:120]
+            text   = (item.get("text") or "")[:200]
+            source = (item.get("source") or "")[:25]
+            date   = (item.get("published_at") or "")[:10]
+            prio   = " [WICHTIG]" if item.get("priority") == "HIGH" else ""
+            lines.append(f"[{i}] {date} | {source}{prio}\n    {title}\n    {text}")
+        return "\n\n".join(lines)
 
     def _extract_headlines(self, news_items: List[Dict], max_items: int = 15) -> str:
         """Kompakte Schlagzeilen für Ollama-Prompt."""
