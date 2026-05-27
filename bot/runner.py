@@ -96,6 +96,15 @@ def _is_eu_stock(ticker: str) -> bool:
     return any(upper.endswith(s.upper()) for s in _EU_SUFFIXES)
 
 
+def _base_symbol(ticker: str) -> str:
+    """Strip exchange suffix so ASML and ASML.AS map to the same base."""
+    upper = ticker.upper()
+    for s in sorted(_EU_SUFFIXES, key=len, reverse=True):
+        if upper.endswith(s.upper()):
+            return upper[: -len(s)]
+    return upper
+
+
 def _get_watchlist(portfolio: Portfolio) -> List[str]:
     """Returns watchlist: dynamic/static US + optional EU + optional Crypto."""
     if _dynamic_watchlist:
@@ -120,9 +129,13 @@ def _get_watchlist(portfolio: Portfolio) -> List[str]:
                     )
             except Exception as e:
                 log.warning("EU-Auto-Scan fehlgeschlagen: %s", e)
+        _base_symbols_in_list = {_base_symbol(x) for x in base}
         for t in eu_tickers:
-            if t not in base:
+            if t not in base and _base_symbol(t) not in _base_symbols_in_list:
                 base.append(t)
+                _base_symbols_in_list.add(_base_symbol(t))
+            elif _base_symbol(t) in _base_symbols_in_list and t not in base:
+                log.debug("EU-Ticker %s übersprungen (Basisymbol bereits als US-Ticker vorhanden)", t)
 
     # Krypto anhängen wenn aktiviert
     if config.crypto_enabled and config.crypto_watchlist:
