@@ -176,6 +176,18 @@ class Config:
     sl_cooldown_days: int = field(
         default_factory=lambda: int(os.getenv("SL_COOLDOWN_DAYS", "5"))
     )
+    # Mindest-Trades bevor RL-Agent und adaptive Threshold-Anpassung aktiv werden
+    min_trades_for_adaptive: int = field(
+        default_factory=lambda: int(os.getenv("MIN_TRADES_FOR_ADAPTIVE", "50"))
+    )
+    # Volumen-Bestätigung: heutiges Volumen muss mind. X% des 20d-Durchschnitts betragen
+    volume_confirm_ratio: float = field(
+        default_factory=lambda: float(os.getenv("VOLUME_CONFIRM_RATIO", "0.80"))
+    )
+    # News-Staleness: Kurs bereits X% gestiegen seit Newsveröffentlichung → Signal veraltet
+    news_stale_pct: float = field(
+        default_factory=lambda: float(os.getenv("NEWS_STALE_PCT", "0.05"))
+    )
 
     # ── Hedge / Rezessions-Absicherung ───────────────────────────────────────
     # Inverse ETFs kaufen wenn Marktregime BEAR oder CRISIS erreicht

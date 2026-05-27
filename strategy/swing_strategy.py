@@ -27,6 +27,7 @@ from analyzers.sentiment_memory import SentimentMemory
 from analyzers.margin_readiness import MarginTierTracker
 from analyzers.reentry_tracker import ReEntryTracker
 from analyzers.sl_cooldown import StopLossCooldown
+from analyzers.insider_signal import get_insider_score
 from analyzers.regime_adaptive import RegimeAdaptiveConfig, get_adaptive_params
 from analyzers.sharpe_sizer import SharpeSizer
 from analyzers.cross_asset import CrossAssetSignals
@@ -174,9 +175,9 @@ class SwingStrategy:
         _current_score = _bot_score_state.current
         _smod = _get_score_mod(_current_score)
 
-        # Score-Malus erst nach 10 bewerteten Trades anwenden (frischer Bot soll starten können)
+        # Score-Malus erst nach MIN_TRADES_FOR_ADAPTIVE Trades anwenden
         _trades_scored = _bot_score_state.trades_scored
-        if _trades_scored < 10 and _smod.threshold_adj > 0:
+        if _trades_scored < config.min_trades_for_adaptive and _smod.threshold_adj > 0:
             log.debug(
                 "Score-Malus ausgesetzt (erst %d/10 Trades bewertet) – Threshold unverändert",
                 _trades_scored,
@@ -279,6 +280,33 @@ class SwingStrategy:
         except Exception as e:
             log.debug("Options-Intelligence fehlgeschlagen: %s", e)
 
+        # ── Volumen-Bestätigung ──────────────────────────────────────────────
+        vol_ok, vol_reason = self._check_volume_confirmation(ticker)
+        if not vol_ok:
+            log.info("[%s] Volumen-Check: %s", ticker, vol_reason)
+            return f"[{ticker}] 📊 {vol_reason} – kein Kauf ohne Volumen-Bestätigung."
+
+        # ── Insider-Signal ───────────────────────────────────────────────────
+        try:
+            insider = get_insider_score(ticker, lookback_days=30)
+            if insider.signal == "STRONG_SELL":
+                self._notifier.send(
+                    f"⚠️ <b>{ticker} Insider-Warnung</b>\n{insider.message}"
+                )
+                return f"[{ticker}] ⚠️ {insider.message} – Kauf blockiert."
+            if insider.signal == "MILD_SELL":
+                log.info("[%s] Insider-Warnung: %s", ticker, insider.message)
+            if insider.signal in ("STRONG_BUY", "MILD_BUY"):
+                log.info("[%s] Insider-Kaufsignal: %s (Score %.1f)", ticker, insider.message, insider.score)
+        except Exception as _ie:
+            log.debug("Insider-Signal fehlgeschlagen: %s", _ie)
+
+        # ── News-Staleness (Kurs bereits stark gestiegen) ────────────────────
+        stale, stale_reason = self._check_news_staleness(ticker, current_price)
+        if stale:
+            log.info("[%s] News-Staleness: %s", ticker, stale_reason)
+            return f"[{ticker}] ⏱️ {stale_reason} – Signal veraltet, kein Kauf."
+
         # ── RL Agent Entscheidung ────────────────────────────────────────────
         try:
             from collectors.vix_monitor import get_vix
@@ -296,9 +324,9 @@ class SwingStrategy:
             rl_buy, rl_modifier = self.rl_agent.should_buy(rl_state)
             if not rl_buy:
                 log.info("[%s] RL-Agent rät ab (explain: %s)", ticker, self.rl_agent.explain(rl_state))
-                # RL blockiert nur wenn es genug Erfahrung hat (> 10 Trades)
+                # RL blockiert erst ab MIN_TRADES_FOR_ADAPTIVE Trades (vorher nur Modifier)
                 stats = self.rl_agent.get_stats()
-                if stats.get("total_trades", 0) >= 10:
+                if stats.get("total_trades", 0) >= config.min_trades_for_adaptive:
                     return f"[{ticker}] 🤖 RL-Agent: Trade nicht empfohlen (Lernbasis: {stats['total_trades']} Trades)"
         except Exception as e:
             log.debug("RL-Agent fehlgeschlagen: %s", e)
@@ -1247,6 +1275,51 @@ class SwingStrategy:
             f"[{ticker}] 💰 Partial-TP {level_label} | "
             f"{sell_shares:.2f}×${actual_price:.2f} | Rest {remaining_shares:.2f} Stück | {sl_note}"
         )
+
+    @staticmethod
+    def _check_volume_confirmation(ticker: str) -> Tuple[bool, str]:
+        """Kaufbestätigung: heutiges Volumen muss >= VOLUME_CONFIRM_RATIO × 20d-Durchschnitt."""
+        try:
+            import yfinance as yf
+            hist = yf.Ticker(ticker).history(period="25d", interval="1d")
+            if len(hist) < 5:
+                return True, ""
+            avg_20d = float(hist["Volume"].iloc[:-1].tail(20).mean())
+            today_vol = float(hist["Volume"].iloc[-1])
+            if avg_20d <= 0:
+                return True, ""
+            ratio = today_vol / avg_20d
+            threshold = config.volume_confirm_ratio
+            if ratio < threshold:
+                return False, (
+                    f"Volumen {today_vol:,.0f} = {ratio*100:.0f}% des 20d-Durchschnitts "
+                    f"({avg_20d:,.0f}) – unter {threshold*100:.0f}%-Schwelle"
+                )
+        except Exception:
+            pass
+        return True, ""
+
+    @staticmethod
+    def _check_news_staleness(ticker: str, current_price: float) -> Tuple[bool, str]:
+        """Prüft ob der Kurs bereits stark auf die News reagiert hat (Signal veraltet)."""
+        try:
+            import yfinance as yf
+            hist = yf.Ticker(ticker).history(period="3d", interval="1d")
+            if len(hist) < 2:
+                return False, ""
+            prev_close = float(hist["Close"].iloc[-2])
+            if prev_close <= 0:
+                return False, ""
+            move = (current_price - prev_close) / prev_close
+            threshold = config.news_stale_pct
+            if move > threshold:
+                return True, (
+                    f"Kurs bereits +{move*100:.1f}% gegenüber Vortag (${prev_close:.2f}→${current_price:.2f}) "
+                    f"– News wahrscheinlich bereits eingepreist (Schwelle: +{threshold*100:.0f}%)"
+                )
+        except Exception:
+            pass
+        return False, ""
 
     @staticmethod
     def _get_ema21(ticker: str) -> Optional[float]:

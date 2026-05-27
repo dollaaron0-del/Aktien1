@@ -3,14 +3,21 @@ PaperBroker – Simuliert Order-Ausführung mit realistischer Slippage-Modellier
 
 Slippage-Komponenten:
 - Spread:          Basiert auf Liquiditätsstufe (bekannte ETFs vs. Small-Caps)
+                   + VIX-Multiplikator: bei hoher Volatilität weiten sich Spreads
 - Kommission:      0.1% pro Trade, mindestens $1.00
 - Market-Impact:   Nur bei großen Orders (> $50k), zusätzlich 0.05%
+
+VIX-Spread-Multiplikator:
+  VIX < 20  → 1.0×  (normaler Markt)
+  VIX 20–25 → 1.25× (erhöhte Volatilität)
+  VIX 25–30 → 1.75× (stressiger Markt)
+  VIX > 30  → 2.5×  (Krisenmodus, Spreads drastisch weiter)
 
 Buy:  fill_price = price * (1 + spread + commission + market_impact)
 Sell: fill_price = price * (1 - spread - commission - market_impact)
 
 Konfigurierbar via Env-Variablen:
-  SLIPPAGE_SPREAD_PCT       (Standard: 0.0005 = 0.05%)
+  SLIPPAGE_SPREAD_PCT       (Standard: 0.001  = 0.10%)
   SLIPPAGE_COMMISSION_PCT   (Standard: 0.001  = 0.10%)
   SLIPPAGE_MIN_COMMISSION   (Standard: 1.0 USD)
 """
@@ -23,11 +30,27 @@ from logger import get_logger
 log = get_logger(__name__)
 
 # ── Konfiguration via Env-Variablen ────────────────────────────────────────────
-_SPREAD_PCT         = float(os.getenv("SLIPPAGE_SPREAD_PCT",     "0.0005"))
+_SPREAD_PCT         = float(os.getenv("SLIPPAGE_SPREAD_PCT",     "0.001"))   # 0.10%
 _COMMISSION_PCT     = float(os.getenv("SLIPPAGE_COMMISSION_PCT", "0.001"))
 _MIN_COMMISSION_USD = float(os.getenv("SLIPPAGE_MIN_COMMISSION", "1.0"))
 _MARKET_IMPACT_PCT  = 0.0005   # 0.05% bei Orders > $50k
 _LARGE_ORDER_USD    = 50_000.0
+
+
+def _vix_spread_multiplier() -> float:
+    """Spread-Multiplikator basierend auf aktuellem VIX-Level."""
+    try:
+        from collectors.vix_monitor import get_vix
+        vix = get_vix() or 20.0
+        if vix > 30:
+            return 2.5
+        if vix > 25:
+            return 1.75
+        if vix > 20:
+            return 1.25
+        return 1.0
+    except Exception:
+        return 1.0
 
 # Hochliquide ETFs und Large-Cap-Tickers mit engem Spread
 _LIQUID_TICKERS = {
@@ -38,9 +61,9 @@ _LIQUID_TICKERS = {
 }
 
 # Spread-Stufen nach Liquidität
-_SPREAD_LIQUID     = _SPREAD_PCT * 0.5   # enger Spread für liquide Werte
-_SPREAD_STANDARD   = _SPREAD_PCT         # Standard-Spread
-_SPREAD_ILLIQUID   = _SPREAD_PCT * 3.0   # weiter Spread für illiquide Werte
+_SPREAD_LIQUID     = _SPREAD_PCT * 0.5   # enger Spread für liquide Werte   (0.05%)
+_SPREAD_STANDARD   = _SPREAD_PCT         # Standard-Spread                  (0.10%)
+_SPREAD_ILLIQUID   = _SPREAD_PCT * 5.0   # weiter Spread für illiquide Werte (0.50%)
 
 
 def _get_spread(ticker: str) -> float:
@@ -85,7 +108,7 @@ class PaperBroker:
         Returns:
             (fill_price, slippage_usd, commission_usd)
         """
-        spread      = _get_spread(ticker)
+        spread      = _get_spread(ticker) * _vix_spread_multiplier()
         order_value = price * abs(shares)
 
         # Kommission: max(MIN_COMMISSION, order_value * COMMISSION_PCT)
