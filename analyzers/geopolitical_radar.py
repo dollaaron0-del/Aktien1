@@ -358,12 +358,13 @@ class GeopoliticalRadar:
 
             if event.severity >= _MIN_SEVERITY_FOR_NOTIFY and notify_fn:
                 severity_emoji = {1: "🌐", 2: "⚠️", 3: "🚨"}.get(event.severity, "📡")
-                buy_str  = f"KAUF:    {', '.join(buy_tickers[:5])}"  if buy_tickers  else ""
-                sell_str = f"VERKAUF: {', '.join(sell_tickers[:5])}" if sell_tickers else ""
+                severity_label = {1: "Niedrig", 2: "Mittel", 3: "Kritisch"}.get(event.severity, "")
+                buy_str  = f"📈 KAUF:    {', '.join(buy_tickers[:5])}"  if buy_tickers  else ""
+                sell_str = f"📉 VERKAUF: {', '.join(sell_tickers[:5])}" if sell_tickers else ""
                 impact_str = "\n".join(filter(None, [buy_str, sell_str]))
 
                 alerts.append(
-                    f"{severity_emoji} <b>GEOPOLITIK: {event.category}</b>\n"
+                    f"{severity_emoji} <b>GEOPOLITIK: {event.category}</b>  [{severity_label}]\n"
                     f"<i>{event.headline[:140]}</i>\n"
                     f"Quelle: {event.source}\n\n"
                     f"{impact_str}"
@@ -435,7 +436,7 @@ class GeopoliticalRadar:
             return None
 
         return GeoEvent(
-            category=best_match["name"],
+            category=best_match.get("label", best_match["name"]),
             severity=best_match["severity"],
             headline=headline[:200],
             source=source,
