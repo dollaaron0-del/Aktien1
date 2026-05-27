@@ -21,6 +21,7 @@ class Config:
     reddit_user_agent: str = field(default_factory=lambda: os.getenv("REDDIT_USER_AGENT", "StockSentimentBot/1.0"))
     newsapi_key: str = field(default_factory=lambda: os.getenv("NEWSAPI_KEY", ""))
     twitter_bearer_token: str = field(default_factory=lambda: os.getenv("TWITTER_BEARER_TOKEN", ""))
+    quiver_api_key: str = field(default_factory=lambda: os.getenv("QUIVER_API_KEY", ""))
     # Interactive Brokers (TWS / IB Gateway)
     ibkr_host:      str = field(default_factory=lambda: os.getenv("IBKR_HOST",      "127.0.0.1"))
     ibkr_port:      int = field(default_factory=lambda: int(os.getenv("IBKR_PORT",  "7497")))
@@ -308,6 +309,11 @@ def validate_config() -> None:
         warnings.append("NEWSAPI_KEY fehlt – NewsAPI-Quelle deaktiviert.")
     if not config.reddit_client_id:
         warnings.append("REDDIT_CLIENT_ID fehlt – Reddit-Quelle deaktiviert.")
+    if not config.quiver_api_key:
+        warnings.append(
+            "QUIVER_API_KEY fehlt – Congressional-Trades mit Ausschuss-Kontext deaktiviert. "
+            "Kostenlosen Key auf quiverquant.com registrieren."
+        )
 
     # ── Wertebereich-Prüfungen ────────────────────────────────────────────────
     if not (0.0 < config.stop_loss_pct < 1.0):

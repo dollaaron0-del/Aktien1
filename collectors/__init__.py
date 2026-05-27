@@ -11,6 +11,7 @@ from .options_flow_collector import OptionsFlowCollector
 from .european_news_collector import EuropeanNewsCollector
 from .german_media_collector import GermanMediaCollector
 from .international_media_collector import InternationalMediaCollector
+from .quiver_collector import QuiverCollector
 from .twitter_collector import TwitterCollector
 from .sec_8k_collector import SEC8KCollector
 from .short_interest_collector import ShortInterestCollector
@@ -33,5 +34,5 @@ __all__ = [
     "AnalystCollector", "EarningsTranscriptCollector", "PatentCollector",
     "JobListingsCollector", "CEOInterviewCollector", "EURegulationCollector",
     "ChineseMediaCollector", "WebTrafficCollector", "GermanMediaCollector",
-    "InternationalMediaCollector",
+    "InternationalMediaCollector", "QuiverCollector",
 ]
