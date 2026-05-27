@@ -154,6 +154,21 @@ class Config:
         default_factory=lambda: int(os.getenv("OLLAMA_TIMEOUT", "30"))
     )
 
+    # ── Einstiegs-Timing + Exit-Management ───────────────────────────────────
+    # EMA21-Check: Kurs darf max. X% über EMA21 liegen (sonst: Conditional Entry)
+    # 0.03 = 3% → bei >3% über EMA21 wird in Warteschlange gestellt, nicht sofort gekauft
+    entry_ema_max_deviation: float = field(
+        default_factory=lambda: float(os.getenv("ENTRY_EMA_MAX_DEVIATION", "0.03"))
+    )
+    # Partial Take-Profit: Bei X% Gewinn werden Y% der Position verkauft
+    # Verbleibende Position läuft mit SL auf Breakeven weiter (Trailing)
+    partial_tp_pct: float = field(
+        default_factory=lambda: float(os.getenv("PARTIAL_TP_PCT", "0.10"))
+    )
+    partial_tp_sell_frac: float = field(
+        default_factory=lambda: float(os.getenv("PARTIAL_TP_SELL_FRAC", "0.50"))
+    )
+
     # ── Hedge / Rezessions-Absicherung ───────────────────────────────────────
     # Inverse ETFs kaufen wenn Marktregime BEAR oder CRISIS erreicht
     enable_hedging: bool = field(

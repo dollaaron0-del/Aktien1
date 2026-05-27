@@ -29,6 +29,7 @@ class Position:
     entry_catalysts: List[str] = field(default_factory=list)
     currency: str = "USD"           # Handelswährung (EUR/GBP/CHF/USD)
     fx_rate_at_entry: float = 1.0   # FX-Rate zur Basiswährung bei Kauf
+    partial_tp_taken: bool = False  # True nach erstem Teilverkauf (50% TP)
 
     @property
     def entry_value(self) -> float:
@@ -113,6 +114,7 @@ class Portfolio:
         for stmt in [
             "ALTER TABLE positions ADD COLUMN currency TEXT DEFAULT 'USD'",
             "ALTER TABLE positions ADD COLUMN fx_rate_at_entry REAL DEFAULT 1.0",
+            "ALTER TABLE positions ADD COLUMN partial_tp_taken INTEGER DEFAULT 0",
             "ALTER TABLE trades ADD COLUMN currency TEXT DEFAULT 'USD'",
             "ALTER TABLE trades ADD COLUMN fx_rate REAL DEFAULT 1.0",
         ]:
@@ -229,7 +231,7 @@ class Portfolio:
             """
             SELECT ticker, shares, entry_price, entry_date, stop_loss,
                    take_profit, target_hold_days, rationale, entry_catalysts,
-                   currency, fx_rate_at_entry
+                   currency, fx_rate_at_entry, partial_tp_taken
             FROM positions WHERE ticker=?
             """,
             (ticker,),
@@ -243,7 +245,7 @@ class Portfolio:
             """
             SELECT ticker, shares, entry_price, entry_date, stop_loss,
                    take_profit, target_hold_days, rationale, entry_catalysts,
-                   currency, fx_rate_at_entry
+                   currency, fx_rate_at_entry, partial_tp_taken
             FROM positions
             """
         ).fetchall()
@@ -264,8 +266,8 @@ class Portfolio:
                     INSERT OR REPLACE INTO positions
                         (ticker, shares, entry_price, entry_date, stop_loss,
                          take_profit, target_hold_days, rationale, entry_catalysts,
-                         currency, fx_rate_at_entry)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         currency, fx_rate_at_entry, partial_tp_taken)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         position.ticker,
@@ -279,6 +281,7 @@ class Portfolio:
                         json.dumps(position.entry_catalysts),
                         position.currency,
                         position.fx_rate_at_entry,
+                        int(position.partial_tp_taken),
                     ),
                 )
                 self._insert_trade(
@@ -315,6 +318,37 @@ class Portfolio:
                     fx_rate=pos.fx_rate_at_entry,
                 )
         return pnl
+
+    def update_partial_tp(
+        self,
+        ticker: str,
+        new_shares: float,
+        new_stop_loss: float,
+        sell_shares: float,
+        sell_price: float,
+        pnl: float,
+        currency: str = "USD",
+        fx_rate: float = 1.0,
+    ) -> None:
+        """Partial Take-Profit: reduziert Position, setzt SL auf Breakeven, bucht Erlös."""
+        with _db_lock:
+            with self._conn:
+                self._conn.execute(
+                    "UPDATE positions SET shares=?, stop_loss=?, partial_tp_taken=1 WHERE ticker=?",
+                    (new_shares, new_stop_loss, ticker),
+                )
+                self._set_cash(self._get_cash() + sell_shares * sell_price)
+                self._insert_trade(
+                    ticker=ticker,
+                    action="SELL",
+                    shares=sell_shares,
+                    price=sell_price,
+                    timestamp=datetime.utcnow().isoformat(),
+                    pnl=pnl,
+                    reason="Partial-TP",
+                    currency=currency,
+                    fx_rate=fx_rate,
+                )
 
     def total_value(self, prices: Dict[str, float]) -> float:
         total = self._get_cash()
@@ -419,6 +453,7 @@ class Portfolio:
         col_names = row.keys() if hasattr(row, "keys") else []
         currency = row["currency"] if "currency" in col_names else "USD"
         fx_rate = row["fx_rate_at_entry"] if "fx_rate_at_entry" in col_names else 1.0
+        partial_tp = bool(row["partial_tp_taken"]) if "partial_tp_taken" in col_names else False
         return Position(
             ticker=ticker,
             shares=shares,
@@ -431,4 +466,5 @@ class Portfolio:
             entry_catalysts=catalysts,
             currency=currency or "USD",
             fx_rate_at_entry=float(fx_rate or 1.0),
+            partial_tp_taken=partial_tp,
         )

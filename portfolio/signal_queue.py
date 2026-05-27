@@ -24,6 +24,7 @@ class SignalQueue:
         self._conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._init_db()
+        self._migrate()
 
     def _init_db(self):
         self._conn.executescript("""
@@ -47,6 +48,13 @@ class SignalQueue:
         """)
         self._conn.commit()
 
+    def _migrate(self) -> None:
+        try:
+            self._conn.execute("ALTER TABLE pending_signals ADD COLUMN limit_price REAL")
+            self._conn.commit()
+        except Exception:
+            pass  # Column already exists
+
     def enqueue(
         self,
         ticker: str,
@@ -60,8 +68,11 @@ class SignalQueue:
         sources_used: int,
         sources_breakdown: Dict[str, int],
         suggested_hold_days: int,
+        limit_price: Optional[float] = None,
     ) -> int:
-        """Adds a BUY signal to the queue. Returns the new signal ID."""
+        """Adds a BUY signal to the queue. Returns the new signal ID.
+        limit_price: optional price ceiling — signal executes only when price <= limit_price.
+        Used for EMA21 pullback entries."""
         # Avoid duplicate pending entries for the same ticker
         self._conn.execute(
             "UPDATE pending_signals SET status='superseded' "
@@ -73,8 +84,9 @@ class SignalQueue:
             """INSERT INTO pending_signals
                (ticker, sentiment_score, confidence, target_price, direction,
                 entry_rationale, key_catalysts, risk_factors, sources_used,
-                sources_breakdown, suggested_hold_days, created_at, expires_at, status)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'pending')""",
+                sources_breakdown, suggested_hold_days, created_at, expires_at, status,
+                limit_price)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)""",
             (
                 ticker,
                 sentiment_score,
@@ -89,6 +101,7 @@ class SignalQueue:
                 suggested_hold_days,
                 now.isoformat(),
                 (now + timedelta(hours=self.max_age_hours)).isoformat(),
+                limit_price,
             ),
         )
         self._conn.commit()

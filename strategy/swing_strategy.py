@@ -466,6 +466,12 @@ class SwingStrategy:
 
             days_held = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
 
+            # ── Partial Take-Profit (einmalig bei +10%) ──────────────────────
+            if not pos.partial_tp_taken:
+                partial_msg = self._check_partial_tp(ticker, pos, price)
+                if partial_msg:
+                    actions.append(partial_msg)
+
             # ── Trailing Stop-Loss aktualisieren ─────────────────────────────
             trailing_updated = self._update_trailing_stop(pos, price)
             if trailing_updated:
@@ -511,6 +517,15 @@ class SwingStrategy:
 
             current_price = self.broker.get_price(ticker)
             if not current_price:
+                continue
+
+            # EMA-Conditional Entry: warte bis Kurs unter Limit fällt
+            limit_price = signal.get("limit_price")
+            if limit_price and current_price > limit_price * 1.01:
+                log.debug(
+                    "[%s] Conditional Entry: Kurs $%.2f noch über Limit $%.2f – warte",
+                    ticker, current_price, limit_price,
+                )
                 continue
 
             portfolio_value = self.portfolio.total_value(
@@ -812,6 +827,44 @@ class SwingStrategy:
         if not liq_ok:
             return f"[{ticker}] ⛔ {liq_reason} – Kauf abgebrochen."
 
+        # EMA21 Einstiegs-Check: nicht in überkauften Markt kaufen
+        if not _is_crypto(ticker) and config.entry_ema_max_deviation > 0:
+            ema21 = self._get_ema21(ticker)
+            if ema21 and ema21 > 0:
+                deviation = (price - ema21) / ema21
+                if deviation > config.entry_ema_max_deviation:
+                    limit_price = round(ema21 * 1.005, 2)  # 0.5% Toleranz über EMA21
+                    if self.signal_queue:
+                        self.signal_queue.enqueue(
+                            ticker=ticker,
+                            sentiment_score=analysis.sentiment_score,
+                            confidence=analysis.confidence,
+                            target_price=analysis.target_price,
+                            direction=analysis.direction,
+                            entry_rationale=analysis.entry_rationale,
+                            key_catalysts=analysis.key_catalysts,
+                            risk_factors=analysis.risk_factors,
+                            sources_used=analysis.sources_used,
+                            sources_breakdown=sources_breakdown,
+                            suggested_hold_days=analysis.suggested_hold_days,
+                            limit_price=limit_price,
+                        )
+                    self._notifier.send(
+                        f"⏳ <b>{ticker} BUY – Warte auf Pullback</b>\n"
+                        f"Score: {analysis.sentiment_score:.2f} | Konfidenz: {analysis.confidence}\n"
+                        f"Kurs ${price:.2f} ist {deviation*100:.1f}% über EMA21 (${ema21:.2f})\n"
+                        f"Conditional Entry bei: ${limit_price:.2f}"
+                    )
+                    log.info(
+                        "[%s] EMA21-Check: %.1f%% über EMA21 ($%.2f) – Conditional Entry @ $%.2f",
+                        ticker, deviation * 100, ema21, limit_price,
+                    )
+                    return (
+                        f"[{ticker}] ⏳ BUY in Warteschlange – "
+                        f"Kurs {deviation*100:.1f}% über EMA21 (${ema21:.2f}), "
+                        f"Entry-Limit @ ${limit_price:.2f}"
+                    )
+
         # Krypto: erweiterte SL/TP-Prozentsätze aus Config
         if _is_crypto(ticker):
             sl_pct = config.crypto_stop_loss_pct
@@ -1097,6 +1150,86 @@ class SwingStrategy:
             self._notifier.send(msg)
         except Exception:
             pass
+
+    def _check_partial_tp(self, ticker: str, pos: Position, price: float) -> Optional[str]:
+        """Verkauft partial_tp_sell_frac der Position wenn Gewinn >= partial_tp_pct erreicht.
+        Setzt SL danach auf Breakeven – Rest läuft mit Trailing weiter."""
+        gain = (price - pos.entry_price) / pos.entry_price
+        if gain < config.partial_tp_pct:
+            return None
+
+        sell_frac = config.partial_tp_sell_frac
+        sell_shares = math.floor(pos.shares * sell_frac * 100) / 100
+        if sell_shares <= 0:
+            return None
+
+        if _is_crypto(ticker):
+            fill = self.broker.sell_crypto(ticker, sell_shares)
+        else:
+            fill = self.broker.sell(ticker, sell_shares, price)
+        ok, actual_price, warn = _check_fill(fill, ticker, "sell")
+        if not ok:
+            log.warning("[%s] Partial-TP SELL fehlgeschlagen: %s", ticker, warn)
+            return None
+        if not actual_price:
+            actual_price = price
+        if warn:
+            self._notifier.send(warn)
+
+        remaining_shares = round(pos.shares - sell_shares, 4)
+        pnl_partial = (actual_price - pos.entry_price) * sell_shares
+        # SL auf Breakeven + kleiner Puffer (nie unter bisherigem SL)
+        new_sl = max(round(pos.entry_price * 1.005, 2), pos.stop_loss)
+
+        self.portfolio.update_partial_tp(
+            ticker=ticker,
+            new_shares=remaining_shares,
+            new_stop_loss=new_sl,
+            sell_shares=sell_shares,
+            sell_price=actual_price,
+            pnl=pnl_partial,
+            currency=pos.currency,
+            fx_rate=pos.fx_rate_at_entry,
+        )
+        pos.shares = remaining_shares
+        pos.stop_loss = new_sl
+        pos.partial_tp_taken = True
+
+        days_held = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
+        self.journal.log_exit(
+            ticker=ticker, price=actual_price,
+            entry_price=pos.entry_price,
+            pnl=pnl_partial,
+            reason=f"Partial-TP ({sell_frac*100:.0f}%) bei +{gain*100:.1f}%",
+            days_held=days_held,
+        )
+        self._notifier.send(
+            f"💰 <b>Partial Take-Profit {ticker}</b>\n"
+            f"Verkauft: {sell_shares:.2f} Stück ({sell_frac*100:.0f}%) @ ${actual_price:.2f} "
+            f"(+{gain*100:.1f}%)\n"
+            f"Realisierter Gewinn: +${pnl_partial:.2f}\n"
+            f"Verbleibend: {remaining_shares:.2f} Stück | SL → Breakeven ${new_sl:.2f}"
+        )
+        log.info(
+            "[%s] Partial-TP: %.2f Stück @ $%.2f (+%.1f%%) | SL→$%.2f | verbleibend %.2f",
+            ticker, sell_shares, actual_price, gain * 100, new_sl, remaining_shares,
+        )
+        return (
+            f"[{ticker}] 💰 Partial-TP {sell_shares:.2f}×${actual_price:.2f} "
+            f"(+{gain*100:.1f}%) | SL→${new_sl:.2f} | Rest {remaining_shares:.2f} Stück"
+        )
+
+    @staticmethod
+    def _get_ema21(ticker: str) -> Optional[float]:
+        """EMA21 aus 3-Monats-Tagesdaten via yfinance. None bei Fehler oder zu wenig Daten."""
+        try:
+            import yfinance as yf
+            hist = yf.Ticker(ticker).history(period="3mo", interval="1d")
+            if len(hist) < 21:
+                return None
+            return float(hist["Close"].ewm(span=21, adjust=False).mean().iloc[-1])
+        except Exception:
+            return None
 
     @staticmethod
     def _update_trailing_stop(pos: Position, current_price: float) -> bool:
