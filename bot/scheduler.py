@@ -335,8 +335,9 @@ def run_bot_loop(
             review_job = schedule.every().day.at(slot["hhmm"]).do(_monthly_review_check)
             review_job._is_analysis_job = True
 
-            # Pre-Market Briefing 90 Min vor Open (60 Min früher als Vollanalyse)
-            pre_hhmm = _subtract_minutes(slot["hhmm"], 60)
+            # Pre-Market Briefing 30 Min vor Open (gleiche Zeit wie Vollanalyse)
+            # Läuft zuerst durch (kein Claude → schnell), danach startet Vollanalyse
+            pre_hhmm = slot["hhmm"]
             exch = slot["exchange"]
             pre_job = schedule.every().day.at(pre_hhmm).do(_pre_market_job, exch)
             pre_job._is_analysis_job = True
@@ -344,7 +345,7 @@ def run_bot_loop(
         times_str = ", ".join(f"{s['hhmm']} ({s['exchange']})" for s in slots)
         console.print(f"[dim]Analyse-Jobs registriert: {times_str}[/dim]")
         pre_times = ", ".join(
-            f"{_subtract_minutes(s['hhmm'], 60)} pre-market ({s['exchange']})" for s in slots
+            f"{s['hhmm']} pre-market ({s['exchange']})" for s in slots
         )
         console.print(f"[dim]Pre-Market-Jobs: {pre_times}[/dim]")
 
