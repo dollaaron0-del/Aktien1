@@ -145,19 +145,6 @@ def _get_watchlist(portfolio: Portfolio) -> List[str]:
             if t not in base:
                 base.append(t)
 
-    # Vom Dashboard manuell angeforderte + Headline-Signal-Ticker analysieren
-    # force_claude=True: Ollama-Prescreen + Budget-Check werden übersprungen
-    requested = _urq.consume_all()  # returns List[(ticker, meta)]
-    _force_claude_tickers: set = set()
-    _headline_meta: Dict[str, dict] = {}  # ticker → Signal-Metadaten für Follow-Up
-    for t, meta in requested:
-        if t not in base:
-            log.info("Nutzeranfrage: %s wird in diesem Zyklus analysiert", t)
-            base.append(t)
-        _force_claude_tickers.add(t)
-        if meta.get("from_headline"):
-            _headline_meta[t] = meta
-
     # Opportunity-Scan: bei ≥50% freien Slots nach weiteren Kandidaten suchen
     _opportunity_scan(portfolio, base)
 
@@ -645,7 +632,20 @@ def run_analysis_cycle(
 
     # EU Marktbarometer einmal pro Zyklus laden (cached 2h)
     _eu_market_ctx = None
+    # Vom Dashboard / Headline-Signal angeforderte Ticker einsammeln, BEVOR die
+    # Watchlist eingefroren wird – force_claude und headline_meta gelten pro Zyklus.
+    _requested = _urq.consume_all()  # returns List[(ticker, meta)]
+    _force_claude_tickers: set = set()
+    _headline_meta: Dict[str, dict] = {}
     active_watchlist = _get_watchlist(portfolio)
+    for _t, _meta in _requested:
+        if _t not in active_watchlist:
+            log.info("Nutzeranfrage: %s wird in diesem Zyklus analysiert", _t)
+            active_watchlist.append(_t)
+        _force_claude_tickers.add(_t)
+        if _meta.get("from_headline"):
+            _headline_meta[_t] = _meta
+
     if any(_is_eu_stock(t) for t in active_watchlist):
         try:
             _eu_market_ctx = EUMarketContext().get_snapshot()
