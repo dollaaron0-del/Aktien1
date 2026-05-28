@@ -894,7 +894,7 @@ def run_bot_loop(
                     tickers_str = ", ".join(sig.ticker for sig in urgent)
                     console.print(
                         f"  [bold yellow]⚡ Signal-Trigger ({_SIGNAL_TRIGGER_SCORE:.0%}): "
-                        f"Sofort-Analyse ausgelöst: {tickers_str}[/bold yellow]"
+                        f"Sofort-Analyse gestartet: {tickers_str}[/bold yellow]"
                     )
                     notifier.send(
                         f"⚡ <b>Signal-Trigger</b>\n\n"
@@ -903,7 +903,12 @@ def run_bot_loop(
                             f"(Score {sig.score:.2f})"
                             for sig in urgent
                         )
-                        + "\n\n📋 Vollanalyse in Warteschlange – Ergebnis folgt im nächsten Bot-Zyklus."
+                        + "\n\n🔍 Sofort-Analyse wird jetzt ausgeführt …"
+                    )
+                    # Sofort analysieren – nicht auf nächsten geplanten Zyklus warten
+                    safe_run_analysis_cycle(
+                        portfolio, broker, strategy, tracker, phase_ctrl,
+                        archive, reflection, weekend_prep_inst, hedge_strategy_inst,
                     )
         except Exception as e:
             log.warning("Headline-Scan-Job fehlgeschlagen: %s", e)
