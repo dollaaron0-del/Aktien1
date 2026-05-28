@@ -276,13 +276,21 @@ def main():
                 f"({config.ibkr_host}:{config.ibkr_port}) – Fallback auf Paper-Broker.[/yellow]"
             )
             try:
-                from notifier.telegram_notifier import TelegramNotifier
-                TelegramNotifier().send(
-                    f"⚠️ <b>IBKR-Verbindung fehlgeschlagen</b>\n\n"
-                    f"Host: {config.ibkr_host}:{config.ibkr_port}\n"
-                    f"Bot läuft im Paper-Modus – keine echten Orders!\n\n"
-                    f"IB Gateway prüfen und Bot neu starten."
-                )
+                import os as _os, time as _time
+                _cooldown_file = "/tmp/ibkr_error_notified"
+                _cooldown_ok = True
+                if _os.path.exists(_cooldown_file):
+                    if _time.time() - _os.path.getmtime(_cooldown_file) < 3600:
+                        _cooldown_ok = False
+                if _cooldown_ok:
+                    from notifier.telegram_notifier import TelegramNotifier
+                    TelegramNotifier().send(
+                        f"⚠️ <b>IBKR-Verbindung fehlgeschlagen</b>\n\n"
+                        f"Host: {config.ibkr_host}:{config.ibkr_port}\n"
+                        f"Bot läuft im Paper-Modus – keine echten Orders!\n\n"
+                        f"IB Gateway prüfen und Bot neu starten."
+                    )
+                    open(_cooldown_file, "w").close()
             except Exception:
                 pass
             broker = PaperBroker()
