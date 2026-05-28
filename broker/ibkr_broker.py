@@ -102,6 +102,7 @@ class IBKRBroker:
             return False
         try:
             ib = IB()
+            log.info("IBKR: Verbindungsversuch %s:%d (clientId=%d) …", _HOST, _PORT, _CLIENT_ID)
             ib.connect(_HOST, _PORT, clientId=_CLIENT_ID, readonly=False, timeout=10)
             self._ib = ib
             self._connected = True
