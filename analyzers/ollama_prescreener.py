@@ -234,18 +234,24 @@ class OllamaPrescreener:
         Entscheidet ob Claude gerufen werden soll.
         Konservativ: Im Zweifel immer Claude.
         """
-        # Niedrige Konfidenz → Claude (sicherer)
+        # Niedrige Konfidenz → fast immer Claude; nur bei glasklarem BEARISH sparen
         if confidence == "LOW":
+            if score < 0.30:
+                return False, f"Ollama: klar BEARISH ({score:.2f}, LOW) – kein Trade möglich"
             return True, ""
 
-        # Nur bei HIGH confidence UND glasklarem BEARISH (< 0.20) Claude sparen
-        # MEDIUM confidence immer an Claude weitergeben – Ollama-Unsicherheit zu hoch
-        if score < 0.20 and confidence == "HIGH":
-            return False, f"Ollama: klar BEARISH ({score:.2f}, HIGH) – SKIP ohne Claude"
+        # HIGH confidence: bewährte Schwellen
+        if confidence == "HIGH":
+            if score < self.bearish_skip:
+                return False, f"Ollama: klar BEARISH ({score:.2f}, HIGH) – SKIP ohne Claude"
+            if score < self.neutral_skip:
+                return False, f"Ollama: NEUTRAL ({score:.2f}, HIGH) – kein Trade-Signal"
+            return True, ""
 
-        # Klar neutral mit sehr hoher Konfidenz → Claude sparen
-        if score < self.neutral_skip and confidence == "HIGH":
-            return False, f"Ollama: NEUTRAL ({score:.2f}, HIGH) – kein Trade-Signal"
+        # MEDIUM confidence: Claude nur wenn Score nahe genug an der Kaufschwelle (≥ 0.55)
+        # Scores < 0.55 können die 0.65-Kaufschwelle selbst mit Adaptive-Boost kaum erreichen
+        if score < 0.55:
+            return False, f"Ollama: NEUTRAL/BEARISH ({score:.2f}, MEDIUM) – Score zu niedrig für Kauf"
 
         # Alles andere → Claude (bullische Signale, Unsicherheit)
         return True, ""
