@@ -327,35 +327,44 @@ def _safe_collect(collector_name: str, fn, *args, **kwargs) -> List[Dict]:
 
 
 def _make_collectors() -> Dict:
-    """Build all collector instances once per analysis cycle."""
-    _twitter = TwitterCollector()
+    """Build all collector instances once per analysis cycle. Failed inits become None."""
+    _log = get_logger(__name__)
+
+    def _safe(name, fn):
+        try:
+            return fn()
+        except Exception as e:
+            _log.warning("Collector '%s' konnte nicht initialisiert werden: %s", name, e)
+            return None
+
+    _twitter = _safe("twitter", TwitterCollector)
     return {
-        "yahoo":             YahooCollector(),
-        "reddit":            RedditCollector(),
-        "newsapi":           NewsAPICollector(),
-        "insider":           InsiderCollector(lookback_days=90),
-        "usaspending":       USASpendingCollector(lookback_days=180, min_award_usd=1_000_000),
-        "sec_edgar":         SECEdgarCollector(lookback_days=30),
-        "stocktwits":        StockTwitsCollector(lookback_hours=48),
-        "wire":              WireCollector(lookback_days=7),
-        "options_flow":      OptionsFlowCollector(),
-        "european_news":     EuropeanNewsCollector(lookback_hours=72),
-        "twitter":           _twitter if _twitter.available else None,
-        "sec_8k":            SEC8KCollector(),
-        "short_interest":    ShortInterestCollector(),
-        "institutional_13f": InstitutionalCollector(),
-        "analyst_ratings":   AnalystCollector(),
-        "earn_transcripts":  EarningsTranscriptCollector(),
-        "patents":           PatentCollector(),
-        "job_listings":      JobListingsCollector(),
-        "ceo_interviews":    CEOInterviewCollector(),
-        "eu_regulation":     EURegulationCollector(),
-        "chinese_media":     ChineseMediaCollector(),
-        "web_traffic":       WebTrafficCollector(),
-        "crypto_news":       CryptoNewsCollector(),
-        "german_media":      GermanMediaCollector(lookback_hours=48),
-        "intl_media":        InternationalMediaCollector(lookback_hours=48),
-        "quiver":            QuiverCollector(lookback_days=90),
+        "yahoo":             _safe("yahoo",           YahooCollector),
+        "reddit":            _safe("reddit",          RedditCollector),
+        "newsapi":           _safe("newsapi",         NewsAPICollector),
+        "insider":           _safe("insider",         lambda: InsiderCollector(lookback_days=90)),
+        "usaspending":       _safe("usaspending",     lambda: USASpendingCollector(lookback_days=180, min_award_usd=1_000_000)),
+        "sec_edgar":         _safe("sec_edgar",       lambda: SECEdgarCollector(lookback_days=30)),
+        "stocktwits":        _safe("stocktwits",      lambda: StockTwitsCollector(lookback_hours=48)),
+        "wire":              _safe("wire",            lambda: WireCollector(lookback_days=7)),
+        "options_flow":      _safe("options_flow",    OptionsFlowCollector),
+        "european_news":     _safe("european_news",   lambda: EuropeanNewsCollector(lookback_hours=72)),
+        "twitter":           _twitter if (_twitter and _twitter.available) else None,
+        "sec_8k":            _safe("sec_8k",          SEC8KCollector),
+        "short_interest":    _safe("short_interest",  ShortInterestCollector),
+        "institutional_13f": _safe("institutional",   InstitutionalCollector),
+        "analyst_ratings":   _safe("analyst",         AnalystCollector),
+        "earn_transcripts":  _safe("transcripts",     EarningsTranscriptCollector),
+        "patents":           _safe("patents",         PatentCollector),
+        "job_listings":      _safe("jobs",            JobListingsCollector),
+        "ceo_interviews":    _safe("ceo",             CEOInterviewCollector),
+        "eu_regulation":     _safe("eu_reg",          EURegulationCollector),
+        "chinese_media":     _safe("chinese",         ChineseMediaCollector),
+        "web_traffic":       _safe("web_traffic",     WebTrafficCollector),
+        "crypto_news":       _safe("crypto_news",     CryptoNewsCollector),
+        "german_media":      _safe("german",          lambda: GermanMediaCollector(lookback_hours=48)),
+        "intl_media":        _safe("intl",            lambda: InternationalMediaCollector(lookback_hours=48)),
+        "quiver":            _safe("quiver",          lambda: QuiverCollector(lookback_days=90)),
     }
 
 
@@ -514,10 +523,20 @@ def run_analysis_cycle(
 
     # Multi-Agent Konsens wenn aktiviert, sonst Standard-Analyzer
     _multi_agent_enabled = os.getenv("MULTI_AGENT_ENABLED", "false").lower() in ("1", "true", "yes")
-    analyzer = MultiAgentAnalyzer() if _multi_agent_enabled else ClaudeAnalyzer()
+    try:
+        analyzer = MultiAgentAnalyzer() if _multi_agent_enabled else ClaudeAnalyzer()
+    except Exception as _az_err:
+        log.error("Analyzer-Initialisierung fehlgeschlagen: %s", _az_err, exc_info=True)
+        TelegramNotifier().send(f"❌ <b>Analyse-Fehler</b>\nAnalyzer-Init fehlgeschlagen: <code>{_az_err}</code>")
+        return
     if _multi_agent_enabled:
         console.print("  [bold magenta]🤝 Multi-Agent Konsens aktiv[/bold magenta] (3 Claude-Analysten)")
-    collectors = _make_collectors()
+    try:
+        collectors = _make_collectors()
+    except Exception as _col_err:
+        log.error("Collector-Initialisierung fehlgeschlagen: %s", _col_err, exc_info=True)
+        TelegramNotifier().send(f"❌ <b>Analyse-Fehler</b>\nCollector-Init fehlgeschlagen: <code>{_col_err}</code>")
+        return
 
     # Inject continuous learning memo into Claude's system prompt
     lessons_memo = reflection.get_active_memo() if reflection else None
@@ -541,14 +560,18 @@ def run_analysis_cycle(
             macro_news_for_regime = NewsAPICollector().collect_general("market recession economy", max_results=10)
         except Exception as e:
             cycle_log.warning("Hedge-Regime: Macro-News konnten nicht geladen werden – %s", e)
-        regime, hedge_actions = hedge_strategy.evaluate_regime(macro_news_for_regime or None)
-        regime_color = {"BULL": "green", "NEUTRAL": "yellow", "BEAR": "red", "CRISIS": "bold red"}.get(regime, "white")
-        latest = hedge_strategy.regime_summary()
-        score_str = f" (Score: {latest['recession_score']:.2f})" if latest else ""
-        console.print(f"  Marktregime: [{regime_color}]{regime}[/{regime_color}]{score_str}")
-        for action in hedge_actions:
-            console.print(f"  [magenta]{action}[/magenta]")
-            cycle_actions.append(action)
+        try:
+            regime, hedge_actions = hedge_strategy.evaluate_regime(macro_news_for_regime or None)
+            regime_color = {"BULL": "green", "NEUTRAL": "yellow", "BEAR": "red", "CRISIS": "bold red"}.get(regime, "white")
+            latest = hedge_strategy.regime_summary()
+            score_str = f" (Score: {latest['recession_score']:.2f})" if latest else ""
+            console.print(f"  Marktregime: [{regime_color}]{regime}[/{regime_color}]{score_str}")
+            for action in hedge_actions:
+                console.print(f"  [magenta]{action}[/magenta]")
+                cycle_actions.append(action)
+        except Exception as _reg_err:
+            cycle_log.error("Regime-Check fehlgeschlagen – fahre ohne Hedge fort: %s", _reg_err, exc_info=True)
+            console.print(f"  [dim red]⚠ Regime-Check fehlgeschlagen: {_reg_err}[/dim red]")
 
     # ── Makro-Events aus Webhook anzeigen ────────────────────────────────────
     if config.tradingview_webhook_enabled:
@@ -565,10 +588,14 @@ def run_analysis_cycle(
             pass
 
     # Check stop-loss / take-profit first (no Claude needed)
-    exit_actions = strategy.check_open_positions()
-    for action in exit_actions:
-        console.print(f"  [yellow]{action}[/yellow]")
-    cycle_actions.extend(exit_actions)
+    try:
+        exit_actions = strategy.check_open_positions()
+        for action in exit_actions:
+            console.print(f"  [yellow]{action}[/yellow]")
+        cycle_actions.extend(exit_actions)
+    except Exception as _sl_err:
+        cycle_log.error("SL/TP-Check fehlgeschlagen: %s", _sl_err, exc_info=True)
+        console.print(f"  [dim red]⚠ SL/TP-Check fehlgeschlagen: {_sl_err}[/dim red]")
 
     # TradingView SELL-Signale verarbeiten (Short/Bearish Engulfing)
     if config.tradingview_webhook_enabled:
