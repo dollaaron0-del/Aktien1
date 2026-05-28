@@ -275,6 +275,16 @@ def main():
                 "[yellow]⚠ IBKR-Verbindung fehlgeschlagen "
                 f"({config.ibkr_host}:{config.ibkr_port}) – Fallback auf Paper-Broker.[/yellow]"
             )
+            try:
+                from notifier.telegram_notifier import TelegramNotifier
+                TelegramNotifier().send(
+                    f"⚠️ <b>IBKR-Verbindung fehlgeschlagen</b>\n\n"
+                    f"Host: {config.ibkr_host}:{config.ibkr_port}\n"
+                    f"Bot läuft im Paper-Modus – keine echten Orders!\n\n"
+                    f"IB Gateway prüfen und Bot neu starten."
+                )
+            except Exception:
+                pass
             broker = PaperBroker()
     else:
         broker = PaperBroker()
