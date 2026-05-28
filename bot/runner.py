@@ -505,7 +505,12 @@ def run_analysis_cycle(
     hedge_strategy=None,
 ):
     rule_suffix = "  [bold yellow][EXPLORATION][/bold yellow]" if config.exploration_mode else ""
-    console.rule(f"[bold blue]Analyse-Zyklus – {datetime.now().strftime('%Y-%m-%d %H:%M')}{rule_suffix}")
+    _cycle_ts = datetime.now().strftime('%Y-%m-%d %H:%M')
+    console.rule(f"[bold blue]Analyse-Zyklus – {_cycle_ts}{rule_suffix}")
+    try:
+        TelegramNotifier().send(f"🔄 <b>Analyse-Zyklus gestartet</b> – {_cycle_ts}")
+    except Exception:
+        pass
 
     # Multi-Agent Konsens wenn aktiviert, sonst Standard-Analyzer
     _multi_agent_enabled = os.getenv("MULTI_AGENT_ENABLED", "false").lower() in ("1", "true", "yes")

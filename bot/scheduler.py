@@ -553,10 +553,18 @@ def run_bot_loop(
                         f"Starte Pre-Market Briefing und Analyse jetzt..."
                     )
                     _pre_market_job(slot["exchange"])
-                    run_analysis_cycle(
-                        portfolio, broker, strategy, tracker, phase_ctrl,
-                        archive, reflection, weekend_prep_inst, hedge_strategy_inst,
-                    )
+                    try:
+                        run_analysis_cycle(
+                            portfolio, broker, strategy, tracker, phase_ctrl,
+                            archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+                        )
+                    except Exception as _cycle_err:
+                        log.error("Nachhol-Analyse fehlgeschlagen: %s", _cycle_err, exc_info=True)
+                        TelegramNotifier().send(
+                            f"❌ <b>Nachhol-Analyse fehlgeschlagen</b>\n\n"
+                            f"Fehler: <code>{str(_cycle_err)[:300]}</code>\n\n"
+                            f"Bitte Logs prüfen: <code>journalctl -u aktien_bot -n 50</code>"
+                        )
                     break
             except Exception as e:
                 log.warning("Catch-up-Check fehlgeschlagen: %s", e)
@@ -708,7 +716,12 @@ def run_bot_loop(
             )
             _watchdog_ran_dates.add(today_str)
         except Exception as _wd_err:
-            log.error("Watchdog-Analyse fehlgeschlagen: %s", _wd_err)
+            log.error("Watchdog-Analyse fehlgeschlagen: %s", _wd_err, exc_info=True)
+            TelegramNotifier().send(
+                f"❌ <b>Watchdog-Analyse fehlgeschlagen</b>\n\n"
+                f"Fehler: <code>{str(_wd_err)[:300]}</code>\n\n"
+                f"Bitte Logs prüfen: <code>journalctl -u aktien_bot -n 50</code>"
+            )
 
     schedule.every().hour.do(_daily_analysis_watchdog)
     _daily_analysis_watchdog()  # sofort beim Start prüfen
