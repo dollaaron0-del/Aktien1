@@ -107,6 +107,8 @@ class SignalConfirmation:
             today = float(hist["Volume"].iloc[-1])
             if avg <= 0:
                 return SignalCheck("Volumen", True, "Keine Basis", "Übersprungen")
+            if today == 0:
+                return SignalCheck("Volumen", True, "Markt geschlossen", "Übersprungen (kein Tagesvolumen)")
             ratio = today / avg
             passed = ratio >= self.volume_boost_ratio
             return SignalCheck(

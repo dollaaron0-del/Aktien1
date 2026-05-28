@@ -886,6 +886,22 @@ def run_analysis_cycle(
                 f"(Konfidenz/Schwelle/Filter – Logs prüfen)[/dim]"
             )
 
+        # Korrektur-Follow-Up: Headline-BUY-Signal durch Strategy geblockt → User informieren
+        if (
+            ticker in _headline_meta
+            and analysis.recommendation == "BUY"
+            and (action is None or "GEKAUFT" not in action)
+        ):
+            try:
+                _block_reason = action or f"[{ticker}] Kein Kauf (Filter-Details in Logs)"
+                TelegramNotifier().send(
+                    f"⚠️ <b>{ticker} – Kauf nicht ausgeführt</b>\n\n"
+                    f"Claude: BUY (Score {analysis.sentiment_score:.2f}) – aber Trade blockiert:\n"
+                    f"{_block_reason.replace(f'[{ticker}] ', '')}"
+                )
+            except Exception as _corr_err:
+                log.debug("Korrektur-Follow-Up fehlgeschlagen: %s", _corr_err)
+
     # Record portfolio snapshot
     prices = broker.get_prices(list(portfolio.all_positions().keys()))
     total_value = portfolio.total_value(prices)

@@ -803,7 +803,7 @@ def run_bot_loop(
                             f"(Score {sig.score:.2f})"
                             for sig in urgent
                         )
-                        + "\n\n🔍 Vollanalyse läuft – Ergebnis folgt in wenigen Minuten."
+                        + "\n\n📋 Vollanalyse in Warteschlange – Ergebnis folgt im nächsten Bot-Zyklus."
                     )
         except Exception as e:
             log.warning("Headline-Scan-Job fehlgeschlagen: %s", e)
