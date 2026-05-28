@@ -104,10 +104,18 @@ class IBKRBroker:
             ib = IB()
             log.info("IBKR: Verbindungsversuch %s:%d (clientId=%d) …", _HOST, _PORT, _CLIENT_ID)
             ib.connect(_HOST, _PORT, clientId=_CLIENT_ID, readonly=False, timeout=10)
+            log.info("IBKR: TCP-Verbindung hergestellt – frage Konten ab …")
+        except Exception as e:
+            log.exception("IBKR connect() fehlgeschlagen (%s:%d): %s", _HOST, _PORT, e)
+            self._connected = False
+            return False
+
+        try:
             self._ib = ib
             self._connected = True
 
             accounts = ib.managedAccounts()
+            log.info("IBKR: managedAccounts = %s", accounts)
             self._active_account = _ACCOUNT or (accounts[0] if accounts else "")
 
             # Paper-Account-Erkennung: IBKR Paper-Accounts beginnen mit "DU"
@@ -135,7 +143,7 @@ class IBKRBroker:
                 )
             return True
         except Exception as e:
-            log.error("IBKR Verbindung fehlgeschlagen (%s:%d): %s", _HOST, _PORT, e)
+            log.exception("IBKR post-connect fehlgeschlagen: %s", e)
             self._connected = False
             return False
 
