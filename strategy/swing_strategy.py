@@ -223,10 +223,26 @@ class SwingStrategy:
             portfolio_value
         )
 
+        # Pre-Market-Boost: wenn der Heimatmarkt noch geschlossen ist, höhere Schwelle
+        _pre_market = False
+        if config.pre_market_threshold_boost > 0:
+            try:
+                from analyzers.market_schedule import is_exchange_open
+                _eu_sfx = {".DE",".F",".MU",".PA",".AS",".MI",".MC",".BR",".BE",
+                           ".VI",".L",".SW",".CO",".ST",".HE",".OL"}
+                _ticker_exchange = "XETRA" if any(ticker.upper().endswith(s.upper()) for s in _eu_sfx) else "NYSE"
+                if not is_exchange_open(_ticker_exchange):
+                    effective_threshold += config.pre_market_threshold_boost
+                    _pre_market = True
+            except Exception:
+                pass
+
         if analysis.sentiment_score < effective_threshold:
             return (
                 f"[{ticker}] Sentiment {analysis.sentiment_score:.2f} unter Schwelle "
-                f"{effective_threshold:.2f} ({self.focus.profile.label}) – übersprungen."
+                f"{effective_threshold:.2f} ({self.focus.profile.label}"
+                + (" – Pre-Market)" if _pre_market else ")")
+                + " – übersprungen."
             )
 
         # Circuit Breaker: Tagesverlust / Drawdown prüfen

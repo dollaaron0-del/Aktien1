@@ -57,6 +57,10 @@ class Config:
     # Sentiment thresholds (0–1)
     buy_threshold: float = 0.65
     sell_threshold: float = 0.35
+    # Extra-Schwelle wenn der Heimatmarkt einer Aktie noch geschlossen ist (Pre-Market-Kauf)
+    pre_market_threshold_boost: float = field(
+        default_factory=lambda: float(os.getenv("PRE_MARKET_THRESHOLD_BOOST", "0.05"))
+    )
     min_sources: int = field(default_factory=lambda: int(os.getenv("MIN_SOURCES", "1")))
 
     # ── Marktbasierter Analyse-Zeitplan ─────────────────────────────────────

@@ -94,6 +94,24 @@ _EXCHANGE_HOLIDAYS: Dict[str, Set[str]] = {
 }
 
 
+def is_exchange_open(exchange: str = "NYSE") -> bool:
+    """Returns True if the given exchange is currently in its regular trading session."""
+    exch = EXCHANGE_DEFS.get(exchange.upper())
+    if not exch:
+        return False
+    tz = ZoneInfo(exch["tz"])
+    now_local = datetime.now(tz)
+    if now_local.weekday() >= 5:
+        return False
+    today_str = now_local.date().isoformat()
+    holidays = _EXCHANGE_HOLIDAYS.get(exchange.upper(), _ALL_HOLIDAYS)
+    if today_str in holidays:
+        return False
+    open_time: dtime = exch["open"]
+    close_time = dtime(16, 0)  # standard 16:00 local for all supported exchanges
+    return open_time <= now_local.time() <= close_time
+
+
 def is_market_holiday(d: Optional[date_type] = None, exchange: str = "") -> bool:
     """Returns True if the given date is a holiday for the specified exchange."""
     if d is None:
