@@ -188,6 +188,22 @@ class Config:
     news_stale_pct: float = field(
         default_factory=lambda: float(os.getenv("NEWS_STALE_PCT", "0.05"))
     )
+    # ── Multi-Signal-Bestätigung ──────────────────────────────────────────────
+    # Mindestanzahl grüner Sekundärsignale (von 4) bevor gekauft wird
+    signal_min_confirmations: int = field(
+        default_factory=lambda: int(os.getenv("SIGNAL_MIN_CONFIRMATIONS", "2"))
+    )
+    # Volumen-Boost: heutiges Volumen muss X× des 20d-Avg betragen
+    signal_volume_boost_ratio: float = field(
+        default_factory=lambda: float(os.getenv("SIGNAL_VOLUME_BOOST_RATIO", "1.20"))
+    )
+    # Momentum-Fenster: 5d-Return muss zwischen min und max liegen
+    signal_momentum_min_pct: float = field(
+        default_factory=lambda: float(os.getenv("SIGNAL_MOMENTUM_MIN_PCT", "0.01"))
+    )
+    signal_momentum_max_pct: float = field(
+        default_factory=lambda: float(os.getenv("SIGNAL_MOMENTUM_MAX_PCT", "0.10"))
+    )
 
     # ── Hedge / Rezessions-Absicherung ───────────────────────────────────────
     # Inverse ETFs kaufen wenn Marktregime BEAR oder CRISIS erreicht

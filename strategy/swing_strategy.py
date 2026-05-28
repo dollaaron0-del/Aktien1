@@ -28,6 +28,7 @@ from analyzers.margin_readiness import MarginTierTracker
 from analyzers.reentry_tracker import ReEntryTracker
 from analyzers.sl_cooldown import StopLossCooldown
 from analyzers.insider_signal import get_insider_score
+from analyzers.signal_confirmation import SignalConfirmation
 from analyzers.regime_adaptive import RegimeAdaptiveConfig, get_adaptive_params
 from analyzers.sharpe_sizer import SharpeSizer
 from analyzers.cross_asset import CrossAssetSignals
@@ -127,6 +128,12 @@ class SwingStrategy:
         self.options_intel   = OptionsIntelligence()
         self.rl_agent        = RLAgent()
         self.sl_cooldown     = StopLossCooldown(cooldown_days=config.sl_cooldown_days)
+        self.signal_confirm  = SignalConfirmation(
+            min_confirmations=config.signal_min_confirmations,
+            volume_boost_ratio=config.signal_volume_boost_ratio,
+            momentum_min_pct=config.signal_momentum_min_pct,
+            momentum_max_pct=config.signal_momentum_max_pct,
+        )
         # Short-Strategy (optional, wird von main.py gesetzt)
         self._short_strategy: Optional["ShortStrategy"] = None
 
@@ -306,6 +313,23 @@ class SwingStrategy:
         if stale:
             log.info("[%s] News-Staleness: %s", ticker, stale_reason)
             return f"[{ticker}] ⏱️ {stale_reason} – Signal veraltet, kein Kauf."
+
+        # ── Multi-Signal-Bestätigung ─────────────────────────────────────────
+        confirmation = self.signal_confirm.check_all(ticker, current_price)
+        log.info(
+            "[%s] Signal-Bestätigung: %d/%d grün – %s",
+            ticker, confirmation.passed_count, len(confirmation.checks),
+            confirmation.summary().split("\n")[0],
+        )
+        if not confirmation.approved:
+            # Bei hohem Score (≥ 0.80) Telegram-Hinweis senden
+            if analysis.sentiment_score >= 0.80:
+                self._notifier.send(confirmation.telegram_text(ticker))
+            return (
+                f"[{ticker}] 📋 Signal-Bestätigung fehlgeschlagen: "
+                f"{confirmation.passed_count}/{confirmation.required} Sekundärsignale grün "
+                f"– kein Kauf."
+            )
 
         # ── RL Agent Entscheidung ────────────────────────────────────────────
         try:
