@@ -1312,6 +1312,8 @@ class SwingStrategy:
             today_vol = float(hist["Volume"].iloc[-1])
             if avg_20d <= 0:
                 return True, ""
+            if today_vol == 0:
+                return True, ""  # Markt noch geschlossen – kein Block
             ratio = today_vol / avg_20d
             threshold = config.volume_confirm_ratio
             if ratio < threshold:
