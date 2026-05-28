@@ -649,8 +649,14 @@ def run_bot_loop(
 
     # ── Nutzeranfragen-Job: alle 15 Minuten prüfen ──────────────────────────
     def _user_request_job():
-        """Sofort-Analyse wenn Nutzer Ticker über das Dashboard angefordert hat."""
+        """Sofort-Analyse wenn Nutzer Ticker über das Dashboard angefordert hat.
+        Außerhalb der Handelszeiten (06–23 Uhr, Wochentags) verbleiben Ticker in
+        der Queue und werden bei der nächsten vorbörslichen Analyse verarbeitet.
+        """
         try:
+            _now = datetime.now()
+            if _now.weekday() >= 5 or not (6 <= _now.hour < 23):
+                return  # Queue wartet – nächste Vorbörsliche Analyse nimmt sie mit
             from analyzers import user_request_queue as _urq
             pending = _urq.peek()
             if not pending:
@@ -896,20 +902,39 @@ def run_bot_loop(
                         f"  [bold yellow]⚡ Signal-Trigger ({_SIGNAL_TRIGGER_SCORE:.0%}): "
                         f"Sofort-Analyse gestartet: {tickers_str}[/bold yellow]"
                     )
-                    notifier.send(
-                        f"⚡ <b>Signal-Trigger</b>\n\n"
-                        + "\n".join(
-                            f"  • <b>{sig.ticker}</b> – {sig.signal_type} "
-                            f"(Score {sig.score:.2f})"
-                            for sig in urgent
+                    _in_trading_hours = (
+                        datetime.now().weekday() < 5
+                        and 6 <= datetime.now().hour < 23
+                    )
+                    if _in_trading_hours:
+                        notifier.send(
+                            f"⚡ <b>Signal-Trigger</b>\n\n"
+                            + "\n".join(
+                                f"  • <b>{sig.ticker}</b> – {sig.signal_type} "
+                                f"(Score {sig.score:.2f})"
+                                for sig in urgent
+                            )
+                            + "\n\n🔍 Sofort-Analyse wird jetzt ausgeführt …"
                         )
-                        + "\n\n🔍 Sofort-Analyse wird jetzt ausgeführt …"
-                    )
-                    # Sofort analysieren – nicht auf nächsten geplanten Zyklus warten
-                    safe_run_analysis_cycle(
-                        portfolio, broker, strategy, tracker, phase_ctrl,
-                        archive, reflection, weekend_prep_inst, hedge_strategy_inst,
-                    )
+                        # Sofort analysieren – nicht auf nächsten geplanten Zyklus warten
+                        safe_run_analysis_cycle(
+                            portfolio, broker, strategy, tracker, phase_ctrl,
+                            archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+                        )
+                    else:
+                        notifier.send(
+                            f"⚡ <b>Signal-Trigger</b> (außerhalb Handelszeiten)\n\n"
+                            + "\n".join(
+                                f"  • <b>{sig.ticker}</b> – {sig.signal_type} "
+                                f"(Score {sig.score:.2f})"
+                                for sig in urgent
+                            )
+                            + "\n\n📋 In Queue gespeichert – Analyse startet mit dem nächsten Vorbörslichen Fenster."
+                        )
+                        log.info(
+                            "Signal-Trigger außerhalb Handelszeiten – %d Ticker in Queue für Vorbörsliche Analyse.",
+                            len(urgent),
+                        )
         except Exception as e:
             log.warning("Headline-Scan-Job fehlgeschlagen: %s", e)
 
