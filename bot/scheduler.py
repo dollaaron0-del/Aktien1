@@ -293,10 +293,20 @@ def run_bot_loop(
 
     def _reschedule_analysis():
         """Rebuilds analysis schedule for the new day (handles DST changes)."""
-        for job in list(schedule.jobs):
-            if getattr(job, "_is_analysis_job", False):
-                schedule.cancel_job(job)
-        _register_analysis_jobs()
+        # Snapshot existing jobs BEFORE cancelling — restore on error
+        cancelled = [
+            job for job in list(schedule.jobs)
+            if getattr(job, "_is_analysis_job", False)
+        ]
+        for job in cancelled:
+            schedule.cancel_job(job)
+        try:
+            _register_analysis_jobs()
+        except Exception as _rsa_err:
+            log.error("_register_analysis_jobs fehlgeschlagen – stelle Jobs wieder her: %s", _rsa_err)
+            # Restore cancelled jobs so analysis doesn't silently disappear
+            for job in cancelled:
+                schedule.jobs.append(job)
 
     def _pre_market_job(exchange: str):
         """Pre-Market Briefing: schneller Daten-Scan ohne Claude."""
@@ -517,8 +527,8 @@ def run_bot_loop(
 
     # ── Catch-up: verpasstes Analyse-Fenster nachholen ─────────────────────
     # Wenn der Bot nach dem geplanten Zeitfenster startet (z.B. nach Neustart),
-    # wird die Analyse sofort nachgeholt – bis zu 60 Minuten nach dem Fenster.
-    _CATCHUP_MAX_MINUTES = 60
+    # wird die Analyse sofort nachgeholt – bis zu 180 Minuten nach dem Fenster.
+    _CATCHUP_MAX_MINUTES = 180
 
     def _catchup_missed_window():
         now_local = datetime.now()
@@ -625,23 +635,83 @@ def run_bot_loop(
     # ── Nutzeranfragen-Job: alle 15 Minuten prüfen ──────────────────────────
     def _user_request_job():
         """Sofort-Analyse wenn Nutzer Ticker über das Dashboard angefordert hat."""
-        from analyzers import user_request_queue as _urq
-        pending = _urq.peek()
-        if not pending:
-            return
-        log.info(
-            "Nutzeranfrage-Job: %d Ticker sofort analysieren: %s",
-            len(pending), pending,
-        )
-        console.print(
-            f"\n[bold cyan]📬 Nutzeranfrage – sofortige Analyse: {', '.join(pending)}[/bold cyan]"
-        )
-        run_analysis_cycle(
-            portfolio, broker, strategy, tracker, phase_ctrl,
-            archive, reflection, weekend_prep_inst, hedge_strategy_inst,
-        )
+        try:
+            from analyzers import user_request_queue as _urq
+            pending = _urq.peek()
+            if not pending:
+                return
+            log.info(
+                "Nutzeranfrage-Job: %d Ticker sofort analysieren: %s",
+                len(pending), pending,
+            )
+            console.print(
+                f"\n[bold cyan]📬 Nutzeranfrage – sofortige Analyse: {', '.join(pending)}[/bold cyan]"
+            )
+            run_analysis_cycle(
+                portfolio, broker, strategy, tracker, phase_ctrl,
+                archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+            )
+        except Exception as _urq_err:
+            log.error("Nutzeranfrage-Job fehlgeschlagen: %s", _urq_err)
 
     schedule.every(15).minutes.do(_user_request_job)
+
+    # ── Tages-Watchdog: stellt sicher dass täglich mindestens eine Analyse läuft ──
+    _watchdog_ran_dates: set = set()
+
+    def _daily_analysis_watchdog():
+        """
+        Prüft stündlich ob heute bereits eine Analyse gelaufen ist.
+        Fehlt sie (nach dem geplanten Zeitfenster), wird eine Nachhol-Analyse gestartet.
+        Verhindert stille Ausfälle durch Reschedule-Fehler oder Bot-Neustart.
+        """
+        now = datetime.now()
+        today = now.date()
+        if today.weekday() >= 5:
+            return
+        today_str = today.isoformat()
+        if today_str in _watchdog_ran_dates:
+            return
+
+        slots = mkt_schedule.get_schedule_strings(date=today)
+        if not slots:
+            return
+
+        # Prüfe ob wir den ersten Slot um mehr als 30 Min überschritten haben
+        h, m = map(int, slots[0]["hhmm"].split(":"))
+        slot_dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        if now < slot_dt + __import__("datetime").timedelta(minutes=30):
+            return  # noch zu früh
+
+        # Analyse-Log: gab es heute schon eine Analyse?
+        try:
+            from analyzers.analysis_log import AnalysisLog as _AL
+            recent = _AL().get_recent(limit=1)
+            if recent and (recent[0].get("analyzed_at") or "").startswith(today_str):
+                _watchdog_ran_dates.add(today_str)
+                return
+        except Exception:
+            pass
+
+        log.warning("Tages-Watchdog: Keine Analyse heute erkannt – starte Nachhol-Analyse.")
+        console.print(
+            f"\n[bold yellow]🔔 Tages-Watchdog: Keine heutige Analyse erkannt – hole nach...[/bold yellow]"
+        )
+        TelegramNotifier().send(
+            "⏰ <b>Tages-Watchdog</b>\n\n"
+            "Keine Analyse für heute registriert – starte Nachhol-Analyse jetzt."
+        )
+        try:
+            run_analysis_cycle(
+                portfolio, broker, strategy, tracker, phase_ctrl,
+                archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+            )
+            _watchdog_ran_dates.add(today_str)
+        except Exception as _wd_err:
+            log.error("Watchdog-Analyse fehlgeschlagen: %s", _wd_err)
+
+    schedule.every().hour.do(_daily_analysis_watchdog)
+    _daily_analysis_watchdog()  # sofort beim Start prüfen
 
     # ── Conditional Entry Preis-Check: alle 15 Minuten ──────────────────────
     def _conditional_entry_job():
