@@ -705,7 +705,17 @@ def run_bot_loop(
             portfolio, broker, strategy, tracker, phase_ctrl,
             archive, reflection, weekend_prep_inst, hedge_strategy_inst,
         )
-        _watchdog_ran_dates.add(today_str)
+        # Nur als "erledigt" markieren wenn die Analyse tatsächlich Einträge erzeugt hat.
+        # Bei Fehler bleibt der Tag offen → Watchdog versucht es in der nächsten Stunde erneut.
+        try:
+            from analyzers.analysis_log import AnalysisLog as _AL
+            after = _AL().get_recent(limit=1)
+            if after and (after[0].get("analyzed_at") or "").startswith(today_str):
+                _watchdog_ran_dates.add(today_str)
+            else:
+                log.warning("Tages-Watchdog: Analyse lief, aber kein Log-Eintrag – erneuter Versuch in 1h")
+        except Exception:
+            pass  # Im Zweifel nächste Stunde wieder prüfen
 
     schedule.every().hour.do(_daily_analysis_watchdog)
     _daily_analysis_watchdog()  # sofort beim Start prüfen
