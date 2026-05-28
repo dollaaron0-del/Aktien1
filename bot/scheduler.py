@@ -916,6 +916,62 @@ def run_bot_loop(
     schedule.every(20).minutes.do(_headline_scan_job)
     _headline_scan_job()   # Einmal sofort beim Start ausführen
 
+    # ── Momentum/Hype-Scanner: alle 45 Minuten während Handelszeiten ─────────
+    def _momentum_scan_job():
+        """
+        Scannt das Universum auf Aktien mit ungewöhnlichem Kaufdruck
+        (Volumen ≥ 2× Schnitt UND Kurs ≥ +2%). Wer gerade gehyped wird,
+        kommt sofort in die Analyse-Queue und löst eine Sofort-Analyse aus.
+        Läuft nur an Handelstagen 08:00–22:00 Lokalzeit.
+        """
+        try:
+            local_now = datetime.now()
+            if local_now.weekday() >= 5 or not (8 <= local_now.hour < 22):
+                return
+            from analyzers.watchlist_scanner import WatchlistScanner
+            from analyzers.user_request_queue import add_ticker as _req_ticker
+            scanner = WatchlistScanner(
+                min_volume_ratio=2.0,
+                min_price_change_pct=2.0,
+                max_picks=5,
+            )
+            exclude = list(portfolio.all_positions().keys())
+            hits = scanner.scan(exclude=exclude)
+            if not hits:
+                return
+            notifier = TelegramNotifier()
+            for h in hits:
+                _req_ticker(h["ticker"], meta={
+                    "signal_type":   "MOMENTUM",
+                    "score":         min(0.95, 0.70 + h["volume_ratio"] * 0.05),
+                    "headline":      f"Vol ×{h['volume_ratio']:.1f}, +{h['change_pct']:.1f}%",
+                    "from_headline": False,
+                    "momentum":      True,
+                })
+            msg = "\n".join(
+                f"  • <b>{h['ticker']}</b> +{h['change_pct']:.1f}% | "
+                f"Vol ×{h['volume_ratio']:.1f} | {h['streak_days']}d↑"
+                for h in hits
+            )
+            notifier.send(
+                f"📈 <b>Momentum-Scanner</b>\n\n{msg}\n\n"
+                f"🔍 Sofort-Analyse gestartet."
+            )
+            console.print(
+                f"  [bold green]📈 Momentum-Scanner: "
+                f"{len(hits)} Hype-Kandidaten → "
+                f"{', '.join(h['ticker'] for h in hits)}[/bold green]"
+            )
+            safe_run_analysis_cycle(
+                portfolio, broker, strategy, tracker, phase_ctrl,
+                archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+            )
+        except Exception as e:
+            log.warning("Momentum-Scan-Job fehlgeschlagen: %s", e)
+
+    schedule.every(45).minutes.do(_momentum_scan_job)
+    _momentum_scan_job()   # Einmal sofort beim Start ausführen
+
     # ── Kursbewegungs-Alarm: alle 5 Minuten während Handelszeiten ───────────
     _price_move_last: dict = {}   # ticker → letzter bekannter Kurs
 
