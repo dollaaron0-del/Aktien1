@@ -71,6 +71,11 @@ EU_UNIVERSE: Dict[str, tuple] = {
     "BAYN.DE":   ("Bayer AG",           "DE", "Healthcare"),
     "ADS.DE":    ("Adidas AG",          "DE", "Konsum"),
     "HEN3.DE":   ("Henkel",             "DE", "Konsum"),
+    "RHM.DE":    ("Rheinmetall AG",     "DE", "Rüstung"),
+    "MTX.DE":    ("MTU Aero Engines",   "DE", "Luftfahrt"),
+    "ENR.DE":    ("Siemens Energy",     "DE", "Energie"),
+    "DHER.DE":   ("Delivery Hero",      "DE", "Technologie"),
+    "ZAL.DE":    ("Zalando SE",         "DE", "Konsum"),
     # Niederlande (AEX .AS)
     "ASML.AS":   ("ASML Holding",       "NL", "Halbleiter"),
     "HEIA.AS":   ("Heineken",           "NL", "Konsum"),
