@@ -3,6 +3,7 @@ bot/runner.py – Analysis cycle, news collection, and related helpers.
 """
 
 import os
+import traceback
 from collections import defaultdict
 from datetime import datetime, date
 from typing import List, Dict, Optional
@@ -500,6 +501,28 @@ def _print_portfolio_summary(portfolio: Portfolio, broker, phase_ctrl: PhaseCont
 def _progress_bar(pct: float, width: int = 20) -> str:
     filled = int(pct / 100 * width)
     return f"[{'█' * filled}{'░' * (width - filled)}]"
+
+
+def safe_run_analysis_cycle(*args, **kwargs) -> None:
+    """
+    Fehler-sicherer Wrapper um run_analysis_cycle.
+    Fängt alle unbehandelten Exceptions, loggt den vollen Traceback
+    und schickt ihn per Telegram — der Bot-Loop läuft weiter.
+    Alle Aufruforte in scheduler.py sollten diesen Wrapper verwenden.
+    """
+    try:
+        run_analysis_cycle(*args, **kwargs)
+    except Exception as _fatal:
+        _tb = traceback.format_exc()
+        log.error("Analyse-Zyklus FATAL – ungefangene Exception:\n%s", _tb)
+        try:
+            TelegramNotifier().send(
+                f"❌ <b>Analyse-Zyklus abgebrochen</b>\n\n"
+                f"Fehler: <code>{str(_fatal)[:400]}</code>\n\n"
+                f"Details: <code>journalctl -u aktien_bot -n 80</code>"
+            )
+        except Exception:
+            pass
 
 
 def run_analysis_cycle(

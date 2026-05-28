@@ -27,7 +27,7 @@ from analyzers.weekend_prep import WeekendPrep
 from analyzers.parameter_optimizer import ParameterOptimizer, _MIN_TRADES
 from analyzers.turbo_learner import TurboLearner
 from bot.pre_market_scanner import PreMarketScanner
-from bot.runner import run_analysis_cycle, _print_portfolio_summary
+from bot.runner import run_analysis_cycle, safe_run_analysis_cycle, _print_portfolio_summary
 from cli.commands import run_weekend_prep
 
 console = Console()
@@ -337,7 +337,7 @@ def run_bot_loop(
         for slot in slots:
             # Volle Analyse 30 Min vor Open (bisherig)
             job = schedule.every().day.at(slot["hhmm"]).do(
-                run_analysis_cycle,
+                safe_run_analysis_cycle,
                 portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
                 weekend_prep_inst, hedge_strategy_inst,
             )
@@ -553,18 +553,10 @@ def run_bot_loop(
                         f"Starte Pre-Market Briefing und Analyse jetzt..."
                     )
                     _pre_market_job(slot["exchange"])
-                    try:
-                        run_analysis_cycle(
-                            portfolio, broker, strategy, tracker, phase_ctrl,
-                            archive, reflection, weekend_prep_inst, hedge_strategy_inst,
-                        )
-                    except Exception as _cycle_err:
-                        log.error("Nachhol-Analyse fehlgeschlagen: %s", _cycle_err, exc_info=True)
-                        TelegramNotifier().send(
-                            f"❌ <b>Nachhol-Analyse fehlgeschlagen</b>\n\n"
-                            f"Fehler: <code>{str(_cycle_err)[:300]}</code>\n\n"
-                            f"Bitte Logs prüfen: <code>journalctl -u aktien_bot -n 50</code>"
-                        )
+                    safe_run_analysis_cycle(
+                        portfolio, broker, strategy, tracker, phase_ctrl,
+                        archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+                    )
                     break
             except Exception as e:
                 log.warning("Catch-up-Check fehlgeschlagen: %s", e)
@@ -655,7 +647,7 @@ def run_bot_loop(
             console.print(
                 f"\n[bold cyan]📬 Nutzeranfrage – sofortige Analyse: {', '.join(pending)}[/bold cyan]"
             )
-            run_analysis_cycle(
+            safe_run_analysis_cycle(
                 portfolio, broker, strategy, tracker, phase_ctrl,
                 archive, reflection, weekend_prep_inst, hedge_strategy_inst,
             )
@@ -709,19 +701,11 @@ def run_bot_loop(
             "⏰ <b>Tages-Watchdog</b>\n\n"
             "Keine Analyse für heute registriert – starte Nachhol-Analyse jetzt."
         )
-        try:
-            run_analysis_cycle(
-                portfolio, broker, strategy, tracker, phase_ctrl,
-                archive, reflection, weekend_prep_inst, hedge_strategy_inst,
-            )
-            _watchdog_ran_dates.add(today_str)
-        except Exception as _wd_err:
-            log.error("Watchdog-Analyse fehlgeschlagen: %s", _wd_err, exc_info=True)
-            TelegramNotifier().send(
-                f"❌ <b>Watchdog-Analyse fehlgeschlagen</b>\n\n"
-                f"Fehler: <code>{str(_wd_err)[:300]}</code>\n\n"
-                f"Bitte Logs prüfen: <code>journalctl -u aktien_bot -n 50</code>"
-            )
+        safe_run_analysis_cycle(
+            portfolio, broker, strategy, tracker, phase_ctrl,
+            archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+        )
+        _watchdog_ran_dates.add(today_str)
 
     schedule.every().hour.do(_daily_analysis_watchdog)
     _daily_analysis_watchdog()  # sofort beim Start prüfen
@@ -1068,7 +1052,7 @@ def run_bot_loop(
                 f"[bold cyan]Intraday-Scan – {datetime.now().strftime('%H:%M')}[/bold cyan]"
             )
             try:
-                run_analysis_cycle(
+                safe_run_analysis_cycle(
                     portfolio, broker, strategy, tracker, phase_ctrl,
                     archive, reflection, weekend_prep_inst, hedge_strategy_inst,
                 )
