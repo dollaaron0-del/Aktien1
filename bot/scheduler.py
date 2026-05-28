@@ -536,6 +536,21 @@ def run_bot_loop(
         if local_date.weekday() >= 5:
             return
         slots = mkt_schedule.get_schedule_strings(date=local_date)
+
+        # Analyse-Log einmal laden um doppelte Nachholungen zu verhindern
+        _today_str = local_date.isoformat()
+        _already_ran = False
+        try:
+            from analyzers.analysis_log import AnalysisLog as _AL
+            _recent = _AL().get_recent(limit=1)
+            if _recent and (_recent[0].get("analyzed_at") or "").startswith(_today_str):
+                _already_ran = True
+        except Exception:
+            pass
+
+        if _already_ran:
+            return  # Analyse hat heute schon stattgefunden – kein Nachholen nötig
+
         for slot in slots:
             try:
                 h, m = map(int, slot["hhmm"].split(":"))
