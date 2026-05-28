@@ -683,6 +683,14 @@ def run_bot_loop(
         if now < slot_dt + __import__("datetime").timedelta(minutes=30):
             return  # noch zu früh
 
+        # Prüfe ob IRGENDEIN heutiger Slot in den letzten 45 Min war → Analyse läuft noch
+        _td = __import__("datetime").timedelta
+        for _slot in slots:
+            _sh, _sm = map(int, _slot["hhmm"].split(":"))
+            _slot_dt = now.replace(hour=_sh, minute=_sm, second=0, microsecond=0)
+            if _td(0) <= now - _slot_dt <= _td(minutes=45):
+                return  # Analyse läuft wahrscheinlich noch
+
         # Analyse-Log: gab es heute schon eine Analyse?
         try:
             from analyzers.analysis_log import AnalysisLog as _AL
