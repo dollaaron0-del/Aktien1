@@ -123,9 +123,6 @@ sleep 0.8
 xdotool click 1
 sleep 1.2
 echo "X11-Fokus nach Klick: $(xdotool getwindowfocus 2>/dev/null) (war: $NATURAL_FOCUS)"
-# Fokus auf natuerlichen JavaFX Handler zurueck: XTEST-Tastatureingaben muessen dorthin
-xdotool windowfocus --sync "$NATURAL_FOCUS" 2>/dev/null || true
-echo "Fokus wiederhergestellt: $(xdotool getwindowfocus 2>/dev/null) (erwartet: $NATURAL_FOCUS)"
 sleep 0.3
 
 scrot /tmp/ibgw_before_type.png 2>/dev/null || true
@@ -146,7 +143,7 @@ print(f"Zeile y={uy}: {row_d} ({'Fokus-Cursor!' if row_d>100 else 'keine Aenderu
 print(f"Gesamt: {total} ({'Klick hatte Wirkung' if total>300 else 'Klick hatte KEINE Wirkung'})")
 PYEOF
 
-# KEIN windowfocus - natuerlicherweise bleibt JavaFX-Handler
+echo "X11-Fokus vor type: $(xdotool getwindowfocus 2>/dev/null)"
 xdotool type --clearmodifiers --delay 150 "stocksentimenttradingbot"
 sleep 1.0
 
@@ -193,7 +190,7 @@ echo "Klicke Passwort: (${USER_ABS_X}, ${PASS_ABS_Y})"
 xdotool mousemove "$USER_ABS_X" "$PASS_ABS_Y"
 sleep 0.3
 xdotool click 1; sleep 0.8; xdotool click 1; sleep 1.2
-xdotool windowfocus --sync "$NATURAL_FOCUS" 2>/dev/null || true
+echo "X11-Fokus vor Passwort-type: $(xdotool getwindowfocus 2>/dev/null)"
 sleep 0.3
 
 xdotool type --clearmodifiers --delay 150 "narjAv-qixru3-b1whaj"
