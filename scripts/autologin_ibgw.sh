@@ -132,6 +132,10 @@ PYEOF
     if ! $IBC_OK; then
         echo "IBC FEHLGESCHLAGEN - Diagnose:"
         ps aux | grep -E 'java|xterm|ibc' | grep -v grep | head -5
+        echo "=== /tmp/ibc_run.log ==="
+        cat /tmp/ibc_run.log 2>/dev/null || echo "(keine /tmp/ibc_run.log)"
+        echo "=== launcher.log (letzte 50 Zeilen) ==="
+        tail -50 /root/Jts/launcher.log 2>/dev/null || echo "(keine /root/Jts/launcher.log)"
         echo "IBC-Logs (suche):"
         find /tmp /root/Jts /opt/ibc -name "*.log" -newer /tmp/ibc_logs 2>/dev/null | \
             xargs ls -la 2>/dev/null | tail -10
@@ -283,8 +287,9 @@ print(f"Zeile y={uy}: {row_d} ({'Fokus-Cursor!' if row_d>100 else 'keine Aenderu
 print(f"Gesamt: {total} ({'Klick hatte Wirkung' if total>300 else 'Klick hatte KEINE Wirkung'})")
 PYEOF
 
-echo "X11-Fokus vor type: $(xdotool getwindowfocus 2>/dev/null)"
-xdotool type --clearmodifiers --delay 120 'stocksentimenttradingbot'
+FOCUS_WIN=$(xdotool getwindowfocus 2>/dev/null)
+echo "X11-Fokus vor type: $FOCUS_WIN"
+xdotool type --window "$FOCUS_WIN" --clearmodifiers --delay 200 'stocksentimenttradingbot'
 sleep 0.5
 
 scrot /tmp/ibgw_after_type.png 2>/dev/null || true
@@ -330,10 +335,11 @@ echo "Klicke Passwort: (${USER_ABS_X}, ${PASS_ABS_Y})"
 xdotool mousemove "$USER_ABS_X" "$PASS_ABS_Y"
 sleep 0.3
 xdotool click 1; sleep 0.8; xdotool click 1; sleep 1.2
-echo "X11-Fokus vor Passwort-type: $(xdotool getwindowfocus 2>/dev/null)"
+FOCUS_WIN=$(xdotool getwindowfocus 2>/dev/null)
+echo "X11-Fokus vor Passwort-type: $FOCUS_WIN"
 sleep 0.3
 
-xdotool type --clearmodifiers --delay 120 'narjAv-qixru3-b1whaj'
+xdotool type --window "$FOCUS_WIN" --clearmodifiers --delay 200 'narjAv-qixru3-b1whaj'
 sleep 1.0
 
 xdotool key Return
