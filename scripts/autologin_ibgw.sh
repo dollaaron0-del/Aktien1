@@ -55,15 +55,45 @@ for y in range(60):
     print(f"{wy_px:3d}px: {row}")
 PYEOF
 
-# Login-Koordinaten: Formular liegt bei x≈33% der Fensterbreite (ASCII-Scan: Logo-Mitte x≈261)
-# FELD 2 y=223 (37%): Username-Feld; FELD 3 y=257 (42%): Passwort-Feld
-# KEIN windowfocus vor dem Tippen - JavaFX Eingabe-Handler behalten
-USER_REL_Y=223
-PASS_REL_Y=257
-USER_ABS_X=$((WIN_X + W * 33 / 100))
+# Pixel-Scan: Helle Eingabefelder automatisch erkennen (y=200-320, threshold>185, >50 helle Pixel)
+echo "=== Pixel-Scan Eingabefelder ==="
+SCAN=$(/opt/Aktien/venv/bin/python3 - /tmp/ibgw_init.png "$WIN_X" "$WIN_Y" "$W" "$H" <<'PYEOF'
+import sys
+from PIL import Image
+f, wx, wy, ww, wh = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
+img = Image.open(f)
+win = img.crop((wx, wy, wx+ww, wy+wh)).convert('L')
+rows = [(y, [x for x in range(ww) if win.getpixel((x, y)) > 185])
+        for y in range(200, min(wh, 320))]
+rows = [(y, bp) for y, bp in rows if len(bp) > 50]
+if not rows:
+    print(f"FELD0 {ww//2} 223")
+    print(f"FELD1 {ww//2} 257")
+else:
+    clusters, cl = [], [rows[0]]
+    for r in rows[1:]:
+        if r[0] - cl[-1][0] <= 5:
+            cl.append(r)
+        else:
+            clusters.append(cl)
+            cl = [r]
+    clusters.append(cl)
+    for i, cl in enumerate(clusters):
+        best = max(cl, key=lambda r: len(r[1]))
+        xc = sum(best[1]) // len(best[1])
+        print(f"FELD{i} {xc} {best[0]}")
+PYEOF
+)
+echo "$SCAN"
+SCAN_X=$(echo "$SCAN"  | awk 'NR==1{print $2}')
+SCAN_Y0=$(echo "$SCAN" | awk 'NR==1{print $3}')
+SCAN_Y1=$(echo "$SCAN" | awk 'NR==2{print $3}')
+if [ -n "$SCAN_X"  ]; then USER_ABS_X=$((WIN_X + SCAN_X)); else USER_ABS_X=$((WIN_X + W/2)); fi
+if [ -n "$SCAN_Y0" ]; then USER_REL_Y="$SCAN_Y0";           else USER_REL_Y=223; fi
+if [ -n "$SCAN_Y1" ]; then PASS_REL_Y="$SCAN_Y1";           else PASS_REL_Y=257; fi
 USER_ABS_Y=$((WIN_Y + USER_REL_Y))
 PASS_ABS_Y=$((WIN_Y + PASS_REL_Y))
-echo "Klick-Koordinaten: Username (${USER_ABS_X}, ${USER_ABS_Y}), Passwort (${USER_ABS_X}, ${PASS_ABS_Y})"
+echo "Adaptive Koordinaten: Username (${USER_ABS_X}, ${USER_ABS_Y}), Passwort (${USER_ABS_X}, ${PASS_ABS_Y})"
 
 # Fenster in Vordergrund (aber Fokus NICHT aendern)
 xdotool windowraise "$WIN" 2>/dev/null || true
@@ -73,6 +103,7 @@ sleep 0.5
 echo "Klicke Username: (${USER_ABS_X}, ${USER_ABS_Y})"
 xdotool mousemove "$USER_ABS_X" "$USER_ABS_Y"
 sleep 0.3
+echo "Maus-Position: $(xdotool getmouselocation 2>/dev/null)"
 xdotool click 1
 sleep 0.8
 xdotool click 1
