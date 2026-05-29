@@ -46,10 +46,11 @@ H=$(echo "$GEOM" | cut -dx -f2)
 echo "Fenstergrösse: ${W}x${H}"
 
 # --- Direkte Koordinaten fuer das Login-Formular ---
-# Benutzernamefeld: ca. 33% von oben (bei 610px: y=200)
-USER_Y=$((H * 33 / 100))
-# Passwortfeld: ca. 46% von oben (bei 610px: y=280)
-PASS_Y=$((H * 46 / 100))
+# ASCII-Art zeigt Form-Elemente in Zeilen 7-11 (obere 31% = y=122-191px)
+# Benutzernamefeld: ca. 23% von oben (bei 610px: y=140)
+USER_Y=$((H * 23 / 100))
+# Passwortfeld: ca. 34% von oben (bei 610px: y=207)
+PASS_Y=$((H * 34 / 100))
 CENTER_X=$((W / 2))
 
 echo "Klicke Benutzernamefeld bei (${CENTER_X}, ${USER_Y})"
