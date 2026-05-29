@@ -33,6 +33,16 @@ if [ -z "$WIN" ] || [ "$BEST_AREA" -lt 50000 ]; then
 fi
 
 echo "Verwende Fenster: $WIN (${BEST_AREA} px)"
+
+# Fensterposition fuer absolute Koordinaten bestimmen
+WIN_POS=$(xdotool getwindowgeometry "$WIN" 2>/dev/null | grep Position | awk '{print $2}')
+WIN_X=$(echo "$WIN_POS" | cut -d, -f1)
+WIN_Y=$(echo "$WIN_POS" | cut -d, -f2)
+GEOM=$(xdotool getwindowgeometry "$WIN" 2>/dev/null | grep Geometry | awk '{print $2}')
+W=$(echo "$GEOM" | cut -dx -f1)
+H=$(echo "$GEOM" | cut -dx -f2)
+echo "Fenster-Position: (${WIN_X}, ${WIN_Y}), Groesse: ${W}x${H}"
+
 scrot /tmp/ibgw_before.png 2>/dev/null || true
 
 xdotool windowfocus --sync "$WIN" 2>/dev/null || true
@@ -40,50 +50,50 @@ sleep 1
 xdotool windowraise "$WIN" 2>/dev/null || true
 sleep 0.5
 
-GEOM=$(xdotool getwindowgeometry "$WIN" 2>/dev/null | grep Geometry | awk '{print $2}')
-W=$(echo "$GEOM" | cut -dx -f1)
-H=$(echo "$GEOM" | cut -dx -f2)
-echo "Fenstergrösse: ${W}x${H}"
+# ABSOLUTE Koordinaten berechnen (XTEST simuliert echte Hardware-Eingabe)
+# ASCII-Art zeigt Form-Elemente bei y=122-191px (obere 31%)
+# Benutzernamefeld: ca. 23% von oben (y~140)
+USER_ABS_X=$((WIN_X + W / 2))
+USER_ABS_Y=$((WIN_Y + H * 23 / 100))
+# Passwortfeld: ca. 34% von oben (y~207)
+PASS_ABS_Y=$((WIN_Y + H * 34 / 100))
 
-# --- Direkte Koordinaten fuer das Login-Formular ---
-# ASCII-Art zeigt Form-Elemente in Zeilen 7-11 (obere 31% = y=122-191px)
-# Benutzernamefeld: ca. 23% von oben (bei 610px: y=140)
-USER_Y=$((H * 23 / 100))
-# Passwortfeld: ca. 34% von oben (bei 610px: y=207)
-PASS_Y=$((H * 34 / 100))
-CENTER_X=$((W / 2))
-
-echo "Klicke Benutzernamefeld bei (${CENTER_X}, ${USER_Y})"
-xdotool mousemove --window "$WIN" "$CENTER_X" "$USER_Y" click 3 2>/dev/null || true
+echo "Klicke Benutzernamefeld (absolut): (${USER_ABS_X}, ${USER_ABS_Y})"
+xdotool mousemove "$USER_ABS_X" "$USER_ABS_Y"
+sleep 0.3
+xdotool click 1
 sleep 0.8
-xdotool type --clearmodifiers --delay 50 "stocksentimenttradingbot"
+xdotool type --clearmodifiers --delay 80 "stocksentimenttradingbot"
 sleep 0.5
 
-echo "Klicke Passwortfeld bei (${CENTER_X}, ${PASS_Y})"
-xdotool mousemove --window "$WIN" "$CENTER_X" "$PASS_Y" click 3 2>/dev/null || true
+echo "Klicke Passwortfeld (absolut): (${USER_ABS_X}, ${PASS_ABS_Y})"
+xdotool mousemove "$USER_ABS_X" "$PASS_ABS_Y"
+sleep 0.3
+xdotool click 1
 sleep 0.8
-xdotool type --clearmodifiers --delay 50 "narjAv-qixru3-b1whaj"
+xdotool type --clearmodifiers --delay 80 "narjAv-qixru3-b1whaj"
 sleep 0.5
 
-xdotool key Return 2>/dev/null || true
+xdotool key Return
 echo "Login abgeschickt um $(date)"
 
 sleep 5
 scrot /tmp/ibgw_after.png 2>/dev/null || true
-echo "Screenshot: /tmp/ibgw_after.png"
 
-# Persistenter HTTP-Server (ueberlebt Script-Ende)
-pkill -f "python3 -m http.server 9092" 2>/dev/null || true
-nohup python3 -m http.server 9092 --directory /tmp > /tmp/http_server.log 2>&1 &
-disown
-echo "=== Screenshots abrufbar ==="
-echo "  Vorher: http://161.97.166.88:9092/ibgw_before.png"
-echo "  Nachher: http://161.97.166.88:9092/ibgw_after.png"
+# After-Screenshot sofort als ASCII ausgeben
+echo "=== AFTER Screenshot ASCII ==="
+/opt/Aktien/venv/bin/python3 -c "
+from PIL import Image
+img = Image.open('/tmp/ibgw_after.png').convert('L').resize((100, 20))
+chars = ' .:-=+*#%@'
+for y in range(img.height):
+    print(''.join(chars[int(img.getpixel((x,y))*(len(chars)-1)/255)] for x in range(img.width)))
+" 2>/dev/null || true
 
-sleep 60
+sleep 55
 if ss -tlnp 2>/dev/null | grep -q ':4002'; then
     echo "ERFOLG: Port 4002 ist offen"
 else
-    echo "WARNUNG: Port 4002 nach 65s noch nicht offen"
+    echo "WARNUNG: Port 4002 nach 60s noch nicht offen"
     ps aux | grep java | grep -v grep | awk '{print "Java laeuft:", $1, $11}'
 fi
