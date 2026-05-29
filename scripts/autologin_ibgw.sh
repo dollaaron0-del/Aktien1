@@ -49,9 +49,51 @@ if [ -z "$S_KC" ]; then
 fi
 sleep 0.5
 
+echo "===== AUTOLOGIN v5 ====="
+
 pkill -f java 2>/dev/null || true
 sleep 3
 
+# ---- IBC: i4jruntime.jar Symlink-Fix ----
+# IBC iteriert ueber alle *.jar in den Gateway-Jars; symlink macht i4jruntime automatisch verfuegbar
+I4J_JAR="/opt/ibgateway/.install4j/i4jruntime.jar"
+GW_JARS="/opt/ibgateway/1045/jars"
+if [ -f "$I4J_JAR" ] && [ -d "$GW_JARS" ] && [ ! -e "$GW_JARS/i4jruntime.jar" ]; then
+    ln -sf "$I4J_JAR" "$GW_JARS/i4jruntime.jar" && \
+        echo "IBC Fix: i4jruntime.jar -> $GW_JARS/ (OK)" || \
+        echo "IBC Fix: FEHLER beim Symlink"
+else
+    ls "$GW_JARS/i4jruntime.jar" 2>/dev/null && echo "IBC Fix: Symlink bereits vorhanden" || \
+        echo "IBC Fix: Voraussetzungen fehlen (JAR=$I4J_JAR JARS=$GW_JARS)"
+fi
+
+# ---- IBC-Login-Versuch ----
+IBC_OK=false
+if [ -f "/opt/ibc/gatewaystart.sh" ]; then
+    echo "Starte IBC-Login..."
+    DISPLAY=:99 bash /opt/ibc/gatewaystart.sh &
+    echo "Warte bis 120s auf Port 4002 (IBC)..."
+    for i in $(seq 1 12); do
+        sleep 10
+        if ss -tlnp 2>/dev/null | grep -q ':4002'; then
+            echo "IBC ERFOLG: Port 4002 nach $((i*10))s offen"
+            IBC_OK=true
+            break
+        fi
+        pgrep -f java >/dev/null 2>&1 || { echo "  Java-Prozess gestorben - IBC abgebrochen"; break; }
+        echo "  ${i}0s: warte..."
+    done
+    if ! $IBC_OK; then
+        echo "IBC FEHLGESCHLAGEN - letzte IBC-Log-Zeilen:"
+        tail -30 /tmp/ibc_logs/*.log 2>/dev/null || echo "(keine Logs in /tmp/ibc_logs/)"
+        pkill -f java 2>/dev/null || true
+        sleep 3
+    fi
+fi
+$IBC_OK && exit 0
+
+# ---- xdotool Fallback ----
+echo "Starte xdotool-Fallback (direkte Gateway-GUI)..."
 /opt/ibgateway/ibgateway &
 
 echo "Warte 45s auf vollstaendigen Gateway-Start..."
