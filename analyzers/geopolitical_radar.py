@@ -298,8 +298,9 @@ class GeopoliticalRadar:
         if not headlines:
             return []
 
-        seen = self._load_seen()
+        seen, cat_cooldowns = self._load_seen()
         events: List[GeoEvent] = []
+        now_iso = datetime.utcnow().isoformat()
 
         for title, source in headlines:
             key = title.lower()[:90]
@@ -308,17 +309,18 @@ class GeopoliticalRadar:
             seen.add(key)
 
             event = self._classify(title, source)
-            if event:
-                events.append(event)
+            if not event:
+                continue
+            if event.category in cat_cooldowns:
+                log.debug("GeoRadar: '%s' 7-Tage-Cooldown, übersprungen", event.category)
+                continue
+            events.append(event)
+            cat_cooldowns[event.category] = now_iso
 
-        self._save_seen(seen)
+        self._save_seen(seen, cat_cooldowns)
 
         if events:
-            log.info(
-                "GeopoliticalRadar: %d neue Events erkannt: %s",
-                len(events),
-                ", ".join(e.category for e in events),
-            )
+            log.info("GeopoliticalRadar: %d neue Events: %s", len(events), ", ".join(e.category for e in events))
         return events
 
     def process_events(
@@ -468,25 +470,31 @@ class GeopoliticalRadar:
             impacts=best_match["impacts"],
         )
 
-    # ── State-Persistenz ──────────────────────────────────────────────────────
-
-    def _load_seen(self) -> set:
+    def _load_seen(self) -> tuple:
         try:
             with open(self._state_path, encoding="utf-8") as f:
                 data = json.load(f)
-            cutoff = (datetime.utcnow() - timedelta(hours=48)).isoformat()
-            return {k for k, v in data.items() if v >= cutoff}
+            now = datetime.utcnow()
+            hl_cut  = (now - timedelta(hours=48)).isoformat()
+            cat_cut = (now - timedelta(days=7)).isoformat()
+            if "headlines" in data:
+                seen = {k for k, v in data["headlines"].items() if v >= hl_cut}
+                cats = {k: v for k, v in data.get("categories", {}).items() if v >= cat_cut}
+            else:
+                seen = {k for k, v in data.items() if v >= hl_cut}
+                cats = {}
+            return seen, cats
         except Exception:
-            return set()
+            return set(), {}
 
-    def _save_seen(self, seen: set) -> None:
+    def _save_seen(self, seen: set, cat_cooldowns: dict) -> None:
         dirpath = os.path.dirname(self._state_path) or "."
         os.makedirs(dirpath, exist_ok=True)
-        now = datetime.utcnow().isoformat()
         try:
             fd, tmp = tempfile.mkstemp(dir=dirpath, suffix=".tmp")
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump({k: now for k in seen}, f)
+                now = datetime.utcnow().isoformat()
+                json.dump({"headlines": {k: now for k in seen}, "categories": cat_cooldowns}, f)
             os.replace(tmp, self._state_path)
         except Exception as e:
             log.debug("GeoRadar: State speichern fehlgeschlagen: %s", e)
