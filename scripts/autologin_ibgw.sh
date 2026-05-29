@@ -51,12 +51,12 @@ xdotool windowraise "$WIN" 2>/dev/null || true
 sleep 0.5
 
 # ABSOLUTE Koordinaten berechnen (XTEST simuliert echte Hardware-Eingabe)
-# ASCII-Art zeigt Form-Elemente bei y=122-191px (obere 31%)
-# Benutzernamefeld: ca. 23% von oben (y~140)
+# GSTAT-Panel belegt obere ~190px - Login-Formular ist darunter
+# Benutzernamefeld: ca. 48% von oben (y~293 relativ, wie Original-autologin y=311)
 USER_ABS_X=$((WIN_X + W / 2))
-USER_ABS_Y=$((WIN_Y + H * 23 / 100))
-# Passwortfeld: ca. 34% von oben (y~207)
-PASS_ABS_Y=$((WIN_Y + H * 34 / 100))
+USER_ABS_Y=$((WIN_Y + H * 48 / 100))
+# Passwortfeld: ca. 60% von oben (y~366 relativ)
+PASS_ABS_Y=$((WIN_Y + H * 60 / 100))
 
 echo "Klicke Benutzernamefeld (absolut): (${USER_ABS_X}, ${USER_ABS_Y})"
 xdotool mousemove "$USER_ABS_X" "$USER_ABS_Y"
