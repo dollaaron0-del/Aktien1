@@ -148,8 +148,10 @@ print(f"Gesamt: {total} ({'Klick hatte Wirkung' if total>300 else 'Klick hatte K
 PYEOF
 
 echo "X11-Fokus vor type: $(xdotool getwindowfocus 2>/dev/null)"
-xdotool type --clearmodifiers --delay 150 "stocksentimenttradingbot"
-sleep 1.0
+for _c in s t o c k s e n t i m e n t t r a d i n g b o t; do
+    xdotool key --clearmodifiers "$_c"; sleep 0.1
+done
+sleep 0.5
 
 scrot /tmp/ibgw_after_type.png 2>/dev/null || true
 
@@ -197,7 +199,9 @@ xdotool click 1; sleep 0.8; xdotool click 1; sleep 1.2
 echo "X11-Fokus vor Passwort-type: $(xdotool getwindowfocus 2>/dev/null)"
 sleep 0.3
 
-xdotool type --clearmodifiers --delay 150 "narjAv-qixru3-b1whaj"
+for _c in n a r j A v minus q i x r u 3 minus b 1 w h a j; do
+    xdotool key --clearmodifiers "$_c"; sleep 0.1
+done
 sleep 1.0
 
 xdotool key Return
