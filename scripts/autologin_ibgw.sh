@@ -1,8 +1,9 @@
 #!/bin/bash
 export DISPLAY=:99
 
-# Xvfb-Keyboard mit US-Layout initialisieren (ohne das sind Buchstaben nicht gemappt
-# und xdotool type schlägt bei jedem Zeichen lautlos fehl, während Tab/Return funktionieren)
+# xclip benoetigt fuer Clipboard-Paste in JavaFX-Felder
+command -v xclip >/dev/null 2>&1 || apt-get install -y xclip >/dev/null 2>&1
+
 setxkbmap -layout us 2>/dev/null && echo "Keyboard: US-Layout gesetzt" || echo "WARNUNG: setxkbmap fehlgeschlagen"
 
 pkill -f java 2>/dev/null || true
@@ -148,9 +149,12 @@ print(f"Gesamt: {total} ({'Klick hatte Wirkung' if total>300 else 'Klick hatte K
 PYEOF
 
 echo "X11-Fokus vor type: $(xdotool getwindowfocus 2>/dev/null)"
-for _c in s t o c k s e n t i m e n t t r a d i n g b o t; do
-    xdotool key --clearmodifiers "$_c"; sleep 0.1
-done
+# Clipboard-Paste: zuverlaessiger als xdotool key fuer JavaFX-Textfelder
+printf '%s' 'stocksentimenttradingbot' | DISPLAY=:99 xclip -selection clipboard
+sleep 0.2
+xdotool key --clearmodifiers ctrl+a
+sleep 0.1
+xdotool key --clearmodifiers ctrl+v
 sleep 0.5
 
 scrot /tmp/ibgw_after_type.png 2>/dev/null || true
@@ -199,9 +203,11 @@ xdotool click 1; sleep 0.8; xdotool click 1; sleep 1.2
 echo "X11-Fokus vor Passwort-type: $(xdotool getwindowfocus 2>/dev/null)"
 sleep 0.3
 
-for _c in n a r j A v minus q i x r u 3 minus b 1 w h a j; do
-    xdotool key --clearmodifiers "$_c"; sleep 0.1
-done
+printf '%s' 'narjAv-qixru3-b1whaj' | DISPLAY=:99 xclip -selection clipboard
+sleep 0.2
+xdotool key --clearmodifiers ctrl+a
+sleep 0.1
+xdotool key --clearmodifiers ctrl+v
 sleep 1.0
 
 xdotool key Return
