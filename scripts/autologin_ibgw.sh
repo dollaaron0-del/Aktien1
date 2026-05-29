@@ -90,25 +90,52 @@ else
         echo "IBC Fix: Voraussetzungen fehlen (JAR=$I4J_JAR JARS=$GW_JARS)"
 fi
 
+# ---- IBC config.ini: headless-sichere Einstellungen ----
+IBC_CONFIG="/opt/ibc/config.ini"
+if [ -f "$IBC_CONFIG" ]; then
+    # 'manual' wuerde auf Benutzereingabe warten -> haengt lautlos in Xvfb
+    sed -i 's/ExistingSessionDetectedAction=manual/ExistingSessionDetectedAction=primaryonly/' "$IBC_CONFIG"
+    echo "IBC Config: $(grep ExistingSessionDetectedAction "$IBC_CONFIG")"
+fi
+mkdir -p /tmp/ibc_logs
+
 # ---- IBC-Login-Versuch ----
 IBC_OK=false
 if [ -f "/opt/ibc/gatewaystart.sh" ]; then
     echo "Starte IBC-Login..."
     DISPLAY=:99 bash /opt/ibc/gatewaystart.sh &
-    echo "Warte bis 120s auf Port 4002 (IBC)..."
-    for i in $(seq 1 12); do
+    echo "Warte bis 150s auf Port 4002 (IBC)..."
+    for i in $(seq 1 15); do
         sleep 10
-        if ss -tlnp 2>/dev/null | grep -q ':4002'; then
-            echo "IBC ERFOLG: Port 4002 nach $((i*10))s offen"
+        if ss -tlnp 2>/dev/null | grep -qE ':4001|:4002'; then
+            PORT=$(ss -tlnp 2>/dev/null | grep -oE ':400[12]' | head -1 | tr -d ':')
+            echo "IBC ERFOLG: Port $PORT nach $((i*10))s offen"
             IBC_OK=true
             break
         fi
         pgrep -f java >/dev/null 2>&1 || { echo "  Java-Prozess gestorben - IBC abgebrochen"; break; }
+        # Alle 30s: Screenshot des Xvfb zeigen
+        if [ $((i % 3)) -eq 0 ]; then
+            echo "  --- Xvfb-Status bei ${i}0s ---"
+            pgrep -a java 2>/dev/null | head -2 | sed 's/^/  Java: /'
+            scrot /tmp/ibc_diag_${i}0s.png 2>/dev/null && \
+            /opt/Aktien/venv/bin/python3 - /tmp/ibc_diag_${i}0s.png <<'PYEOF'
+import sys; from PIL import Image
+img = Image.open(sys.argv[1]).convert('L').resize((80, 15))
+chars = ' .:-=+*#%@'
+for y in range(15):
+    print('  '+''.join(chars[int(img.getpixel((x,y))*(len(chars)-1)/255)] for x in range(80)))
+PYEOF
+        fi
         echo "  ${i}0s: warte..."
     done
     if ! $IBC_OK; then
-        echo "IBC FEHLGESCHLAGEN - letzte IBC-Log-Zeilen:"
-        tail -30 /tmp/ibc_logs/*.log 2>/dev/null || echo "(keine Logs in /tmp/ibc_logs/)"
+        echo "IBC FEHLGESCHLAGEN - Diagnose:"
+        ps aux | grep -E 'java|xterm|ibc' | grep -v grep | head -5
+        echo "IBC-Logs (suche):"
+        find /tmp /root/Jts /opt/ibc -name "*.log" -newer /tmp/ibc_logs 2>/dev/null | \
+            xargs ls -la 2>/dev/null | tail -10
+        tail -20 /tmp/ibc_logs/*.log 2>/dev/null || echo "(keine Logs in /tmp/ibc_logs/)"
         pkill -f java 2>/dev/null || true
         sleep 3
     fi
