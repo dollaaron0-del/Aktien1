@@ -6,8 +6,8 @@ sleep 3
 
 /opt/ibgateway/ibgateway &
 
-echo "Warte 35s auf vollstaendigen Gateway-Start (Splash + WebView)..."
-sleep 35
+echo "Warte 45s auf vollstaendigen Gateway-Start (Splash + WebView)..."
+sleep 45
 
 # Groesstes Fenster finden (nicht Xvfb Root > 700k px)
 WIN=""
@@ -43,69 +43,90 @@ W=$(echo "$GEOM" | cut -dx -f1)
 H=$(echo "$GEOM" | cut -dx -f2)
 echo "Fenster-Position: (${WIN_X}, ${WIN_Y}), Groesse: ${W}x${H}"
 
-scrot /tmp/ibgw_before.png 2>/dev/null || true
+# Hilfsfunktion: Screenshot nehmen und als ASCII ausgeben
+ascii_shot() {
+    local f=$1 label=$2
+    scrot "$f" 2>/dev/null || true
+    echo "=== $label ==="
+    /opt/Aktien/venv/bin/python3 -c "
+from PIL import Image
+img = Image.open('$f').convert('L').resize((100, 25))
+chars = ' .:-=+*#%@'
+for y in range(img.height):
+    print(''.join(chars[int(img.getpixel((x,y))*(len(chars)-1)/255)] for x in range(img.width)))
+" 2>/dev/null || true
+}
 
-xdotool windowfocus --sync "$WIN" 2>/dev/null || true
-sleep 1
-xdotool windowraise "$WIN" 2>/dev/null || true
-sleep 0.5
+ascii_shot /tmp/ibgw_step0.png "SCHRITT 0: Ausgangszustand"
 
 # ABSOLUTE Koordinaten berechnen (XTEST simuliert echte Hardware-Eingabe)
 # GSTAT-Panel belegt obere ~190px - Login-Formular ist darunter
-# Benutzernamefeld: ca. 48% von oben (y~293 relativ, wie Original-autologin y=311)
+# Benutzernamefeld: ca. 48% von oben (y~293 relativ)
 USER_ABS_X=$((WIN_X + W / 2))
 USER_ABS_Y=$((WIN_Y + H * 48 / 100))
 # Passwortfeld: ca. 60% von oben (y~366 relativ)
 PASS_ABS_Y=$((WIN_Y + H * 60 / 100))
 
+echo "Benutzername-Feld absolut: (${USER_ABS_X}, ${USER_ABS_Y})"
+echo "Passwort-Feld absolut: (${USER_ABS_X}, ${PASS_ABS_Y})"
+
 # Erster Klick: Fenster aktivieren (neutraler Bereich oben)
 NEUTRAL_Y=$((WIN_Y + 30))
+xdotool windowfocus --sync "$WIN" 2>/dev/null || true
+sleep 0.5
+xdotool windowraise "$WIN" 2>/dev/null || true
+sleep 0.5
 xdotool mousemove "$USER_ABS_X" "$NEUTRAL_Y"
 sleep 0.3
 xdotool click 1
-sleep 0.5
+sleep 0.8
 
-# Zweiter Klick: Benutzernamefeld fokussieren (JavaFX braucht oft 2 Klicks)
+ascii_shot /tmp/ibgw_step1.png "SCHRITT 1: Nach Fenster-Aktivierung"
+
+# Benutzernamefeld fokussieren (JavaFX braucht oft 2 Klicks)
 echo "Klicke Benutzernamefeld (absolut): (${USER_ABS_X}, ${USER_ABS_Y})"
 xdotool mousemove "$USER_ABS_X" "$USER_ABS_Y"
 sleep 0.3
 xdotool click 1
-sleep 0.5
-xdotool click 1
 sleep 0.8
-xdotool type --clearmodifiers --delay 80 "stocksentimenttradingbot"
-sleep 0.5
+xdotool click 1
+sleep 1.0
 
+ascii_shot /tmp/ibgw_step2.png "SCHRITT 2: Nach Benutzername-Fokus (Cursor sichtbar?)"
+
+xdotool type --clearmodifiers --delay 80 "stocksentimenttradingbot"
+sleep 0.8
+
+ascii_shot /tmp/ibgw_step3.png "SCHRITT 3: Nach Benutzername-Eingabe (Text sichtbar?)"
+
+# Passwortfeld fokussieren
 echo "Klicke Passwortfeld (absolut): (${USER_ABS_X}, ${PASS_ABS_Y})"
 xdotool mousemove "$USER_ABS_X" "$PASS_ABS_Y"
 sleep 0.3
 xdotool click 1
-sleep 0.5
-xdotool click 1
 sleep 0.8
+xdotool click 1
+sleep 1.0
+
+ascii_shot /tmp/ibgw_step4.png "SCHRITT 4: Nach Passwort-Fokus"
+
 xdotool type --clearmodifiers --delay 80 "narjAv-qixru3-b1whaj"
-sleep 0.5
+sleep 0.8
+
+ascii_shot /tmp/ibgw_step5.png "SCHRITT 5: Nach Passwort-Eingabe"
 
 xdotool key Return
 echo "Login abgeschickt um $(date)"
 
-sleep 5
-scrot /tmp/ibgw_after.png 2>/dev/null || true
+sleep 3
 
-# After-Screenshot sofort als ASCII ausgeben
-echo "=== AFTER Screenshot ASCII ==="
-/opt/Aktien/venv/bin/python3 -c "
-from PIL import Image
-img = Image.open('/tmp/ibgw_after.png').convert('L').resize((100, 20))
-chars = ' .:-=+*#%@'
-for y in range(img.height):
-    print(''.join(chars[int(img.getpixel((x,y))*(len(chars)-1)/255)] for x in range(img.width)))
-" 2>/dev/null || true
+ascii_shot /tmp/ibgw_step6.png "SCHRITT 6: Nach Login-Submit (Laedt?)"
 
-sleep 55
+sleep 57
 if ss -tlnp 2>/dev/null | grep -q ':4002'; then
     echo "ERFOLG: Port 4002 ist offen"
 else
     echo "WARNUNG: Port 4002 nach 60s noch nicht offen"
+    ascii_shot /tmp/ibgw_step7.png "SCHRITT 7: Endzustand"
     ps aux | grep java | grep -v grep | awk '{print "Java laeuft:", $1, $11}'
 fi
