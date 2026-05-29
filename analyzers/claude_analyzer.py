@@ -171,8 +171,11 @@ SCHRITT 2 – AUSGABE als JSON:
 
 BUY nur wenn BULL-Seite klar überwiegt UND technische Signale bestätigen.
 entry_trigger_price: NUR bei SKIP mit bullischem Potential (score ≥ 0.50, direction BULLISH/NEUTRAL):
-  Der technische Kurs-Level bei dem das Risk/Reward zu einem BUY kippt.
-  Verwende EMA21, unteres Bollinger Band oder nächste Unterstützungszone.
+  Der Kurs-Level bei dem das Risk/Reward zu einem BUY kippt.
+  Wichtig: Wähle das NÄCHSTE Unterstützungsniveau das max. 5% unter dem aktuellen Kurs liegt.
+  Wenn EMA21 oder Bollinger-Band weiter als 5% entfernt sind, setze den Trigger trotzdem
+  auf 2–4% unter aktuellem Kurs (leichter Pullback reicht als Bestätigung).
+  Ziel: Trigger soll realistisch erreichbar sein, nicht der absolute Tiefpunkt.
   Null wenn klar BEARISH, zu unklar, oder offene Position vorhanden.
 SKIP wenn DRAW oder wenn BEAR-Argumente das Risiko zu hoch machen.
 Bei BUY: trage in "related_tickers" 2–3 Ticker-Symbole ein die von derselben These profitieren

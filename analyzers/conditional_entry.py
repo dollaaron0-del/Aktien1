@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
 _FILE = os.path.join(os.path.dirname(__file__), "..", "data", "conditional_entries.json")
-_EXPIRY_DAYS = 3
+_EXPIRY_DAYS = 7
 
 
 @dataclass
