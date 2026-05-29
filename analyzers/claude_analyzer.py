@@ -170,6 +170,9 @@ SCHRITT 2 – AUSGABE als JSON:
 }}
 
 BUY nur wenn BULL-Seite klar überwiegt UND technische Signale bestätigen.
+confidence-Regeln: HIGH wenn ≥3 unabhängige Quellen + technische UND fundamentale Signale
+  übereinstimmen + score ≥ 0.72 + kein wesentlicher Widerspruch im Bear-Case.
+  MEDIUM wenn 2 Quellen oder nur eines der Systeme bestätigt. LOW sonst.
 entry_trigger_price: NUR bei SKIP mit bullischem Potential (score ≥ 0.50, direction BULLISH/NEUTRAL):
   Der Kurs-Level bei dem das Risk/Reward zu einem BUY kippt.
   Wichtig: Wähle das NÄCHSTE Unterstützungsniveau das max. 5% unter dem aktuellen Kurs liegt.

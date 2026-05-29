@@ -28,7 +28,7 @@ DEFAULT_UNIVERSE = [
     # EU – Rüstung & Verteidigung (aktueller Megatrend)
     "AIR.PA", "BA.L", "BAESY",
     # EU – Energie / Industrie
-    "SHEL.L", "TTE.PA", "ASML.AS", "NOVO-B.CO",
+    "SHEL.L", "TTE.PA", "NOVO-B.CO",
 ]
 
 
