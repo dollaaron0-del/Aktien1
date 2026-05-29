@@ -1,6 +1,10 @@
 #!/bin/bash
 export DISPLAY=:99
 
+# Xvfb-Keyboard mit US-Layout initialisieren (ohne das sind Buchstaben nicht gemappt
+# und xdotool type schlägt bei jedem Zeichen lautlos fehl, während Tab/Return funktionieren)
+setxkbmap -layout us 2>/dev/null && echo "Keyboard: US-Layout gesetzt" || echo "WARNUNG: setxkbmap fehlgeschlagen"
+
 pkill -f java 2>/dev/null || true
 sleep 3
 
