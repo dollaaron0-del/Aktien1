@@ -55,13 +55,12 @@ for y in range(60):
     print(f"{wy_px:3d}px: {row}")
 PYEOF
 
-# Login-Koordinaten basierend auf Scan-Ergebnis:
-# - y=257 (42%): helle Spitze nach GSTAT-Region => Username-Feld
-# - y=395 (64%): zweite erkannte Region darunter => Passwort-Feld
-# KEIN windowfocus vor dem Tippen - JavaFX Eingabe-Handler (4194345) behalten
-USER_REL_Y=257
-PASS_REL_Y=395
-USER_ABS_X=$((WIN_X + W / 2))
+# Login-Koordinaten: Formular liegt bei x≈33% der Fensterbreite (ASCII-Scan: Logo-Mitte x≈261)
+# FELD 2 y=223 (37%): Username-Feld; FELD 3 y=257 (42%): Passwort-Feld
+# KEIN windowfocus vor dem Tippen - JavaFX Eingabe-Handler behalten
+USER_REL_Y=223
+PASS_REL_Y=257
+USER_ABS_X=$((WIN_X + W * 33 / 100))
 USER_ABS_Y=$((WIN_Y + USER_REL_Y))
 PASS_ABS_Y=$((WIN_Y + PASS_REL_Y))
 echo "Klick-Koordinaten: Username (${USER_ABS_X}, ${USER_ABS_Y}), Passwort (${USER_ABS_X}, ${PASS_ABS_Y})"
