@@ -58,9 +58,19 @@ USER_ABS_Y=$((WIN_Y + H * 48 / 100))
 # Passwortfeld: ca. 60% von oben (y~366 relativ)
 PASS_ABS_Y=$((WIN_Y + H * 60 / 100))
 
+# Erster Klick: Fenster aktivieren (neutraler Bereich oben)
+NEUTRAL_Y=$((WIN_Y + 30))
+xdotool mousemove "$USER_ABS_X" "$NEUTRAL_Y"
+sleep 0.3
+xdotool click 1
+sleep 0.5
+
+# Zweiter Klick: Benutzernamefeld fokussieren (JavaFX braucht oft 2 Klicks)
 echo "Klicke Benutzernamefeld (absolut): (${USER_ABS_X}, ${USER_ABS_Y})"
 xdotool mousemove "$USER_ABS_X" "$USER_ABS_Y"
 sleep 0.3
+xdotool click 1
+sleep 0.5
 xdotool click 1
 sleep 0.8
 xdotool type --clearmodifiers --delay 80 "stocksentimenttradingbot"
@@ -69,6 +79,8 @@ sleep 0.5
 echo "Klicke Passwortfeld (absolut): (${USER_ABS_X}, ${PASS_ABS_Y})"
 xdotool mousemove "$USER_ABS_X" "$PASS_ABS_Y"
 sleep 0.3
+xdotool click 1
+sleep 0.5
 xdotool click 1
 sleep 0.8
 xdotool type --clearmodifiers --delay 80 "narjAv-qixru3-b1whaj"
