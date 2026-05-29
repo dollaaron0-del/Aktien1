@@ -19,7 +19,8 @@ for w in $(xdotool search --any --name "" 2>/dev/null); do
         H=$(echo "$GEOM" | cut -dx -f2)
         AREA=$((W * H))
         echo "Fenster $w: ${W}x${H} (Flaeche: $AREA)"
-        if [ "$AREA" -gt "$BEST_AREA" ]; then
+        # Root-Fenster (Xvfb-Canvas, meist > 700000) ausschliessen
+        if [ "$AREA" -gt "$BEST_AREA" ] && [ "$AREA" -lt 700000 ] && [ "$AREA" -gt 100000 ]; then
             BEST_AREA=$AREA
             WIN=$w
         fi
