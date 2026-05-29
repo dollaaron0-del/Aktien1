@@ -6,51 +6,25 @@ sleep 3
 
 /opt/ibgateway/ibgateway &
 
-echo "Warte 45s auf vollstaendigen Gateway-Start (Splash + WebView)..."
+echo "Warte 45s auf vollstaendigen Gateway-Start..."
 sleep 45
 
-# Alle Fenster auflisten inkl. Titel und Position
-echo "=== Alle Fenster (wmctrl) ==="
-wmctrl -l -G 2>/dev/null || echo "(wmctrl nicht verfuegbar)"
-
-# Fenster finden (nicht Xvfb Root > 700k px)
-declare -a WINS=()
+# Fenster finden
+WIN=""
+BEST_AREA=0
 for w in $(xdotool search --any --name "" 2>/dev/null); do
     GEOM=$(xdotool getwindowgeometry "$w" 2>/dev/null | grep Geometry | awk '{print $2}')
     if [ -n "$GEOM" ]; then
         W=$(echo "$GEOM" | cut -dx -f1)
         H=$(echo "$GEOM" | cut -dx -f2)
         AREA=$((W * H))
-        POS=$(xdotool getwindowgeometry "$w" 2>/dev/null | grep Position | awk '{print $2}')
-        echo "Fenster $w: ${W}x${H} (${AREA}px) @ $POS"
-        if [ "$AREA" -gt 100000 ] && [ "$AREA" -lt 700000 ]; then
-            WINS+=("$w")
+        if [ "$AREA" -gt "$BEST_AREA" ] && [ "$AREA" -lt 700000 ] && [ "$AREA" -gt 100000 ]; then
+            BEST_AREA=$AREA
+            WIN=$w
         fi
     fi
 done
-
-if [ ${#WINS[@]} -eq 0 ]; then
-    echo "FEHLER: Kein gueltiges Fenster gefunden"
-    ps aux | grep java | grep -v grep
-    exit 1
-fi
-
-# Fenster mit aktuellem X11-Fokus bevorzugen, sonst niedrigste ID (urspruengliches Fenster)
-FOCUS_WIN=$(xdotool getwindowfocus 2>/dev/null)
-echo "Aktueller X11-Fokus: $FOCUS_WIN"
-
-WIN=""
-for w in "${WINS[@]}"; do
-    [ "$w" = "$FOCUS_WIN" ] && WIN="$w" && break
-done
-if [ -z "$WIN" ]; then
-    # Niedrigste ID = erstes (aeltestes) Fenster
-    WIN="${WINS[0]}"
-    for w in "${WINS[@]}"; do
-        [ "$w" -lt "$WIN" ] && WIN="$w"
-    done
-fi
-echo "Verwende Fenster: $WIN"
+[ -z "$WIN" ] && echo "FEHLER: Kein Fenster" && exit 1
 
 WIN_POS=$(xdotool getwindowgeometry "$WIN" 2>/dev/null | grep Position | awk '{print $2}')
 WIN_X=$(echo "$WIN_POS" | cut -d, -f1)
@@ -58,116 +32,155 @@ WIN_Y=$(echo "$WIN_POS" | cut -d, -f2)
 GEOM=$(xdotool getwindowgeometry "$WIN" 2>/dev/null | grep Geometry | awk '{print $2}')
 W=$(echo "$GEOM" | cut -dx -f1)
 H=$(echo "$GEOM" | cut -dx -f2)
-echo "Fenster-Position: (${WIN_X}, ${WIN_Y}), Groesse: ${W}x${H}"
+echo "Fenster: $WIN @ (${WIN_X},${WIN_Y}) ${W}x${H}"
 
-# Screenshot + ASCII nur des Fensterbereichs + Pixel-Inspektion an bestimmten y-Positionen
-inspect_shot() {
-    local f=$1 label=$2 y1=$3 y2=$4
-    scrot "$f" 2>/dev/null || true
-    echo "=== $label ==="
-    /opt/Aktien/venv/bin/python3 - "$f" "$WIN_X" "$WIN_Y" "$W" "$H" "$y1" "$y2" <<'PYEOF'
+scrot /tmp/ibgw_scan.png 2>/dev/null || true
+
+# Schritt 1: Vollbild-ASCII des ganzen Fensters (100x60 fuer bessere Aufloesung)
+echo "=== Vollbild-Fenster 100x60 ==="
+/opt/Aktien/venv/bin/python3 - /tmp/ibgw_scan.png "$WIN_X" "$WIN_Y" "$W" "$H" <<'PYEOF'
 import sys
 from PIL import Image
-f = sys.argv[1]
-wx, wy, ww, wh = int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
-y1, y2 = int(sys.argv[6]), int(sys.argv[7])
+f, wx, wy, ww, wh = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
 chars = ' .:-=+*#%@'
-try:
-    img = Image.open(f)
-    win = img.crop((wx, wy, wx+ww, wy+wh)).convert('L')
-    # Zeige Bereich y1-y2 im Fenster (Zeilen um die Klickposition)
-    area = win.crop((0, max(0, y1-40), ww, min(wh, y2+40))).resize((100, 20))
-    for y in range(area.height):
-        print(''.join(chars[int(area.getpixel((x,y))*(len(chars)-1)/255)] for x in range(area.width)))
-    # Pixel-Werte in der Mitte bei y1 und y2
-    cx = ww // 2
-    for py in [y1, y2]:
-        if 0 <= py < wh:
-            vals = [win.getpixel((cx+dx, py)) for dx in range(-20, 21, 4)]
-            avg = sum(vals) // len(vals)
-            print(f"  Pixel y={py}: avg={avg}/255 ({['schwarz','dunkel','grau','hell','weiss'][min(4,avg*5//256)]})")
-except Exception as e:
-    print(f'Fehler: {e}')
+img = Image.open(f)
+win = img.crop((wx, wy, wx+ww, wy+wh)).convert('L').resize((100, 60))
+for y in range(win.height):
+    print(''.join(chars[int(win.getpixel((x,y))*(len(chars)-1)/255)] for x in range(win.width)))
 PYEOF
-}
 
-# Ausgangszustand + Pixel-Check bei geplanten Klick-Positionen
-# Neue Koordinaten: 55%/67% statt 48%/60% (GSTAT-Panel reicht weiter nach unten)
-USER_REL_Y=$((H * 55 / 100))
-PASS_REL_Y=$((H * 67 / 100))
+# Schritt 2: Vertikal-Helligkeits-Scan (findet Eingabefelder)
+echo "=== Vertikal-Helligkeits-Scan (Mitte des Fensters) ==="
+SCAN_OUTPUT=$(/opt/Aktien/venv/bin/python3 - /tmp/ibgw_scan.png "$WIN_X" "$WIN_Y" "$W" "$H" <<'PYEOF'
+import sys
+from PIL import Image
+f, wx, wy, ww, wh = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
+img = Image.open(f)
+win = img.crop((wx, wy, wx+ww, wy+wh)).convert('L')
+cx = ww // 2
+
+# Helligkeit jede 5px
+avgs = []
+for y in range(0, wh, 5):
+    row = [win.getpixel((cx + dx, y)) for dx in range(-60, 61, 6)]
+    avgs.append((y, sum(row) // len(row)))
+
+# Ausgabe als Balkendiagramm
+for y, avg in avgs:
+    bar = '#' * (avg // 8)
+    pct = y * 100 // wh
+    print(f"y={y:3d}({pct:2d}%): {avg:3d} {bar}")
+
+# Felder-Erkennung: Bereiche heller als Hintergrund
+bg = sorted(a for _,a in avgs)[len(avgs)//5]  # 20. Perzentile = Hintergrund
+threshold = bg + 20
+print(f"\nHintergrund-Helligkeit: {bg}/255, Schwellwert: {threshold}/255")
+fields = []
+in_field = False
+for y, avg in avgs:
+    if avg > threshold and not in_field:
+        in_field = True; start = y
+    elif avg <= threshold and in_field:
+        in_field = False
+        if y - start >= 10:
+            mid = (start + y) // 2
+            fields.append(mid)
+            print(f"FELD_ERKANNT: y={start}-{y}, Mitte={mid} ({mid*100//wh}%)")
+if not fields:
+    print("KEIN_FELD_GEFUNDEN")
+PYEOF
+)
+echo "$SCAN_OUTPUT"
+
+# Koordinaten aus Scan-Ergebnis extrahieren
+USER_REL_Y=""
+PASS_REL_Y=""
+while IFS= read -r line; do
+    if [[ "$line" == FELD_ERKANNT:* ]]; then
+        MID=$(echo "$line" | grep -oP 'Mitte=\K[0-9]+')
+        if [ -z "$USER_REL_Y" ]; then
+            USER_REL_Y="$MID"
+        elif [ -z "$PASS_REL_Y" ]; then
+            PASS_REL_Y="$MID"
+        fi
+    fi
+done <<< "$SCAN_OUTPUT"
+
+# Fallback wenn keine Felder erkannt
+[ -z "$USER_REL_Y" ] && USER_REL_Y=$((H * 35 / 100)) && echo "Fallback USERNAME y=35%"
+[ -z "$PASS_REL_Y" ] && PASS_REL_Y=$((H * 47 / 100)) && echo "Fallback PASSWORD y=47%"
+
 USER_ABS_X=$((WIN_X + W / 2))
 USER_ABS_Y=$((WIN_Y + USER_REL_Y))
 PASS_ABS_Y=$((WIN_Y + PASS_REL_Y))
+echo "Finale Koordinaten: Username (${USER_ABS_X}, ${USER_ABS_Y}) = ${USER_REL_Y}px, Passwort (${USER_ABS_X}, ${PASS_ABS_Y}) = ${PASS_REL_Y}px"
 
-echo "Neue Koordinaten: Username y=${USER_REL_Y} (${USER_ABS_Y} abs, 55%), Passwort y=${PASS_REL_Y} (${PASS_ABS_Y} abs, 67%)"
-inspect_shot /tmp/ibgw_step0.png "SCHRITT 0: Ausgangszustand (Pixel bei 55%/67%)" "$USER_REL_Y" "$PASS_REL_Y"
-
-# Fenster in Vordergrund bringen und fokussieren
+# ---- Login ----
 xdotool windowraise "$WIN" 2>/dev/null || true
 sleep 0.5
 xdotool windowfocus --sync "$WIN" 2>/dev/null || true
 sleep 0.5
-echo "X11-Fokus nach windowfocus: $(xdotool getwindowfocus 2>/dev/null) (erwartet: $WIN)"
 
-# Neutraler Klick oben
-xdotool mousemove "$USER_ABS_X" "$((WIN_Y + 30))"
-sleep 0.2
-xdotool click 1
-sleep 0.8
+# Neutraler Klick
+xdotool mousemove "$USER_ABS_X" "$((WIN_Y + 20))"
+sleep 0.2; xdotool click 1; sleep 0.8
 
-# ---- Benutzernamefeld ----
-echo "Klicke Username bei y=55% (${USER_ABS_X}, ${USER_ABS_Y})"
-xdotool windowraise "$WIN" 2>/dev/null || true
-xdotool mousemove "$USER_ABS_X" "$USER_ABS_Y"
-sleep 0.3
-xdotool click 1
-sleep 0.8
-xdotool click 1
-sleep 1.0
-xdotool windowfocus --sync "$WIN" 2>/dev/null || true
-sleep 0.3
-echo "X11-Fokus vor Username-Eingabe: $(xdotool getwindowfocus 2>/dev/null) (erwartet: $WIN)"
+# Benutzernamefeld
+echo "Klicke Username: (${USER_ABS_X}, ${USER_ABS_Y})"
+xdotool mousemove "$USER_ABS_X" "$USER_ABS_Y"; sleep 0.3
+xdotool click 1; sleep 0.8; xdotool click 1; sleep 1.0
+xdotool windowfocus --sync "$WIN" 2>/dev/null || true; sleep 0.3
+echo "Fokus: $(xdotool getwindowfocus 2>/dev/null) (erwartet: $WIN)"
 
-inspect_shot /tmp/ibgw_step2.png "SCHRITT 2: Nach Username-Klick (Cursor?)" "$USER_REL_Y" "$PASS_REL_Y"
-
+scrot /tmp/ibgw_before_type.png 2>/dev/null || true
 xdotool type --clearmodifiers --delay 150 "stocksentimenttradingbot"
-sleep 1.0
-
-inspect_shot /tmp/ibgw_step3.png "SCHRITT 3: Nach Username-Eingabe (Text?)" "$USER_REL_Y" "$PASS_REL_Y"
-
-xdotool key --clearmodifiers Tab
-sleep 2.0
-
-# ---- Passwortfeld ----
-echo "Klicke Passwort bei y=67% (${USER_ABS_X}, ${PASS_ABS_Y})"
-xdotool windowraise "$WIN" 2>/dev/null || true
-xdotool mousemove "$USER_ABS_X" "$PASS_ABS_Y"
-sleep 0.3
-xdotool click 1
 sleep 0.8
-xdotool click 1
-sleep 1.0
-xdotool windowfocus --sync "$WIN" 2>/dev/null || true
-sleep 0.3
-echo "X11-Fokus vor Passwort-Eingabe: $(xdotool getwindowfocus 2>/dev/null) (erwartet: $WIN)"
+scrot /tmp/ibgw_after_type.png 2>/dev/null || true
 
-xdotool type --clearmodifiers --delay 150 "narjAv-qixru3-b1whaj"
-sleep 1.0
+# Pixel-Vergleich: hat sich was geaendert?
+echo "=== Pixel-Aenderung nach Eingabe ==="
+/opt/Aktien/venv/bin/python3 - /tmp/ibgw_before_type.png /tmp/ibgw_after_type.png "$WIN_X" "$WIN_Y" "$W" "$H" "$USER_REL_Y" <<'PYEOF'
+import sys
+from PIL import Image
+f1, f2 = sys.argv[1], sys.argv[2]
+wx, wy, ww, wh, cy = int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6]), int(sys.argv[7])
+b = Image.open(f1).crop((wx, wy, wx+ww, wy+wh)).convert('L')
+a = Image.open(f2).crop((wx, wy, wx+ww, wy+wh)).convert('L')
+diffs = sum(abs(a.getpixel((x, cy)) - b.getpixel((x, cy))) for x in range(ww))
+print(f"Pixel-Differenz bei y={cy}: {diffs} (>100 = Text sichtbar, ~0 = nichts geaendert)")
+PYEOF
 
-inspect_shot /tmp/ibgw_step5.png "SCHRITT 5: Nach Passwort-Eingabe" "$USER_REL_Y" "$PASS_REL_Y"
+xdotool key --clearmodifiers Tab; sleep 2.0
+
+# Passwortfeld
+echo "Klicke Passwort: (${USER_ABS_X}, ${PASS_ABS_Y})"
+xdotool mousemove "$USER_ABS_X" "$PASS_ABS_Y"; sleep 0.3
+xdotool click 1; sleep 0.8; xdotool click 1; sleep 1.0
+xdotool windowfocus --sync "$WIN" 2>/dev/null || true; sleep 0.3
+xdotool type --clearmodifiers --delay 150 "narjAv-qixru3-b1whaj"; sleep 0.8
 
 xdotool windowfocus --sync "$WIN" 2>/dev/null || true
 xdotool key Return
 echo "Login abgeschickt um $(date)"
 sleep 5
 
-inspect_shot /tmp/ibgw_step6.png "SCHRITT 6: Nach Submit" "$USER_REL_Y" "$PASS_REL_Y"
+scrot /tmp/ibgw_after_login.png 2>/dev/null || true
+echo "=== Nach Login-Submit ==="
+/opt/Aktien/venv/bin/python3 - /tmp/ibgw_after_login.png "$WIN_X" "$WIN_Y" "$W" "$H" <<'PYEOF'
+import sys
+from PIL import Image
+f, wx, wy, ww, wh = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
+chars = ' .:-=+*#%@'
+img = Image.open(f)
+win = img.crop((wx, wy, wx+ww, wy+wh)).convert('L').resize((100, 30))
+for y in range(win.height):
+    print(''.join(chars[int(win.getpixel((x,y))*(len(chars)-1)/255)] for x in range(win.width)))
+PYEOF
 
 sleep 55
 if ss -tlnp 2>/dev/null | grep -q ':4002'; then
     echo "ERFOLG: Port 4002 ist offen"
 else
     echo "WARNUNG: Port 4002 nach 60s noch nicht offen"
-    inspect_shot /tmp/ibgw_step7.png "SCHRITT 7: Endzustand" "$USER_REL_Y" "$PASS_REL_Y"
     ps aux | grep java | grep -v grep | awk '{print "Java laeuft:", $1, $11}'
 fi
