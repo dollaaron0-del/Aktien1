@@ -34,132 +34,105 @@ W=$(echo "$GEOM" | cut -dx -f1)
 H=$(echo "$GEOM" | cut -dx -f2)
 echo "Fenster: $WIN @ (${WIN_X},${WIN_Y}) ${W}x${H}"
 
-scrot /tmp/ibgw_scan.png 2>/dev/null || true
+# Natuerlichen X11-Fokus VOR jeder Interaktion merken
+NATURAL_FOCUS=$(xdotool getwindowfocus 2>/dev/null)
+echo "Natuerlicher X11-Fokus (JavaFX Eingabe-Handler): $NATURAL_FOCUS"
 
-# Schritt 1: Vollbild-ASCII des ganzen Fensters (100x60 fuer bessere Aufloesung)
-echo "=== Vollbild-Fenster 100x60 ==="
-/opt/Aktien/venv/bin/python3 - /tmp/ibgw_scan.png "$WIN_X" "$WIN_Y" "$W" "$H" <<'PYEOF'
+scrot /tmp/ibgw_init.png 2>/dev/null || true
+
+# Vollbild-ASCII mit y-Koordinaten (Diagnose)
+echo "=== Vollbild-Fenster (100x60, mit y-Koordinaten) ==="
+/opt/Aktien/venv/bin/python3 - /tmp/ibgw_init.png "$WIN_X" "$WIN_Y" "$W" "$H" <<'PYEOF'
 import sys
 from PIL import Image
 f, wx, wy, ww, wh = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
 chars = ' .:-=+*#%@'
 img = Image.open(f)
 win = img.crop((wx, wy, wx+ww, wy+wh)).convert('L').resize((100, 60))
-for y in range(win.height):
-    print(''.join(chars[int(win.getpixel((x,y))*(len(chars)-1)/255)] for x in range(win.width)))
+for y in range(60):
+    row = ''.join(chars[int(win.getpixel((x,y))*(len(chars)-1)/255)] for x in range(100))
+    wy_px = y * wh // 60
+    print(f"{wy_px:3d}px: {row}")
 PYEOF
 
-# Schritt 2: Vertikal-Helligkeits-Scan (findet Eingabefelder)
-echo "=== Vertikal-Helligkeits-Scan (Mitte des Fensters) ==="
-SCAN_OUTPUT=$(/opt/Aktien/venv/bin/python3 - /tmp/ibgw_scan.png "$WIN_X" "$WIN_Y" "$W" "$H" <<'PYEOF'
-import sys
-from PIL import Image
-f, wx, wy, ww, wh = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
-img = Image.open(f)
-win = img.crop((wx, wy, wx+ww, wy+wh)).convert('L')
-cx = ww // 2
-
-# Helligkeit jede 5px
-avgs = []
-for y in range(0, wh, 5):
-    row = [win.getpixel((cx + dx, y)) for dx in range(-60, 61, 6)]
-    avgs.append((y, sum(row) // len(row)))
-
-# Ausgabe als Balkendiagramm
-for y, avg in avgs:
-    bar = '#' * (avg // 8)
-    pct = y * 100 // wh
-    print(f"y={y:3d}({pct:2d}%): {avg:3d} {bar}")
-
-# Felder-Erkennung: Bereiche heller als Hintergrund
-bg = sorted(a for _,a in avgs)[len(avgs)//5]  # 20. Perzentile = Hintergrund
-threshold = bg + 20
-print(f"\nHintergrund-Helligkeit: {bg}/255, Schwellwert: {threshold}/255")
-fields = []
-in_field = False
-for y, avg in avgs:
-    if avg > threshold and not in_field:
-        in_field = True; start = y
-    elif avg <= threshold and in_field:
-        in_field = False
-        if y - start >= 10:
-            mid = (start + y) // 2
-            fields.append(mid)
-            print(f"FELD_ERKANNT: y={start}-{y}, Mitte={mid} ({mid*100//wh}%)")
-if not fields:
-    print("KEIN_FELD_GEFUNDEN")
-PYEOF
-)
-echo "$SCAN_OUTPUT"
-
-# Koordinaten aus Scan-Ergebnis extrahieren
-USER_REL_Y=""
-PASS_REL_Y=""
-while IFS= read -r line; do
-    if [[ "$line" == FELD_ERKANNT:* ]]; then
-        MID=$(echo "$line" | grep -oP 'Mitte=\K[0-9]+')
-        if [ -z "$USER_REL_Y" ]; then
-            USER_REL_Y="$MID"
-        elif [ -z "$PASS_REL_Y" ]; then
-            PASS_REL_Y="$MID"
-        fi
-    fi
-done <<< "$SCAN_OUTPUT"
-
-# Fallback wenn keine Felder erkannt
-[ -z "$USER_REL_Y" ] && USER_REL_Y=$((H * 35 / 100)) && echo "Fallback USERNAME y=35%"
-[ -z "$PASS_REL_Y" ] && PASS_REL_Y=$((H * 47 / 100)) && echo "Fallback PASSWORD y=47%"
-
+# Login-Koordinaten basierend auf Scan-Ergebnis:
+# - y=257 (42%): helle Spitze nach GSTAT-Region => Username-Feld
+# - y=395 (64%): zweite erkannte Region darunter => Passwort-Feld
+# KEIN windowfocus vor dem Tippen - JavaFX Eingabe-Handler (4194345) behalten
+USER_REL_Y=257
+PASS_REL_Y=395
 USER_ABS_X=$((WIN_X + W / 2))
 USER_ABS_Y=$((WIN_Y + USER_REL_Y))
 PASS_ABS_Y=$((WIN_Y + PASS_REL_Y))
-echo "Finale Koordinaten: Username (${USER_ABS_X}, ${USER_ABS_Y}) = ${USER_REL_Y}px, Passwort (${USER_ABS_X}, ${PASS_ABS_Y}) = ${PASS_REL_Y}px"
+echo "Klick-Koordinaten: Username (${USER_ABS_X}, ${USER_ABS_Y}), Passwort (${USER_ABS_X}, ${PASS_ABS_Y})"
 
-# ---- Login ----
+# Fenster in Vordergrund (aber Fokus NICHT aendern)
 xdotool windowraise "$WIN" 2>/dev/null || true
 sleep 0.5
-xdotool windowfocus --sync "$WIN" 2>/dev/null || true
-sleep 0.5
 
-# Neutraler Klick
-xdotool mousemove "$USER_ABS_X" "$((WIN_Y + 20))"
-sleep 0.2; xdotool click 1; sleep 0.8
-
-# Benutzernamefeld
+# ---- Benutzernamefeld ----
 echo "Klicke Username: (${USER_ABS_X}, ${USER_ABS_Y})"
-xdotool mousemove "$USER_ABS_X" "$USER_ABS_Y"; sleep 0.3
-xdotool click 1; sleep 0.8; xdotool click 1; sleep 1.0
-xdotool windowfocus --sync "$WIN" 2>/dev/null || true; sleep 0.3
-echo "Fokus: $(xdotool getwindowfocus 2>/dev/null) (erwartet: $WIN)"
+xdotool mousemove "$USER_ABS_X" "$USER_ABS_Y"
+sleep 0.3
+xdotool click 1
+sleep 0.8
+xdotool click 1
+sleep 1.2
+echo "X11-Fokus nach Klick: $(xdotool getwindowfocus 2>/dev/null) (war: $NATURAL_FOCUS)"
 
 scrot /tmp/ibgw_before_type.png 2>/dev/null || true
+
+# KEIN windowfocus - natuerlicherweise bleibt JavaFX-Handler
 xdotool type --clearmodifiers --delay 150 "stocksentimenttradingbot"
-sleep 0.8
+sleep 1.0
+
 scrot /tmp/ibgw_after_type.png 2>/dev/null || true
 
-# Pixel-Vergleich: hat sich was geaendert?
-echo "=== Pixel-Aenderung nach Eingabe ==="
-/opt/Aktien/venv/bin/python3 - /tmp/ibgw_before_type.png /tmp/ibgw_after_type.png "$WIN_X" "$WIN_Y" "$W" "$H" "$USER_REL_Y" <<'PYEOF'
+# Pixel-Differenz: hat das Fenster auf die Eingabe reagiert?
+echo "=== Pixel-Differenz Username-Zeile ==="
+/opt/Aktien/venv/bin/python3 - /tmp/ibgw_before_type.png /tmp/ibgw_after_type.png \
+    "$WIN_X" "$WIN_Y" "$W" "$H" "$USER_REL_Y" "$PASS_REL_Y" <<'PYEOF'
 import sys
 from PIL import Image
 f1, f2 = sys.argv[1], sys.argv[2]
-wx, wy, ww, wh, cy = int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6]), int(sys.argv[7])
+wx, wy, ww, wh = int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6])
+uy, py = int(sys.argv[7]), int(sys.argv[8])
 b = Image.open(f1).crop((wx, wy, wx+ww, wy+wh)).convert('L')
 a = Image.open(f2).crop((wx, wy, wx+ww, wy+wh)).convert('L')
-diffs = sum(abs(a.getpixel((x, cy)) - b.getpixel((x, cy))) for x in range(ww))
-print(f"Pixel-Differenz bei y={cy}: {diffs} (>100 = Text sichtbar, ~0 = nichts geaendert)")
+for label, y in [('Username', uy), ('Passwort', py)]:
+    d = sum(abs(a.getpixel((x, y)) - b.getpixel((x, y))) for x in range(ww))
+    print(f"{label} y={y}: Differenz={d} ({'OK: Text erschienen!' if d>200 else 'LEER: keine Aenderung' if d<50 else 'unklar'})")
+# Gesamtdiff (irgendwo im Fenster)
+total = sum(abs(a.getpixel((x, y)) - b.getpixel((x, y))) for y in range(wh) for x in range(0, ww, 4))
+print(f"Gesamt-Differenz im Fenster: {total} ({'Etwas hat sich geaendert' if total>500 else 'Nichts hat sich geaendert'})")
 PYEOF
 
-xdotool key --clearmodifiers Tab; sleep 2.0
+echo "=== Nach Username-Eingabe ==="
+/opt/Aktien/venv/bin/python3 - /tmp/ibgw_after_type.png "$WIN_X" "$WIN_Y" "$W" "$H" <<'PYEOF'
+import sys
+from PIL import Image
+f, wx, wy, ww, wh = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
+chars = ' .:-=+*#%@'
+img = Image.open(f)
+win = img.crop((wx, wy, wx+ww, wy+wh)).convert('L').resize((100, 30))
+for y in range(30):
+    row = ''.join(chars[int(win.getpixel((x,y))*(len(chars)-1)/255)] for x in range(100))
+    wy_px = y * wh // 30
+    print(f"{wy_px:3d}px: {row}")
+PYEOF
 
-# Passwortfeld
+xdotool key --clearmodifiers Tab
+sleep 2.0
+
+# ---- Passwortfeld ----
 echo "Klicke Passwort: (${USER_ABS_X}, ${PASS_ABS_Y})"
-xdotool mousemove "$USER_ABS_X" "$PASS_ABS_Y"; sleep 0.3
-xdotool click 1; sleep 0.8; xdotool click 1; sleep 1.0
-xdotool windowfocus --sync "$WIN" 2>/dev/null || true; sleep 0.3
-xdotool type --clearmodifiers --delay 150 "narjAv-qixru3-b1whaj"; sleep 0.8
+xdotool mousemove "$USER_ABS_X" "$PASS_ABS_Y"
+sleep 0.3
+xdotool click 1; sleep 0.8; xdotool click 1; sleep 1.2
 
-xdotool windowfocus --sync "$WIN" 2>/dev/null || true
+xdotool type --clearmodifiers --delay 150 "narjAv-qixru3-b1whaj"
+sleep 1.0
+
 xdotool key Return
 echo "Login abgeschickt um $(date)"
 sleep 5
@@ -173,8 +146,10 @@ f, wx, wy, ww, wh = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.arg
 chars = ' .:-=+*#%@'
 img = Image.open(f)
 win = img.crop((wx, wy, wx+ww, wy+wh)).convert('L').resize((100, 30))
-for y in range(win.height):
-    print(''.join(chars[int(win.getpixel((x,y))*(len(chars)-1)/255)] for x in range(win.width)))
+for y in range(30):
+    row = ''.join(chars[int(win.getpixel((x,y))*(len(chars)-1)/255)] for x in range(100))
+    wy_px = y * wh // 30
+    print(f"{wy_px:3d}px: {row}")
 PYEOF
 
 sleep 55
