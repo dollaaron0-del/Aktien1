@@ -55,7 +55,8 @@ for y in range(60):
     print(f"{wy_px:3d}px: {row}")
 PYEOF
 
-# Pixel-Scan: Helle Eingabefelder automatisch erkennen (y=200-320, threshold>185, >50 helle Pixel)
+# Pixel-Scan: Helle Eingabefelder automatisch erkennen (y=210-300, threshold>150, >30 helle Pixel)
+# Verbose-Diagnose via stderr; FELD-Zeilen via stdout fuer bash-Parsing
 echo "=== Pixel-Scan Eingabefelder ==="
 SCAN=$(/opt/Aktien/venv/bin/python3 - /tmp/ibgw_init.png "$WIN_X" "$WIN_Y" "$W" "$H" <<'PYEOF'
 import sys
@@ -63,10 +64,18 @@ from PIL import Image
 f, wx, wy, ww, wh = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
 img = Image.open(f)
 win = img.crop((wx, wy, wx+ww, wy+wh)).convert('L')
-rows = [(y, [x for x in range(ww) if win.getpixel((x, y)) > 185])
-        for y in range(200, min(wh, 320))]
-rows = [(y, bp) for y, bp in rows if len(bp) > 50]
+# Verbose: jede Zeile mit >5 hellen Pixeln ausgeben (stderr)
+sys.stderr.write("=== Scan y=210-300, thresh>150 ===\n")
+for y in range(210, min(wh, 300), 4):
+    bp = [x for x in range(ww) if win.getpixel((x, y)) > 150]
+    if len(bp) > 5:
+        sys.stderr.write(f"  y={y:3d}: n={len(bp):3d} x={min(bp)}-{max(bp)}\n")
+# Cluster-Erkennung (stdout -> bash)
+rows = [(y, [x for x in range(ww) if win.getpixel((x, y)) > 150])
+        for y in range(210, min(wh, 300))]
+rows = [(y, bp) for y, bp in rows if len(bp) > 30]
 if not rows:
+    sys.stderr.write("  FALLBACK: keine Cluster gefunden\n")
     print(f"FELD0 {ww//2} 223")
     print(f"FELD1 {ww//2} 257")
 else:
@@ -80,7 +89,10 @@ else:
     clusters.append(cl)
     for i, cl in enumerate(clusters):
         best = max(cl, key=lambda r: len(r[1]))
-        xc = sum(best[1]) // len(best[1])
+        # 70th-Perzentile der hellen x-Positionen: landet im Eingabefeld, rechts von Label
+        sx = sorted(best[1])
+        xc = sx[len(sx) * 7 // 10]
+        sys.stderr.write(f"  FELD{i}: y={best[0]} x_range={min(best[1])}-{max(best[1])} x70pct={xc}\n")
         print(f"FELD{i} {xc} {best[0]}")
 PYEOF
 )
@@ -95,9 +107,11 @@ USER_ABS_Y=$((WIN_Y + USER_REL_Y))
 PASS_ABS_Y=$((WIN_Y + PASS_REL_Y))
 echo "Adaptive Koordinaten: Username (${USER_ABS_X}, ${USER_ABS_Y}), Passwort (${USER_ABS_X}, ${PASS_ABS_Y})"
 
-# Fenster in Vordergrund (aber Fokus NICHT aendern)
+# Fenster in Vordergrund und X11-Fokus setzen (beides noetig fuer JavaFX Widget-Fokus)
 xdotool windowraise "$WIN" 2>/dev/null || true
+xdotool windowfocus --sync "$WIN" 2>/dev/null || true
 sleep 0.5
+echo "X11-Fokus nach windowfocus: $(xdotool getwindowfocus 2>/dev/null) (erwartet: $WIN)"
 
 # ---- Benutzernamefeld ----
 echo "Klicke Username: (${USER_ABS_X}, ${USER_ABS_Y})"
@@ -111,6 +125,22 @@ sleep 1.2
 echo "X11-Fokus nach Klick: $(xdotool getwindowfocus 2>/dev/null) (war: $NATURAL_FOCUS)"
 
 scrot /tmp/ibgw_before_type.png 2>/dev/null || true
+
+# Diagnose: hatte der Klick selbst eine visuelle Wirkung?
+echo "=== Klick-Wirkung (init vs before_type) ==="
+/opt/Aktien/venv/bin/python3 - /tmp/ibgw_init.png /tmp/ibgw_before_type.png \
+    "$WIN_X" "$WIN_Y" "$W" "$H" "$USER_REL_Y" <<'PYEOF'
+import sys
+from PIL import Image
+f1, f2 = sys.argv[1], sys.argv[2]
+wx, wy, ww, wh, uy = int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6]), int(sys.argv[7])
+b = Image.open(f1).crop((wx, wy, wx+ww, wy+wh)).convert('L')
+a = Image.open(f2).crop((wx, wy, wx+ww, wy+wh)).convert('L')
+row_d = sum(abs(a.getpixel((x, uy)) - b.getpixel((x, uy))) for x in range(ww))
+total = sum(abs(a.getpixel((x, y)) - b.getpixel((x, y))) for y in range(wh) for x in range(0, ww, 4))
+print(f"Zeile y={uy}: {row_d} ({'Fokus-Cursor!' if row_d>100 else 'keine Aenderung'})")
+print(f"Gesamt: {total} ({'Klick hatte Wirkung' if total>300 else 'Klick hatte KEINE Wirkung'})")
+PYEOF
 
 # KEIN windowfocus - natuerlicherweise bleibt JavaFX-Handler
 xdotool type --clearmodifiers --delay 150 "stocksentimenttradingbot"
