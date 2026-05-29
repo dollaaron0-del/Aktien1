@@ -1,10 +1,53 @@
 #!/bin/bash
 export DISPLAY=:99
 
-# xclip benoetigt fuer Clipboard-Paste in JavaFX-Felder
-command -v xclip >/dev/null 2>&1 || apt-get install -y xclip >/dev/null 2>&1
+# Keyboard-Setup: setxkbmap + xmodmap Fallback
+# (Xvfb hat ohne explizites Setup keine Buchstaben-Keycodes)
+setxkbmap -layout us -rules evdev -model pc105 2>/dev/null || \
+    setxkbmap -layout us 2>/dev/null || true
 
-setxkbmap -layout us 2>/dev/null && echo "Keyboard: US-Layout gesetzt" || echo "WARNUNG: setxkbmap fehlgeschlagen"
+# Pruefen ob 's' gemappt ist (repraesentativ fuer alle Buchstaben)
+S_KC=$(xmodmap -pke 2>/dev/null | grep -m1 " = s " | awk '{print $2}')
+echo "Keyboard: Keycode fuer 's' nach setxkbmap: ${S_KC:-NICHT GEMAPPT}"
+
+if [ -z "$S_KC" ]; then
+    echo "setxkbmap nicht wirksam -> xmodmap Fallback"
+    xmodmap \
+        -e "keycode 10 = 1 exclam" \
+        -e "keycode 11 = 2 at" \
+        -e "keycode 12 = 3 numbersign" \
+        -e "keycode 13 = 4 dollar" \
+        -e "keycode 14 = 5 percent" \
+        -e "keycode 19 = 0 parenright" \
+        -e "keycode 20 = minus underscore" \
+        -e "keycode 24 = q Q" \
+        -e "keycode 25 = w W" \
+        -e "keycode 26 = e E" \
+        -e "keycode 27 = r R" \
+        -e "keycode 28 = t T" \
+        -e "keycode 29 = y Y" \
+        -e "keycode 30 = u U" \
+        -e "keycode 31 = i I" \
+        -e "keycode 32 = o O" \
+        -e "keycode 33 = p P" \
+        -e "keycode 38 = a A" \
+        -e "keycode 39 = s S" \
+        -e "keycode 40 = d D" \
+        -e "keycode 42 = g G" \
+        -e "keycode 43 = h H" \
+        -e "keycode 44 = j J" \
+        -e "keycode 45 = k K" \
+        -e "keycode 53 = x X" \
+        -e "keycode 54 = c C" \
+        -e "keycode 55 = v V" \
+        -e "keycode 56 = b B" \
+        -e "keycode 57 = n N" \
+        -e "keycode 58 = m M" \
+        2>/dev/null || echo "FEHLER: xmodmap fehlgeschlagen"
+    S_KC2=$(xmodmap -pke 2>/dev/null | grep -m1 " = s " | awk '{print $2}')
+    echo "Keyboard nach xmodmap: Keycode fuer 's': ${S_KC2:-IMMER NOCH NICHT GEMAPPT}"
+fi
+sleep 0.5
 
 pkill -f java 2>/dev/null || true
 sleep 3
@@ -149,12 +192,7 @@ print(f"Gesamt: {total} ({'Klick hatte Wirkung' if total>300 else 'Klick hatte K
 PYEOF
 
 echo "X11-Fokus vor type: $(xdotool getwindowfocus 2>/dev/null)"
-# Clipboard-Paste: zuverlaessiger als xdotool key fuer JavaFX-Textfelder
-printf '%s' 'stocksentimenttradingbot' | DISPLAY=:99 xclip -selection clipboard
-sleep 0.2
-xdotool key --clearmodifiers ctrl+a
-sleep 0.1
-xdotool key --clearmodifiers ctrl+v
+xdotool type --clearmodifiers --delay 120 'stocksentimenttradingbot'
 sleep 0.5
 
 scrot /tmp/ibgw_after_type.png 2>/dev/null || true
@@ -203,11 +241,7 @@ xdotool click 1; sleep 0.8; xdotool click 1; sleep 1.2
 echo "X11-Fokus vor Passwort-type: $(xdotool getwindowfocus 2>/dev/null)"
 sleep 0.3
 
-printf '%s' 'narjAv-qixru3-b1whaj' | DISPLAY=:99 xclip -selection clipboard
-sleep 0.2
-xdotool key --clearmodifiers ctrl+a
-sleep 0.1
-xdotool key --clearmodifiers ctrl+v
+xdotool type --clearmodifiers --delay 120 'narjAv-qixru3-b1whaj'
 sleep 1.0
 
 xdotool key Return
