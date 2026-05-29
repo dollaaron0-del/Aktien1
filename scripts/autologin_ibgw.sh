@@ -49,10 +49,33 @@ if [ -z "$S_KC" ]; then
 fi
 sleep 0.5
 
-echo "===== AUTOLOGIN v5 ====="
+echo "===== AUTOLOGIN v6 ====="
 
 pkill -f java 2>/dev/null || true
 sleep 3
+
+# ---- xterm sicherstellen (IBC-Voraussetzung) ----
+if ! command -v xterm >/dev/null 2>&1; then
+    echo "xterm fehlt - versuche apt-get..."
+    apt-get install -y xterm 2>/dev/null || true
+fi
+if ! command -v xterm >/dev/null 2>&1; then
+    echo "apt-get fehlgeschlagen - erstelle xterm-Stub"
+    cat > /usr/local/bin/xterm << 'XWRAP'
+#!/bin/bash
+# Stub fuer IBC: findet -e Flag und fuehrt Argumente aus
+while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "-e" ]]; then
+        shift
+        if [[ $# -eq 1 ]]; then eval "$1"; else exec "$@"; fi
+        exit $?
+    fi
+    shift
+done
+XWRAP
+    chmod +x /usr/local/bin/xterm
+fi
+echo "xterm: $(command -v xterm)"
 
 # ---- IBC: i4jruntime.jar Symlink-Fix ----
 # IBC iteriert ueber alle *.jar in den Gateway-Jars; symlink macht i4jruntime automatisch verfuegbar
