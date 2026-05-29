@@ -100,6 +100,10 @@ fi
 mkdir -p /tmp/ibc_logs
 
 # ---- IBC-Login-Versuch ----
+# Zombie-Prozesse aus vorherigen Laeufen bereinigen
+pkill -f 'displaybannerandlaunch' 2>/dev/null || true
+pkill -9 -f 'tee.*ibc' 2>/dev/null || true
+sleep 1
 IBC_OK=false
 if [ -f "/opt/ibc/gatewaystart.sh" ]; then
     echo "Starte IBC-Login..."
@@ -135,11 +139,19 @@ PYEOF
         echo "=== /tmp/ibc_run.log ==="
         cat /tmp/ibc_run.log 2>/dev/null || echo "(keine /tmp/ibc_run.log)"
         echo "=== launcher.log (letzte 50 Zeilen) ==="
-        tail -50 /root/Jts/launcher.log 2>/dev/null || echo "(keine /root/Jts/launcher.log)"
-        echo "IBC-Logs (suche):"
-        find /tmp /root/Jts /opt/ibc -name "*.log" -newer /tmp/ibc_logs 2>/dev/null | \
-            xargs ls -la 2>/dev/null | tail -10
-        tail -20 /tmp/ibc_logs/*.log 2>/dev/null || echo "(keine Logs in /tmp/ibc_logs/)"
+        LAUNCHER_TAIL=$(tail -50 /root/Jts/launcher.log 2>/dev/null)
+        echo "${LAUNCHER_TAIL:-(keine /root/Jts/launcher.log)}"
+        echo "=== IBC-Logs-Verzeichnis ==="
+        ls -la /tmp/ibc_logs/ 2>/dev/null || echo "(leer oder nicht vorhanden)"
+        cat /tmp/ibc_logs/*.txt 2>/dev/null | tail -80 || echo "(keine .txt Logs in /tmp/ibc_logs/)"
+        if echo "$LAUNCHER_TAIL" | grep -q "INVALID_USERNAME_OR_BAD_IP"; then
+            echo ""
+            echo "!!! KRITISCH: IBKR lehnt Zugangsdaten/IP ab (INVALID_USERNAME_OR_BAD_IP) !!!"
+            echo "Verwendeter Username: $(grep IbLoginId /opt/ibc/config.ini 2>/dev/null | cut -d= -f2)"
+            echo "TradingMode:          $(grep TradingMode /opt/ibc/config.ini 2>/dev/null | cut -d= -f2)"
+            echo "Server-IP:            $(curl -s4 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')"
+            echo "==> Zugangsdaten auf paper.ibkr.com testen + IP-Whitelist pruefen!"
+        fi
         pkill -f java 2>/dev/null || true
         sleep 3
     fi
@@ -288,8 +300,13 @@ print(f"Gesamt: {total} ({'Klick hatte Wirkung' if total>300 else 'Klick hatte K
 PYEOF
 
 FOCUS_WIN=$(xdotool getwindowfocus 2>/dev/null)
-echo "X11-Fokus vor type: $FOCUS_WIN"
-xdotool type --window "$FOCUS_WIN" --clearmodifiers --delay 200 'stocksentimenttradingbot'
+echo "X11-Fokus vor Eingabe: $FOCUS_WIN"
+# PRIMARY-Selection + Middle-Click (X11-Paste, umgeht JavaFX Keyboard-Filter)
+printf 'stocksentimenttradingbot' | xclip -display :99 -selection primary 2>/dev/null || true
+sleep 0.3
+xdotool mousemove "$USER_ABS_X" "$USER_ABS_Y"
+sleep 0.2
+xdotool click 2
 sleep 0.5
 
 scrot /tmp/ibgw_after_type.png 2>/dev/null || true
@@ -335,11 +352,14 @@ echo "Klicke Passwort: (${USER_ABS_X}, ${PASS_ABS_Y})"
 xdotool mousemove "$USER_ABS_X" "$PASS_ABS_Y"
 sleep 0.3
 xdotool click 1; sleep 0.8; xdotool click 1; sleep 1.2
-FOCUS_WIN=$(xdotool getwindowfocus 2>/dev/null)
-echo "X11-Fokus vor Passwort-type: $FOCUS_WIN"
+echo "X11-Fokus nach Passwort-Klick: $(xdotool getwindowfocus 2>/dev/null)"
 sleep 0.3
-
-xdotool type --window "$FOCUS_WIN" --clearmodifiers --delay 200 'narjAv-qixru3-b1whaj'
+# PRIMARY-Selection + Middle-Click fuer Passwort
+printf 'narjAv-qixru3-b1whaj' | xclip -display :99 -selection primary 2>/dev/null || true
+sleep 0.3
+xdotool mousemove "$USER_ABS_X" "$PASS_ABS_Y"
+sleep 0.2
+xdotool click 2
 sleep 1.0
 
 xdotool key Return
