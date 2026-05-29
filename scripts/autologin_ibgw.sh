@@ -71,15 +71,18 @@ sleep 5
 scrot /tmp/ibgw_after.png 2>/dev/null || true
 echo "Screenshot: /tmp/ibgw_after.png"
 
-# Screenshot per HTTP erreichbar machen
-pkill -f "python3 -m http" 2>/dev/null || true
-python3 -m http.server 9092 --directory /tmp &>/dev/null &
-echo "Screenshot unter http://161.97.166.88:9092/ibgw_after.png"
+# Persistenter HTTP-Server (ueberlebt Script-Ende)
+pkill -f "python3 -m http.server 9092" 2>/dev/null || true
+nohup python3 -m http.server 9092 --directory /tmp > /tmp/http_server.log 2>&1 &
+disown
+echo "=== Screenshots abrufbar ==="
+echo "  Vorher: http://161.97.166.88:9092/ibgw_before.png"
+echo "  Nachher: http://161.97.166.88:9092/ibgw_after.png"
 
-sleep 55
+sleep 60
 if ss -tlnp 2>/dev/null | grep -q ':4002'; then
     echo "ERFOLG: Port 4002 ist offen"
 else
-    echo "WARNUNG: Port 4002 nach 60s noch nicht offen"
+    echo "WARNUNG: Port 4002 nach 65s noch nicht offen"
     ps aux | grep java | grep -v grep | awk '{print "Java laeuft:", $1, $11}'
 fi
