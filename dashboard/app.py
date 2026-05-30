@@ -1093,7 +1093,7 @@ with tab_network:
                     "GLP1_OBESITY":       (-0.08,  0.95),
                     # ── Finanzen / Industrie (Mitte links) ───────────────────
                     "FINANCIALS":         (-0.28,  0.40),
-                    "REAL_ESTATE":        ( 0.10,  0.48),
+                    "REAL_ESTATE":        (-0.08,  0.28),
                     "INDUSTRIALS":        (-0.58,  0.18),
                     # ── Energie / Rohstoffe (unten links) ────────────────────
                     "OIL_GAS":            (-0.82, -0.48),
@@ -1196,7 +1196,7 @@ with tab_network:
 
                 _zone_traces  = []   # je ein Trace pro Cluster (Kreis + Label)
                 _label_x2, _label_y2, _label_txt2, _label_col2 = [], [], [], []
-                _label_ax2, _label_ay2 = [], []   # Pfeilankerpunkte am Kreisrand
+                _label_nx2, _label_ny2 = [], []   # Richtungsvektor für xanchor/yanchor
 
                 for _theme, (zx, zy) in _theme_centers.items():
                     _in_zone = _theme_to_tickers.get(_theme, [])
@@ -1232,40 +1232,42 @@ with tab_network:
                         _nx, _ny = zx / _dist, zy / _dist
                     else:
                         _nx, _ny = 0.0, -1.0   # Fallback: nach unten
-                    _lx = zx + (_r_zone + 0.08) * _nx
-                    _ly = zy + (_r_zone + 0.08) * _ny
+                    # Boxkante (nicht Boxmitte) am Kreisrand → mehr Abstand zu Knoten
+                    _lx = zx + (_r_zone + 0.10) * _nx
+                    _ly = zy + (_r_zone + 0.10) * _ny
                     _label_x2.append(_lx)
                     _label_y2.append(_ly)
                     _label_txt2.append(_zl)
                     _label_col2.append(_zc)
-                    # Pfeilankerpunkt = Kreisrand in Richtung Label
-                    _label_ax2.append(zx + _r_zone * _nx * 0.95)
-                    _label_ay2.append(zy + _r_zone * _ny * 0.95)
+                    _label_nx2.append(_nx)
+                    _label_ny2.append(_ny)
 
-                # Labels als Annotationen mit Hintergrundbox + kurzem Pfeil zum Kreis
-                _zone_annotations = [
-                    dict(
+                # Labels als Annotationen — xanchor/yanchor sodass Boxkante am Ankerpunkt
+                _zone_annotations = []
+                for lx, ly, lt, lc, lnx, lny in zip(
+                    _label_x2, _label_y2, _label_txt2, _label_col2,
+                    _label_nx2, _label_ny2,
+                ):
+                    _r8i = int(lc[1:3], 16)
+                    _g8i = int(lc[3:5], 16)
+                    _b8i = int(lc[5:7], 16)
+                    # Boxkante zeigt zum Cluster: bei rechts/links/oben/unten unterschiedlich
+                    _xanc = "left"   if lnx >  0.35 else ("right"  if lnx < -0.35 else "center")
+                    _yanc = "bottom" if lny >  0.35 else ("top"    if lny < -0.35 else "middle")
+                    _zone_annotations.append(dict(
                         x=lx, y=ly,
-                        ax=ax, ay=ay,
                         text=f"<b>{lt}</b>",
-                        showarrow=True,
-                        arrowhead=0,
-                        arrowwidth=1,
-                        arrowcolor=lc,
+                        showarrow=False,
+                        xanchor=_xanc,
+                        yanchor=_yanc,
                         xref="x", yref="y",
-                        axref="x", ayref="y",
                         font=dict(size=10, color="#ffffff"),
-                        bgcolor=f"rgba({int(lc[1:3],16)},{int(lc[3:5],16)},{int(lc[5:7],16)},0.80)",
+                        bgcolor=f"rgba({_r8i},{_g8i},{_b8i},0.82)",
                         bordercolor=lc,
                         borderwidth=1,
-                        borderpad=3,
+                        borderpad=4,
                         opacity=0.95,
-                    )
-                    for lx, ly, lt, lc, ax, ay in zip(
-                        _label_x2, _label_y2, _label_txt2, _label_col2,
-                        _label_ax2, _label_ay2,
-                    )
-                ]
+                    ))
 
                 # ── Kanten (nur wenn Toggle aktiv) ─────────────────────────
                 _edge_x, _edge_y = [], []
