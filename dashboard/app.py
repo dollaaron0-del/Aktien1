@@ -937,16 +937,23 @@ with tab_network:
             # ── Node-Daten aus BotDataBridge (einheitliche Quelle) ──────────────
             _rec_color = {"BUY": "#00e676", "HOLD": "#ffd740", "SELL": "#f44336", "SKIP": "#888888"}
             _nodes: dict = {}
-            _canonical_seen: set = set()    # verhindert Duplikat-Nodes
-            for ticker, _ts in _all_states.items():
-                # Cross-Listing: Duplikat → auf kanonischen Ticker mappen
-                _canon = _CANONICAL.get(ticker, ticker)
-                if _canon != ticker:
-                    # Duplikat: nur behalten wenn kanonischer Ticker noch nicht da ist
-                    if _canon in _canonical_seen or _canon in _all_states:
-                        continue   # kanonischer Ticker wird separat verarbeitet
-                    ticker = _canon  # Duplikat als kanonischer Ticker aufnehmen
-                _canonical_seen.add(_canon)
+            # Erst alle States sammeln und nach kanonischem Ticker mergen
+            # (bestes Signal gewinnt: BUY > HOLD > SELL > SKIP)
+            _REC_RANK = {"BUY": 4, "HOLD": 3, "SELL": 2, "SKIP": 1, "UNKNOWN": 0}
+            _merged_states: dict = {}  # canon_ticker → _ts
+            for _raw_t, _ts in _all_states.items():
+                _canon = _CANONICAL.get(_raw_t, _raw_t)
+                if _canon not in _merged_states:
+                    _merged_states[_canon] = _ts
+                else:
+                    # Besser bewertetes Signal gewinnt
+                    _cur_rank = _REC_RANK.get(_merged_states[_canon].recommendation or "UNKNOWN", 0)
+                    _new_rank = _REC_RANK.get(_ts.recommendation or "UNKNOWN", 0)
+                    if _new_rank > _cur_rank:
+                        _merged_states[_canon] = _ts
+
+            _nodes: dict = {}
+            for ticker, _ts in _merged_states.items():
                 raw_rec = _ts.recommendation or "UNKNOWN"
                 # UNKNOWN / leere Empfehlungen → SKIP (kein echter Signal)
                 rec = raw_rec if raw_rec in _rec_color else "SKIP"
@@ -1075,11 +1082,11 @@ with tab_network:
                         _angle = 2 * math.pi * _i / _n - math.pi / 2
                         _pos[t] = (_cx + _r * math.cos(_angle), _cy + _r * math.sin(_angle))
 
-                # Ticker ohne Thema: kleiner Ring in der Mitte
+                # Ticker ohne Thema: äußerer Ring (1.10–1.25) damit Cluster nicht verdeckt
                 _n_nt = len(_no_theme)
                 for _i, t in enumerate(sorted(_no_theme)):
                     _angle = 2 * math.pi * _i / max(_n_nt, 1)
-                    _r_nt  = 0.15 + 0.03 * (_i % 3)  # 3 konzentrische Ringe
+                    _r_nt  = 1.10 + 0.05 * (_i % 3)  # 3 konzentrische Außenringe
                     _pos[t] = (_r_nt * math.cos(_angle), _r_nt * math.sin(_angle))
 
                 _n_themed = len(_ticker_list) - _n_nt
@@ -1263,9 +1270,9 @@ with tab_network:
                         plot_bgcolor="#0e1117",
                         font=dict(color="#dddddd"),
                         xaxis=dict(showgrid=False, zeroline=False,
-                                   showticklabels=False, range=[-1.35, 1.35]),
+                                   showticklabels=False, range=[-1.55, 1.55]),
                         yaxis=dict(showgrid=False, zeroline=False,
-                                   showticklabels=False, range=[-1.30, 1.30]),
+                                   showticklabels=False, range=[-1.50, 1.50]),
                         hovermode="closest",
                         height=760,
                         margin=dict(l=10, r=10, t=20, b=10),
