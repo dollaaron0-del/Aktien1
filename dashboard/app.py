@@ -1073,35 +1073,35 @@ with tab_network:
 
                 # Jedes Thema bekommt einen festen Sektor auf dem Canvas
                 _theme_centers = {
-                    # ── Rüstung & Industrie (links) ───────────────────────────
-                    "DEFENSE_EU":         (-0.86,  0.59),
-                    "DEFENSE_US":         (-0.59,  0.74),
-                    "INDUSTRIALS":        (-0.59,  0.37),
-                    "EU_INDUSTRIAL":      (-0.78,  0.12),
-                    # ── Energie & Rohstoffe (unten links) ────────────────────
-                    "OIL_GAS":            (-0.67, -0.43),
-                    "SAFE_HAVEN":         (-0.92, -0.23),
-                    "MINING_METALS":      (-0.89, -0.56),
-                    "CLEAN_ENERGY":       (-0.43, -0.59),
-                    # ── Gesundheit (oben Mitte) ───────────────────────────────
-                    "BIOTECH_HEALTH":     (-0.18,  0.66),
-                    "GLP1_OBESITY":       ( 0.12,  0.88),
-                    # ── Finanzen & Payments (Mitte) ───────────────────────────
-                    "REAL_ESTATE":        (-0.43, -0.10),
-                    "FINANCIALS":         (-0.08,  0.04),
-                    "PAYMENTS_FINTECH":   ( 0.28,  0.04),
-                    "CRYPTO_PROXY":       ( 0.86,  0.08),
-                    # ── KI / Tech-Block (oben rechts) ─────────────────────────
-                    "AI_CHIPS":           ( 0.59,  0.74),
-                    "DATA_CENTER_POWER":  ( 0.75,  0.59),
-                    "SEMICONDUCTORS":     ( 0.74,  0.41),
-                    "AI_HYPERSCALER":     ( 0.43,  0.53),
+                    # ── Rüstung & Industrie (enger Block, oben links) ─────────
+                    "DEFENSE_EU":         (-0.85,  0.60),
+                    "DEFENSE_US":         (-0.58,  0.72),
+                    "INDUSTRIALS":        (-0.60,  0.38),
+                    "EU_INDUSTRIAL":      (-0.85,  0.26),
+                    # ── Energie & Rohstoffe (enger Block, unten links) ────────
+                    "OIL_GAS":            (-0.68, -0.42),
+                    "SAFE_HAVEN":         (-0.90, -0.22),
+                    "MINING_METALS":      (-0.82, -0.55),
+                    "CLEAN_ENERGY":       (-0.46, -0.54),
+                    # ── Gesundheit (oben Mitte, eng) ──────────────────────────
+                    "BIOTECH_HEALTH":     (-0.15,  0.68),
+                    "GLP1_OBESITY":       ( 0.10,  0.85),
+                    # ── Finanzen (enger Block, Mitte) ─────────────────────────
+                    "REAL_ESTATE":        (-0.32, -0.10),
+                    "FINANCIALS":         (-0.05,  0.05),
+                    "PAYMENTS_FINTECH":   ( 0.22,  0.05),
+                    "CRYPTO_PROXY":       ( 0.72, -0.10),
+                    # ── KI / Tech (enger Block, oben rechts) ─────────────────
+                    "AI_CHIPS":           ( 0.60,  0.75),
+                    "AI_HYPERSCALER":     ( 0.40,  0.55),
+                    "DATA_CENTER_POWER":  ( 0.72,  0.60),
+                    "SEMICONDUCTORS":     ( 0.68,  0.40),
                     # ── Software (rechts Mitte) ───────────────────────────────
-                    "AI_SOFTWARE":        ( 0.64,  0.18),
-                    "ENTERPRISE_SOFTWARE":( 0.45, -0.33),
-                    # ── Konsum / E-Auto (unten rechts) ────────────────────────
-                    "ECOMMERCE_CONSUMER": ( 0.43, -0.67),
-                    "EV_AUTO":            ( 0.72, -0.56),
+                    "AI_SOFTWARE":        ( 0.60,  0.18),
+                    "ENTERPRISE_SOFTWARE":( 0.40, -0.30),
+                    # ── Konsum / E-Auto (enger Block, unten rechts) ───────────
+                    "ECOMMERCE_CONSUMER": ( 0.40, -0.60),
+                    "EV_AUTO":            ( 0.65, -0.50),
                 }
                 # Primär-Thema: erster Eintrag aus get_themes() → bestimmt den Cluster
                 # Mehrfachthemen landen im ersten (wichtigsten) Cluster, nicht im Durchschnitt
@@ -1286,12 +1286,12 @@ with tab_network:
                     # Label-Richtung: radial nach außen, mit Overrides für problematische Cluster
                     _dir_overrides = {
                         "FINANCIALS":      ( 0.0, -1.0),  # → unten
-                        "REAL_ESTATE":     ( 0.0, -1.0),  # → unten
+                        "REAL_ESTATE":     (-1.0,  0.0),  # → links (Mitte-links, weg von CLEAN_ENERGY)
                         "INDUSTRIALS":     (-1.0,  0.0),  # → links
-                        "EU_INDUSTRIAL":   (-1.0,  0.0),  # → links (x=-0.78 → label ~-1.14)
+                        "EU_INDUSTRIAL":   (-1.0,  0.0),  # → links
                         "GLP1_OBESITY":    ( 0.0,  1.0),  # → oben
-                        "BIOTECH_HEALTH":  ( 0.0,  1.0),  # → oben (nicht in Rüstung-Kreis)
-                        "PAYMENTS_FINTECH":( 0.0, -1.0),  # → unten
+                        "BIOTECH_HEALTH":  ( 0.0,  1.0),  # → oben
+                        "PAYMENTS_FINTECH":( 0.0,  1.0),  # → oben (weg von ENTERPRISE_SW)
                     }
                     if _theme in _dir_overrides:
                         _nx, _ny = _dir_overrides[_theme]
@@ -1429,7 +1429,7 @@ with tab_network:
                 ]
 
                 fig = go.Figure(
-                    data=[_sector_link_trace] + _zone_traces + [_conn_trace, _edge_trace, _node_trace] + _legend_traces,
+                    data=_zone_traces + [_conn_trace, _edge_trace, _node_trace] + _legend_traces,
                     layout=go.Layout(
                         paper_bgcolor="#0e1117",
                         plot_bgcolor="#0e1117",
