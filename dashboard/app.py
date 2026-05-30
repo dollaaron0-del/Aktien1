@@ -1039,27 +1039,37 @@ with tab_network:
                 }
 
                 # ── Hintergrund-Zonen (farbige Cluster-Kreise) ─────────────
-                _zone_traces = []
+                # Hex-Farbe → rgba-String
+                def _rgba(h, a):
+                    return f"rgba({int(h[1:3],16)},{int(h[3:5],16)},{int(h[5:7],16)},{a})"
+
+                # ── Zonen: echte Shape-Kreise in Datenkoordinaten ───────────
+                _zone_shapes = []
                 _zone_annotations = []
+                _r = 0.20  # Radius jeder Zone in Datenkoordinaten
                 for _theme, (zx, zy) in _theme_centers.items():
                     _in_zone = [t for t in _ticker_list if _theme in _get_themes(t)]
                     if not _in_zone:
                         continue
                     _zc = _theme_colors.get(_theme, "#666666")
                     _zl = _theme_labels_de.get(_theme, _theme)
-                    _zone_traces.append(go.Scatter(
-                        x=[zx], y=[zy],
-                        mode="markers",
-                        marker=dict(size=100, color=_zc, opacity=0.07,
-                                    line=dict(width=1, color=_zc)),
-                        hoverinfo="skip", showlegend=False,
+                    _zone_shapes.append(dict(
+                        type="circle",
+                        xref="x", yref="y",
+                        x0=zx - _r, y0=zy - _r,
+                        x1=zx + _r, y1=zy + _r,
+                        fillcolor=_rgba(_zc, 0.12),
+                        line=dict(color=_rgba(_zc, 0.55), width=1.5, dash="dot"),
+                        layer="below",
                     ))
                     _zone_annotations.append(dict(
-                        x=zx, y=zy + 0.14,
+                        x=zx, y=zy - _r - 0.04,
                         text=f"<b>{_zl}</b>",
                         showarrow=False,
-                        font=dict(size=10, color=_zc),
-                        xref="x", yref="y", opacity=0.9,
+                        font=dict(size=11, color=_zc),
+                        bgcolor="rgba(14,17,23,0.6)",
+                        borderpad=2,
+                        xref="x", yref="y",
                     ))
 
                 # ── Kanten ─────────────────────────────────────────────────
@@ -1085,7 +1095,12 @@ with tab_network:
                 _node_colors = [_nodes[t]["color"] for t in _ticker_list]
                 _node_sizes  = [16 + 6 * _conn_count[t] for t in _ticker_list]
 
-                # Firmenname aus globalem Lookup
+                # Knotenrand in Themenfarbe → sofort sichtbare Sektor-Zugehörigkeit
+                _node_borders = [
+                    _theme_colors.get((_get_themes(t) or [""])[0], "#333333")
+                    for t in _ticker_list
+                ]
+
                 _node_hover = [
                     (
                         f"<b>{t}</b>  {_ALL_NAMES.get(t.upper(), '')}<br>"
@@ -1098,7 +1113,7 @@ with tab_network:
                     for t in _ticker_list
                 ]
 
-                # Sichtbare Beschriftung: Kürzel + Firmenname (1. Wort)
+                # Label: Kürzel + 1. Wort des Firmennamens
                 _node_labels = []
                 for t in _ticker_list:
                     _nm = _ALL_NAMES.get(t.upper(), "")
@@ -1116,7 +1131,7 @@ with tab_network:
                     marker=dict(
                         size=_node_sizes,
                         color=_node_colors,
-                        line=dict(width=1, color="#111111"),
+                        line=dict(width=2, color=_node_borders),
                     ),
                     showlegend=False,
                 )
@@ -1132,7 +1147,7 @@ with tab_network:
                 ]
 
                 fig = go.Figure(
-                    data=_zone_traces + [_edge_trace, _node_trace] + _legend_traces,
+                    data=[_edge_trace, _node_trace] + _legend_traces,
                     layout=go.Layout(
                         paper_bgcolor="#0e1117",
                         plot_bgcolor="#0e1117",
@@ -1140,10 +1155,11 @@ with tab_network:
                         xaxis=dict(showgrid=False, zeroline=False,
                                    showticklabels=False, range=[-1.35, 1.35]),
                         yaxis=dict(showgrid=False, zeroline=False,
-                                   showticklabels=False, range=[-1.25, 1.25]),
+                                   showticklabels=False, range=[-1.30, 1.30]),
                         hovermode="closest",
-                        height=740,
+                        height=760,
                         margin=dict(l=10, r=10, t=20, b=10),
+                        shapes=_zone_shapes,
                         annotations=_zone_annotations,
                         legend=dict(
                             bgcolor="#1a1a2e", bordercolor="#444",
