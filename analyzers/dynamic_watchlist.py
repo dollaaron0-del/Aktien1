@@ -37,7 +37,7 @@ SCAN_UNIVERSE = [
     # Konsum
     "WMT", "COST", "HD", "MCD", "NKE", "DIS", "NFLX",
     # Wachstum / Momentum
-    "PLTR", "COIN", "SHOP", "UBER", "ABNB", "SOFI",
+    "PLTR", "COIN", "MSTR", "RIOT", "MARA", "CLSK", "SHOP", "UBER", "ABNB", "SOFI",
     # Halbleiter
     "ASML", "TSM", "AMAT", "MU", "MRVL", "ARM",
 ]

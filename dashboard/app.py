@@ -1087,7 +1087,7 @@ with tab_network:
                     "BIOTECH_HEALTH":     (-0.15,  0.68),
                     "GLP1_OBESITY":       ( 0.10,  0.85),
                     # ── Finanzen (enger Block, Mitte) ─────────────────────────
-                    "REAL_ESTATE":        (-0.32, -0.10),
+                    "REAL_ESTATE":        (-0.20, -0.18),
                     "FINANCIALS":         (-0.05,  0.05),
                     "PAYMENTS_FINTECH":   ( 0.22,  0.05),
                     "CRYPTO_PROXY":       ( 0.72, -0.10),

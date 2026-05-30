@@ -20,7 +20,7 @@ DEFAULT_UNIVERSE = [
     # Consumer
     "WMT", "COST", "HD", "MCD", "NKE", "SBUX", "DIS", "NFLX",
     # Growth / momentum
-    "PLTR", "COIN", "SHOP", "UBER", "ABNB", "RIVN", "LCID", "SOFI", "HOOD",
+    "PLTR", "COIN", "MSTR", "RIOT", "MARA", "CLSK", "SHOP", "UBER", "ABNB", "RIVN", "LCID", "SOFI", "HOOD",
     # Semiconductors
     "ASML", "TSM", "AMAT", "LRCX", "MU", "MRVL", "ARM",
     # EU – Deutschland (XETRA)
