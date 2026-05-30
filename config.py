@@ -157,6 +157,18 @@ class Config:
     ollama_timeout: int = field(
         default_factory=lambda: int(os.getenv("OLLAMA_TIMEOUT", "30"))
     )
+    # ── Frugal-Modus (Paper-Trading / Datenspar-Modus) ────────────────────────
+    # true = Ollama übernimmt alle normalen Analysen; Claude nur noch für
+    # offene Positionen, SEC/Earnings-Quellen und manuelle Dashboard-Anfragen.
+    # Einsparung: ~85% weniger Claude-API-Kosten.
+    frugal_mode: bool = field(
+        default_factory=lambda: os.getenv("FRUGAL_MODE", "false").lower() in ("1", "true", "yes")
+    )
+    # Mindest-Score damit Ollama im Frugal-Modus BUY empfehlen darf (etwas höher
+    # als normaler buy_threshold, da Ollama weniger präzise als Claude ist)
+    frugal_buy_min_score: float = field(
+        default_factory=lambda: float(os.getenv("FRUGAL_BUY_MIN_SCORE", "0.68"))
+    )
 
     # ── Einstiegs-Timing + Exit-Management ───────────────────────────────────
     # EMA21-Check: Kurs darf max. X% über EMA21 liegen (sonst: Conditional Entry)

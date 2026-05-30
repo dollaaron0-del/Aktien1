@@ -345,6 +345,53 @@ class ClaudeAnalyzer:
         if not news_items:
             return self._empty_result(ticker, "Alle Artikel nach Glaubwürdigkeits-Filter entfernt")
 
+        # ── Frugal-Modus: Ollama übernimmt vollständige Analyse ─────────────────
+        # Aktiv wenn FRUGAL_MODE=true und kein Override-Grund vorliegt.
+        # Übersprungen für: offene Positionen (Thesis-Check), high-priority Quellen,
+        # manuelle Dashboard-Anfragen (force_claude=True).
+        _high_priority_sources = {
+            "SEC 8-K", "Analyst Rating", "Benzinga Analyst",
+            "Earnings Call Transcript", "13F Institutional", "Short Interest",
+        }
+        _has_high_priority = any(
+            any(src in (item.get("source") or "") for src in _high_priority_sources)
+            for item in news_items
+        )
+        if (
+            config.frugal_mode
+            and prescreener
+            and not force_claude
+            and not open_position
+            and not _has_high_priority
+        ):
+            result_data = prescreener.full_analysis(
+                ticker=ticker,
+                news_items=news_items,
+                price_data=price_data,
+                buy_min_score=config.frugal_buy_min_score,
+            )
+            if result_data is not None:
+                cost_tracker.record(claude_called=False, ollama_used=True)
+                return AnalysisResult(
+                    ticker=ticker,
+                    sentiment_score=result_data["sentiment_score"],
+                    direction=result_data["direction"],
+                    confidence=result_data["confidence"],
+                    recommendation=result_data["recommendation"],
+                    entry_rationale=f"[Frugal/Ollama] {result_data['entry_rationale']}",
+                    risk_factors=result_data["risk_factors"],
+                    key_catalysts=result_data["key_catalysts"],
+                    suggested_hold_days=result_data["suggested_hold_days"],
+                    target_price=None,
+                    target_price_rationale="",
+                    thesis_valid=None,
+                    thesis_break_reason="",
+                    sources_used=len(news_items),
+                    raw_summary=f"[Frugal] {result_data['summary']}",
+                )
+            # Ollama fehlgeschlagen → Claude als Fallback
+            log.info("[%s] Frugal-Modus: Ollama fehlgeschlagen – Claude als Fallback", ticker)
+
         # ── API-Kosten-Limit (übersprungen bei manueller Anfrage) ───────────────
         if not force_claude:
             cost_ok, cost_reason = cost_tracker.check_daily_limit()
