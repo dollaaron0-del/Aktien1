@@ -277,7 +277,7 @@ def main():
             )
             try:
                 import os as _os, time as _time
-                _cooldown_file = "/tmp/ibkr_error_notified"
+                _cooldown_file = _os.path.join(_os.path.dirname(__file__), "data", "ibkr_error_notified")
                 _cooldown_secs = int(_os.getenv("IBKR_NOTIFY_COOLDOWN_HOURS", "168")) * 3600
                 _cooldown_ok = True
                 if _os.path.exists(_cooldown_file):
