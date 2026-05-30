@@ -1093,8 +1093,8 @@ with tab_network:
                     "GLP1_OBESITY":       (-0.08,  0.95),
                     # ── Finanzen / Industrie (Mitte links) ───────────────────
                     "FINANCIALS":         (-0.28,  0.40),
-                    "REAL_ESTATE":        (-0.08,  0.28),
-                    "INDUSTRIALS":        (-0.58,  0.18),
+                    "REAL_ESTATE":        (-0.44,  0.25),
+                    "INDUSTRIALS":        (-0.60,  0.08),
                     # ── Energie / Rohstoffe (unten links) ────────────────────
                     "OIL_GAS":            (-0.82, -0.48),
                     "SAFE_HAVEN":         (-1.10, -0.10),
@@ -1232,9 +1232,9 @@ with tab_network:
                         _nx, _ny = zx / _dist, zy / _dist
                     else:
                         _nx, _ny = 0.0, -1.0   # Fallback: nach unten
-                    # Boxkante (nicht Boxmitte) am Kreisrand → mehr Abstand zu Knoten
-                    _lx = zx + (_r_zone + 0.10) * _nx
-                    _ly = zy + (_r_zone + 0.10) * _ny
+                    # Label weit genug außerhalb des Kreises damit keine Knoten überdeckt werden
+                    _lx = zx + (_r_zone + 0.18) * _nx
+                    _ly = zy + (_r_zone + 0.18) * _ny
                     _label_x2.append(_lx)
                     _label_y2.append(_ly)
                     _label_txt2.append(_zl)
@@ -1251,9 +1251,9 @@ with tab_network:
                     _r8i = int(lc[1:3], 16)
                     _g8i = int(lc[3:5], 16)
                     _b8i = int(lc[5:7], 16)
-                    # Boxkante zeigt zum Cluster: bei rechts/links/oben/unten unterschiedlich
-                    _xanc = "left"   if lnx >  0.35 else ("right"  if lnx < -0.35 else "center")
-                    _yanc = "bottom" if lny >  0.35 else ("top"    if lny < -0.35 else "middle")
+                    # Boxkante zeigt vom Cluster weg: Ankerpunkt ist die dem Cluster zugewandte Seite
+                    _xanc = "left"   if lnx >  0.20 else ("right"  if lnx < -0.20 else "center")
+                    _yanc = "bottom" if lny >  0.20 else ("top"    if lny < -0.20 else "middle")
                     _zone_annotations.append(dict(
                         x=lx, y=ly,
                         text=f"<b>{lt}</b>",
