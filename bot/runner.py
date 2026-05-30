@@ -170,42 +170,43 @@ def _get_watchlist(portfolio: Portfolio) -> tuple:
     except Exception as e:
         log.debug("Verwandte-Ticker-Lookup fehlgeschlagen: %s", e)
 
-    # BenchList: Top-Kandidaten immer für Analyse einbeziehen (unabhängig von Slots)
-    # _bench_geo_contexts: ticker → geo_context Dict (für Claude-Analyse)
+    # BenchList + Sektor-Sampler: im Frugal-Modus deaktiviert (nur Kern-Watchlist)
     _bench_geo_contexts: dict = {}
-    try:
-        from analyzers.bench_list import BenchList
-        _bench = BenchList()
-        _bench.cleanup()
-        _bench_candidates = _bench.pop_candidates(_bench_picks, exclude=base)
-        for _bt in _bench_candidates:
-            base.append(_bt)
-            ctx = _bench.get_context(_bt)
-            if ctx and ctx.get("geo_context"):
-                _bench_geo_contexts[_bt] = ctx["geo_context"]
-        if _bench_candidates:
-            geo_flagged = [t for t in _bench_candidates if t in _bench_geo_contexts]
-            flag_str = f" (🌍 Geo: {', '.join(geo_flagged)})" if geo_flagged else ""
-            console.print(
-                f"  [magenta]📋 BenchList → Analyse: {', '.join(_bench_candidates)}{flag_str}[/magenta]"
-            )
-    except Exception as e:
-        log.debug("BenchList-Analyse-Pull fehlgeschlagen: %s", e)
+    if not config.frugal_mode:
+        try:
+            from analyzers.bench_list import BenchList
+            _bench = BenchList()
+            _bench.cleanup()
+            _bench_candidates = _bench.pop_candidates(_bench_picks, exclude=base)
+            for _bt in _bench_candidates:
+                base.append(_bt)
+                ctx = _bench.get_context(_bt)
+                if ctx and ctx.get("geo_context"):
+                    _bench_geo_contexts[_bt] = ctx["geo_context"]
+            if _bench_candidates:
+                geo_flagged = [t for t in _bench_candidates if t in _bench_geo_contexts]
+                flag_str = f" (🌍 Geo: {', '.join(geo_flagged)})" if geo_flagged else ""
+                console.print(
+                    f"  [magenta]📋 BenchList → Analyse: {', '.join(_bench_candidates)}{flag_str}[/magenta]"
+                )
+        except Exception as e:
+            log.debug("BenchList-Analyse-Pull fehlgeschlagen: %s", e)
 
-    # Sektor-Stichprobe: rotierende Sektor-Aktien für Netz-Aufbau
-    try:
-        from analyzers.sector_sampler import SectorSampler
-        sector_name, sample = SectorSampler().get_sample(exclude=base)
-        added_sample = [t for t in sample if t not in base]
-        for t in added_sample:
-            base.append(t)
-        if added_sample:
-            console.print(
-                f"  [blue]🔬 Sektor-Stichprobe ({sector_name}): "
-                f"{', '.join(added_sample)}[/blue]"
-            )
-    except Exception as e:
-        log.debug("Sektor-Sampler fehlgeschlagen: %s", e)
+        try:
+            from analyzers.sector_sampler import SectorSampler
+            sector_name, sample = SectorSampler().get_sample(exclude=base)
+            added_sample = [t for t in sample if t not in base]
+            for t in added_sample:
+                base.append(t)
+            if added_sample:
+                console.print(
+                    f"  [blue]🔬 Sektor-Stichprobe ({sector_name}): "
+                    f"{', '.join(added_sample)}[/blue]"
+                )
+        except Exception as e:
+            log.debug("Sektor-Sampler fehlgeschlagen: %s", e)
+    else:
+        log.debug("Frugal-Modus: BenchList + Sektor-Sampler übersprungen")
 
     log.info("Analyse-Watchlist: %d Aktien → %s", len(base), ", ".join(base[:15]))
     return base, _bench_geo_contexts
@@ -666,8 +667,25 @@ def run_analysis_cycle(
         except Exception as e:
             log.debug("EU Marktkontext fehlgeschlagen: %s", e)
 
+    _frugal_cache_hours = 8  # Frugal-Modus: Ticker < 8h alt überspringen
     for ticker in active_watchlist:
         ticker = _normalize_ticker(ticker)
+
+        # Frugal-Modus: frisch gecachte Ticker überspringen (spart ~50% Ollama-Calls)
+        if config.frugal_mode and not portfolio.get_position(ticker):
+            cached = _analysis_cache.get(ticker)
+            if cached:
+                from datetime import timezone
+                _cached_at = cached.get("updated_at", "")
+                if _cached_at:
+                    try:
+                        _age_h = (datetime.utcnow() - datetime.fromisoformat(_cached_at.replace("Z", ""))).total_seconds() / 3600
+                        if _age_h < _frugal_cache_hours:
+                            log.debug("[%s] Frugal: Cache %dh alt – übersprungen", ticker, int(_age_h))
+                            continue
+                    except Exception:
+                        pass
+
         console.print(f"\n[cyan]Sammle Daten für {ticker}...[/cyan]")
 
         news, sources_breakdown = collect_news(ticker, archive, collectors)
