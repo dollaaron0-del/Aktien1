@@ -906,7 +906,7 @@ with tab_network:
             st.info("Noch keine Analyse-Daten. Der Bot muss mindestens einen Analyse-Zyklus abgeschlossen haben.")
         else:
             # ── Filter ──────────────────────────────────────────────────────────
-            _net_col1, _net_col2 = st.columns([2, 3])
+            _net_col1, _net_col2, _net_col3 = st.columns([2, 2, 2])
             with _net_col1:
                 _rec_filter = st.multiselect(
                     "Empfehlung filtern",
@@ -915,6 +915,8 @@ with tab_network:
                 )
             with _net_col2:
                 _show_isolated = st.checkbox("Ticker ohne Verbindungen anzeigen", value=True)
+            with _net_col3:
+                _show_edges = st.checkbox("Verbindungslinien anzeigen", value=False)
 
             # ── Cross-Listing-Deduplizierung: gleiche Firma, verschiedene Börsenplätze ──
             # Schlüssel = Duplikat, Wert = kanonischer Ticker (der behalten wird)
@@ -991,23 +993,47 @@ with tab_network:
 
             # Themen-Mapping direkt im Dashboard (unabhängig von StockRelations-Version)
             _DASH_THEMES = {
-                "AI_CHIPS":           ["NVDA","AMD","AVGO","ARM","INTC","TSM","ASML","AMAT","LRCX","KLAC","MU","MRVL"],
+                # ── KI & Tech ────────────────────────────────────────────────
+                "AI_CHIPS":           ["NVDA","AMD","AVGO","ARM","INTC","TSM","ASML","AMAT","LRCX","KLAC",
+                                       "MU","MRVL","SMCI","DELL","ASM.AS"],
                 "AI_HYPERSCALER":     ["MSFT","GOOGL","META","AMZN","ORCL","IBM","SNOW","PLTR"],
-                "AI_SOFTWARE":        ["CRM","NOW","PANW","ADBE","INTU","SNOW","PLTR"],
-                "DEFENSE_US":         ["LMT","RTX","NOC","GD","HII","LDOS","CACI"],
+                "AI_SOFTWARE":        ["CRM","NOW","PANW","ADBE","INTU","PLTR","CRWD","FTNT","ZS",
+                                       "DDOG","NET","S","OKTA","MDB","HUBS"],
+                "ENTERPRISE_SOFTWARE":["SAP.DE","SAP","CRM","NOW","ORCL","MSFT","INTU","WDAY"],
+                "SEMICONDUCTORS":     ["TSM","ASML","NVDA","AMD","AVGO","QCOM","TXN","AMAT",
+                                       "LRCX","KLAC","MU","MRVL","ARM","ASM.AS"],
+                # ── Verteidigung ──────────────────────────────────────────────
+                "DEFENSE_US":         ["LMT","RTX","NOC","GD","HII","LDOS","CACI","BA","HEI"],
                 "DEFENSE_EU":         ["RHM.DE","AIR.PA","BAES.L","MTX.DE","SAAB.ST"],
-                "SEMICONDUCTORS":     ["TSM","ASML","NVDA","AMD","AVGO","QCOM","TXN","AMAT","LRCX","KLAC","MU","MRVL","ARM"],
-                "OIL_GAS":            ["XOM","CVX","COP","OXY","PSX","VLO","SLB","HAL","BKR","TTE.PA","SHEL.L"],
-                "GLP1_OBESITY":       ["LLY","NVO","AMGN","ABBV","PFE","VKTX"],
+                # ── Energie & Rohstoffe ───────────────────────────────────────
+                "OIL_GAS":            ["XOM","CVX","COP","OXY","PSX","VLO","SLB","HAL",
+                                       "BKR","TTE.PA","SHEL","SHEL.L","FCX"],
+                "CLEAN_ENERGY":       ["NEE","ENPH","FSLR","BEP","NESTE.HE","RWE.DE",
+                                       "ORSTED.CO","SEDG","RUN","PLUG","BE"],
+                # ── Gesundheit & Pharma ───────────────────────────────────────
+                "GLP1_OBESITY":       ["LLY","NVO","AMGN","ABBV","PFE","VKTX","MED"],
+                "BIOTECH_HEALTH":     ["LLY","NVO","MRNA","BNTX","REGN","VRTX","ABBV","JNJ",
+                                       "TMO","ABT","GILD","MRK","BMY","BIIB","ILMN","MDT","AZN"],
+                # ── Finanzen ─────────────────────────────────────────────────
+                "FINANCIALS":         ["GS","JPM","MS","BAC","BNP.PA","BRK-B","C","WFC","BLK","SCHW","GS"],
+                # ── Zahlungen & Fintech ───────────────────────────────────────
                 "PAYMENTS_FINTECH":   ["V","MA","AXP","PYPL","SQ","SOFI","NU","HOOD"],
+                # ── Krypto ───────────────────────────────────────────────────
                 "CRYPTO_PROXY":       ["COIN","MSTR","RIOT","MARA","CLSK"],
-                "DATA_CENTER_POWER":  ["EQIX","DLR","AMT","NRG","CEG","VST","OKLO"],
-                "EU_INDUSTRIAL":      ["SAP.DE","SIE.DE","ALV.DE","BMW.DE","MBG.DE","IFX.DE","ENGI.PA","RWE.DE"],
+                # ── Infrastruktur & Strom ─────────────────────────────────────
+                "DATA_CENTER_POWER":  ["EQIX","DLR","AMT","NRG","CEG","VST","OKLO","VRT"],
+                # ── Industrie & Logistik ──────────────────────────────────────
+                "INDUSTRIALS":        ["CAT","HON","GE","DE","XPO","UPS","FDX","GXO","EMR","ETN","MMM"],
+                # ── E-Commerce & Konsum ───────────────────────────────────────
+                "ECOMMERCE_CONSUMER": ["AMZN","SHOP","MELI","WMT","COST","HD","NFLX","EBAY","ETSY",
+                                       "NKE","LULU","TJX","ULTA","MCD","MC.PA","JD","EL","SBUX"],
+                # ── Europäische Industrie ─────────────────────────────────────
+                "EU_INDUSTRIAL":      ["SAP.DE","SIE.DE","ALV.DE","BMW.DE","MBG.DE","IFX.DE",
+                                       "ENGI.PA","RWE.DE","DSV.CO","AIR.PA"],
+                # ── Safe-Haven ────────────────────────────────────────────────
                 "SAFE_HAVEN":         ["GLD","SLV","GDX","NEM","GOLD","AEM","WPM"],
-                "BIOTECH_HEALTH":     ["LLY","NVO","MRNA","BNTX","REGN","VRTX","ABBV","JNJ","TMO","ABT"],
-                "ECOMMERCE_CONSUMER": ["AMZN","SHOP","MELI","WMT","COST","HD","NFLX"],
-                "CLEAN_ENERGY":       ["NEE","ENPH","FSLR","BEP","NESTE.HE","RWE.DE","ORSTED.CO"],
-                "ENTERPRISE_SOFTWARE":["SAP.DE","CRM","NOW","ORCL","MSFT","INTU","WDAY"],
+                # ── EV & Mobilität ────────────────────────────────────────────
+                "EV_AUTO":            ["TSLA","BYD","NIO","RIVN","LCID","GM","F","STLA"],
             }
             _DASH_T2T: dict = {}
             for _th, _tks in _DASH_THEMES.items():
@@ -1042,22 +1068,26 @@ with tab_network:
                 # Jedes Thema bekommt einen festen Sektor auf dem Canvas
                 _theme_centers = {
                     "AI_CHIPS":           ( 0.70,  0.55),
-                    "SEMICONDUCTORS":     ( 0.90,  0.10),
+                    "SEMICONDUCTORS":     ( 0.92,  0.10),
                     "AI_HYPERSCALER":     ( 0.55, -0.40),
-                    "AI_SOFTWARE":        ( 0.20, -0.70),
-                    "ENTERPRISE_SOFTWARE":(-0.05, -0.85),
+                    "AI_SOFTWARE":        ( 0.22, -0.68),
+                    "ENTERPRISE_SOFTWARE":(-0.05, -0.90),
                     "DEFENSE_US":         (-0.65,  0.55),
-                    "DEFENSE_EU":         (-0.90,  0.15),
-                    "OIL_GAS":            (-0.75, -0.35),
-                    "CLEAN_ENERGY":       (-0.30, -0.70),
-                    "GLP1_OBESITY":       ( 0.10,  0.85),
-                    "BIOTECH_HEALTH":     (-0.35,  0.65),
-                    "PAYMENTS_FINTECH":   ( 0.45,  0.25),
-                    "CRYPTO_PROXY":       ( 0.80, -0.10),
+                    "DEFENSE_EU":         (-0.92,  0.15),
+                    "OIL_GAS":            (-0.78, -0.38),
+                    "CLEAN_ENERGY":       (-0.30, -0.72),
+                    "GLP1_OBESITY":       ( 0.10,  0.88),
+                    "BIOTECH_HEALTH":     (-0.35,  0.68),
+                    "PAYMENTS_FINTECH":   ( 0.45,  0.22),
+                    "CRYPTO_PROXY":       ( 0.88, -0.12),
                     "DATA_CENTER_POWER":  ( 0.25,  0.72),
-                    "SAFE_HAVEN":         (-0.70, -0.05),
-                    "EU_INDUSTRIAL":      (-0.55, -0.60),
-                    "ECOMMERCE_CONSUMER": (-0.15, -0.85),
+                    "SAFE_HAVEN":         (-0.72, -0.05),
+                    "EU_INDUSTRIAL":      (-0.55, -0.62),
+                    "ECOMMERCE_CONSUMER": (-0.15, -0.90),
+                    # ── Neue Cluster ──────────────────────────────────────────
+                    "FINANCIALS":         (-0.22,  0.42),
+                    "INDUSTRIALS":        (-0.50,  0.28),
+                    "EV_AUTO":            ( 0.38, -0.18),
                 }
                 # Primär-Thema: erster Eintrag aus get_themes() → bestimmt den Cluster
                 # Mehrfachthemen landen im ersten (wichtigsten) Cluster, nicht im Durchschnitt
@@ -1115,6 +1145,9 @@ with tab_network:
                     "SAFE_HAVEN":         "#BDC3C7",
                     "EU_INDUSTRIAL":      "#E67E22",
                     "ECOMMERCE_CONSUMER": "#26C6DA",
+                    "FINANCIALS":         "#2980B9",
+                    "INDUSTRIALS":        "#795548",
+                    "EV_AUTO":            "#43A047",
                 }
                 _theme_labels_de = {
                     "AI_CHIPS":           "KI-Chips",
@@ -1134,6 +1167,9 @@ with tab_network:
                     "SAFE_HAVEN":         "Safe-Haven",
                     "EU_INDUSTRIAL":      "EU Industrie",
                     "ECOMMERCE_CONSUMER": "E-Commerce",
+                    "FINANCIALS":         "Finanzen",
+                    "INDUSTRIALS":        "Industrie",
+                    "EV_AUTO":            "EV & Auto",
                 }
 
                 # ── Hintergrund-Zonen: Polygon-Kreise (fill="toself" funktioniert immer) ──
@@ -1187,14 +1223,15 @@ with tab_network:
                     showlegend=False,
                 )
 
-                # ── Kanten ─────────────────────────────────────────────────
+                # ── Kanten (nur wenn Toggle aktiv) ─────────────────────────
                 _edge_x, _edge_y = [], []
-                for (src, dst) in _edges:
-                    if src in _pos and dst in _pos:
-                        x0, y0 = _pos[src]
-                        x1, y1 = _pos[dst]
-                        _edge_x += [x0, x1, None]
-                        _edge_y += [y0, y1, None]
+                if _show_edges:
+                    for (src, dst) in _edges:
+                        if src in _pos and dst in _pos:
+                            x0, y0 = _pos[src]
+                            x1, y1 = _pos[dst]
+                            _edge_x += [x0, x1, None]
+                            _edge_y += [y0, y1, None]
 
                 _edge_trace = go.Scatter(
                     x=_edge_x, y=_edge_y,
