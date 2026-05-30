@@ -954,7 +954,8 @@ with tab_network:
             _edge_labels: list = []
             _edge_seen: set = set()
             _get_related = lambda t: _net_rel.get_related(t)[:6]
-            _get_themes   = lambda t: _all_states[t].themes if t in _all_states else getattr(_net_rel, "get_themes", lambda t: [])(t)
+            # Direkt StockRelations statt Bridge-Cache – Bridge-themes können leer sein
+            _get_themes  = lambda t: _net_rel.get_themes(t)
             for from_t in list(_nodes.keys()):
                 for to_t in _get_related(from_t):
                     if to_t not in _nodes:
@@ -1029,6 +1030,13 @@ with tab_network:
                     _angle = 2 * math.pi * _i / max(_n_nt, 1)
                     _r_nt  = 0.15 + 0.03 * (_i % 3)  # 3 konzentrische Ringe
                     _pos[t] = (_r_nt * math.cos(_angle), _r_nt * math.sin(_angle))
+
+                _n_themed = len(_ticker_list) - _n_nt
+                st.caption(
+                    f"Sektoren erkannt: {len(_theme_to_tickers)} | "
+                    f"Ticker mit Sektor: {_n_themed} | "
+                    f"Ohne Sektor: {_n_nt}"
+                )
 
                 # ── Theme-Farben & deutsche Labels ─────────────────────────
                 _theme_colors = {
