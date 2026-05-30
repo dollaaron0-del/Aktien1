@@ -1087,7 +1087,7 @@ with tab_network:
                     "BIOTECH_HEALTH":     (-0.15,  0.68),
                     "GLP1_OBESITY":       ( 0.10,  0.85),
                     # ── Finanzen (enger Block, Mitte) ─────────────────────────
-                    "REAL_ESTATE":        (-0.20, -0.18),
+                    "REAL_ESTATE":        (-0.08, -0.28),
                     "FINANCIALS":         (-0.05,  0.05),
                     "PAYMENTS_FINTECH":   ( 0.22,  0.05),
                     "CRYPTO_PROXY":       ( 0.72, -0.10),
@@ -1286,7 +1286,7 @@ with tab_network:
                     # Label-Richtung: radial nach außen, mit Overrides für problematische Cluster
                     _dir_overrides = {
                         "FINANCIALS":      ( 0.0, -1.0),  # → unten
-                        "REAL_ESTATE":     (-1.0,  0.0),  # → links (Mitte-links, weg von CLEAN_ENERGY)
+                        "REAL_ESTATE":     ( 0.0, -1.0),  # → unten (direkt unter FINANCIALS)
                         "INDUSTRIALS":     (-1.0,  0.0),  # → links
                         "EU_INDUSTRIAL":   (-1.0,  0.0),  # → links
                         "GLP1_OBESITY":    ( 0.0,  1.0),  # → oben
