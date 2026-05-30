@@ -998,7 +998,71 @@ with tab_network:
                     _jitter_cy   = hash(t + "y") % 200 / 1000.0 - 0.1
                     _pos[t] = (cx + _jitter_seed, cy + _jitter_cy)
 
-                # ── Kanten zeichnen ──────────────────────────────────────────────
+                # ── Theme-Farben & deutsche Labels ─────────────────────────
+                _theme_colors = {
+                    "AI_CHIPS":           "#7B68EE",
+                    "SEMICONDUCTORS":     "#9B59B6",
+                    "AI_HYPERSCALER":     "#3498DB",
+                    "AI_SOFTWARE":        "#5DADE2",
+                    "ENTERPRISE_SOFTWARE":"#1ABC9C",
+                    "DEFENSE_US":         "#E74C3C",
+                    "DEFENSE_EU":         "#C0392B",
+                    "OIL_GAS":            "#F39C12",
+                    "CLEAN_ENERGY":       "#2ECC71",
+                    "GLP1_OBESITY":       "#FF69B4",
+                    "BIOTECH_HEALTH":     "#E91E63",
+                    "PAYMENTS_FINTECH":   "#00BCD4",
+                    "CRYPTO_PROXY":       "#FFD700",
+                    "DATA_CENTER_POWER":  "#4CAF50",
+                    "SAFE_HAVEN":         "#BDC3C7",
+                    "EU_INDUSTRIAL":      "#E67E22",
+                    "ECOMMERCE_CONSUMER": "#26C6DA",
+                }
+                _theme_labels_de = {
+                    "AI_CHIPS":           "KI-Chips",
+                    "SEMICONDUCTORS":     "Halbleiter",
+                    "AI_HYPERSCALER":     "Hyperscaler",
+                    "AI_SOFTWARE":        "KI-Software",
+                    "ENTERPRISE_SOFTWARE":"Enterprise SW",
+                    "DEFENSE_US":         "Rüstung USA",
+                    "DEFENSE_EU":         "Rüstung EU",
+                    "OIL_GAS":            "Öl & Gas",
+                    "CLEAN_ENERGY":       "Erneuerbare",
+                    "GLP1_OBESITY":       "GLP-1",
+                    "BIOTECH_HEALTH":     "Biotech",
+                    "PAYMENTS_FINTECH":   "Payments",
+                    "CRYPTO_PROXY":       "Krypto",
+                    "DATA_CENTER_POWER":  "Rechenzentren",
+                    "SAFE_HAVEN":         "Safe-Haven",
+                    "EU_INDUSTRIAL":      "EU Industrie",
+                    "ECOMMERCE_CONSUMER": "E-Commerce",
+                }
+
+                # ── Hintergrund-Zonen (farbige Cluster-Kreise) ─────────────
+                _zone_traces = []
+                _zone_annotations = []
+                for _theme, (zx, zy) in _theme_centers.items():
+                    _in_zone = [t for t in _ticker_list if _theme in _get_themes(t)]
+                    if not _in_zone:
+                        continue
+                    _zc = _theme_colors.get(_theme, "#666666")
+                    _zl = _theme_labels_de.get(_theme, _theme)
+                    _zone_traces.append(go.Scatter(
+                        x=[zx], y=[zy],
+                        mode="markers",
+                        marker=dict(size=100, color=_zc, opacity=0.07,
+                                    line=dict(width=1, color=_zc)),
+                        hoverinfo="skip", showlegend=False,
+                    ))
+                    _zone_annotations.append(dict(
+                        x=zx, y=zy + 0.14,
+                        text=f"<b>{_zl}</b>",
+                        showarrow=False,
+                        font=dict(size=10, color=_zc),
+                        xref="x", yref="y", opacity=0.9,
+                    ))
+
+                # ── Kanten ─────────────────────────────────────────────────
                 _edge_x, _edge_y = [], []
                 for (src, dst) in _edges:
                     if src in _pos and dst in _pos:
@@ -1010,43 +1074,54 @@ with tab_network:
                 _edge_trace = go.Scatter(
                     x=_edge_x, y=_edge_y,
                     mode="lines",
-                    line=dict(width=0.8, color="#555555"),
-                    hoverinfo="none",
-                    showlegend=False,
+                    line=dict(width=0.8, color="#445566"),
+                    hoverinfo="none", showlegend=False,
                 )
 
-                # ── Knoten zeichnen ──────────────────────────────────────────────
-                _node_x = [_pos[t][0] for t in _ticker_list]
-                _node_y = [_pos[t][1] for t in _ticker_list]
+                # ── Knoten ─────────────────────────────────────────────────
+                _conn_count  = {t: sum(1 for e in _edges if t in e) for t in _ticker_list}
+                _node_x      = [_pos[t][0] for t in _ticker_list]
+                _node_y      = [_pos[t][1] for t in _ticker_list]
                 _node_colors = [_nodes[t]["color"] for t in _ticker_list]
-                _node_text = [
-                    f"<b>{t}</b><br>Empfehlung: {_nodes[t]['rec']}<br>"
-                    f"Score: {_nodes[t]['score']}<br>Zuletzt: {_nodes[t]['date']}<br>"
-                    f"Verbindungen: {sum(1 for e in _edges if t in e)}"
+                _node_sizes  = [16 + 6 * _conn_count[t] for t in _ticker_list]
+
+                # Firmenname aus globalem Lookup
+                _node_hover = [
+                    (
+                        f"<b>{t}</b>  {_ALL_NAMES.get(t.upper(), '')}<br>"
+                        f"Empfehlung: <b>{_nodes[t]['rec']}</b>  |  "
+                        f"Score: {_nodes[t]['score']}<br>"
+                        f"Zuletzt: {_nodes[t]['date']}<br>"
+                        f"Sektor: {', '.join(_get_themes(t)) or '–'}<br>"
+                        f"Verbindungen: {_conn_count[t]}"
+                    )
                     for t in _ticker_list
                 ]
-                _node_sizes = [
-                    14 + 6 * sum(1 for e in _edges if t in e)
-                    for t in _ticker_list
-                ]
+
+                # Sichtbare Beschriftung: Kürzel + Firmenname (1. Wort)
+                _node_labels = []
+                for t in _ticker_list:
+                    _nm = _ALL_NAMES.get(t.upper(), "")
+                    _short = _nm.split()[0][:9] if _nm else ""
+                    _node_labels.append(f"{t} · {_short}" if _short else t)
 
                 _node_trace = go.Scatter(
                     x=_node_x, y=_node_y,
                     mode="markers+text",
                     hoverinfo="text",
-                    hovertext=_node_text,
-                    text=_ticker_list,
+                    hovertext=_node_hover,
+                    text=_node_labels,
                     textposition="top center",
-                    textfont=dict(size=9, color="#dddddd"),
+                    textfont=dict(size=8, color="#cccccc"),
                     marker=dict(
                         size=_node_sizes,
                         color=_node_colors,
-                        line=dict(width=1, color="#222222"),
+                        line=dict(width=1, color="#111111"),
                     ),
                     showlegend=False,
                 )
 
-                # ── Legende ──────────────────────────────────────────────────────
+                # ── Legende ────────────────────────────────────────────────
                 _legend_traces = [
                     go.Scatter(
                         x=[None], y=[None], mode="markers",
@@ -1057,21 +1132,22 @@ with tab_network:
                 ]
 
                 fig = go.Figure(
-                    data=[_edge_trace, _node_trace] + _legend_traces,
+                    data=_zone_traces + [_edge_trace, _node_trace] + _legend_traces,
                     layout=go.Layout(
                         paper_bgcolor="#0e1117",
                         plot_bgcolor="#0e1117",
                         font=dict(color="#dddddd"),
-                        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                        xaxis=dict(showgrid=False, zeroline=False,
+                                   showticklabels=False, range=[-1.35, 1.35]),
+                        yaxis=dict(showgrid=False, zeroline=False,
+                                   showticklabels=False, range=[-1.25, 1.25]),
                         hovermode="closest",
-                        height=620,
-                        margin=dict(l=10, r=10, t=10, b=10),
+                        height=740,
+                        margin=dict(l=10, r=10, t=20, b=10),
+                        annotations=_zone_annotations,
                         legend=dict(
-                            bgcolor="#1a1a2e",
-                            bordercolor="#444",
-                            borderwidth=1,
-                            font=dict(color="#dddddd"),
+                            bgcolor="#1a1a2e", bordercolor="#444",
+                            borderwidth=1, font=dict(color="#dddddd"),
                         ),
                     ),
                 )
