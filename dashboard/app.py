@@ -1070,41 +1070,51 @@ with tab_network:
                     "ECOMMERCE_CONSUMER": "E-Commerce",
                 }
 
-                # ── Hintergrund-Zonen (farbige Cluster-Kreise) ─────────────
-                # Hex-Farbe → rgba-String
-                def _rgba(h, a):
-                    return f"rgba({int(h[1:3],16)},{int(h[3:5],16)},{int(h[5:7],16)},{a})"
-
-                # ── Zonen: echte Shape-Kreise in Datenkoordinaten ───────────
-                _zone_shapes = []
-                _zone_annotations = []
+                # ── Hintergrund-Zonen als Scatter-Trace (zuverlässiger als shapes) ──
+                # Für jedes Cluster: ein großer halb-transparenter Marker am Zentrum
+                # + ein Text-Label darunter
+                _zone_x, _zone_y, _zone_colors, _zone_sizes, _zone_text = [], [], [], [], []
+                _label_x, _label_y, _label_text, _label_colors = [], [], [], []
                 for _theme, (zx, zy) in _theme_centers.items():
                     _in_zone = _theme_to_tickers.get(_theme, [])
                     if not _in_zone:
                         continue
-                    # Radius dynamisch: wächst mit Anzahl der Knoten im Cluster
                     _n_zone = len(_in_zone)
-                    _r = min(0.13 + 0.022 * _n_zone, 0.26)
+                    # Marker-Größe: Kugel die den Cluster visuell umschließt
+                    # Knotenradius ≈ 0.10–0.18 in Datenkoord → ca. 90–160px bei 760px-Canvas
+                    _blob_px = int(120 + 28 * _n_zone)
                     _zc = _theme_colors.get(_theme, "#666666")
                     _zl = _theme_labels_de.get(_theme, _theme)
-                    _zone_shapes.append(dict(
-                        type="circle",
-                        xref="x", yref="y",
-                        x0=zx - _r, y0=zy - _r,
-                        x1=zx + _r, y1=zy + _r,
-                        fillcolor=_rgba(_zc, 0.12),
-                        line=dict(color=_rgba(_zc, 0.55), width=1.5, dash="dot"),
-                        layer="below",
-                    ))
-                    _zone_annotations.append(dict(
-                        x=zx, y=zy - _r - 0.04,
-                        text=f"<b>{_zl}</b>",
-                        showarrow=False,
-                        font=dict(size=11, color=_zc),
-                        bgcolor="rgba(14,17,23,0.6)",
-                        borderpad=2,
-                        xref="x", yref="y",
-                    ))
+                    _zone_x.append(zx)
+                    _zone_y.append(zy)
+                    _zone_colors.append(_zc)
+                    _zone_sizes.append(_blob_px)
+                    # Label etwas unterhalb des Zonenzentrums
+                    _label_x.append(zx)
+                    _label_y.append(zy - 0.22)
+                    _label_text.append(f"<b>{_zl}</b>")
+                    _label_colors.append(_zc)
+
+                _zone_bg_trace = go.Scatter(
+                    x=_zone_x, y=_zone_y,
+                    mode="markers",
+                    marker=dict(
+                        size=_zone_sizes,
+                        color=_zone_colors,
+                        opacity=0.13,
+                        line=dict(width=2, color=_zone_colors),
+                    ),
+                    hoverinfo="none",
+                    showlegend=False,
+                )
+                _zone_label_trace = go.Scatter(
+                    x=_label_x, y=_label_y,
+                    mode="text",
+                    text=_label_text,
+                    textfont=dict(size=11, color=_label_colors),
+                    hoverinfo="none",
+                    showlegend=False,
+                )
 
                 # ── Kanten ─────────────────────────────────────────────────
                 _edge_x, _edge_y = [], []
@@ -1183,7 +1193,7 @@ with tab_network:
                 ]
 
                 fig = go.Figure(
-                    data=[_edge_trace, _node_trace] + _legend_traces,
+                    data=[_zone_bg_trace, _zone_label_trace, _edge_trace, _node_trace] + _legend_traces,
                     layout=go.Layout(
                         paper_bgcolor="#0e1117",
                         plot_bgcolor="#0e1117",
@@ -1195,8 +1205,6 @@ with tab_network:
                         hovermode="closest",
                         height=760,
                         margin=dict(l=10, r=10, t=20, b=10),
-                        shapes=_zone_shapes,
-                        annotations=_zone_annotations,
                         legend=dict(
                             bgcolor="#1a1a2e", bordercolor="#444",
                             borderwidth=1, font=dict(color="#dddddd"),
