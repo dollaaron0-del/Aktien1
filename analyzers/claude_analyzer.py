@@ -599,12 +599,17 @@ class ClaudeAnalyzer:
             thesis_valid = (
                 bool(thesis_valid_raw) if thesis_valid_raw is not None else None
             )
+            rec = data.get("recommendation", "SKIP")
+            # Crypto safety: prompt instructs KEIN BUY but model can still output BUY
+            if _is_crypto(ticker) and rec == "BUY":
+                log.warning("[%s] Crypto BUY → HOLD override (post-parse safety)", ticker)
+                rec = "HOLD"
             return AnalysisResult(
                 ticker=ticker,
                 sentiment_score=float(data.get("sentiment_score", 0.5)),
                 direction=data.get("direction", "NEUTRAL"),
                 confidence=data.get("confidence", "LOW"),
-                recommendation=data.get("recommendation", "SKIP"),
+                recommendation=rec,
                 entry_rationale=data.get("entry_rationale", ""),
                 risk_factors=data.get("risk_factors", []),
                 key_catalysts=data.get("key_catalysts", []),

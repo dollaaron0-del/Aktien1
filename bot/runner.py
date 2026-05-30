@@ -107,7 +107,7 @@ def _base_symbol(ticker: str) -> str:
     return upper
 
 
-def _get_watchlist(portfolio: Portfolio) -> List[str]:
+def _get_watchlist(portfolio: Portfolio) -> tuple:
     """Returns watchlist: dynamic/static US + optional EU + optional Crypto."""
     if _dynamic_watchlist:
         active = list(portfolio.all_positions().keys())
@@ -208,7 +208,7 @@ def _get_watchlist(portfolio: Portfolio) -> List[str]:
         log.debug("Sektor-Sampler fehlgeschlagen: %s", e)
 
     log.info("Analyse-Watchlist: %d Aktien → %s", len(base), ", ".join(base[:15]))
-    return base
+    return base, _bench_geo_contexts
 
 
 def _opportunity_scan(portfolio: "Portfolio", base: List[str]) -> None:
@@ -637,7 +637,7 @@ def run_analysis_cycle(
     _requested = _urq.consume_all()  # returns List[(ticker, meta)]
     _force_claude_tickers: set = set()
     _headline_meta: Dict[str, dict] = {}
-    active_watchlist = _get_watchlist(portfolio)
+    active_watchlist, _bench_geo_contexts = _get_watchlist(portfolio)
     for _t, _meta in _requested:
         if _t not in active_watchlist:
             log.info("Nutzeranfrage: %s wird in diesem Zyklus analysiert", _t)
@@ -806,7 +806,7 @@ def run_analysis_cycle(
                 log.debug("[%s] On-Chain-Analyse fehlgeschlagen: %s", ticker, e)
 
         console.print(f"  [cyan]Analysiere mit Claude ({config.claude_model})...[/cyan]")
-        _geo_ctx = _bench_geo_contexts.get(ticker) if "_bench_geo_contexts" in dir() else None
+        _geo_ctx = _bench_geo_contexts.get(ticker)
         if _geo_ctx:
             log.info("[%s] Geopolitischer Kontext wird an Claude übergeben: %s",
                      ticker, _geo_ctx.get("kategorie", ""))
