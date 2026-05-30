@@ -930,17 +930,22 @@ with tab_network:
                     "color":   _rec_color.get(rec, "#888888"),
                 }
 
-            # ── Kanten aus StockRelations ────────────────────────────────────────
+            # ── Kanten: dynamisch + statische Themen-Cluster ────────────────────
             _edges: list = []
             _edge_labels: list = []
-            for from_t, entries in _net_rel._graph.items():
-                if from_t not in _nodes:
-                    continue
-                for entry in entries[:2]:
-                    for to_t in entry["related"]:
-                        if to_t in _nodes:
-                            _edges.append((from_t, to_t))
-                            _edge_labels.append(entry["reason"][:60])
+            _edge_seen: set = set()
+            for from_t in list(_nodes.keys()):
+                for to_t in _net_rel.get_related(from_t, limit=6):
+                    if to_t not in _nodes:
+                        continue
+                    key = tuple(sorted([from_t, to_t]))
+                    if key in _edge_seen:
+                        continue
+                    _edge_seen.add(key)
+                    _themes = _net_rel.get_themes(from_t)
+                    _lbl = _themes[0].replace("_", " ") if _themes else "Verwandt"
+                    _edges.append((from_t, to_t))
+                    _edge_labels.append(_lbl[:60])
 
             # Isolierte Knoten herausfiltern wenn gewünscht
             if not _show_isolated:
@@ -950,29 +955,46 @@ with tab_network:
             if not _nodes:
                 st.info("Keine Daten für die gewählten Filter.")
             else:
-                # ── Spring-Layout (ohne networkx): Knoten kreisförmig ──────────
+                # ── Themen-basiertes Layout ──────────────────────────────────────
                 _ticker_list = list(_nodes.keys())
-                _n = len(_ticker_list)
                 _pos: dict = {}
 
-                # Cluster nach Empfehlung anordnen
-                _clusters = {"BUY": [], "HOLD": [], "SELL": [], "SKIP": []}
-                for t in _ticker_list:
-                    _clusters[_nodes[t]["rec"]].append(t)
-
-                _cluster_centers = {
-                    "BUY":  (0.0,  0.7),
-                    "HOLD": (0.7,  0.0),
-                    "SELL": (0.0, -0.7),
-                    "SKIP": (-0.7, 0.0),
+                # Jedes Thema bekommt einen festen Sektor auf dem Canvas
+                _theme_centers = {
+                    "AI_CHIPS":           ( 0.70,  0.55),
+                    "SEMICONDUCTORS":     ( 0.90,  0.10),
+                    "AI_HYPERSCALER":     ( 0.55, -0.40),
+                    "AI_SOFTWARE":        ( 0.20, -0.70),
+                    "ENTERPRISE_SOFTWARE":(-0.05, -0.85),
+                    "DEFENSE_US":         (-0.65,  0.55),
+                    "DEFENSE_EU":         (-0.90,  0.15),
+                    "OIL_GAS":            (-0.75, -0.35),
+                    "CLEAN_ENERGY":       (-0.30, -0.70),
+                    "GLP1_OBESITY":       ( 0.10,  0.85),
+                    "BIOTECH_HEALTH":     (-0.35,  0.65),
+                    "PAYMENTS_FINTECH":   ( 0.45,  0.25),
+                    "CRYPTO_PROXY":       ( 0.80, -0.10),
+                    "DATA_CENTER_POWER":  ( 0.25,  0.72),
+                    "SAFE_HAVEN":         (-0.70, -0.05),
+                    "EU_INDUSTRIAL":      (-0.55, -0.60),
+                    "ECOMMERCE_CONSUMER": (-0.15, -0.85),
                 }
-                for rec, tickers in _clusters.items():
-                    cx, cy = _cluster_centers[rec]
-                    m = len(tickers)
-                    for i, t in enumerate(tickers):
-                        angle = 2 * math.pi * i / max(m, 1)
-                        r = 0.25 + 0.08 * math.sqrt(m)
-                        _pos[t] = (cx + r * math.cos(angle), cy + r * math.sin(angle))
+                # Position = Schwerpunkt aller Themen des Tickers
+                for t in _ticker_list:
+                    _t_themes = _net_rel.get_themes(t)
+                    _t_centers = [_theme_centers[th] for th in _t_themes if th in _theme_centers]
+                    if _t_centers:
+                        cx = sum(c[0] for c in _t_centers) / len(_t_centers)
+                        cy = sum(c[1] for c in _t_centers) / len(_t_centers)
+                    else:
+                        # Kein Thema: zufällig nahe der Mitte (deterministisch per Hash)
+                        _h = hash(t) % 1000 / 1000.0
+                        cx = 0.3 * math.cos(2 * math.pi * _h)
+                        cy = 0.3 * math.sin(2 * math.pi * _h)
+                    # Leichten Jitter damit Knoten nicht übereinander liegen
+                    _jitter_seed = hash(t + "x") % 200 / 1000.0 - 0.1
+                    _jitter_cy   = hash(t + "y") % 200 / 1000.0 - 0.1
+                    _pos[t] = (cx + _jitter_seed, cy + _jitter_cy)
 
                 # ── Kanten zeichnen ──────────────────────────────────────────────
                 _edge_x, _edge_y = [], []
@@ -1972,7 +1994,7 @@ with tab_log:
 
     # Pending-Queue anzeigen
     from analyzers.user_request_queue import peek as _peek_queue
-    _pending = _peek_queue()
+    _pending = [e if isinstance(e, str) else e.get("ticker", str(e)) for e in _peek_queue()]
     if _pending:
         st.info(f"⏳ Warteschlange: **{', '.join(_pending)}** — werden beim nächsten Zyklus analysiert.")
 
