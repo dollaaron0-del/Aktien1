@@ -13,8 +13,8 @@ Sekundärsignale (4 gesamt, mind. 2 müssen grün sein):
 Konfigurierbar via .env:
   SIGNAL_MIN_CONFIRMATIONS   (Standard: 2)
   SIGNAL_VOLUME_BOOST_RATIO  (Standard: 1.20)
-  SIGNAL_MOMENTUM_MIN_PCT    (Standard: 0.01 = +1%)
-  SIGNAL_MOMENTUM_MAX_PCT    (Standard: 0.10 = +10%)
+  SIGNAL_MOMENTUM_MIN_PCT    (Standard: 0.005 = +0.5%)
+  SIGNAL_MOMENTUM_MAX_PCT    (Standard: 0.15 = +15%)
 """
 from __future__ import annotations
 
@@ -69,8 +69,8 @@ class SignalConfirmation:
         self,
         min_confirmations: int = 2,
         volume_boost_ratio: float = 1.20,
-        momentum_min_pct: float = 0.01,
-        momentum_max_pct: float = 0.10,
+        momentum_min_pct: float = 0.005,
+        momentum_max_pct: float = 0.15,
     ):
         self.min_confirmations = min_confirmations
         self.volume_boost_ratio = volume_boost_ratio

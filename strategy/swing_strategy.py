@@ -218,10 +218,12 @@ class SwingStrategy:
             pass
 
         # Score-Modifier auf Kaufschwelle anwenden
-        effective_threshold = self.focus.get_effective_threshold(
+        _raw_threshold = self.focus.get_effective_threshold(
             adaptive_threshold + phase_modifier + _smod.threshold_adj + sentiment_memory_adj,
             portfolio_value
         )
+        # Absolutes Cap: Schwelle darf 0.80 nie überschreiten, damit genug Signale durchkommen
+        effective_threshold = min(_raw_threshold, 0.80)
 
         # Pre-Market-Boost: wenn der Heimatmarkt noch geschlossen ist, höhere Schwelle
         _pre_market = False
@@ -232,7 +234,7 @@ class SwingStrategy:
                            ".VI",".L",".SW",".CO",".ST",".HE",".OL"}
                 _ticker_exchange = "XETRA" if any(ticker.upper().endswith(s.upper()) for s in _eu_sfx) else "NYSE"
                 if not is_exchange_open(_ticker_exchange):
-                    effective_threshold += config.pre_market_threshold_boost
+                    effective_threshold = min(effective_threshold + config.pre_market_threshold_boost, 0.80)
                     _pre_market = True
             except Exception:
                 pass
@@ -302,12 +304,6 @@ class SwingStrategy:
                 return f"[{ticker}] 📊 Options: Smart-Money BEARISH (P/C={opt.put_call_ratio:.2f}) – übersprungen."
         except Exception as e:
             log.debug("Options-Intelligence fehlgeschlagen: %s", e)
-
-        # ── Volumen-Bestätigung ──────────────────────────────────────────────
-        vol_ok, vol_reason = self._check_volume_confirmation(ticker)
-        if not vol_ok:
-            log.info("[%s] Volumen-Check: %s", ticker, vol_reason)
-            return f"[{ticker}] 📊 {vol_reason} – kein Kauf ohne Volumen-Bestätigung."
 
         # ── Insider-Signal ───────────────────────────────────────────────────
         try:
