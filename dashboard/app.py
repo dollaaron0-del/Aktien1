@@ -916,7 +916,7 @@ with tab_network:
                 _show_isolated = st.checkbox("Ticker ohne Verbindungen anzeigen", value=True)
 
             # ── Node-Daten aufbauen ──────────────────────────────────────────────
-            _rec_color = {"BUY": "#00cc66", "HOLD": "#f0a500", "SELL": "#ff4444", "SKIP": "#888888"}
+            _rec_color = {"BUY": "#00e676", "HOLD": "#ffd740", "SELL": "#f44336", "SKIP": "#888888"}
             _nodes: dict = {}
             for e in _net_entries:
                 rec = (e.get("recommendation") or "SKIP").upper()
