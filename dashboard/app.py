@@ -1073,35 +1073,35 @@ with tab_network:
 
                 # Jedes Thema bekommt einen festen Sektor auf dem Canvas
                 _theme_centers = {
-                    # ── Rüstung & Industrie (links — real economy) ────────────
-                    "DEFENSE_EU":         (-1.05,  0.72),   # Rüstung EU
-                    "DEFENSE_US":         (-0.72,  0.90),   # Rüstung USA
-                    "INDUSTRIALS":        (-0.72,  0.45),   # direkt unter Rüstung USA
-                    "EU_INDUSTRIAL":      (-1.10,  0.18),   # direkt unter Rüstung EU
+                    # ── Rüstung & Industrie (links) ───────────────────────────
+                    "DEFENSE_EU":         (-0.86,  0.59),
+                    "DEFENSE_US":         (-0.59,  0.74),
+                    "INDUSTRIALS":        (-0.59,  0.37),
+                    "EU_INDUSTRIAL":      (-0.90,  0.15),
                     # ── Energie & Rohstoffe (unten links) ────────────────────
-                    "OIL_GAS":            (-0.82, -0.52),
-                    "SAFE_HAVEN":         (-1.12, -0.28),
-                    "MINING_METALS":      (-1.08, -0.68),
-                    "CLEAN_ENERGY":       (-0.52, -0.72),
+                    "OIL_GAS":            (-0.67, -0.43),
+                    "SAFE_HAVEN":         (-0.92, -0.23),
+                    "MINING_METALS":      (-0.89, -0.56),
+                    "CLEAN_ENERGY":       (-0.43, -0.59),
                     # ── Gesundheit (oben Mitte) ───────────────────────────────
-                    "BIOTECH_HEALTH":     (-0.22,  0.80),
-                    "GLP1_OBESITY":       ( 0.12,  1.02),
-                    # ── Finanzen Block (Mitte) — Finanzen & Payments nebeneinander
-                    "REAL_ESTATE":        (-0.52, -0.12),
-                    "FINANCIALS":         (-0.10,  0.05),
-                    "PAYMENTS_FINTECH":   ( 0.34,  0.05),   # direkt rechts von Finanzen
-                    "CRYPTO_PROXY":       ( 1.05,  0.10),   # rechts (nahe Tech)
+                    "BIOTECH_HEALTH":     (-0.18,  0.66),
+                    "GLP1_OBESITY":       ( 0.12,  0.88),
+                    # ── Finanzen & Payments (Mitte) ───────────────────────────
+                    "REAL_ESTATE":        (-0.43, -0.10),
+                    "FINANCIALS":         (-0.08,  0.04),
+                    "PAYMENTS_FINTECH":   ( 0.28,  0.04),
+                    "CRYPTO_PROXY":       ( 0.86,  0.08),
                     # ── KI / Tech-Block (oben rechts) ─────────────────────────
-                    "AI_CHIPS":           ( 0.72,  0.90),
-                    "DATA_CENTER_POWER":  ( 0.92,  0.72),
-                    "SEMICONDUCTORS":     ( 0.90,  0.50),
-                    "AI_HYPERSCALER":     ( 0.52,  0.65),
+                    "AI_CHIPS":           ( 0.59,  0.74),
+                    "DATA_CENTER_POWER":  ( 0.75,  0.59),
+                    "SEMICONDUCTORS":     ( 0.74,  0.41),
+                    "AI_HYPERSCALER":     ( 0.43,  0.53),
                     # ── Software (rechts Mitte) ───────────────────────────────
-                    "AI_SOFTWARE":        ( 0.78,  0.22),
-                    "ENTERPRISE_SOFTWARE":( 0.55, -0.40),
+                    "AI_SOFTWARE":        ( 0.64,  0.18),
+                    "ENTERPRISE_SOFTWARE":( 0.45, -0.33),
                     # ── Konsum / E-Auto (unten rechts) ────────────────────────
-                    "ECOMMERCE_CONSUMER": ( 0.52, -0.82),
-                    "EV_AUTO":            ( 0.88, -0.68),
+                    "ECOMMERCE_CONSUMER": ( 0.43, -0.67),
+                    "EV_AUTO":            ( 0.72, -0.56),
                 }
                 # Primär-Thema: erster Eintrag aus get_themes() → bestimmt den Cluster
                 # Mehrfachthemen landen im ersten (wichtigsten) Cluster, nicht im Durchschnitt
@@ -1120,8 +1120,8 @@ with tab_network:
                 for _theme, _members in _theme_to_tickers.items():
                     _cx, _cy = _theme_centers[_theme]
                     _n = len(_members)
-                    # Radius wächst mit Anzahl der Knoten (min 0.08, max 0.15)
-                    _r = min(0.08 + 0.012 * _n, 0.15)
+                    # Radius wächst mit Anzahl der Knoten (min 0.07, max 0.13)
+                    _r = min(0.07 + 0.009 * _n, 0.13)
                     for _i, t in enumerate(sorted(_members)):  # sortiert = deterministisch
                         _angle = 2 * math.pi * _i / _n - math.pi / 2
                         _pos[t] = (_cx + _r * math.cos(_angle), _cy + _r * math.sin(_angle))
@@ -1205,7 +1205,7 @@ with tab_network:
                     if not _in_zone:
                         continue
                     _n_zone = len(_in_zone)
-                    _r_zone = min(0.11 + 0.015 * _n_zone, 0.21)
+                    _r_zone = min(0.09 + 0.012 * _n_zone, 0.18)
                     _zc = _theme_colors.get(_theme, "#666666")
                     _zl = _theme_labels_de.get(_theme, _theme)
 
@@ -1380,9 +1380,9 @@ with tab_network:
                         plot_bgcolor="#0e1117",
                         font=dict(color="#dddddd"),
                         xaxis=dict(showgrid=False, zeroline=False,
-                                   showticklabels=False, range=[-1.55, 1.55]),
+                                   showticklabels=False, range=[-1.30, 1.30]),
                         yaxis=dict(showgrid=False, zeroline=False,
-                                   showticklabels=False, range=[-1.50, 1.50]),
+                                   showticklabels=False, range=[-1.10, 1.15]),
                         hovermode="closest",
                         height=760,
                         margin=dict(l=10, r=10, t=20, b=10),
