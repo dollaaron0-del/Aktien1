@@ -62,6 +62,13 @@ _signal_expander    = SignalDrivenExpander()
 _analysis_cache     = AnalysisCache()
 _analysis_log       = AnalysisLog()
 
+# Semantic dedup – einmal laden, alle Ticker eines Zyklus nutzen dieselbe Instanz
+try:
+    from analyzers.semantic_dedup import SemanticDeduplicator as _SemDedup
+    _semantic_dedup = _SemDedup() if config.ollama_enabled else None
+except Exception:
+    _semantic_dedup = None
+
 _collect_log = get_logger("collectors")
 
 
@@ -388,13 +395,16 @@ def collect_news(ticker: str, archive: NewsArchive, collectors: Dict) -> tuple:
     except Exception:
         pass
 
-    seen: set = set()
-    unique: List[Dict] = []
-    for item in all_items:
-        key = (item.get("title") or "").lower()[:80]
-        if key and key not in seen:
-            seen.add(key)
-            unique.append(item)
+    if _semantic_dedup is not None:
+        unique = _semantic_dedup.deduplicate(all_items)
+    else:
+        seen: set = set()
+        unique = []
+        for item in all_items:
+            key = (item.get("title") or "").lower()[:80]
+            if key and key not in seen:
+                seen.add(key)
+                unique.append(item)
 
     return unique, sources_breakdown
 
