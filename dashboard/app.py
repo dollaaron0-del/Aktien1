@@ -1098,7 +1098,7 @@ with tab_network:
                     "SEMICONDUCTORS":     ( 0.68,  0.40),
                     # ── Software (rechts Mitte) ───────────────────────────────
                     "AI_SOFTWARE":        ( 0.60,  0.18),
-                    "ENTERPRISE_SOFTWARE":( 0.40, -0.30),
+                    "ENTERPRISE_SOFTWARE":( 0.48, -0.18),
                     # ── Konsum / E-Auto (enger Block, unten rechts) ───────────
                     "ECOMMERCE_CONSUMER": ( 0.40, -0.60),
                     "EV_AUTO":            ( 0.65, -0.50),
@@ -1285,13 +1285,14 @@ with tab_network:
 
                     # Label-Richtung: radial nach außen, mit Overrides für problematische Cluster
                     _dir_overrides = {
-                        "FINANCIALS":      ( 0.0, -1.0),  # → unten
-                        "REAL_ESTATE":     ( 0.0, -1.0),  # → unten (direkt unter FINANCIALS)
-                        "INDUSTRIALS":     (-1.0,  0.0),  # → links
-                        "EU_INDUSTRIAL":   (-1.0,  0.0),  # → links
-                        "GLP1_OBESITY":    ( 0.0,  1.0),  # → oben
-                        "BIOTECH_HEALTH":  ( 0.0,  1.0),  # → oben
-                        "PAYMENTS_FINTECH":( 0.0,  1.0),  # → oben (weg von ENTERPRISE_SW)
+                        "FINANCIALS":         ( 0.0, -1.0),
+                        "REAL_ESTATE":        ( 0.0, -1.0),
+                        "INDUSTRIALS":        (-1.0,  0.0),
+                        "EU_INDUSTRIAL":      (-1.0,  0.0),
+                        "GLP1_OBESITY":       ( 0.0,  1.0),
+                        "BIOTECH_HEALTH":     ( 0.0,  1.0),
+                        "PAYMENTS_FINTECH":   ( 0.0,  1.0),
+                        "ENTERPRISE_SOFTWARE":( 1.0,  0.0),  # → rechts (weg vom E-Commerce-Kreis)
                     }
                     if _theme in _dir_overrides:
                         _nx, _ny = _dir_overrides[_theme]
