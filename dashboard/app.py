@@ -1227,12 +1227,18 @@ with tab_network:
                         showlegend=False,
                     ))
 
-                    # Label radial nach außen vom Graphmittelpunkt (0,0)
-                    _dist = _math.sqrt(zx ** 2 + zy ** 2)
-                    if _dist > 0.05:
-                        _nx, _ny = zx / _dist, zy / _dist
+                    # Label-Richtung: radial nach außen, mit Overrides für problematische Cluster
+                    _dir_overrides = {
+                        "FINANCIALS":   ( 0.0, -1.0),   # → nach unten (sonst in Biotech-Blase)
+                        "REAL_ESTATE":  (-1.0,  0.0),   # → nach links
+                        "INDUSTRIALS":  (-1.0,  0.0),   # → nach links
+                        "GLP1_OBESITY": ( 0.0,  1.0),   # → nach oben (bleibt sauber oben)
+                    }
+                    if _theme in _dir_overrides:
+                        _nx, _ny = _dir_overrides[_theme]
                     else:
-                        _nx, _ny = 0.0, -1.0   # Fallback: nach unten
+                        _dist = _math.sqrt(zx ** 2 + zy ** 2)
+                        _nx, _ny = (zx / _dist, zy / _dist) if _dist > 0.05 else (0.0, -1.0)
                     # Label weit genug außerhalb des Kreises damit keine Knoten überdeckt werden
                     _lx = zx + (_r_zone + 0.18) * _nx
                     _ly = zy + (_r_zone + 0.18) * _ny
@@ -1246,8 +1252,9 @@ with tab_network:
                     _label_ax2.append(zx + _r_zone * _nx)
                     _label_ay2.append(zy + _r_zone * _ny)
 
-                # Labels als Annotationen — Pfeil vom Kreisrand zum Label
+                # Labels als Annotationen (kein Pfeil — separate Linie unten)
                 _zone_annotations = []
+                _conn_x, _conn_y, _conn_colors = [], [], []
                 for lx, ly, lt, lc, lnx, lny, lax, lay in zip(
                     _label_x2, _label_y2, _label_txt2, _label_col2,
                     _label_nx2, _label_ny2, _label_ax2, _label_ay2,
@@ -1255,21 +1262,15 @@ with tab_network:
                     _r8i = int(lc[1:3], 16)
                     _g8i = int(lc[3:5], 16)
                     _b8i = int(lc[5:7], 16)
-                    # Label-Box wächst vom Cluster weg
                     _xanc = "left"   if lnx >  0.20 else ("right"  if lnx < -0.20 else "center")
                     _yanc = "bottom" if lny >  0.20 else ("top"    if lny < -0.20 else "middle")
                     _zone_annotations.append(dict(
                         x=lx, y=ly,
-                        ax=lax, ay=lay,
                         text=f"<b>{lt}</b>",
-                        showarrow=True,
-                        arrowhead=0,
-                        arrowwidth=1.5,
-                        arrowcolor=lc,
+                        showarrow=False,
                         xanchor=_xanc,
                         yanchor=_yanc,
                         xref="x", yref="y",
-                        axref="x", ayref="y",
                         font=dict(size=10, color="#ffffff"),
                         bgcolor=f"rgba({_r8i},{_g8i},{_b8i},0.85)",
                         bordercolor=lc,
@@ -1277,6 +1278,19 @@ with tab_network:
                         borderpad=4,
                         opacity=0.95,
                     ))
+                    # Verbindungslinie Kreisrand → Label (ein Segment pro Cluster)
+                    _conn_x += [lax, lx, None]
+                    _conn_y += [lay, ly, None]
+                    _conn_colors.append(lc)
+
+                # Alle Verbindungslinien als ein Trace (gleiche Farbe geht nicht pro Segment,
+                # deshalb hellgrau — Label-Farbe identifiziert den Cluster bereits)
+                _conn_trace = go.Scatter(
+                    x=_conn_x, y=_conn_y,
+                    mode="lines",
+                    line=dict(width=1.2, color="rgba(180,180,180,0.45)"),
+                    hoverinfo="none", showlegend=False,
+                )
 
                 # ── Kanten (nur wenn Toggle aktiv) ─────────────────────────
                 _edge_x, _edge_y = [], []
@@ -1356,7 +1370,7 @@ with tab_network:
                 ]
 
                 fig = go.Figure(
-                    data=_zone_traces + [_edge_trace, _node_trace] + _legend_traces,
+                    data=_zone_traces + [_conn_trace, _edge_trace, _node_trace] + _legend_traces,
                     layout=go.Layout(
                         paper_bgcolor="#0e1117",
                         plot_bgcolor="#0e1117",
