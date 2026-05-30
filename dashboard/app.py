@@ -916,13 +916,20 @@ with tab_network:
                 _show_isolated = st.checkbox("Ticker ohne Verbindungen anzeigen", value=True)
 
             # ── Node-Daten aufbauen ──────────────────────────────────────────────
+            # Aktive BUY-Signale aus der Signal-Queue haben Vorrang über
+            # die letzte Analyse im Log (Ticker kann inzwischen re-analysiert
+            # als SKIP geloggt sein, aber das Signal ist noch pending).
+            _net_pending_buys = {s["ticker"].upper() for s in sig_queue.get_pending()}
+
             _rec_color = {"BUY": "#00e676", "HOLD": "#ffd740", "SELL": "#f44336", "SKIP": "#888888"}
             _nodes: dict = {}
             for e in _net_entries:
-                rec = (e.get("recommendation") or "SKIP").upper()
+                ticker = e["ticker"]
+                rec    = (e.get("recommendation") or "SKIP").upper()
+                if ticker.upper() in _net_pending_buys:
+                    rec = "BUY"
                 if rec not in _rec_filter:
                     continue
-                ticker = e["ticker"]
                 _nodes[ticker] = {
                     "rec":     rec,
                     "score":   round(e.get("sentiment_score") or 0.0, 2),
