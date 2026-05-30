@@ -272,15 +272,16 @@ def main():
             )
         else:
             console.print(
-                "[yellow]⚠ IBKR-Verbindung fehlgeschlagen "
-                f"({config.ibkr_host}:{config.ibkr_port}) – Fallback auf Paper-Broker.[/yellow]"
+                "[dim]ℹ IBKR nicht verbunden "
+                f"({config.ibkr_host}:{config.ibkr_port}) – Paper-Broker aktiv.[/dim]"
             )
             try:
                 import os as _os, time as _time
                 _cooldown_file = "/tmp/ibkr_error_notified"
+                _cooldown_secs = int(_os.getenv("IBKR_NOTIFY_COOLDOWN_HOURS", "168")) * 3600
                 _cooldown_ok = True
                 if _os.path.exists(_cooldown_file):
-                    if _time.time() - _os.path.getmtime(_cooldown_file) < 3600:
+                    if _time.time() - _os.path.getmtime(_cooldown_file) < _cooldown_secs:
                         _cooldown_ok = False
                 if _cooldown_ok:
                     from notifier.telegram_notifier import TelegramNotifier
