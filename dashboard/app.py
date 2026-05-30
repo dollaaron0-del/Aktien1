@@ -1073,29 +1073,34 @@ with tab_network:
 
                 # Jedes Thema bekommt einen festen Sektor auf dem Canvas
                 _theme_centers = {
-                    "AI_CHIPS":           ( 0.70,  0.55),
-                    "SEMICONDUCTORS":     ( 0.92,  0.10),
-                    "AI_HYPERSCALER":     ( 0.55, -0.40),
-                    "AI_SOFTWARE":        ( 0.22, -0.68),
-                    "ENTERPRISE_SOFTWARE":(-0.05, -0.90),
-                    "DEFENSE_US":         (-0.65,  0.55),
-                    "DEFENSE_EU":         (-0.92,  0.15),
-                    "OIL_GAS":            (-0.78, -0.38),
-                    "CLEAN_ENERGY":       (-0.30, -0.72),
-                    "GLP1_OBESITY":       ( 0.10,  0.88),
-                    "BIOTECH_HEALTH":     (-0.35,  0.68),
-                    "PAYMENTS_FINTECH":   ( 0.45,  0.22),
-                    "CRYPTO_PROXY":       ( 0.88, -0.12),
-                    "DATA_CENTER_POWER":  ( 0.25,  0.72),
-                    "SAFE_HAVEN":         (-0.72, -0.05),
-                    "EU_INDUSTRIAL":      (-0.55, -0.62),
-                    "ECOMMERCE_CONSUMER": (-0.15, -0.90),
-                    # ── Neue Cluster ──────────────────────────────────────────
-                    "FINANCIALS":         (-0.22,  0.42),
-                    "INDUSTRIALS":        (-0.50,  0.28),
-                    "EV_AUTO":            ( 0.38, -0.18),
-                    "MINING_METALS":      (-0.88, -0.58),
-                    "REAL_ESTATE":        ( 0.10,  0.52),
+                    # ── KI / Tech-Block (oben rechts) ─────────────────────────
+                    "AI_CHIPS":           ( 0.72,  0.88),
+                    "DATA_CENTER_POWER":  ( 1.05,  0.68),
+                    "SEMICONDUCTORS":     ( 1.12,  0.38),
+                    "AI_HYPERSCALER":     ( 0.50,  0.60),
+                    "CRYPTO_PROXY":       ( 1.08,  0.08),
+                    # ── Software / Fintech (rechts) ───────────────────────────
+                    "AI_SOFTWARE":        ( 0.72,  0.05),
+                    "PAYMENTS_FINTECH":   ( 0.95, -0.32),
+                    "ENTERPRISE_SOFTWARE":( 0.52, -0.38),
+                    # ── Konsum / E-Auto (unten rechts) ────────────────────────
+                    "ECOMMERCE_CONSUMER": ( 0.50, -0.78),
+                    "EV_AUTO":            ( 0.88, -0.68),
+                    # ── Rüstung / Gesundheit (oben links) ────────────────────
+                    "DEFENSE_EU":         (-1.05,  0.65),
+                    "DEFENSE_US":         (-0.72,  0.85),
+                    "BIOTECH_HEALTH":     (-0.38,  0.78),
+                    "GLP1_OBESITY":       (-0.08,  0.95),
+                    # ── Finanzen / Industrie (Mitte links) ───────────────────
+                    "FINANCIALS":         (-0.28,  0.40),
+                    "REAL_ESTATE":        ( 0.10,  0.48),
+                    "INDUSTRIALS":        (-0.58,  0.18),
+                    # ── Energie / Rohstoffe (unten links) ────────────────────
+                    "OIL_GAS":            (-0.82, -0.48),
+                    "SAFE_HAVEN":         (-1.10, -0.10),
+                    "MINING_METALS":      (-1.08, -0.62),
+                    "EU_INDUSTRIAL":      (-0.60, -0.52),
+                    "CLEAN_ENERGY":       (-0.32, -0.72),
                 }
                 # Primär-Thema: erster Eintrag aus get_themes() → bestimmt den Cluster
                 # Mehrfachthemen landen im ersten (wichtigsten) Cluster, nicht im Durchschnitt
