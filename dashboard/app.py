@@ -954,16 +954,32 @@ with tab_network:
             _edge_labels: list = []
             _edge_seen: set = set()
             _get_related = lambda t: _net_rel.get_related(t)[:6]
-            # Direkt StockRelations, robust gegen ältere Server-Versionen
-            _sr_themes_fn = getattr(_net_rel, "get_themes", None)
-            if _sr_themes_fn is None:
-                # Ältere StockRelations ohne get_themes: manuell aus Modulvariable
-                try:
-                    from analyzers.stock_relations import _TICKER_TO_THEMES as _T2T
-                    _sr_themes_fn = lambda t: _T2T.get(t.upper(), [])
-                except Exception:
-                    _sr_themes_fn = lambda t: []
-            _get_themes = _sr_themes_fn
+
+            # Themen-Mapping direkt im Dashboard (unabhängig von StockRelations-Version)
+            _DASH_THEMES = {
+                "AI_CHIPS":           ["NVDA","AMD","AVGO","ARM","INTC","TSM","ASML","AMAT","LRCX","KLAC","MU","MRVL"],
+                "AI_HYPERSCALER":     ["MSFT","GOOGL","META","AMZN","ORCL","IBM","SNOW","PLTR"],
+                "AI_SOFTWARE":        ["CRM","NOW","PANW","ADBE","INTU","SNOW","PLTR"],
+                "DEFENSE_US":         ["LMT","RTX","NOC","GD","HII","LDOS","CACI"],
+                "DEFENSE_EU":         ["RHM.DE","AIR.PA","BAES.L","MTX.DE","SAAB.ST"],
+                "SEMICONDUCTORS":     ["TSM","ASML","NVDA","AMD","AVGO","QCOM","TXN","AMAT","LRCX","KLAC","MU","MRVL","ARM"],
+                "OIL_GAS":            ["XOM","CVX","COP","OXY","PSX","VLO","SLB","HAL","BKR","TTE.PA","SHEL.L"],
+                "GLP1_OBESITY":       ["LLY","NVO","AMGN","ABBV","PFE","VKTX"],
+                "PAYMENTS_FINTECH":   ["V","MA","AXP","PYPL","SQ","SOFI","NU","HOOD"],
+                "CRYPTO_PROXY":       ["COIN","MSTR","RIOT","MARA","CLSK"],
+                "DATA_CENTER_POWER":  ["EQIX","DLR","AMT","NRG","CEG","VST","OKLO"],
+                "EU_INDUSTRIAL":      ["SAP.DE","SIE.DE","ALV.DE","BMW.DE","MBG.DE","IFX.DE","ENGI.PA","RWE.DE"],
+                "SAFE_HAVEN":         ["GLD","SLV","GDX","NEM","GOLD","AEM","WPM"],
+                "BIOTECH_HEALTH":     ["LLY","NVO","MRNA","BNTX","REGN","VRTX","ABBV","JNJ","TMO","ABT"],
+                "ECOMMERCE_CONSUMER": ["AMZN","SHOP","MELI","WMT","COST","HD","NFLX"],
+                "CLEAN_ENERGY":       ["NEE","ENPH","FSLR","BEP","NESTE.HE","RWE.DE","ORSTED.CO"],
+                "ENTERPRISE_SOFTWARE":["SAP.DE","CRM","NOW","ORCL","MSFT","INTU","WDAY"],
+            }
+            _DASH_T2T: dict = {}
+            for _th, _tks in _DASH_THEMES.items():
+                for _tk in _tks:
+                    _DASH_T2T.setdefault(_tk, []).append(_th)
+            _get_themes = lambda t: _DASH_T2T.get(t.upper(), [])
             for from_t in list(_nodes.keys()):
                 for to_t in _get_related(from_t):
                     if to_t not in _nodes:
