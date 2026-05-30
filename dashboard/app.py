@@ -954,8 +954,16 @@ with tab_network:
             _edge_labels: list = []
             _edge_seen: set = set()
             _get_related = lambda t: _net_rel.get_related(t)[:6]
-            # Direkt StockRelations statt Bridge-Cache – Bridge-themes können leer sein
-            _get_themes  = lambda t: _net_rel.get_themes(t)
+            # Direkt StockRelations, robust gegen ältere Server-Versionen
+            _sr_themes_fn = getattr(_net_rel, "get_themes", None)
+            if _sr_themes_fn is None:
+                # Ältere StockRelations ohne get_themes: manuell aus Modulvariable
+                try:
+                    from analyzers.stock_relations import _TICKER_TO_THEMES as _T2T
+                    _sr_themes_fn = lambda t: _T2T.get(t.upper(), [])
+                except Exception:
+                    _sr_themes_fn = lambda t: []
+            _get_themes = _sr_themes_fn
             for from_t in list(_nodes.keys()):
                 for to_t in _get_related(from_t):
                     if to_t not in _nodes:
