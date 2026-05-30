@@ -1007,15 +1007,19 @@ with tab_network:
                 "DEFENSE_EU":         ["RHM.DE","AIR.PA","BAES.L","MTX.DE","SAAB.ST"],
                 # ── Energie & Rohstoffe ───────────────────────────────────────
                 "OIL_GAS":            ["XOM","CVX","COP","OXY","PSX","VLO","SLB","HAL",
-                                       "BKR","TTE.PA","SHEL","SHEL.L","FCX"],
+                                       "BKR","TTE.PA","SHEL","SHEL.L"],
                 "CLEAN_ENERGY":       ["NEE","ENPH","FSLR","BEP","NESTE.HE","RWE.DE",
-                                       "ORSTED.CO","SEDG","RUN","PLUG","BE"],
+                                       "ORSTED.CO","SEDG","RUN","PLUG","BE","ALP"],
+                # ── Rohstoffe & Bergbau ───────────────────────────────────────
+                "MINING_METALS":      ["BHP","RIO","FCX","VALE","AA","NEM","GOLD","AEM","WPM","SCCO"],
                 # ── Gesundheit & Pharma ───────────────────────────────────────
                 "GLP1_OBESITY":       ["LLY","NVO","AMGN","ABBV","PFE","VKTX","MED"],
                 "BIOTECH_HEALTH":     ["LLY","NVO","MRNA","BNTX","REGN","VRTX","ABBV","JNJ",
-                                       "TMO","ABT","GILD","MRK","BMY","BIIB","ILMN","MDT","AZN"],
+                                       "TMO","ABT","GILD","MRK","BMY","BIIB","ILMN","MDT","AZN","ALNY"],
                 # ── Finanzen ─────────────────────────────────────────────────
-                "FINANCIALS":         ["GS","JPM","MS","BAC","BNP.PA","BRK-B","C","WFC","BLK","SCHW","GS"],
+                "FINANCIALS":         ["GS","JPM","MS","BAC","BNP.PA","BRK-B","C","WFC","BLK","SCHW"],
+                # ── Immobilien ───────────────────────────────────────────────
+                "REAL_ESTATE":        ["AVB","ARE","O","VTR","PLD","SPG","EQR","PSA","AMT","EQIX"],
                 # ── Zahlungen & Fintech ───────────────────────────────────────
                 "PAYMENTS_FINTECH":   ["V","MA","AXP","PYPL","SQ","SOFI","NU","HOOD"],
                 # ── Krypto ───────────────────────────────────────────────────
@@ -1023,10 +1027,12 @@ with tab_network:
                 # ── Infrastruktur & Strom ─────────────────────────────────────
                 "DATA_CENTER_POWER":  ["EQIX","DLR","AMT","NRG","CEG","VST","OKLO","VRT"],
                 # ── Industrie & Logistik ──────────────────────────────────────
-                "INDUSTRIALS":        ["CAT","HON","GE","DE","XPO","UPS","FDX","GXO","EMR","ETN","MMM"],
+                "INDUSTRIALS":        ["CAT","HON","GE","DE","XPO","UPS","FDX","GXO","EMR",
+                                       "ETN","MMM","RPM","SPXC","UP","GFL","ITW","PH"],
                 # ── E-Commerce & Konsum ───────────────────────────────────────
                 "ECOMMERCE_CONSUMER": ["AMZN","SHOP","MELI","WMT","COST","HD","NFLX","EBAY","ETSY",
-                                       "NKE","LULU","TJX","ULTA","MCD","MC.PA","JD","EL","SBUX"],
+                                       "NKE","LULU","TJX","ULTA","MCD","MC.PA","JD","EL","SBUX",
+                                       "KMB","PG","CL","IMAX"],
                 # ── Europäische Industrie ─────────────────────────────────────
                 "EU_INDUSTRIAL":      ["SAP.DE","SIE.DE","ALV.DE","BMW.DE","MBG.DE","IFX.DE",
                                        "ENGI.PA","RWE.DE","DSV.CO","AIR.PA"],
@@ -1088,6 +1094,8 @@ with tab_network:
                     "FINANCIALS":         (-0.22,  0.42),
                     "INDUSTRIALS":        (-0.50,  0.28),
                     "EV_AUTO":            ( 0.38, -0.18),
+                    "MINING_METALS":      (-0.88, -0.58),
+                    "REAL_ESTATE":        ( 0.10,  0.52),
                 }
                 # Primär-Thema: erster Eintrag aus get_themes() → bestimmt den Cluster
                 # Mehrfachthemen landen im ersten (wichtigsten) Cluster, nicht im Durchschnitt
@@ -1148,6 +1156,8 @@ with tab_network:
                     "FINANCIALS":         "#2980B9",
                     "INDUSTRIALS":        "#795548",
                     "EV_AUTO":            "#43A047",
+                    "MINING_METALS":      "#8D6E63",
+                    "REAL_ESTATE":        "#AB47BC",
                 }
                 _theme_labels_de = {
                     "AI_CHIPS":           "KI-Chips",
@@ -1170,6 +1180,8 @@ with tab_network:
                     "FINANCIALS":         "Finanzen",
                     "INDUSTRIALS":        "Industrie",
                     "EV_AUTO":            "EV & Auto",
+                    "MINING_METALS":      "Rohstoffe",
+                    "REAL_ESTATE":        "Immobilien",
                 }
 
                 # ── Hintergrund-Zonen: Polygon-Kreise (fill="toself" funktioniert immer) ──
