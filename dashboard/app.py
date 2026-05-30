@@ -934,15 +934,17 @@ with tab_network:
             _edges: list = []
             _edge_labels: list = []
             _edge_seen: set = set()
+            _get_related = lambda t: _net_rel.get_related(t)[:6]
+            _get_themes   = getattr(_net_rel, "get_themes", lambda t: [])
             for from_t in list(_nodes.keys()):
-                for to_t in _net_rel.get_related(from_t, limit=6):
+                for to_t in _get_related(from_t):
                     if to_t not in _nodes:
                         continue
                     key = tuple(sorted([from_t, to_t]))
                     if key in _edge_seen:
                         continue
                     _edge_seen.add(key)
-                    _themes = _net_rel.get_themes(from_t)
+                    _themes = _get_themes(from_t)
                     _lbl = _themes[0].replace("_", " ") if _themes else "Verwandt"
                     _edges.append((from_t, to_t))
                     _edge_labels.append(_lbl[:60])
@@ -981,7 +983,7 @@ with tab_network:
                 }
                 # Position = Schwerpunkt aller Themen des Tickers
                 for t in _ticker_list:
-                    _t_themes = _net_rel.get_themes(t)
+                    _t_themes = _get_themes(t)
                     _t_centers = [_theme_centers[th] for th in _t_themes if th in _theme_centers]
                     if _t_centers:
                         cx = sum(c[0] for c in _t_centers) / len(_t_centers)
