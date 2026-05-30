@@ -1077,7 +1077,7 @@ with tab_network:
                     "DEFENSE_EU":         (-0.86,  0.59),
                     "DEFENSE_US":         (-0.59,  0.74),
                     "INDUSTRIALS":        (-0.59,  0.37),
-                    "EU_INDUSTRIAL":      (-0.90,  0.15),
+                    "EU_INDUSTRIAL":      (-0.78,  0.12),
                     # ── Energie & Rohstoffe (unten links) ────────────────────
                     "OIL_GAS":            (-0.67, -0.43),
                     "SAFE_HAVEN":         (-0.92, -0.23),
@@ -1195,6 +1195,61 @@ with tab_network:
                 _N_PTS   = 48                    # Punkte pro Kreis-Polygon
                 _angles  = [2 * _math.pi * i / _N_PTS for i in range(_N_PTS + 1)]
 
+                # ── Sektor-zu-Sektor Verbindungen (wirtschaftliche Abhängigkeiten) ──
+                _sector_links = [
+                    # Rüstung ↔ Industrie
+                    ("DEFENSE_US",  "INDUSTRIALS"),
+                    ("DEFENSE_EU",  "EU_INDUSTRIAL"),
+                    ("INDUSTRIALS", "EU_INDUSTRIAL"),
+                    ("DEFENSE_US",  "DEFENSE_EU"),
+                    # Tech-Ökosystem
+                    ("AI_CHIPS",       "AI_HYPERSCALER"),
+                    ("AI_CHIPS",       "SEMICONDUCTORS"),
+                    ("AI_CHIPS",       "DATA_CENTER_POWER"),
+                    ("AI_HYPERSCALER", "AI_SOFTWARE"),
+                    ("AI_HYPERSCALER", "DATA_CENTER_POWER"),
+                    ("AI_SOFTWARE",    "ENTERPRISE_SOFTWARE"),
+                    # Finanzen-Block
+                    ("FINANCIALS",     "PAYMENTS_FINTECH"),
+                    ("FINANCIALS",     "REAL_ESTATE"),
+                    ("PAYMENTS_FINTECH","CRYPTO_PROXY"),
+                    # Pharma
+                    ("BIOTECH_HEALTH", "GLP1_OBESITY"),
+                    # Energie
+                    ("OIL_GAS",        "CLEAN_ENERGY"),
+                    ("MINING_METALS",  "CLEAN_ENERGY"),
+                    ("OIL_GAS",        "EU_INDUSTRIAL"),
+                    # Konsum & Mobilität
+                    ("ENTERPRISE_SOFTWARE", "ECOMMERCE_CONSUMER"),
+                    ("EV_AUTO",        "ECOMMERCE_CONSUMER"),
+                    ("AI_CHIPS",       "EV_AUTO"),
+                    ("SEMICONDUCTORS", "EV_AUTO"),
+                    ("MINING_METALS",  "EV_AUTO"),     # Batterierohstoffe
+                    # Cross-Sektor
+                    ("INDUSTRIALS",    "CLEAN_ENERGY"),
+                    ("FINANCIALS",     "ENTERPRISE_SOFTWARE"),
+                ]
+                _sl_x, _sl_y = [], []
+                for _t1, _t2 in _sector_links:
+                    if _t1 not in _theme_centers or _t2 not in _theme_centers: continue
+                    if not _theme_to_tickers.get(_t1) or not _theme_to_tickers.get(_t2): continue
+                    _x1, _y1 = _theme_centers[_t1]
+                    _x2, _y2 = _theme_centers[_t2]
+                    _ddx, _ddy = _x2 - _x1, _y2 - _y1
+                    _dd = _math.sqrt(_ddx**2 + _ddy**2) or 1e-6
+                    # Kantenpunkte (Linie beginnt/endet am Kreisrand, nicht im Zentrum)
+                    _rr1 = min(0.09 + 0.012 * len(_theme_to_tickers.get(_t1, [])), 0.18)
+                    _rr2 = min(0.09 + 0.012 * len(_theme_to_tickers.get(_t2, [])), 0.18)
+                    _sl_x += [_x1 + _rr1*_ddx/_dd, _x2 - _rr2*_ddx/_dd, None]
+                    _sl_y += [_y1 + _rr1*_ddy/_dd, _y2 - _rr2*_ddy/_dd, None]
+
+                _sector_link_trace = go.Scatter(
+                    x=_sl_x, y=_sl_y,
+                    mode="lines",
+                    line=dict(width=1.0, color="rgba(120,140,180,0.30)"),
+                    hoverinfo="none", showlegend=False,
+                )
+
                 _zone_traces  = []   # je ein Trace pro Cluster (Kreis + Label)
                 _label_x2, _label_y2, _label_txt2, _label_col2 = [], [], [], []
                 _label_nx2, _label_ny2 = [], []   # Richtungsvektor für xanchor/yanchor
@@ -1230,12 +1285,12 @@ with tab_network:
 
                     # Label-Richtung: radial nach außen, mit Overrides für problematische Cluster
                     _dir_overrides = {
-                        "FINANCIALS":      ( 0.0, -1.0),  # → unten (weg von Biotech)
+                        "FINANCIALS":      ( 0.0, -1.0),  # → unten
                         "REAL_ESTATE":     ( 0.0, -1.0),  # → unten
                         "INDUSTRIALS":     (-1.0,  0.0),  # → links
-                        "EU_INDUSTRIAL":   (-1.0,  0.0),  # → links
+                        "EU_INDUSTRIAL":   (-1.0,  0.0),  # → links (x=-0.78 → label ~-1.14)
                         "GLP1_OBESITY":    ( 0.0,  1.0),  # → oben
-                        "BIOTECH_HEALTH":  (-0.7,  0.7),  # → oben-links
+                        "BIOTECH_HEALTH":  ( 0.0,  1.0),  # → oben (nicht in Rüstung-Kreis)
                         "PAYMENTS_FINTECH":( 0.0, -1.0),  # → unten
                     }
                     if _theme in _dir_overrides:
@@ -1374,7 +1429,7 @@ with tab_network:
                 ]
 
                 fig = go.Figure(
-                    data=_zone_traces + [_conn_trace, _edge_trace, _node_trace] + _legend_traces,
+                    data=[_sector_link_trace] + _zone_traces + [_conn_trace, _edge_trace, _node_trace] + _legend_traces,
                     layout=go.Layout(
                         paper_bgcolor="#0e1117",
                         plot_bgcolor="#0e1117",
