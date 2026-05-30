@@ -1285,14 +1285,15 @@ with tab_network:
 
                     # Label-Richtung: radial nach außen, mit Overrides für problematische Cluster
                     _dir_overrides = {
-                        "FINANCIALS":         ( 0.0, -1.0),
+                        "FINANCIALS":         (-1.0,  0.0),  # → links (war unten, deckte REAL_ESTATE)
                         "REAL_ESTATE":        ( 0.0, -1.0),
                         "INDUSTRIALS":        (-1.0,  0.0),
                         "EU_INDUSTRIAL":      (-1.0,  0.0),
                         "GLP1_OBESITY":       ( 0.0,  1.0),
                         "BIOTECH_HEALTH":     ( 0.0,  1.0),
                         "PAYMENTS_FINTECH":   ( 0.0,  1.0),
-                        "ENTERPRISE_SOFTWARE":( 1.0,  0.0),  # → rechts (weg vom E-Commerce-Kreis)
+                        "AI_HYPERSCALER":     ( 0.0,  1.0),  # → oben (war oben-rechts, deckte KI-Chips)
+                        "ENTERPRISE_SOFTWARE":( 1.0,  0.0),
                     }
                     if _theme in _dir_overrides:
                         _nx, _ny = _dir_overrides[_theme]
