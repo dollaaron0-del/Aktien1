@@ -895,13 +895,14 @@ with tab_network:
     try:
         import math
         import plotly.graph_objects as go
+        from analyzers.bot_data_bridge import BotDataBridge
         from analyzers.stock_relations import StockRelations
 
-        _net_log     = AnalysisLog()
+        _bridge      = BotDataBridge()
         _net_rel     = StockRelations()
-        _net_entries = _net_log.get_latest_per_ticker(limit=300)
+        _all_states  = _bridge.get_all_states()
 
-        if not _net_entries:
+        if not _all_states:
             st.info("Noch keine Analyse-Daten. Der Bot muss mindestens einen Analyse-Zyklus abgeschlossen haben.")
         else:
             # ── Filter ──────────────────────────────────────────────────────────
@@ -915,26 +916,19 @@ with tab_network:
             with _net_col2:
                 _show_isolated = st.checkbox("Ticker ohne Verbindungen anzeigen", value=True)
 
-            # ── Node-Daten aufbauen ──────────────────────────────────────────────
-            # Aktive BUY-Signale aus der Signal-Queue haben Vorrang über
-            # die letzte Analyse im Log (Ticker kann inzwischen re-analysiert
-            # als SKIP geloggt sein, aber das Signal ist noch pending).
-            _net_pending_buys = {s["ticker"].upper() for s in sig_queue.get_pending()}
-
+            # ── Node-Daten aus BotDataBridge (einheitliche Quelle) ──────────────
             _rec_color = {"BUY": "#00e676", "HOLD": "#ffd740", "SELL": "#f44336", "SKIP": "#888888"}
             _nodes: dict = {}
-            for e in _net_entries:
-                ticker = e["ticker"]
-                rec    = (e.get("recommendation") or "SKIP").upper()
-                if ticker.upper() in _net_pending_buys:
-                    rec = "BUY"
+            for ticker, st in _all_states.items():
+                rec = st.recommendation if st.recommendation in _rec_color else "SKIP"
                 if rec not in _rec_filter:
                     continue
                 _nodes[ticker] = {
-                    "rec":     rec,
-                    "score":   round(e.get("sentiment_score") or 0.0, 2),
-                    "date":    (e.get("analyzed_at") or "")[:10],
-                    "color":   _rec_color.get(rec, "#888888"),
+                    "rec":    rec,
+                    "score":  round(st.score, 2),
+                    "date":   st.analyzed_at[:10] if st.analyzed_at else "",
+                    "color":  _rec_color[rec],
+                    "source": st.rec_source,
                 }
 
             # ── Kanten: dynamisch + statische Themen-Cluster ────────────────────
@@ -942,7 +936,7 @@ with tab_network:
             _edge_labels: list = []
             _edge_seen: set = set()
             _get_related = lambda t: _net_rel.get_related(t)[:6]
-            _get_themes   = getattr(_net_rel, "get_themes", lambda t: [])
+            _get_themes   = lambda t: _all_states[t].themes if t in _all_states else getattr(_net_rel, "get_themes", lambda t: [])(t)
             for from_t in list(_nodes.keys()):
                 for to_t in _get_related(from_t):
                     if to_t not in _nodes:
@@ -1111,8 +1105,9 @@ with tab_network:
                 _node_hover = [
                     (
                         f"<b>{t}</b>  {_ALL_NAMES.get(t.upper(), '')}<br>"
-                        f"Empfehlung: <b>{_nodes[t]['rec']}</b>  |  "
-                        f"Score: {_nodes[t]['score']}<br>"
+                        f"Empfehlung: <b>{_nodes[t]['rec']}</b>  "
+                        f"<i>({_nodes[t].get('source','–')})</i><br>"
+                        f"Score: {_nodes[t]['score']}  |  "
                         f"Zuletzt: {_nodes[t]['date']}<br>"
                         f"Sektor: {', '.join(_get_themes(t)) or '–'}<br>"
                         f"Verbindungen: {_conn_count[t]}"
