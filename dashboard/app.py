@@ -916,10 +916,37 @@ with tab_network:
             with _net_col2:
                 _show_isolated = st.checkbox("Ticker ohne Verbindungen anzeigen", value=True)
 
+            # ── Cross-Listing-Deduplizierung: gleiche Firma, verschiedene Börsenplätze ──
+            # Schlüssel = Duplikat, Wert = kanonischer Ticker (der behalten wird)
+            _CANONICAL = {
+                "ASML.AS":    "ASML",
+                "NOVO-B.CO":  "NVO",
+                "BAES.L":     "BA",       # BAE Systems – UK vs US
+                "SHEL.L":     "SHEL",
+                "TTE.PA":     "TTE",
+                "AIR.PA":     "AIR.PA",   # kein US-Listing → behalten
+                "RHM.DE":     "RHM.DE",   # kein US-Listing → behalten
+                "SAP.DE":     "SAP",      # SAP US ADR
+                "SIE.DE":     "SIE.DE",
+                "BMW.DE":     "BMW.DE",
+                "MC.PA":      "MC.PA",    # LVMH
+                "LVMH.PA":    "MC.PA",
+                "OR.PA":      "OR.PA",
+            }
+
             # ── Node-Daten aus BotDataBridge (einheitliche Quelle) ──────────────
             _rec_color = {"BUY": "#00e676", "HOLD": "#ffd740", "SELL": "#f44336", "SKIP": "#888888"}
             _nodes: dict = {}
+            _canonical_seen: set = set()    # verhindert Duplikat-Nodes
             for ticker, _ts in _all_states.items():
+                # Cross-Listing: Duplikat → auf kanonischen Ticker mappen
+                _canon = _CANONICAL.get(ticker, ticker)
+                if _canon != ticker:
+                    # Duplikat: nur behalten wenn kanonischer Ticker noch nicht da ist
+                    if _canon in _canonical_seen or _canon in _all_states:
+                        continue   # kanonischer Ticker wird separat verarbeitet
+                    ticker = _canon  # Duplikat als kanonischer Ticker aufnehmen
+                _canonical_seen.add(_canon)
                 raw_rec = _ts.recommendation or "UNKNOWN"
                 # UNKNOWN / leere Empfehlungen → SKIP (kein echter Signal)
                 rec = raw_rec if raw_rec in _rec_color else "SKIP"
