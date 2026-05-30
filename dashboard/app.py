@@ -1019,7 +1019,7 @@ with tab_network:
                 # ── Finanzen ─────────────────────────────────────────────────
                 "FINANCIALS":         ["GS","JPM","MS","BAC","BNP.PA","BRK-B","C","WFC","BLK","SCHW"],
                 # ── Immobilien ───────────────────────────────────────────────
-                "REAL_ESTATE":        ["AVB","ARE","O","VTR","PLD","SPG","EQR","PSA","AMT","EQIX"],
+                "REAL_ESTATE":        ["AVB","ARE","O","VTR","PLD","SPG","EQR","PSA"],
                 # ── Zahlungen & Fintech ───────────────────────────────────────
                 "PAYMENTS_FINTECH":   ["V","MA","AXP","PYPL","SQ","SOFI","NU","HOOD"],
                 # ── Krypto ───────────────────────────────────────────────────
@@ -1075,10 +1075,10 @@ with tab_network:
                 _theme_centers = {
                     # ── KI / Tech-Block (oben rechts) ─────────────────────────
                     "AI_CHIPS":           ( 0.72,  0.88),
-                    "DATA_CENTER_POWER":  ( 1.05,  0.68),
-                    "SEMICONDUCTORS":     ( 1.12,  0.38),
-                    "AI_HYPERSCALER":     ( 0.50,  0.60),
-                    "CRYPTO_PROXY":       ( 1.08,  0.08),
+                    "DATA_CENTER_POWER":  ( 0.95,  0.70),
+                    "SEMICONDUCTORS":     ( 0.98,  0.48),
+                    "AI_HYPERSCALER":     ( 0.50,  0.62),
+                    "CRYPTO_PROXY":       ( 1.05,  0.10),
                     # ── Software / Fintech (rechts) ───────────────────────────
                     "AI_SOFTWARE":        ( 0.72,  0.05),
                     "PAYMENTS_FINTECH":   ( 0.95, -0.32),
@@ -1197,6 +1197,7 @@ with tab_network:
                 _zone_traces  = []   # je ein Trace pro Cluster (Kreis + Label)
                 _label_x2, _label_y2, _label_txt2, _label_col2 = [], [], [], []
                 _label_nx2, _label_ny2 = [], []   # Richtungsvektor für xanchor/yanchor
+                _label_ax2,  _label_ay2  = [], []   # Pfeilankerpunkt auf dem Kreisrand
 
                 for _theme, (zx, zy) in _theme_centers.items():
                     _in_zone = _theme_to_tickers.get(_theme, [])
@@ -1241,28 +1242,36 @@ with tab_network:
                     _label_col2.append(_zc)
                     _label_nx2.append(_nx)
                     _label_ny2.append(_ny)
+                    # Ankerpunkt auf dem Kreisrand (Pfeilursprung)
+                    _label_ax2.append(zx + _r_zone * _nx)
+                    _label_ay2.append(zy + _r_zone * _ny)
 
-                # Labels als Annotationen — xanchor/yanchor sodass Boxkante am Ankerpunkt
+                # Labels als Annotationen — Pfeil vom Kreisrand zum Label
                 _zone_annotations = []
-                for lx, ly, lt, lc, lnx, lny in zip(
+                for lx, ly, lt, lc, lnx, lny, lax, lay in zip(
                     _label_x2, _label_y2, _label_txt2, _label_col2,
-                    _label_nx2, _label_ny2,
+                    _label_nx2, _label_ny2, _label_ax2, _label_ay2,
                 ):
                     _r8i = int(lc[1:3], 16)
                     _g8i = int(lc[3:5], 16)
                     _b8i = int(lc[5:7], 16)
-                    # Boxkante zeigt vom Cluster weg: Ankerpunkt ist die dem Cluster zugewandte Seite
+                    # Label-Box wächst vom Cluster weg
                     _xanc = "left"   if lnx >  0.20 else ("right"  if lnx < -0.20 else "center")
                     _yanc = "bottom" if lny >  0.20 else ("top"    if lny < -0.20 else "middle")
                     _zone_annotations.append(dict(
                         x=lx, y=ly,
+                        ax=lax, ay=lay,
                         text=f"<b>{lt}</b>",
-                        showarrow=False,
+                        showarrow=True,
+                        arrowhead=0,
+                        arrowwidth=1.5,
+                        arrowcolor=lc,
                         xanchor=_xanc,
                         yanchor=_yanc,
                         xref="x", yref="y",
+                        axref="x", ayref="y",
                         font=dict(size=10, color="#ffffff"),
-                        bgcolor=f"rgba({_r8i},{_g8i},{_b8i},0.82)",
+                        bgcolor=f"rgba({_r8i},{_g8i},{_b8i},0.85)",
                         bordercolor=lc,
                         borderwidth=1,
                         borderpad=4,
