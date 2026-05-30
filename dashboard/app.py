@@ -1220,20 +1220,28 @@ with tab_network:
                         showlegend=False,
                     ))
 
-                    # Label unterhalb des Kreises
+                    # Label unterhalb des Kreises → wird als Annotation gesetzt (hat bgcolor)
                     _label_x2.append(zx)
-                    _label_y2.append(zy - _r_zone - 0.03)
-                    _label_txt2.append(f"<b>{_zl}</b>")
+                    _label_y2.append(zy - _r_zone - 0.04)
+                    _label_txt2.append(_zl)
                     _label_col2.append(_zc)
 
-                _zone_label_trace = go.Scatter(
-                    x=_label_x2, y=_label_y2,
-                    mode="text",
-                    text=_label_txt2,
-                    textfont=dict(size=10, color=_label_col2),
-                    hoverinfo="none",
-                    showlegend=False,
-                )
+                # Labels als Annotationen mit Hintergrundbox (gut lesbar auf dunklem BG)
+                _zone_annotations = [
+                    dict(
+                        x=lx, y=ly,
+                        text=f"<b>{lt}</b>",
+                        showarrow=False,
+                        xref="x", yref="y",
+                        font=dict(size=11, color="#ffffff"),
+                        bgcolor=f"rgba({int(lc[1:3],16)},{int(lc[3:5],16)},{int(lc[5:7],16)},0.75)",
+                        bordercolor=lc,
+                        borderwidth=1,
+                        borderpad=3,
+                        opacity=0.95,
+                    )
+                    for lx, ly, lt, lc in zip(_label_x2, _label_y2, _label_txt2, _label_col2)
+                ]
 
                 # ── Kanten (nur wenn Toggle aktiv) ─────────────────────────
                 _edge_x, _edge_y = [], []
@@ -1313,7 +1321,7 @@ with tab_network:
                 ]
 
                 fig = go.Figure(
-                    data=_zone_traces + [_zone_label_trace, _edge_trace, _node_trace] + _legend_traces,
+                    data=_zone_traces + [_edge_trace, _node_trace] + _legend_traces,
                     layout=go.Layout(
                         paper_bgcolor="#0e1117",
                         plot_bgcolor="#0e1117",
@@ -1329,6 +1337,7 @@ with tab_network:
                             bgcolor="#1a1a2e", bordercolor="#444",
                             borderwidth=1, font=dict(color="#dddddd"),
                         ),
+                        annotations=_zone_annotations,
                     ),
                 )
                 st.plotly_chart(fig, use_container_width=True)
