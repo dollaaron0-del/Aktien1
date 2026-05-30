@@ -1073,34 +1073,35 @@ with tab_network:
 
                 # Jedes Thema bekommt einen festen Sektor auf dem Canvas
                 _theme_centers = {
+                    # ── Rüstung & Industrie (links — real economy) ────────────
+                    "DEFENSE_EU":         (-1.05,  0.72),   # Rüstung EU
+                    "DEFENSE_US":         (-0.72,  0.90),   # Rüstung USA
+                    "INDUSTRIALS":        (-0.72,  0.45),   # direkt unter Rüstung USA
+                    "EU_INDUSTRIAL":      (-1.10,  0.18),   # direkt unter Rüstung EU
+                    # ── Energie & Rohstoffe (unten links) ────────────────────
+                    "OIL_GAS":            (-0.82, -0.52),
+                    "SAFE_HAVEN":         (-1.12, -0.28),
+                    "MINING_METALS":      (-1.08, -0.68),
+                    "CLEAN_ENERGY":       (-0.52, -0.72),
+                    # ── Gesundheit (oben Mitte) ───────────────────────────────
+                    "BIOTECH_HEALTH":     (-0.22,  0.80),
+                    "GLP1_OBESITY":       ( 0.12,  1.02),
+                    # ── Finanzen Block (Mitte) — Finanzen & Payments nebeneinander
+                    "REAL_ESTATE":        (-0.52, -0.12),
+                    "FINANCIALS":         (-0.10,  0.05),
+                    "PAYMENTS_FINTECH":   ( 0.34,  0.05),   # direkt rechts von Finanzen
+                    "CRYPTO_PROXY":       ( 1.05,  0.10),   # rechts (nahe Tech)
                     # ── KI / Tech-Block (oben rechts) ─────────────────────────
                     "AI_CHIPS":           ( 0.72,  0.90),
-                    "DATA_CENTER_POWER":  ( 0.92,  0.75),
-                    "SEMICONDUCTORS":     ( 0.90,  0.55),
+                    "DATA_CENTER_POWER":  ( 0.92,  0.72),
+                    "SEMICONDUCTORS":     ( 0.90,  0.50),
                     "AI_HYPERSCALER":     ( 0.52,  0.65),
-                    "CRYPTO_PROXY":       ( 1.05,  0.12),
-                    # ── Software / Fintech (rechts) ───────────────────────────
-                    "AI_SOFTWARE":        ( 0.72,  0.08),
-                    "PAYMENTS_FINTECH":   ( 0.95, -0.30),
-                    "ENTERPRISE_SOFTWARE":( 0.52, -0.38),
+                    # ── Software (rechts Mitte) ───────────────────────────────
+                    "AI_SOFTWARE":        ( 0.78,  0.22),
+                    "ENTERPRISE_SOFTWARE":( 0.55, -0.40),
                     # ── Konsum / E-Auto (unten rechts) ────────────────────────
-                    "ECOMMERCE_CONSUMER": ( 0.52, -0.78),
-                    "EV_AUTO":            ( 0.88, -0.65),
-                    # ── Rüstung / Gesundheit (oben links) ────────────────────
-                    "DEFENSE_EU":         (-1.08,  0.72),
-                    "DEFENSE_US":         (-0.78,  0.92),
-                    "BIOTECH_HEALTH":     (-0.38,  0.80),
-                    "GLP1_OBESITY":       ( 0.05,  1.00),
-                    # ── Finanzen / Industrie (Mitte links) ───────────────────
-                    "FINANCIALS":         (-0.15,  0.05),
-                    "REAL_ESTATE":        (-0.45,  0.05),
-                    "INDUSTRIALS":        (-0.65,  0.05),
-                    # ── Energie / Rohstoffe (unten links) ────────────────────
-                    "OIL_GAS":            (-0.82, -0.50),
-                    "SAFE_HAVEN":         (-1.10, -0.12),
-                    "MINING_METALS":      (-1.08, -0.65),
-                    "EU_INDUSTRIAL":      (-0.62, -0.52),
-                    "CLEAN_ENERGY":       (-0.32, -0.75),
+                    "ECOMMERCE_CONSUMER": ( 0.52, -0.82),
+                    "EV_AUTO":            ( 0.88, -0.68),
                 }
                 # Primär-Thema: erster Eintrag aus get_themes() → bestimmt den Cluster
                 # Mehrfachthemen landen im ersten (wichtigsten) Cluster, nicht im Durchschnitt
@@ -1229,11 +1230,13 @@ with tab_network:
 
                     # Label-Richtung: radial nach außen, mit Overrides für problematische Cluster
                     _dir_overrides = {
-                        "FINANCIALS":   ( 0.0, -1.0),   # → nach unten
-                        "REAL_ESTATE":  ( 0.0, -1.0),   # → nach unten
-                        "INDUSTRIALS":  (-1.0,  0.0),   # → nach links
-                        "GLP1_OBESITY": ( 0.0,  1.0),   # → nach oben
-                        "BIOTECH_HEALTH":(-0.8, 0.6),   # → oben-links (weg von Finanzen)
+                        "FINANCIALS":      ( 0.0, -1.0),  # → unten (weg von Biotech)
+                        "REAL_ESTATE":     ( 0.0, -1.0),  # → unten
+                        "INDUSTRIALS":     (-1.0,  0.0),  # → links
+                        "EU_INDUSTRIAL":   (-1.0,  0.0),  # → links
+                        "GLP1_OBESITY":    ( 0.0,  1.0),  # → oben
+                        "BIOTECH_HEALTH":  (-0.7,  0.7),  # → oben-links
+                        "PAYMENTS_FINTECH":( 0.0, -1.0),  # → unten
                     }
                     if _theme in _dir_overrides:
                         _nx, _ny = _dir_overrides[_theme]
