@@ -1191,6 +1191,7 @@ with tab_network:
 
                 _zone_traces  = []   # je ein Trace pro Cluster (Kreis + Label)
                 _label_x2, _label_y2, _label_txt2, _label_col2 = [], [], [], []
+                _label_ax2, _label_ay2 = [], []   # Pfeilankerpunkte am Kreisrand
 
                 for _theme, (zx, zy) in _theme_centers.items():
                     _in_zone = _theme_to_tickers.get(_theme, [])
@@ -1220,27 +1221,45 @@ with tab_network:
                         showlegend=False,
                     ))
 
-                    # Label unterhalb des Kreises → wird als Annotation gesetzt (hat bgcolor)
-                    _label_x2.append(zx)
-                    _label_y2.append(zy - _r_zone - 0.04)
+                    # Label radial nach außen vom Graphmittelpunkt (0,0)
+                    _dist = _math.sqrt(zx ** 2 + zy ** 2)
+                    if _dist > 0.05:
+                        _nx, _ny = zx / _dist, zy / _dist
+                    else:
+                        _nx, _ny = 0.0, -1.0   # Fallback: nach unten
+                    _lx = zx + (_r_zone + 0.08) * _nx
+                    _ly = zy + (_r_zone + 0.08) * _ny
+                    _label_x2.append(_lx)
+                    _label_y2.append(_ly)
                     _label_txt2.append(_zl)
                     _label_col2.append(_zc)
+                    # Pfeilankerpunkt = Kreisrand in Richtung Label
+                    _label_ax2.append(zx + _r_zone * _nx * 0.95)
+                    _label_ay2.append(zy + _r_zone * _ny * 0.95)
 
-                # Labels als Annotationen mit Hintergrundbox (gut lesbar auf dunklem BG)
+                # Labels als Annotationen mit Hintergrundbox + kurzem Pfeil zum Kreis
                 _zone_annotations = [
                     dict(
                         x=lx, y=ly,
+                        ax=ax, ay=ay,
                         text=f"<b>{lt}</b>",
-                        showarrow=False,
+                        showarrow=True,
+                        arrowhead=0,
+                        arrowwidth=1,
+                        arrowcolor=lc,
                         xref="x", yref="y",
-                        font=dict(size=11, color="#ffffff"),
-                        bgcolor=f"rgba({int(lc[1:3],16)},{int(lc[3:5],16)},{int(lc[5:7],16)},0.75)",
+                        axref="x", ayref="y",
+                        font=dict(size=10, color="#ffffff"),
+                        bgcolor=f"rgba({int(lc[1:3],16)},{int(lc[3:5],16)},{int(lc[5:7],16)},0.80)",
                         bordercolor=lc,
                         borderwidth=1,
                         borderpad=3,
                         opacity=0.95,
                     )
-                    for lx, ly, lt, lc in zip(_label_x2, _label_y2, _label_txt2, _label_col2)
+                    for lx, ly, lt, lc, ax, ay in zip(
+                        _label_x2, _label_y2, _label_txt2, _label_col2,
+                        _label_ax2, _label_ay2,
+                    )
                 ]
 
                 # ── Kanten (nur wenn Toggle aktiv) ─────────────────────────
