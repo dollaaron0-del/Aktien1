@@ -919,16 +919,16 @@ with tab_network:
             # ── Node-Daten aus BotDataBridge (einheitliche Quelle) ──────────────
             _rec_color = {"BUY": "#00e676", "HOLD": "#ffd740", "SELL": "#f44336", "SKIP": "#888888"}
             _nodes: dict = {}
-            for ticker, st in _all_states.items():
-                rec = st.recommendation if st.recommendation in _rec_color else "SKIP"
+            for ticker, _ts in _all_states.items():
+                rec = _ts.recommendation if _ts.recommendation in _rec_color else "SKIP"
                 if rec not in _rec_filter:
                     continue
                 _nodes[ticker] = {
                     "rec":    rec,
-                    "score":  round(st.score, 2),
-                    "date":   st.analyzed_at[:10] if st.analyzed_at else "",
+                    "score":  round(_ts.score, 2),
+                    "date":   _ts.analyzed_at[:10] if _ts.analyzed_at else "",
                     "color":  _rec_color[rec],
-                    "source": st.rec_source,
+                    "source": _ts.rec_source,
                 }
 
             # ── Kanten: dynamisch + statische Themen-Cluster ────────────────────
