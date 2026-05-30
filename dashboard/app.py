@@ -1074,33 +1074,33 @@ with tab_network:
                 # Jedes Thema bekommt einen festen Sektor auf dem Canvas
                 _theme_centers = {
                     # ── KI / Tech-Block (oben rechts) ─────────────────────────
-                    "AI_CHIPS":           ( 0.72,  0.88),
-                    "DATA_CENTER_POWER":  ( 0.95,  0.70),
-                    "SEMICONDUCTORS":     ( 0.98,  0.48),
-                    "AI_HYPERSCALER":     ( 0.50,  0.62),
-                    "CRYPTO_PROXY":       ( 1.05,  0.10),
+                    "AI_CHIPS":           ( 0.72,  0.90),
+                    "DATA_CENTER_POWER":  ( 0.92,  0.75),
+                    "SEMICONDUCTORS":     ( 0.90,  0.55),
+                    "AI_HYPERSCALER":     ( 0.52,  0.65),
+                    "CRYPTO_PROXY":       ( 1.05,  0.12),
                     # ── Software / Fintech (rechts) ───────────────────────────
-                    "AI_SOFTWARE":        ( 0.72,  0.05),
-                    "PAYMENTS_FINTECH":   ( 0.95, -0.32),
+                    "AI_SOFTWARE":        ( 0.72,  0.08),
+                    "PAYMENTS_FINTECH":   ( 0.95, -0.30),
                     "ENTERPRISE_SOFTWARE":( 0.52, -0.38),
                     # ── Konsum / E-Auto (unten rechts) ────────────────────────
-                    "ECOMMERCE_CONSUMER": ( 0.50, -0.78),
-                    "EV_AUTO":            ( 0.88, -0.68),
+                    "ECOMMERCE_CONSUMER": ( 0.52, -0.78),
+                    "EV_AUTO":            ( 0.88, -0.65),
                     # ── Rüstung / Gesundheit (oben links) ────────────────────
-                    "DEFENSE_EU":         (-1.05,  0.65),
-                    "DEFENSE_US":         (-0.72,  0.85),
-                    "BIOTECH_HEALTH":     (-0.38,  0.78),
-                    "GLP1_OBESITY":       (-0.08,  0.95),
+                    "DEFENSE_EU":         (-1.08,  0.72),
+                    "DEFENSE_US":         (-0.78,  0.92),
+                    "BIOTECH_HEALTH":     (-0.38,  0.80),
+                    "GLP1_OBESITY":       ( 0.05,  1.00),
                     # ── Finanzen / Industrie (Mitte links) ───────────────────
-                    "FINANCIALS":         (-0.28,  0.40),
-                    "REAL_ESTATE":        (-0.44,  0.25),
-                    "INDUSTRIALS":        (-0.60,  0.08),
+                    "FINANCIALS":         (-0.15,  0.05),
+                    "REAL_ESTATE":        (-0.45,  0.05),
+                    "INDUSTRIALS":        (-0.65,  0.05),
                     # ── Energie / Rohstoffe (unten links) ────────────────────
-                    "OIL_GAS":            (-0.82, -0.48),
-                    "SAFE_HAVEN":         (-1.10, -0.10),
-                    "MINING_METALS":      (-1.08, -0.62),
-                    "EU_INDUSTRIAL":      (-0.60, -0.52),
-                    "CLEAN_ENERGY":       (-0.32, -0.72),
+                    "OIL_GAS":            (-0.82, -0.50),
+                    "SAFE_HAVEN":         (-1.10, -0.12),
+                    "MINING_METALS":      (-1.08, -0.65),
+                    "EU_INDUSTRIAL":      (-0.62, -0.52),
+                    "CLEAN_ENERGY":       (-0.32, -0.75),
                 }
                 # Primär-Thema: erster Eintrag aus get_themes() → bestimmt den Cluster
                 # Mehrfachthemen landen im ersten (wichtigsten) Cluster, nicht im Durchschnitt
@@ -1119,8 +1119,8 @@ with tab_network:
                 for _theme, _members in _theme_to_tickers.items():
                     _cx, _cy = _theme_centers[_theme]
                     _n = len(_members)
-                    # Radius wächst mit Anzahl der Knoten (min 0.10, max 0.18)
-                    _r = min(0.10 + 0.018 * _n, 0.18)
+                    # Radius wächst mit Anzahl der Knoten (min 0.08, max 0.15)
+                    _r = min(0.08 + 0.012 * _n, 0.15)
                     for _i, t in enumerate(sorted(_members)):  # sortiert = deterministisch
                         _angle = 2 * math.pi * _i / _n - math.pi / 2
                         _pos[t] = (_cx + _r * math.cos(_angle), _cy + _r * math.sin(_angle))
@@ -1204,7 +1204,7 @@ with tab_network:
                     if not _in_zone:
                         continue
                     _n_zone = len(_in_zone)
-                    _r_zone = min(0.13 + 0.022 * _n_zone, 0.26)
+                    _r_zone = min(0.11 + 0.015 * _n_zone, 0.21)
                     _zc = _theme_colors.get(_theme, "#666666")
                     _zl = _theme_labels_de.get(_theme, _theme)
 
@@ -1229,10 +1229,11 @@ with tab_network:
 
                     # Label-Richtung: radial nach außen, mit Overrides für problematische Cluster
                     _dir_overrides = {
-                        "FINANCIALS":   ( 0.0, -1.0),   # → nach unten (sonst in Biotech-Blase)
-                        "REAL_ESTATE":  (-1.0,  0.0),   # → nach links
+                        "FINANCIALS":   ( 0.0, -1.0),   # → nach unten
+                        "REAL_ESTATE":  ( 0.0, -1.0),   # → nach unten
                         "INDUSTRIALS":  (-1.0,  0.0),   # → nach links
-                        "GLP1_OBESITY": ( 0.0,  1.0),   # → nach oben (bleibt sauber oben)
+                        "GLP1_OBESITY": ( 0.0,  1.0),   # → nach oben
+                        "BIOTECH_HEALTH":(-0.8, 0.6),   # → oben-links (weg von Finanzen)
                     }
                     if _theme in _dir_overrides:
                         _nx, _ny = _dir_overrides[_theme]
