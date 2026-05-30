@@ -2727,7 +2727,7 @@ with tab_settings:
 
         st.markdown("#### ⚡ Spezial-Modi")
         st.caption("Diese Modi überschreiben die Risiko-Einstellungen oben.")
-        m1, m2, m3 = st.columns(3)
+        m1, m2, m3, m4 = st.columns(4)
         with m1:
             new_turbo = st.toggle(
                 "🚀 Turbo-Modus",
@@ -2759,6 +2759,14 @@ with tab_settings:
             )
             if new_intraday:
                 st.info(f"3. Analyse täglich um {new_intraday_time} UTC")
+        with m4:
+            new_frugal = st.toggle(
+                "🤖 Ollama-Vollanalyse",
+                value=_env.get("FRUGAL_MODE", "false").lower() in ("1","true","yes"),
+                help="Ollama übernimmt die komplette Analyse für normale Ticker. Claude nur noch für offene Positionen, SEC/Earnings und manuelle Anfragen. Spart ~85% Claude-Kosten.",
+            )
+            if new_frugal:
+                st.success("Frugal: Ollama analysiert alles · Claude nur für Positionen & SEC")
 
         st.divider()
         save_btn = st.form_submit_button("💾 Einstellungen speichern", use_container_width=True, type="primary")
@@ -2784,6 +2792,7 @@ with tab_settings:
             "EXPLORATION_MODE":          "true" if new_expl else "false",
             "INTRADAY_SCAN_ENABLED":     "true" if new_intraday else "false",
             "INTRADAY_SCAN_TIME":        new_intraday_time.strip() or "17:30",
+            "FRUGAL_MODE":               "true" if new_frugal else "false",
             "MONTHLY_DISTRIBUTION_EUR":  str(new_monthly_eur),
             "DISTRIBUTION_BUFFER_MONTHS": str(new_buffer),
         }

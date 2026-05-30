@@ -111,8 +111,8 @@ class OllamaPrescreener:
         model: str = "llama3.1:8b",
         timeout: int = 30,
         # Schwellen für "Claude überspringen"
-        bearish_skip_threshold: float = 0.35,   # Score unter diesem Wert = klar bearish
-        neutral_skip_threshold: float = 0.60,   # Score unter diesem Wert = neutral → Claude sparen
+        bearish_skip_threshold: float = 0.38,   # Score unter diesem Wert = klar bearish
+        neutral_skip_threshold: float = 0.65,   # Score unter diesem Wert = neutral → Claude sparen
     ):
         self.base_url         = base_url.rstrip("/")
         self.model            = model
@@ -253,9 +253,9 @@ class OllamaPrescreener:
         Entscheidet ob Claude gerufen werden soll.
         Konservativ: Im Zweifel immer Claude.
         """
-        # Niedrige Konfidenz → fast immer Claude; nur bei glasklarem BEARISH sparen
+        # Niedrige Konfidenz → Claude außer bei klarem BEARISH
         if confidence == "LOW":
-            if score < 0.30:
+            if score < 0.35:
                 return False, f"Ollama: klar BEARISH ({score:.2f}, LOW) – kein Trade möglich"
             return True, ""
 
@@ -267,9 +267,8 @@ class OllamaPrescreener:
                 return False, f"Ollama: NEUTRAL ({score:.2f}, HIGH) – kein Trade-Signal"
             return True, ""
 
-        # MEDIUM confidence: Claude nur wenn Score nahe genug an der Kaufschwelle (≥ 0.55)
-        # Scores < 0.55 können die 0.65-Kaufschwelle selbst mit Adaptive-Boost kaum erreichen
-        if score < 0.55:
+        # MEDIUM confidence: Claude nur wenn Score nahe genug an der Kaufschwelle (≥ 0.58)
+        if score < 0.58:
             return False, f"Ollama: NEUTRAL/BEARISH ({score:.2f}, MEDIUM) – Score zu niedrig für Kauf"
 
         # Alles andere → Claude (bullische Signale, Unsicherheit)
