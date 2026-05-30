@@ -1011,11 +1011,11 @@ with tab_network:
                 "CLEAN_ENERGY":       ["NEE","ENPH","FSLR","BEP","NESTE.HE","RWE.DE",
                                        "ORSTED.CO","SEDG","RUN","PLUG","BE","ALP"],
                 # ── Rohstoffe & Bergbau ───────────────────────────────────────
-                "MINING_METALS":      ["BHP","RIO","FCX","VALE","AA","NEM","GOLD","AEM","WPM","SCCO"],
+                "MINING_METALS":      ["BHP","RIO","FCX","VALE","AA","NEM","GOLD","AEM","WPM","SCCO","CHME","DD","LYB"],
                 # ── Gesundheit & Pharma ───────────────────────────────────────
                 "GLP1_OBESITY":       ["LLY","NVO","AMGN","ABBV","PFE","VKTX","MED"],
                 "BIOTECH_HEALTH":     ["LLY","NVO","MRNA","BNTX","REGN","VRTX","ABBV","JNJ",
-                                       "TMO","ABT","GILD","MRK","BMY","BIIB","ILMN","MDT","AZN","ALNY"],
+                                       "TMO","ABT","GILD","MRK","BMY","BIIB","ILMN","MDT","AZN","AZN.L","ALNY"],
                 # ── Finanzen ─────────────────────────────────────────────────
                 "FINANCIALS":         ["GS","JPM","MS","BAC","BNP.PA","BRK-B","C","WFC","BLK","SCHW"],
                 # ── Immobilien ───────────────────────────────────────────────
