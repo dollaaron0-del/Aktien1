@@ -920,15 +920,33 @@ with tab_network:
             _rec_color = {"BUY": "#00e676", "HOLD": "#ffd740", "SELL": "#f44336", "SKIP": "#888888"}
             _nodes: dict = {}
             for ticker, _ts in _all_states.items():
-                rec = _ts.recommendation if _ts.recommendation in _rec_color else "SKIP"
+                raw_rec = _ts.recommendation or "UNKNOWN"
+                # UNKNOWN / leere Empfehlungen → SKIP (kein echter Signal)
+                rec = raw_rec if raw_rec in _rec_color else "SKIP"
                 if rec not in _rec_filter:
                     continue
+                # Sehr alte Analysen (> 7 Tage) → immer als SKIP markieren
+                _stale = False
+                if _ts.analyzed_at:
+                    try:
+                        from datetime import timezone
+                        _age_days = (datetime.utcnow() - datetime.fromisoformat(
+                            _ts.analyzed_at.replace("Z", "")
+                        )).days
+                        _stale = _age_days > 7
+                    except Exception:
+                        pass
+                if _stale:
+                    rec = "SKIP"
+                    if "SKIP" not in _rec_filter:
+                        continue
                 _nodes[ticker] = {
                     "rec":    rec,
                     "score":  round(_ts.score, 2),
                     "date":   _ts.analyzed_at[:10] if _ts.analyzed_at else "",
                     "color":  _rec_color[rec],
                     "source": _ts.rec_source,
+                    "stale":  _stale,
                 }
 
             # ── Kanten: dynamisch + statische Themen-Cluster ────────────────────
@@ -982,22 +1000,35 @@ with tab_network:
                     "EU_INDUSTRIAL":      (-0.55, -0.60),
                     "ECOMMERCE_CONSUMER": (-0.15, -0.85),
                 }
-                # Position = Schwerpunkt aller Themen des Tickers
+                # Primär-Thema: erster Eintrag aus get_themes() → bestimmt den Cluster
+                # Mehrfachthemen landen im ersten (wichtigsten) Cluster, nicht im Durchschnitt
+                _theme_to_tickers: dict = {}
+                _no_theme: list = []
                 for t in _ticker_list:
-                    _t_themes = _get_themes(t)
-                    _t_centers = [_theme_centers[th] for th in _t_themes if th in _theme_centers]
-                    if _t_centers:
-                        cx = sum(c[0] for c in _t_centers) / len(_t_centers)
-                        cy = sum(c[1] for c in _t_centers) / len(_t_centers)
+                    _primary = next(
+                        (th for th in _get_themes(t) if th in _theme_centers), None
+                    )
+                    if _primary:
+                        _theme_to_tickers.setdefault(_primary, []).append(t)
                     else:
-                        # Kein Thema: zufällig nahe der Mitte (deterministisch per Hash)
-                        _h = hash(t) % 1000 / 1000.0
-                        cx = 0.3 * math.cos(2 * math.pi * _h)
-                        cy = 0.3 * math.sin(2 * math.pi * _h)
-                    # Leichten Jitter damit Knoten nicht übereinander liegen
-                    _jitter_seed = hash(t + "x") % 200 / 1000.0 - 0.1
-                    _jitter_cy   = hash(t + "y") % 200 / 1000.0 - 0.1
-                    _pos[t] = (cx + _jitter_seed, cy + _jitter_cy)
+                        _no_theme.append(t)
+
+                # Knoten eines Clusters kreisförmig um den Mittelpunkt verteilen
+                for _theme, _members in _theme_to_tickers.items():
+                    _cx, _cy = _theme_centers[_theme]
+                    _n = len(_members)
+                    # Radius wächst mit Anzahl der Knoten (min 0.10, max 0.18)
+                    _r = min(0.10 + 0.018 * _n, 0.18)
+                    for _i, t in enumerate(sorted(_members)):  # sortiert = deterministisch
+                        _angle = 2 * math.pi * _i / _n - math.pi / 2
+                        _pos[t] = (_cx + _r * math.cos(_angle), _cy + _r * math.sin(_angle))
+
+                # Ticker ohne Thema: kleiner Ring in der Mitte
+                _n_nt = len(_no_theme)
+                for _i, t in enumerate(sorted(_no_theme)):
+                    _angle = 2 * math.pi * _i / max(_n_nt, 1)
+                    _r_nt  = 0.15 + 0.03 * (_i % 3)  # 3 konzentrische Ringe
+                    _pos[t] = (_r_nt * math.cos(_angle), _r_nt * math.sin(_angle))
 
                 # ── Theme-Farben & deutsche Labels ─────────────────────────
                 _theme_colors = {
@@ -1047,11 +1078,13 @@ with tab_network:
                 # ── Zonen: echte Shape-Kreise in Datenkoordinaten ───────────
                 _zone_shapes = []
                 _zone_annotations = []
-                _r = 0.20  # Radius jeder Zone in Datenkoordinaten
                 for _theme, (zx, zy) in _theme_centers.items():
-                    _in_zone = [t for t in _ticker_list if _theme in _get_themes(t)]
+                    _in_zone = _theme_to_tickers.get(_theme, [])
                     if not _in_zone:
                         continue
+                    # Radius dynamisch: wächst mit Anzahl der Knoten im Cluster
+                    _n_zone = len(_in_zone)
+                    _r = min(0.13 + 0.022 * _n_zone, 0.26)
                     _zc = _theme_colors.get(_theme, "#666666")
                     _zl = _theme_labels_de.get(_theme, _theme)
                     _zone_shapes.append(dict(
@@ -1105,8 +1138,9 @@ with tab_network:
                 _node_hover = [
                     (
                         f"<b>{t}</b>  {_ALL_NAMES.get(t.upper(), '')}<br>"
-                        f"Empfehlung: <b>{_nodes[t]['rec']}</b>  "
-                        f"<i>({_nodes[t].get('source','–')})</i><br>"
+                        f"Empfehlung: <b>{_nodes[t]['rec']}</b>"
+                        + (" ⚠️ veraltet" if _nodes[t].get("stale") else "") +
+                        f"  <i>({_nodes[t].get('source','–')})</i><br>"
                         f"Score: {_nodes[t]['score']}  |  "
                         f"Zuletzt: {_nodes[t]['date']}<br>"
                         f"Sektor: {', '.join(_get_themes(t)) or '–'}<br>"
