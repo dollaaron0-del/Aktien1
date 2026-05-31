@@ -1,5 +1,4 @@
 anthropic>=0.40.0
-praw>=7.7.1
 yfinance>=0.2.40
 newsapi-python>=0.2.7
 pandas>=2.2.0

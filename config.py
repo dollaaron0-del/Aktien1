@@ -387,8 +387,6 @@ def validate_config() -> None:
         warnings.append("TELEGRAM_BOT_TOKEN / CHAT_ID fehlen – keine Push-Benachrichtigungen.")
     if not config.newsapi_key:
         warnings.append("NEWSAPI_KEY fehlt – NewsAPI-Quelle deaktiviert.")
-    if not config.reddit_client_id:
-        warnings.append("REDDIT_CLIENT_ID fehlt – Reddit-Quelle deaktiviert.")
     if not config.quiver_api_key:
         warnings.append(
             "QUIVER_API_KEY fehlt – Congressional-Trades mit Ausschuss-Kontext deaktiviert. "
