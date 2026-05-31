@@ -22,6 +22,7 @@ from collectors import (
     JobListingsCollector, CEOInterviewCollector, EURegulationCollector,
     ChineseMediaCollector, WebTrafficCollector, GermanMediaCollector,
     InternationalMediaCollector, QuiverCollector,
+    EconomicCalendarCollector, AAIISentimentCollector,
 )
 from collectors.news_archive import NewsArchive
 from collectors.crypto_news_collector import CryptoNewsCollector
@@ -361,6 +362,8 @@ def _make_collectors() -> Dict:
         "german_media":      _safe("german",          lambda: GermanMediaCollector(lookback_hours=48)),
         "intl_media":        _safe("intl",            lambda: InternationalMediaCollector(lookback_hours=48)),
         "quiver":            _safe("quiver",          lambda: QuiverCollector(lookback_days=90)),
+        "econ_calendar":     _safe("econ_cal",        lambda: EconomicCalendarCollector(lookahead_days=14)),
+        "aaii_sentiment":    _safe("aaii",            AAIISentimentCollector),
     }
 
 
@@ -377,7 +380,7 @@ def collect_news(ticker: str, archive: NewsArchive, collectors: Dict) -> tuple:
     # Collectors that make sense for crypto assets; stock-specific ones are skipped.
     _CRYPTO_ALLOWED = {
         "yahoo", "reddit", "newsapi", "wire", "stocktwits",
-        "twitter", "crypto_news",
+        "twitter", "crypto_news", "econ_calendar", "aaii_sentiment",
     }
 
     for name, collector in collectors.items():
