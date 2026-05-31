@@ -287,6 +287,20 @@ class SwingStrategy:
             if not sec_check["allowed"]:
                 return f"[{ticker}] {sec_check['reason']} – übersprungen."
 
+        # ── Portfolio-Risiko: CRITICAL blockiert neue Käufe ─────────────────
+        try:
+            from portfolio.risk_monitor import PortfolioRiskMonitor
+            _existing_vals = {
+                t: p.shares * (self.broker.get_price(t) or p.entry_price)
+                for t, p in self.portfolio.all_positions().items()
+            }
+            _risk = PortfolioRiskMonitor().compute(_existing_vals, portfolio_value)
+            block, block_reason = PortfolioRiskMonitor().should_block_new_position(_risk)
+            if block:
+                return f"[{ticker}] 🚨 {block_reason}"
+        except Exception as _rme:
+            log.debug("Portfolio-Risiko-Check fehlgeschlagen: %s", _rme)
+
         # ── Cross-Asset Risk-Appetite ────────────────────────────────────────
         try:
             ca = self.cross_asset.fetch()

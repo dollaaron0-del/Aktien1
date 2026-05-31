@@ -497,6 +497,40 @@ def _print_portfolio_summary(portfolio: Portfolio, broker, phase_ctrl: PhaseCont
 
     console.print(Panel("\n".join(summary_lines), title="Kapital & Phase", border_style=phase_color))
 
+    # ── Portfolio Risk Panel ───────────────────────────────────────────────
+    if positions:
+        try:
+            from portfolio.risk_monitor import PortfolioRiskMonitor
+            _pos_values = {t: p.shares * (prices.get(t) or p.entry_price)
+                           for t, p in positions.items()}
+            risk = PortfolioRiskMonitor().compute(_pos_values, total)
+            if risk:
+                _risk_colors = {"LOW": "green", "MEDIUM": "yellow",
+                                "HIGH": "red", "CRITICAL": "bold red"}
+                rc = _risk_colors.get(risk.risk_label, "white")
+                risk_lines = [
+                    f"Risiko-Score: [{rc}]{risk.risk_score:.0f}/100 – {risk.risk_label}[/{rc}]"
+                    f"  |  VaR(1T,95%): [yellow]${risk.var_1d_dollar:,.0f}"
+                    f" ({risk.var_1d_pct*100:.1f}%)[/yellow]",
+                    f"Beta: [cyan]{risk.portfolio_beta:.2f}[/cyan]"
+                    f"  |  Konzentration (HHI): [cyan]{risk.concentration:.2f}[/cyan]"
+                    f"  |  Ø Korrelation: [cyan]{risk.avg_correlation:.2f}[/cyan]",
+                ]
+                for pos_r in sorted(risk.positions, key=lambda x: -x.weight):
+                    risk_lines.append(
+                        f"  [dim]{pos_r.ticker:6}[/dim]"
+                        f" Gewicht={pos_r.weight*100:.0f}%"
+                        f"  Vola={pos_r.vol_daily*100:.1f}%/T"
+                        f"  Beta={pos_r.beta:.2f}"
+                        f"  VaR=${pos_r.var_1d:,.0f}"
+                    )
+                for w in risk.warnings:
+                    risk_lines.append(f"  [bold yellow]⚠ {w}[/bold yellow]")
+                border = _risk_colors.get(risk.risk_label, "white").replace("bold ", "")
+                console.print(Panel("\n".join(risk_lines), title="Portfolio-Risiko", border_style=border))
+        except Exception as _re:
+            log.debug("Risk panel error: %s", _re)
+
 
 def _progress_bar(pct: float, width: int = 20) -> str:
     filled = int(pct / 100 * width)
