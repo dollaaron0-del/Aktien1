@@ -5,6 +5,7 @@ bot/runner.py – Analysis cycle, news collection, and related helpers.
 import os
 import traceback
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date
 from typing import List, Dict, Optional
 
@@ -382,13 +383,28 @@ def collect_news(ticker: str, archive: NewsArchive, collectors: Dict) -> tuple:
         "twitter", "crypto_news", "econ_calendar", "aaii_sentiment",
     }
 
-    for name, collector in collectors.items():
-        if is_crypto and name not in _CRYPTO_ALLOWED:
+    active_collectors = {
+        name: col for name, col in collectors.items()
+        if col is not None and (not is_crypto or name in _CRYPTO_ALLOWED)
+    }
+    for name in collectors:
+        if name not in active_collectors:
             sources_breakdown[name] = 0
-            continue
-        items = _safe_collect(name, collector.collect, ticker) if collector is not None else []
-        sources_breakdown[name] = len(items)
-        all_items.extend(items)
+
+    _max_workers = min(8, len(active_collectors))
+    with ThreadPoolExecutor(max_workers=_max_workers) as _pool:
+        futures = {
+            _pool.submit(_safe_collect, name, col.collect, ticker): name
+            for name, col in active_collectors.items()
+        }
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                items = future.result()
+            except Exception:
+                items = []
+            sources_breakdown[name] = len(items)
+            all_items.extend(items)
 
     archive.store(ticker, all_items)
 
@@ -724,6 +740,15 @@ def run_analysis_cycle(
         except Exception as e:
             log.debug("EU Marktkontext fehlgeschlagen: %s", e)
 
+    # Analyzer singletons — created once, reused across all tickers in this cycle
+    try:
+        _vel_analyzer   = NewsVelocityAnalyzer()
+        _mtf_sentiment  = MultiTimeframeSentiment()
+        _reentry_tracker = ReEntryTracker()
+        _chart_analyzer = ChartPatternAnalyzer()
+    except Exception:
+        _vel_analyzer = _mtf_sentiment = _reentry_tracker = _chart_analyzer = None
+
     _frugal_cache_hours = 8  # Frugal-Modus: Ticker < 8h alt überspringen
     for ticker in active_watchlist:
         ticker = _normalize_ticker(ticker)
@@ -783,7 +808,7 @@ def run_analysis_cycle(
 
         # News-Geschwindigkeit anzeigen
         try:
-            vel = NewsVelocityAnalyzer().analyze(ticker)
+            vel = (_vel_analyzer or NewsVelocityAnalyzer()).analyze(ticker)
             if vel.acceleration in ("SPIKE", "HIGH"):
                 boost_str = f" (Signal-Boost ×{vel.signal_boost:.2f})" if vel.signal_boost > 1.0 else ""
                 color = "bold yellow" if vel.acceleration == "SPIKE" else "yellow"
@@ -807,17 +832,18 @@ def run_analysis_cycle(
                 if item.get("sentiment_score") is not None:
                     by_date[today_key].append(item)
             if len(by_date) >= 2:
-                mtf_result = MultiTimeframeSentiment().analyze(ticker, dict(by_date))
-                mtf_line = MultiTimeframeSentiment().to_text(mtf_result)
+                _mtf = _mtf_sentiment or MultiTimeframeSentiment()
+                mtf_result = _mtf.analyze(ticker, dict(by_date))
+                mtf_line = _mtf.to_text(mtf_result)
                 if mtf_result.trend in ("UPTREND", "DOWNTREND"):
                     t_color = "green" if mtf_result.trend == "UPTREND" else "red"
                     console.print(f"  [{t_color}]📈 {mtf_line}[/{t_color}]")
         except Exception:
             pass
 
-        # Re-Entry-Tracker: Preise aktualisieren (einmal instanziieren)
+        # Re-Entry-Tracker: Preise aktualisieren
         try:
-            rt = ReEntryTracker()
+            rt = _reentry_tracker or ReEntryTracker()
             tickers_watched = [c.ticker for c in rt.get_all_watched()]
             if tickers_watched:
                 watch_prices = broker.get_prices(tickers_watched)
@@ -846,7 +872,7 @@ def run_analysis_cycle(
         # Chart-Muster-Analyse (für Krypto primär, für Aktien als Bestätigung)
         pattern_result = None
         try:
-            pattern_result = ChartPatternAnalyzer().analyze(ticker)
+            pattern_result = (_chart_analyzer or ChartPatternAnalyzer()).analyze(ticker)
             if pattern_result:
                 sig_color = {"STRONG_BUY": "bold green", "BUY": "green",
                              "STRONG_SELL": "bold red", "SELL": "red"}.get(
