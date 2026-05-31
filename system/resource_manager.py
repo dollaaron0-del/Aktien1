@@ -60,7 +60,12 @@ _RAM_PERFORMANCE_PCT   = 0.60      # ≥60% frei → PERFORMANCE
 _RAM_MINIMAL_PCT       = 0.30      # <30% frei → MINIMAL
 
 # Ollama-Modell je Tier (via .env überschreibbar)
-_MODEL_PERFORMANCE = os.getenv("OLLAMA_MODEL_PERFORMANCE", "llama3.3:70b")
+# Defaults sind auf 32 GB Unified Memory ausgelegt (Mac Mini M4):
+#   PERFORMANCE → qwen2.5:32b  (~20 GB VRAM, beste Qualität)
+#   BALANCED    → qwen2.5:14b  (~9 GB VRAM, gut für Parallelanalysen)
+#   MINIMAL     → llama3.1:8b  (~5 GB VRAM, Mac aktiv genutzt)
+# Bei 24 GB RAM empfohlen: OLLAMA_MODEL_PERFORMANCE=qwen2.5:14b
+_MODEL_PERFORMANCE = os.getenv("OLLAMA_MODEL_PERFORMANCE", "qwen2.5:32b")
 _MODEL_BALANCED    = os.getenv("OLLAMA_MODEL_BALANCED",    "qwen2.5:14b")
 _MODEL_MINIMAL     = os.getenv("OLLAMA_MODEL_MINIMAL",     "llama3.1:8b")
 
