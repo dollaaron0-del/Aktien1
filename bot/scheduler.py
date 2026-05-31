@@ -1347,6 +1347,65 @@ def run_bot_loop(
 
     console.print(f"[dim]SL/TP-Check alle 30 Min · Aging-Check alle 4h · Wochenvorbereitung Sa 09:00 + So 14:00 · Ctrl+C zum Beenden.[/dim]")
 
+    # ── Adaptive Resource Manager: alle 2 Minuten ────────────────────────────
+    try:
+        from system.resource_manager import get_resource_manager, ResourceTier, TIER_MODELS
+        _rm = get_resource_manager()
+        _rm_prev_tier: list = [None]   # mutable container for closure
+
+        def _resource_check_job():
+            try:
+                state = _rm.update(force=True)
+                prev  = _rm_prev_tier[0]
+                if prev == state.tier:
+                    return
+                _rm_prev_tier[0] = state.tier
+
+                tier_labels = {
+                    ResourceTier.PERFORMANCE: ("🚀", "PERFORMANCE", "green"),
+                    ResourceTier.BALANCED:    ("⚖️",  "BALANCED",    "yellow"),
+                    ResourceTier.MINIMAL:     ("🔋", "MINIMAL",     "dim"),
+                }
+                icon, label, color = tier_labels[state.tier]
+                console.print(
+                    f"\n  [{color}]{icon} Ressourcentier: {label}[/{color}]  "
+                    f"[dim]RAM frei: {state.ram_free_gb:.1f}GB / {state.ram_total_gb:.1f}GB "
+                    f"({state.ram_free_pct*100:.0f}%) | "
+                    f"Idle: {state.idle_seconds:.0f}s | "
+                    f"Ollama: {state.ollama_model}[/dim]"
+                )
+
+                # Apply model change to Ollama prescreener if loaded
+                try:
+                    from analyzers.ollama_prescreener import OllamaPrescreener as _OP
+                    import analyzers.ollama_prescreener as _op_mod
+                    if hasattr(_op_mod, "_prescreener_instance"):
+                        _rm.apply_to_ollama(_op_mod._prescreener_instance)
+                except Exception:
+                    pass
+
+                _rm.apply_to_caches()
+
+                # Telegram only on significant tier changes
+                if prev is not None:
+                    try:
+                        TelegramNotifier().send(
+                            f"{icon} <b>Ressourcentier: {label}</b>\n\n"
+                            f"RAM frei: {state.ram_free_gb:.1f}GB / {state.ram_total_gb:.1f}GB "
+                            f"({state.ram_free_pct*100:.0f}%)\n"
+                            f"Mac idle: {state.idle_seconds:.0f}s\n"
+                            f"Ollama-Modell: <code>{state.ollama_model}</code>"
+                        )
+                    except Exception:
+                        pass
+            except Exception as _re:
+                log.debug("Resource-Check fehlgeschlagen: %s", _re)
+
+        schedule.every(2).minutes.do(_resource_check_job)
+        _resource_check_job()   # Einmal beim Start
+    except ImportError:
+        log.debug("system.resource_manager nicht verfügbar – adaptives RAM-Management deaktiviert")
+
     try:
         while True:
             schedule.run_pending()
