@@ -7,15 +7,15 @@ Funktionsweise:
   3. Nur wenn Signal unklar ODER bullisch → Claude wird gerufen
   4. Klar bearisch/neutral mit hoher Konfidenz → Claude wird GESPART
 
-Empfohlene Modelle:
-  CPU-only, < 16 GB RAM : llama3.2:3b     (~2 GB,  ~5–15s pro Analyse)
-  CPU-only, 16–24 GB    : llama3.1:8b     (~5 GB,  ~30–60s pro Analyse)
-  CPU-only, 24+ GB      : qwen2.5:14b     (~9 GB,  ~60–90s pro Analyse)
-  GPU (8+ GB VRAM)      : llama3.3:70b    (~40 GB, ~5–10s pro Analyse)
+Smart Frugal Mode (automatisch, modellabhängig):
+  8b  (MINIMAL tier) : konservative Schwellen, Claude-Fallback bei Unsicherheit
+  14b (BALANCED tier): mittlere Schwellen
+  32b (PERFORMANCE)  : aggressivere Filterung, reicherer Prompt, höhere Eigenständigkeit
 
-Fallback:
-  - Ollama offline / Timeout → Claude übernimmt automatisch
-  - Kein Qualitätsverlust durch Ausfall
+Empfohlene Modelle (Mac Mini M4):
+  16 GB RAM : llama3.1:8b     (~5 GB,  ~30–60s pro Analyse)
+  24 GB RAM : qwen2.5:14b     (~9 GB,  ~60–90s pro Analyse)
+  32 GB RAM : qwen2.5:32b     (~20 GB, ~90–120s pro Analyse) ← beste Qualität
 """
 from __future__ import annotations
 
@@ -31,15 +31,34 @@ from logger import get_logger
 
 log = get_logger(__name__)
 
-# Quellen die IMMER zu Claude gehen – zu wichtig für lokale Vorfilterung
+# Quellen die IMMER zu Claude gehen, unabhängig vom Modell
+# (nur wirklich material-kritische Events)
 _ALWAYS_CLAUDE_SOURCES = {
     "SEC 8-K",
+    "Earnings Call Transcript",
+}
+
+# Zusätzliche Always-Claude-Quellen für schwache Modelle (8b/14b)
+# Bei 32b-Modellen werden diese lokal verarbeitet
+_WEAK_MODEL_CLAUDE_SOURCES = {
     "Analyst Rating",
     "Benzinga Analyst",
-    "Earnings Call Transcript",
     "13F Institutional",
     "Short Interest",
 }
+
+
+def _model_capability(model_name: str) -> str:
+    """Returns 'HIGH' (32b+), 'MEDIUM' (14b), or 'LOW' (≤8b) based on model name."""
+    name = model_name.lower()
+    # Check for explicit size indicators
+    for size in ("70b", "72b", "65b", "34b", "32b", "30b"):
+        if size in name:
+            return "HIGH"
+    for size in ("14b", "13b", "12b", "11b"):
+        if size in name:
+            return "MEDIUM"
+    return "LOW"
 
 # Komprimierungs-Prompt: News-Artikel → strukturiertes Kurzgutachten für Claude
 _COMPRESS_PROMPT = """Summarize these {count} news articles about {ticker} for a financial analyst.
@@ -54,6 +73,29 @@ RISKS: Main risks or headwinds mentioned (2-3 bullets)
 CATALYSTS: Potential positive triggers (2-3 bullets)
 
 Be precise with numbers, dates, product names. Preserve source names for critical news."""
+
+# Rich full analysis for 32b models – near-Claude quality, replaces Claude for most cases
+_FULL_ANALYSIS_PROMPT_32B = """You are a senior portfolio manager running a swing trading strategy (3–21 day holds).
+Analyze the news and price data below for {ticker}. Provide a rigorous trading decision.
+
+PRICE DATA:
+{price_block}
+
+NEWS (most recent first):
+{headlines}
+
+Your analysis must weigh:
+1. News materiality and credibility (earnings beats, guidance changes, M&A, regulatory)
+2. Price action context (trend direction, distance from 52w highs, volume signals)
+3. Risk/reward for a 3–21 day swing trade
+4. Sector and macro headwinds implied by the news
+
+BUY criteria: score ≥ 0.70, direction BULLISH, confidence HIGH or MEDIUM, clear catalyst
+SKIP criteria: score < 0.42 or direction BEARISH with HIGH confidence
+HOLD: everything else
+
+Return ONLY valid JSON, no markdown:
+{{"sentiment_score": <0.0-1.0>, "direction": "<BULLISH|NEUTRAL|BEARISH>", "confidence": "<HIGH|MEDIUM|LOW>", "recommendation": "<BUY|HOLD|SKIP>", "suggested_hold_days": <3-21>, "entry_rationale": "<max 100 chars – specific catalyst>", "stop_loss_note": "<key risk that would invalidate the thesis, 50 chars>", "risk_factors": ["<specific risk 1>", "<specific risk 2>"], "key_catalysts": ["<specific catalyst 1>", "<specific catalyst 2>"], "summary": "<max 120 chars>"}}"""
 
 # Vollständige Analyse im Frugal-Modus – ersetzt Claude komplett für normale Aktien
 _FULL_ANALYSIS_PROMPT = """You are a financial news analyst for swing trading (hold 3–21 days).
@@ -73,6 +115,22 @@ Rules:
 - SKIP if score < 0.40 or direction BEARISH
 - HOLD otherwise
 - suggested_hold_days: 3-7 for event-driven, 7-14 for momentum, 14-21 for trend"""
+
+# Rich screening prompt for 32b models – returns richer signal with reasoning
+_PRESCREEN_PROMPT_32B = """You are a senior financial analyst specializing in swing trading (3–21 day holds).
+Analyze the following news about {ticker} and assess the short-term trading signal.
+
+NEWS:
+{headlines}
+
+Consider: earnings momentum, management credibility, sector tailwinds/headwinds,
+institutional activity, and macro context implied by the headlines.
+
+Return ONLY valid JSON, no markdown, no explanation:
+{{"score": <0.0-1.0>, "direction": "<BULLISH|NEUTRAL|BEARISH>", "confidence": "<HIGH|MEDIUM|LOW>", "reason": "<25 words max>", "catalyst": "<primary driver in 10 words>", "risk": "<biggest risk in 10 words>"}}
+
+Score guide: 0.0=strong sell, 0.35=bearish, 0.5=neutral, 0.65=mildly bullish, 0.80=strong buy signal.
+HIGH confidence only when headlines are clear, consistent, and material."""
 
 # Einfacher, zuverlässiger Prompt – kurze Antwort für kleinere Modelle
 _PRESCREEN_PROMPT = """You are a financial news analyst. Analyze these news headlines about {ticker}.
@@ -110,16 +168,20 @@ class OllamaPrescreener:
         base_url: str = "http://localhost:11434",
         model: str = "llama3.1:8b",
         timeout: int = 30,
-        # Schwellen für "Claude überspringen"
-        bearish_skip_threshold: float = 0.38,   # Score unter diesem Wert = klar bearish
-        neutral_skip_threshold: float = 0.65,   # Score unter diesem Wert = neutral → Claude sparen
+        bearish_skip_threshold: float = 0.38,
+        neutral_skip_threshold: float = 0.65,
     ):
         self.base_url         = base_url.rstrip("/")
         self.model            = model
         self.timeout          = timeout
         self.bearish_skip     = bearish_skip_threshold
         self.neutral_skip     = neutral_skip_threshold
-        self._available: Optional[bool] = None   # Cache, einmal prüfen
+        self._available: Optional[bool] = None
+
+    @property
+    def capability(self) -> str:
+        """Model capability tier: HIGH (32b+), MEDIUM (14b), LOW (8b)."""
+        return _model_capability(self.model)
 
     # ── Verfügbarkeit ─────────────────────────────────────────────────────────
 
@@ -167,9 +229,12 @@ class OllamaPrescreener:
             )
 
         # Hochprioritäre Quellen IMMER zu Claude
+        always_sources = _ALWAYS_CLAUDE_SOURCES.copy()
+        if self.capability in ("LOW", "MEDIUM"):
+            always_sources |= _WEAK_MODEL_CLAUDE_SOURCES
         high_priority = [
             item for item in news_items
-            if any(src in (item.get("source") or "") for src in _ALWAYS_CLAUDE_SOURCES)
+            if any(src in (item.get("source") or "") for src in always_sources)
         ]
         if high_priority:
             return PrescreenResult(
@@ -191,9 +256,13 @@ class OllamaPrescreener:
                 latency_ms=0,
             )
 
-        # Nachrichten auf Schlagzeilen reduzieren (Modell-Token sparen)
-        headlines = self._extract_headlines(news_items)
-        prompt    = _PRESCREEN_PROMPT.format(ticker=ticker, headlines=headlines)
+        # Nachrichten auf Schlagzeilen reduzieren
+        max_items = 25 if self.capability == "HIGH" else 15
+        headlines = self._extract_headlines(news_items, max_items=max_items)
+        if self.capability == "HIGH":
+            prompt = _PRESCREEN_PROMPT_32B.format(ticker=ticker, headlines=headlines)
+        else:
+            prompt = _PRESCREEN_PROMPT.format(ticker=ticker, headlines=headlines)
 
         raw = self._call_ollama(prompt)
         latency_ms = int((time.monotonic() - t0) * 1000)
@@ -251,28 +320,61 @@ class OllamaPrescreener:
     def _decide(self, score: float, direction: str, confidence: str) -> Tuple[bool, str]:
         """
         Entscheidet ob Claude gerufen werden soll.
-        Konservativ: Im Zweifel immer Claude.
+        Schwellen skalieren mit Modellstärke (capability).
         """
-        # Niedrige Konfidenz → Claude außer bei klarem BEARISH
-        if confidence == "LOW":
+        cap = self.capability
+
+        if cap == "HIGH":
+            # 32b-Modell: sehr aggressiv filtern – Claude nur für echte BUY-Kandidaten
+            if confidence == "HIGH":
+                if score < 0.45:
+                    return False, f"32b HIGH BEARISH ({score:.2f}) – SKIP"
+                if score < 0.72:
+                    return False, f"32b HIGH NEUTRAL ({score:.2f}) – kein Trade-Signal"
+                return True, ""   # bullisch mit hoher Konfidenz → Claude bestätigt Kauf
+            if confidence == "MEDIUM":
+                if score < 0.52:
+                    return False, f"32b MEDIUM BEARISH/NEUTRAL ({score:.2f}) – SKIP"
+                if score < 0.68:
+                    return False, f"32b MEDIUM mäßig ({score:.2f}) – kein Kauf-Signal"
+                return True, ""
+            # LOW confidence: Claude außer klar bearisch
+            if score < 0.38:
+                return False, f"32b LOW BEARISH ({score:.2f}) – SKIP"
+            return True, ""
+
+        elif cap == "MEDIUM":
+            # 14b-Modell: moderat vertrauen
+            if confidence == "HIGH":
+                if score < self.bearish_skip:
+                    return False, f"14b HIGH BEARISH ({score:.2f}) – SKIP"
+                if score < 0.67:
+                    return False, f"14b HIGH NEUTRAL ({score:.2f}) – kein Trade-Signal"
+                return True, ""
+            if confidence == "MEDIUM":
+                if score < 0.55:
+                    return False, f"14b MEDIUM ({score:.2f}) – zu niedrig"
+                return True, ""
             if score < 0.35:
-                return False, f"Ollama: klar BEARISH ({score:.2f}, LOW) – kein Trade möglich"
+                return False, f"14b LOW BEARISH ({score:.2f}) – SKIP"
             return True, ""
 
-        # HIGH confidence: bewährte Schwellen
-        if confidence == "HIGH":
-            if score < self.bearish_skip:
-                return False, f"Ollama: klar BEARISH ({score:.2f}, HIGH) – SKIP ohne Claude"
-            if score < self.neutral_skip:
-                return False, f"Ollama: NEUTRAL ({score:.2f}, HIGH) – kein Trade-Signal"
+        else:
+            # 8b-Modell: konservativ – im Zweifel immer Claude
+            if confidence == "LOW":
+                if score < 0.35:
+                    return False, f"Ollama: klar BEARISH ({score:.2f}, LOW) – kein Trade möglich"
+                return True, ""
+            if confidence == "HIGH":
+                if score < self.bearish_skip:
+                    return False, f"Ollama: klar BEARISH ({score:.2f}, HIGH) – SKIP ohne Claude"
+                if score < self.neutral_skip:
+                    return False, f"Ollama: NEUTRAL ({score:.2f}, HIGH) – kein Trade-Signal"
+                return True, ""
+            # MEDIUM
+            if score < 0.58:
+                return False, f"Ollama: NEUTRAL/BEARISH ({score:.2f}, MEDIUM) – Score zu niedrig"
             return True, ""
-
-        # MEDIUM confidence: Claude nur wenn Score nahe genug an der Kaufschwelle (≥ 0.58)
-        if score < 0.58:
-            return False, f"Ollama: NEUTRAL/BEARISH ({score:.2f}, MEDIUM) – Score zu niedrig für Kauf"
-
-        # Alles andere → Claude (bullische Signale, Unsicherheit)
-        return True, ""
 
     # ── Ollama API ────────────────────────────────────────────────────────────
 
@@ -336,8 +438,14 @@ class OllamaPrescreener:
         if confidence not in ("HIGH", "MEDIUM", "LOW"):
             confidence = "LOW"
 
-        return {"score": score, "direction": direction,
-                "confidence": confidence, "reason": reason}
+        return {
+            "score":     score,
+            "direction": direction,
+            "confidence":confidence,
+            "reason":    reason,
+            "catalyst":  str(data.get("catalyst", "")),
+            "risk":      str(data.get("risk", "")),
+        }
 
     def full_analysis(
         self,
@@ -354,16 +462,21 @@ class OllamaPrescreener:
         if not self.is_available() or not news_items:
             return None
 
-        headlines = self._extract_headlines(news_items, max_items=20)
+        max_items = 30 if self.capability == "HIGH" else 20
+        headlines   = self._extract_headlines(news_items, max_items=max_items)
         price_block = self._format_price_block(price_data or {})
-        prompt = _FULL_ANALYSIS_PROMPT.format(
-            ticker=ticker,
-            price_block=price_block,
-            headlines=headlines,
-        )
+
+        if self.capability == "HIGH":
+            prompt     = _FULL_ANALYSIS_PROMPT_32B.format(
+                ticker=ticker, price_block=price_block, headlines=headlines)
+            max_tokens = 500
+        else:
+            prompt     = _FULL_ANALYSIS_PROMPT.format(
+                ticker=ticker, price_block=price_block, headlines=headlines)
+            max_tokens = 350
 
         t0  = time.monotonic()
-        raw = self._call_ollama(prompt, max_tokens=350)
+        raw = self._call_ollama(prompt, max_tokens=max_tokens)
         latency_ms = int((time.monotonic() - t0) * 1000)
 
         if raw is None:

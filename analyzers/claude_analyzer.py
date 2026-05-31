@@ -346,17 +346,20 @@ class ClaudeAnalyzer:
             return self._empty_result(ticker, "Alle Artikel nach Glaubwürdigkeits-Filter entfernt")
 
         # ── Frugal-Modus: Ollama übernimmt vollständige Analyse ─────────────────
-        # Aktiv wenn FRUGAL_MODE=true und kein Override-Grund vorliegt.
-        # Übersprungen für: offene Positionen (Thesis-Check), high-priority Quellen,
-        # manuelle Dashboard-Anfragen (force_claude=True).
-        _high_priority_sources = {
-            "SEC 8-K", "Analyst Rating", "Benzinga Analyst",
-            "Earnings Call Transcript", "13F Institutional", "Short Interest",
-        }
+        from analyzers.ollama_prescreener import (
+            _ALWAYS_CLAUDE_SOURCES, _WEAK_MODEL_CLAUDE_SOURCES
+        )
+        _high_priority_sources = _ALWAYS_CLAUDE_SOURCES.copy()
+        if not prescreener or prescreener.capability in ("LOW", "MEDIUM"):
+            _high_priority_sources |= _WEAK_MODEL_CLAUDE_SOURCES
         _has_high_priority = any(
             any(src in (item.get("source") or "") for src in _high_priority_sources)
             for item in news_items
         )
+        # Smart buy threshold: 32b gets 0.70, smaller models get configured value
+        _buy_min = config.frugal_buy_min_score
+        if config.frugal_smart_mode and prescreener and prescreener.capability == "HIGH":
+            _buy_min = max(_buy_min, 0.70)
         if (
             config.frugal_mode
             and prescreener
@@ -368,7 +371,7 @@ class ClaudeAnalyzer:
                 ticker=ticker,
                 news_items=news_items,
                 price_data=price_data,
-                buy_min_score=config.frugal_buy_min_score,
+                buy_min_score=_buy_min,
             )
             if result_data is not None:
                 cost_tracker.record(claude_called=False, ollama_used=True)

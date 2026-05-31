@@ -164,10 +164,15 @@ class Config:
     frugal_mode: bool = field(
         default_factory=lambda: os.getenv("FRUGAL_MODE", "false").lower() in ("1", "true", "yes")
     )
-    # Mindest-Score damit Ollama im Frugal-Modus BUY empfehlen darf (etwas höher
-    # als normaler buy_threshold, da Ollama weniger präzise als Claude ist)
+    # Smart Frugal: passt Schwellen automatisch an Modellgröße an.
+    # true (default) = 32b-Modell filtert aggressiver als 8b-Modell.
+    frugal_smart_mode: bool = field(
+        default_factory=lambda: os.getenv("FRUGAL_SMART_MODE", "true").lower() not in ("0", "false", "no")
+    )
+    # Mindest-Score damit Ollama im Frugal-Modus BUY empfehlen darf.
+    # 32b: 0.70 (präziser), 8b: 0.65 (weniger zuverlässig → höhere Schwelle).
     frugal_buy_min_score: float = field(
-        default_factory=lambda: float(os.getenv("FRUGAL_BUY_MIN_SCORE", "0.65"))
+        default_factory=lambda: float(os.getenv("FRUGAL_BUY_MIN_SCORE", "0.68"))
     )
 
     # ── Einstiegs-Timing + Exit-Management ───────────────────────────────────
