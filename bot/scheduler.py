@@ -2,6 +2,7 @@
 bot/scheduler.py – Main bot loop, schedule setup, and all _*_job functions.
 """
 
+import os
 import schedule
 import time
 from datetime import datetime
