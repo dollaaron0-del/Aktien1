@@ -157,6 +157,22 @@ class Config:
     ollama_timeout: int = field(
         default_factory=lambda: int(os.getenv("OLLAMA_TIMEOUT", "30"))
     )
+    # ── MLX (Apple Silicon – schneller als Ollama auf M-Series) ──────────────
+    # Aktivierung: pip install mlx-lm && mlx_lm.server --model <model> --port 8080
+    # MLX wird automatisch bevorzugt wenn verfügbar (OLLAMA als Fallback).
+    mlx_enabled: bool = field(
+        default_factory=lambda: os.getenv("MLX_ENABLED", "false").lower() in ("1", "true", "yes")
+    )
+    mlx_url: str = field(
+        default_factory=lambda: os.getenv("MLX_URL", "http://localhost:8080")
+    )
+    # Nur für Logging und capability-Erkennung – das aktive Modell setzt mlx-lm selbst
+    mlx_model: str = field(
+        default_factory=lambda: os.getenv("MLX_MODEL", "qwen2.5:32b")
+    )
+    mlx_timeout: int = field(
+        default_factory=lambda: int(os.getenv("MLX_TIMEOUT", "120"))
+    )
     # ── Frugal-Modus (Paper-Trading / Datenspar-Modus) ────────────────────────
     # true = Ollama übernimmt alle normalen Analysen; Claude nur noch für
     # offene Positionen, SEC/Earnings-Quellen und manuelle Dashboard-Anfragen.

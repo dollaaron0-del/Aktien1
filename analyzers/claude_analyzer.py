@@ -19,21 +19,50 @@ _trust_filter = NewsTrustFilter()
 log = get_logger(__name__)
 
 # Singleton-Instanzen (einmal erstellen, wiederverwenden)
-_prescreener: Optional[OllamaPrescreener] = None
-_cost_tracker: Optional[APICostTracker]   = None
+_prescreener = None
+_cost_tracker: Optional[APICostTracker] = None
+_prescreener_instance = None   # exposed for resource_manager model-switching
 
 
-def _get_prescreener() -> Optional[OllamaPrescreener]:
-    global _prescreener
-    if not config.ollama_enabled:
-        return None
-    if _prescreener is None:
+def _get_prescreener():
+    """
+    Returns the best available local LLM backend:
+      1. MLX  (fastest on Apple Silicon, if MLX_ENABLED=true and server reachable)
+      2. Ollama (if OLLAMA_ENABLED=true)
+      3. None  (pure Claude)
+    Result is cached as singleton for the process lifetime.
+    """
+    global _prescreener, _prescreener_instance
+    if _prescreener is not None:
+        return _prescreener
+
+    if config.mlx_enabled:
+        try:
+            from analyzers.mlx_prescreener import MLXPrescreener
+            mlx = MLXPrescreener(
+                base_url=config.mlx_url,
+                model=config.mlx_model,
+                timeout=config.mlx_timeout,
+            )
+            if mlx.is_available():
+                _prescreener = mlx
+                _prescreener_instance = mlx
+                log.info("Lokales LLM-Backend: MLX @ %s (%s)", config.mlx_url, config.mlx_model)
+                return _prescreener
+        except Exception as _e:
+            log.debug("MLX-Init fehlgeschlagen: %s", _e)
+
+    if config.ollama_enabled:
         _prescreener = OllamaPrescreener(
             base_url=config.ollama_url,
             model=config.ollama_model,
             timeout=config.ollama_timeout,
         )
-    return _prescreener
+        _prescreener_instance = _prescreener
+        log.info("Lokales LLM-Backend: Ollama @ %s (%s)", config.ollama_url, config.ollama_model)
+        return _prescreener
+
+    return None
 
 
 def _get_cost_tracker() -> APICostTracker:
