@@ -750,6 +750,42 @@ def run_analysis_cycle(
         _vel_analyzer = _mtf_sentiment = _reentry_tracker = _chart_analyzer = None
 
     _frugal_cache_hours = 8  # Frugal-Modus: Ticker < 8h alt überspringen
+
+    # Pre-fetch news + price data for ALL tickers in parallel before the analysis loop.
+    # This eliminates sequential waiting: all 12 tickers fetch their 30 collectors simultaneously.
+    _normalized_watchlist = [_normalize_ticker(t) for t in active_watchlist]
+    _prefetch_news:  Dict[str, tuple] = {}
+    _prefetch_price: Dict[str, dict]  = {}
+
+    def _prefetch_ticker(t: str):
+        news_result  = collect_news(t, archive, collectors)
+        if _is_crypto(t):
+            price = {"current_price": broker.get_crypto_price(t), "volume": 0}
+        else:
+            price = collectors["yahoo"].get_price_data(t)
+        return t, news_result, price
+
+    _pf_workers = min(len(_normalized_watchlist), 4)  # cap: avoid overwhelming APIs
+    if _pf_workers > 1:
+        with ThreadPoolExecutor(max_workers=_pf_workers) as _pf_pool:
+            _pf_futures = {_pf_pool.submit(_prefetch_ticker, t): t for t in _normalized_watchlist}
+            for _pf_fut in as_completed(_pf_futures):
+                try:
+                    _t, _nr, _pr = _pf_fut.result()
+                    _prefetch_news[_t]  = _nr
+                    _prefetch_price[_t] = _pr
+                except Exception as _pfe:
+                    _t = _pf_futures[_pf_fut]
+                    log.debug("Prefetch fehlgeschlagen für %s: %s", _t, _pfe)
+    else:
+        for _t in _normalized_watchlist:
+            try:
+                _, _nr, _pr = _prefetch_ticker(_t)
+                _prefetch_news[_t]  = _nr
+                _prefetch_price[_t] = _pr
+            except Exception:
+                pass
+
     for ticker in active_watchlist:
         ticker = _normalize_ticker(ticker)
 
@@ -768,14 +804,17 @@ def run_analysis_cycle(
                     except Exception:
                         pass
 
-        console.print(f"\n[cyan]Sammle Daten für {ticker}...[/cyan]")
+        console.print(f"\n[cyan]Analysiere {ticker}...[/cyan]")
 
-        news, sources_breakdown = collect_news(ticker, archive, collectors)
-        if _is_crypto(ticker):
-            crypto_price = broker.get_crypto_price(ticker)
-            price_data = {"current_price": crypto_price, "volume": 0}
+        _pf = _prefetch_news.get(ticker)
+        if _pf:
+            news, sources_breakdown = _pf
         else:
-            price_data = collectors["yahoo"].get_price_data(ticker)
+            news, sources_breakdown = collect_news(ticker, archive, collectors)
+        price_data = _prefetch_price.get(ticker) or (
+            {"current_price": broker.get_crypto_price(ticker), "volume": 0}
+            if _is_crypto(ticker) else collectors["yahoo"].get_price_data(ticker)
+        )
 
         # Kurs-Check vor Claude: kein Kurs → Claude-Aufruf sparen
         if not _is_crypto(ticker) and not price_data.get("current_price"):
