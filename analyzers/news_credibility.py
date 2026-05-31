@@ -42,6 +42,7 @@ _SOURCE_SCORES: Dict[str, float] = {
     "ecb.europa.eu":        1.0,
     "bls.gov":              1.0,     # Bureau of Labor Statistics
     "census.gov":           1.0,
+    "aaii.com":             0.80,   # AAII Investor Sentiment Survey
     # Tier 2 – Etablierte Finanzmedien
     "cnbc.com":             0.85,
     "marketwatch.com":      0.85,

@@ -42,7 +42,6 @@ from analyzers.analysis_log import AnalysisLog
 import analyzers.user_request_queue as _urq
 from analyzers.rl_agent import RLAgent
 from analyzers.earnings_predictor import EarningsPredictor
-from analyzers.cross_asset import CrossAssetSignals
 from analyzers.multi_agent_analyzer import MultiAgentAnalyzer
 from broker.paper_broker import PaperBroker
 from portfolio import Portfolio
@@ -58,7 +57,6 @@ log = get_logger(__name__)
 _dynamic_watchlist  = DynamicWatchlist(max_picks=config.scan_max_picks or 12) if config.auto_scan_watchlist else None
 _rl_agent           = RLAgent()
 _earnings_predictor = EarningsPredictor()
-_cross_asset        = CrossAssetSignals()
 _signal_expander    = SignalDrivenExpander()
 _analysis_cache     = AnalysisCache()
 _analysis_log       = AnalysisLog()
@@ -438,7 +436,8 @@ def _print_analysis(a: AnalysisResult):
     if a.target_price:
         console.print(f"  [bold]Zielkurs: ${a.target_price:.2f}[/bold] – {a.target_price_rationale}")
     if a.thesis_valid is False:
-        console.print(f"  [bold red]⚠ THESE GEBROCHEN: {a.thesis_break_reason}[/bold red]")
+        reason = a.thesis_break_reason or "Ursprüngliche Kaufkatalysatoren nicht mehr gültig"
+        console.print(f"  [bold red]⚠ THESE GEBROCHEN: {reason}[/bold red]")
     elif a.thesis_valid is True:
         console.print(f"  [green]✓ Kaufthese weiterhin gültig[/green]")
     if a.key_catalysts:
