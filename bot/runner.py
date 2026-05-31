@@ -821,6 +821,45 @@ def run_analysis_cycle(
             console.print(f"  [dim]Kein Kurs für {ticker} verfügbar – übersprungen[/dim]")
             continue
 
+        # ── FinBERT lokales Sentiment ─────────────────────────────────────────
+        try:
+            from analyzers.finbert_analyzer import FinBERTAnalyzer
+            _finbert = FinBERTAnalyzer()
+            if _finbert.is_available() and news:
+                _headlines = [
+                    (item.get("title") or item.get("text") or "")[:120]
+                    for item in news if item.get("title") or item.get("text")
+                ]
+                if _headlines:
+                    _fb = _finbert.analyze_headlines(_headlines)
+                    _fb_color = {"POSITIVE": "green", "NEGATIVE": "red", "NEUTRAL": "yellow"}[_fb["label"]]
+                    console.print(
+                        f"  [{_fb_color}]🤖 FinBERT: {_fb['label']} "
+                        f"(Score {_fb['score']:.2f}, {_fb['confidence']}) "
+                        f"| +{_fb['pos_pct']}% / -{_fb['neg_pct']}%[/{_fb_color}]"
+                    )
+                    _fb_item = _finbert.build_signal_item(ticker, _fb)
+                    if _fb_item:
+                        news = [_fb_item] + news  # prepend so Claude sees it first
+        except Exception as _fbe:
+            log.debug("FinBERT fehlgeschlagen: %s", _fbe)
+
+        # ── Insider-Cluster-Detection ─────────────────────────────────────────
+        try:
+            _insider_items = [
+                i for i in news
+                if (i.get("source") or "").startswith("SEC-Form4")
+                and "gekauft" in (i.get("title") or "").lower()
+            ]
+            if len(_insider_items) >= 2:
+                _names = [i.get("person") or "Insider" for i in _insider_items[:4]]
+                console.print(
+                    f"  [bold green]👥 Insider-Cluster: {len(_insider_items)} Käufe "
+                    f"({', '.join(_names[:3])}{'...' if len(_names) > 3 else ''})[/bold green]"
+                )
+        except Exception:
+            pass
+
         # Feed news items to signal expander – detects unknown small-cap tickers
         new_signal_tickers = _signal_expander.process_news_items(news)
         if new_signal_tickers:
