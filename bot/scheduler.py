@@ -29,6 +29,7 @@ from analyzers.parameter_optimizer import ParameterOptimizer, _MIN_TRADES
 from analyzers.turbo_learner import TurboLearner
 from bot.pre_market_scanner import PreMarketScanner
 from bot.runner import run_analysis_cycle, safe_run_analysis_cycle, _print_portfolio_summary
+from bot.web_dashboard import start_dashboard
 from cli.commands import run_weekend_prep
 
 console = Console()
@@ -251,6 +252,11 @@ def run_bot_loop(
     earnings_strategy=None,
 ) -> None:
     """Main bot event loop – sets up schedule and runs until Ctrl+C."""
+
+    try:
+        start_dashboard(port=int(os.getenv("DASHBOARD_PORT", "8080")))
+    except Exception as _de:
+        log.warning("Web-Dashboard konnte nicht gestartet werden: %s", _de)
 
     prices = broker.get_prices(list(portfolio.all_positions().keys()))
     total = portfolio.total_value(prices)
