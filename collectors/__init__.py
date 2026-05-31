@@ -26,6 +26,7 @@ from .chinese_media_collector import ChineseMediaCollector
 from .web_traffic_collector import WebTrafficCollector
 from .economic_calendar_collector import EconomicCalendarCollector
 from .aaii_sentiment_collector import AAIISentimentCollector
+from .adhoc_collector import AdhocCollector
 
 __all__ = [
     "RedditCollector", "YahooCollector", "NewsAPICollector",
@@ -37,5 +38,5 @@ __all__ = [
     "JobListingsCollector", "CEOInterviewCollector", "EURegulationCollector",
     "ChineseMediaCollector", "WebTrafficCollector", "GermanMediaCollector",
     "InternationalMediaCollector", "QuiverCollector",
-    "EconomicCalendarCollector", "AAIISentimentCollector",
+    "EconomicCalendarCollector", "AAIISentimentCollector", "AdhocCollector",
 ]

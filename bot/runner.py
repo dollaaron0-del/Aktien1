@@ -22,7 +22,7 @@ from collectors import (
     JobListingsCollector, CEOInterviewCollector, EURegulationCollector,
     ChineseMediaCollector, WebTrafficCollector, GermanMediaCollector,
     InternationalMediaCollector, QuiverCollector,
-    EconomicCalendarCollector, AAIISentimentCollector,
+    EconomicCalendarCollector, AAIISentimentCollector, AdhocCollector,
 )
 from collectors.news_archive import NewsArchive
 from collectors.crypto_news_collector import CryptoNewsCollector
@@ -362,6 +362,7 @@ def _make_collectors() -> Dict:
         "quiver":            _safe("quiver",          lambda: QuiverCollector(lookback_days=90)),
         "econ_calendar":     _safe("econ_cal",        lambda: EconomicCalendarCollector(lookahead_days=14)),
         "aaii_sentiment":    _safe("aaii",            AAIISentimentCollector),
+        "adhoc_de":          _safe("adhoc",           AdhocCollector),
     }
 
 

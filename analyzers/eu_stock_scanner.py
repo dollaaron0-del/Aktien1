@@ -105,6 +105,46 @@ EU_UNIVERSE: Dict[str, tuple] = {
     "NOVO-B.CO": ("Novo Nordisk",      "DK", "Healthcare"),
     # Spanien (BME .MC)
     "ITX.MC":    ("Inditex (Zara)",    "ES", "Konsum"),
+    # ── MDAX (Deutschland Mid-Cap) ────────────────────────────────────────────
+    "SHL.DE":    ("Siemens Healthineers", "DE", "Healthcare"),
+    "LEG.DE":    ("LEG Immobilien",      "DE", "Immobilien"),
+    "HNR1.DE":   ("Hannover Rück SE",    "DE", "Versicherung"),
+    "PUM.DE":    ("Puma SE",             "DE", "Konsum"),
+    "WCH.DE":    ("Wacker Chemie AG",    "DE", "Chemie"),
+    "SY1.DE":    ("Symrise AG",          "DE", "Chemie"),
+    "TMV.DE":    ("TeamViewer AG",       "DE", "Technologie"),
+    "NEM.DE":    ("Nemetschek SE",       "DE", "Technologie"),
+    "G24.DE":    ("Scout24 SE",          "DE", "Technologie"),
+    "EVD.DE":    ("CTS Eventim AG",      "DE", "Unterhaltung"),
+    "FRA.DE":    ("Fraport AG",          "DE", "Infrastruktur"),
+    "BOSS.DE":   ("Hugo Boss AG",        "DE", "Luxus"),
+    "KBX.DE":    ("Knorr-Bremse AG",     "DE", "Automobil"),
+    "HAG.DE":    ("Hensoldt AG",         "DE", "Rüstung"),
+    "WAF.DE":    ("Siltronic AG",        "DE", "Halbleiter"),
+    "VNA.DE":    ("Vonovia SE",          "DE", "Immobilien"),
+    "BEI.DE":    ("Beiersdorf AG",       "DE", "Konsum"),
+    "CON.DE":    ("Continental AG",      "DE", "Automobil"),
+    "GXI.DE":    ("Gerresheimer AG",     "DE", "Healthcare"),
+    "SDAX.DE":   ("Schaeffler AG Vz",    "DE", "Automobil"),
+    # ── TecDAX (Deutschland Tech) ─────────────────────────────────────────────
+    "AIXA.DE":   ("Aixtron SE",          "DE", "Halbleiter"),
+    "BC8.DE":    ("Bechtle AG",          "DE", "IT-Services"),
+    "JEN.DE":    ("Jenoptik AG",         "DE", "Technologie"),
+    "SRT3.DE":   ("Sartorius AG Vz",     "DE", "Healthcare"),
+    "FNTN.DE":   ("freenet AG",          "DE", "Telekommunikation"),
+    "S92.DE":    ("SMA Solar Technology","DE", "Energie"),
+    "DWS.DE":    ("DWS Group",           "DE", "Finanzen"),
+    # ── Niederlande – Ergänzungen ─────────────────────────────────────────────
+    "ADYEN.AS":  ("Adyen NV",            "NL", "Fintech"),
+    "ING.AS":    ("ING Groep NV",        "NL", "Finanzen"),
+    "WKL.AS":    ("Wolters Kluwer",      "NL", "Technologie"),
+    # ── Italien (Borsa Italiana .MI) ──────────────────────────────────────────
+    "RACE.MI":   ("Ferrari NV",          "IT", "Automobil"),
+    "ENI.MI":    ("ENI SpA",             "IT", "Energie"),
+    "ISP.MI":    ("Intesa Sanpaolo",     "IT", "Finanzen"),
+    # ── Schweden (OMX Stockholm .ST) ─────────────────────────────────────────
+    "ERIC-B.ST": ("Ericsson",            "SE", "Telekommunikation"),
+    "VOLV-B.ST": ("Volvo AB",            "SE", "Industrie"),
 }
 
 

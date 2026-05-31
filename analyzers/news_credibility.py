@@ -43,6 +43,13 @@ _SOURCE_SCORES: Dict[str, float] = {
     "bls.gov":              1.0,     # Bureau of Labor Statistics
     "census.gov":           1.0,
     "aaii.com":             0.80,   # AAII Investor Sentiment Survey
+    "dgap.de":              0.95,   # Deutsche Pflichtmitteilungen / Ad-hoc
+    "presseportal.de":      0.80,   # Deutsche Pressemitteilungen
+    "boerse.de":            0.75,   # Deutsche Börsennachrichten
+    "finanznachrichten.de": 0.75,   # Deutsche Finanznachrichten
+    "handelsblatt.com":     0.90,   # Führendes deutsches Wirtschaftsblatt
+    "manager-magazin.de":   0.85,   # Deutsches Wirtschaftsmagazin
+    "boerse-frankfurt.de":  0.90,   # Frankfurter Wertpapierbörse
     # Tier 2 – Etablierte Finanzmedien
     "cnbc.com":             0.85,
     "marketwatch.com":      0.85,
