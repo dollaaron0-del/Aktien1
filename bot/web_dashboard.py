@@ -258,9 +258,16 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+class _ReuseHTTPServer(HTTPServer):
+    allow_reuse_address = True  # avoids "Address already in use" on restart
+
+
 def _serve(port: int) -> None:
-    server = HTTPServer(("0.0.0.0", port), _DashboardHandler)
-    server.serve_forever()
+    try:
+        server = _ReuseHTTPServer(("0.0.0.0", port), _DashboardHandler)
+        server.serve_forever()
+    except Exception as e:
+        get_logger(__name__).warning("Dashboard-Server Fehler auf Port %d: %s", port, e)
 
 
 def start_dashboard(port: int = 8080) -> None:
