@@ -1003,6 +1003,77 @@ def run_bot_loop(
     schedule.every(45).minutes.do(_momentum_scan_job)
     _momentum_scan_job()   # Einmal sofort beim Start ausführen
 
+    # ── Reddit-Hype-Scanner: alle 3 Stunden ─────────────────────────────────
+    def _reddit_hype_job():
+        """
+        Scannt Reddit (wallstreetbets, stocks, investing …) auf organisch
+        trending Ticker — unabhängig von der Watchlist.
+        Tickers mit steigender Erwähnungsfrequenz (velocity > 1.5) kommen
+        direkt in die Analyse-Queue.
+        """
+        try:
+            from collectors.reddit_hype_scanner import RedditHypeScanner
+            from analyzers.user_request_queue import add_ticker as _req_ticker
+
+            log.info("Reddit-Hype-Scanner gestartet …")
+            hits = RedditHypeScanner().scan(top_n=10, min_mentions=3)
+            if not hits:
+                return
+
+            exclude   = set(portfolio.all_positions().keys())
+            watchlist = set(getattr(config, "watchlist", []))
+            notifier  = TelegramNotifier()
+
+            queued = []
+            for h in hits:
+                # Skip existing positions and tickers already on watchlist
+                # (watchlist is handled by existing scanners)
+                if h.ticker in exclude:
+                    continue
+                if h.velocity < 1.5 and h.mentions < 5:
+                    continue
+                _req_ticker(h.ticker, meta={
+                    "signal_type":   "REDDIT_HYPE",
+                    "score":         min(0.90, 0.55 + min(h.velocity, 5.0) * 0.07),
+                    "headline":      (
+                        f"Reddit: {h.mentions}× erwähnt | "
+                        f"Velocity ×{h.velocity:.1f} | "
+                        f"r/{', r/'.join(h.subreddits[:2])}"
+                    ),
+                    "from_headline": False,
+                    "reddit_hype":   True,
+                })
+                queued.append(h)
+
+            if not queued:
+                return
+
+            lines = "\n".join(
+                f"  • <b>{h.ticker}</b> – {h.mentions}× | "
+                f"Velocity ×{h.velocity:.1f} | "
+                f"{h.sample_titles[0][:60] if h.sample_titles else ''}"
+                for h in queued
+            )
+            notifier.send(
+                f"🔥 <b>Reddit-Hype-Scanner</b>\n\n{lines}\n\n"
+                f"🔍 Analyse wird gestartet …"
+            )
+            console.print(
+                f"  [bold magenta]🔥 Reddit-Hype: "
+                f"{', '.join(h.ticker for h in queued)} "
+                f"→ Analyse-Queue[/bold magenta]"
+            )
+            safe_run_analysis_cycle(
+                portfolio, broker, strategy, tracker, phase_ctrl,
+                archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+                earnings_strategy,
+            )
+        except Exception as e:
+            log.warning("Reddit-Hype-Job fehlgeschlagen: %s", e)
+
+    schedule.every(3).hours.do(_reddit_hype_job)
+    _reddit_hype_job()   # Einmal sofort beim Start ausführen
+
     # ── Kursbewegungs-Alarm: alle 5 Minuten während Handelszeiten ───────────
     _price_move_last: dict = {}   # ticker → letzter bekannter Kurs
 
