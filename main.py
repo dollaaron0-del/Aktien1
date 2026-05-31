@@ -81,6 +81,7 @@ from collectors.vix_monitor import vix_summary
 from collectors.rl_trainer import start_rl_trainer
 from strategy import SwingStrategy
 from strategy.hedge_strategy import HedgeStrategy
+from strategy.earnings_strategy import EarningsStrategy
 from reporting.exporter import Exporter
 
 from bot.runner import (
@@ -512,6 +513,7 @@ def main():
         kelly_sizer=kelly_sizer,
         goal_risk_assessor=goal_risk,
     )
+    earnings_strategy = EarningsStrategy(portfolio, broker)
 
     # TradingView Sofortausführungs-Thread
     if config.tradingview_webhook_enabled:
@@ -578,7 +580,7 @@ def main():
     if args.once:
         run_analysis_cycle(
             portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
-            weekend_prep_inst, hedge_strategy_inst,
+            weekend_prep_inst, hedge_strategy_inst, earnings_strategy,
         )
         return
 
@@ -597,6 +599,7 @@ def main():
         goal_risk=goal_risk,
         hedge_strategy_inst=hedge_strategy_inst,
         mkt_schedule=mkt_schedule,
+        earnings_strategy=earnings_strategy,
     )
 
 

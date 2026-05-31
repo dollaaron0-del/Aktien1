@@ -570,6 +570,7 @@ def run_analysis_cycle(
     reflection: Optional[ReflectionEngine] = None,
     weekend_prep=None,
     hedge_strategy=None,
+    earnings_strategy=None,
 ):
     rule_suffix = "  [bold yellow][EXPLORATION][/bold yellow]" if config.exploration_mode else ""
     _cycle_ts = datetime.now().strftime('%Y-%m-%d %H:%M')
@@ -644,6 +645,15 @@ def run_analysis_cycle(
                 )
         except Exception:
             pass
+
+    # Force-exit pre-earnings positions before the report
+    if earnings_strategy:
+        try:
+            for _ea in earnings_strategy.check_pre_earnings_exits():
+                console.print(f"  [bold yellow]{_ea}[/bold yellow]")
+                cycle_actions.append(_ea)
+        except Exception as _ee:
+            log.debug("Earnings pre-exit check failed: %s", _ee)
 
     # Check stop-loss / take-profit first (no Claude needed)
     try:
@@ -1005,6 +1015,21 @@ def run_analysis_cycle(
                 f"  [dim][{ticker}] BUY-Signal vorhanden, aber kein Trade "
                 f"(Konfidenz/Schwelle/Filter – Logs prüfen)[/dim]"
             )
+
+        # Earnings Strategy: pre/post-earnings plays (independent of swing signal)
+        if earnings_strategy and price_data:
+            _ep = price_data.get("current_price") or 0
+            if _ep > 0:
+                try:
+                    _pv = portfolio.total_value(broker.get_prices(list(portfolio.all_positions().keys()) + [ticker]))
+                    earn_action = earnings_strategy.evaluate(ticker, _ep, _pv)
+                    if earn_action:
+                        _ec = "bold green" if "GEKAUFT" in earn_action else "dim"
+                        console.print(f"  [{_ec}]{earn_action}[/{_ec}]")
+                        if "GEKAUFT" in earn_action:
+                            cycle_actions.append(earn_action)
+                except Exception as _eae:
+                    log.debug("EarningsStrategy.evaluate error [%s]: %s", ticker, _eae)
 
         # Korrektur-Follow-Up: Headline-BUY-Signal durch Strategy geblockt → User informieren
         if (

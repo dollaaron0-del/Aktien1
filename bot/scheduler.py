@@ -247,6 +247,7 @@ def run_bot_loop(
     goal_risk: GoalRiskAssessor,
     hedge_strategy_inst,
     mkt_schedule: MarketSchedule,
+    earnings_strategy=None,
 ) -> None:
     """Main bot event loop – sets up schedule and runs until Ctrl+C."""
 
@@ -339,7 +340,7 @@ def run_bot_loop(
             job = schedule.every().day.at(slot["hhmm"]).do(
                 safe_run_analysis_cycle,
                 portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
-                weekend_prep_inst, hedge_strategy_inst,
+                weekend_prep_inst, hedge_strategy_inst, earnings_strategy,
             )
             job._is_analysis_job = True
             review_job = schedule.every().day.at(slot["hhmm"]).do(_monthly_review_check)
@@ -571,6 +572,7 @@ def run_bot_loop(
                     safe_run_analysis_cycle(
                         portfolio, broker, strategy, tracker, phase_ctrl,
                         archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+                        earnings_strategy,
                     )
                     break
             except Exception as e:
@@ -671,6 +673,7 @@ def run_bot_loop(
             safe_run_analysis_cycle(
                 portfolio, broker, strategy, tracker, phase_ctrl,
                 archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+                earnings_strategy,
             )
         except Exception as _urq_err:
             log.error("Nutzeranfrage-Job fehlgeschlagen: %s", _urq_err)
@@ -733,6 +736,7 @@ def run_bot_loop(
         safe_run_analysis_cycle(
             portfolio, broker, strategy, tracker, phase_ctrl,
             archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+            earnings_strategy,
         )
         # Nur als "erledigt" markieren wenn die Analyse tatsächlich Einträge erzeugt hat.
         # Bei Fehler bleibt der Tag offen → Watchdog versucht es in der nächsten Stunde erneut.
@@ -920,6 +924,7 @@ def run_bot_loop(
                         safe_run_analysis_cycle(
                             portfolio, broker, strategy, tracker, phase_ctrl,
                             archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+                            earnings_strategy,
                         )
                     else:
                         notifier.send(
@@ -990,6 +995,7 @@ def run_bot_loop(
             safe_run_analysis_cycle(
                 portfolio, broker, strategy, tracker, phase_ctrl,
                 archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+                earnings_strategy,
             )
         except Exception as e:
             log.warning("Momentum-Scan-Job fehlgeschlagen: %s", e)
@@ -1174,6 +1180,7 @@ def run_bot_loop(
                 safe_run_analysis_cycle(
                     portfolio, broker, strategy, tracker, phase_ctrl,
                     archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+                    earnings_strategy,
                 )
             except Exception as e:
                 log.warning("Intraday-Scan-Job fehlgeschlagen: %s", e)
