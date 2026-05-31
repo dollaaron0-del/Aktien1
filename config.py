@@ -167,30 +167,30 @@ class Config:
     # Mindest-Score damit Ollama im Frugal-Modus BUY empfehlen darf (etwas höher
     # als normaler buy_threshold, da Ollama weniger präzise als Claude ist)
     frugal_buy_min_score: float = field(
-        default_factory=lambda: float(os.getenv("FRUGAL_BUY_MIN_SCORE", "0.68"))
+        default_factory=lambda: float(os.getenv("FRUGAL_BUY_MIN_SCORE", "0.65"))
     )
 
     # ── Einstiegs-Timing + Exit-Management ───────────────────────────────────
     # EMA21-Check: Kurs darf max. X% über EMA21 liegen (sonst: Conditional Entry)
-    # 0.03 = 3% → bei >3% über EMA21 wird in Warteschlange gestellt, nicht sofort gekauft
+    # 0.06 = 6% → mehr Spielraum für Momentum-Aktien
     entry_ema_max_deviation: float = field(
-        default_factory=lambda: float(os.getenv("ENTRY_EMA_MAX_DEVIATION", "0.03"))
+        default_factory=lambda: float(os.getenv("ENTRY_EMA_MAX_DEVIATION", "0.06"))
     )
     # Partial Take-Profit: Bei X% Gewinn werden Y% der Position verkauft
     # Verbleibende Position läuft mit SL auf Breakeven weiter (Trailing)
     partial_tp_pct: float = field(
-        default_factory=lambda: float(os.getenv("PARTIAL_TP_PCT", "0.10"))
+        default_factory=lambda: float(os.getenv("PARTIAL_TP_PCT", "0.15"))
     )
     partial_tp_sell_frac: float = field(
-        default_factory=lambda: float(os.getenv("PARTIAL_TP_SELL_FRAC", "0.50"))
+        default_factory=lambda: float(os.getenv("PARTIAL_TP_SELL_FRAC", "0.25"))
     )
-    # Zweite Partial-TP-Stufe: bei X% Gewinn weitere 50% der verbleibenden Shares verkaufen
+    # Zweite Partial-TP-Stufe: bei X% Gewinn weitere 40% der verbleibenden Shares verkaufen
     partial_tp2_pct: float = field(
-        default_factory=lambda: float(os.getenv("PARTIAL_TP2_PCT", "0.20"))
+        default_factory=lambda: float(os.getenv("PARTIAL_TP2_PCT", "0.30"))
     )
     # Stop-Loss Re-Entry Sperre: N Tage nach SL-Auslösung kein Wiederkauf
     sl_cooldown_days: int = field(
-        default_factory=lambda: int(os.getenv("SL_COOLDOWN_DAYS", "5"))
+        default_factory=lambda: int(os.getenv("SL_COOLDOWN_DAYS", "2"))
     )
     # Mindest-Trades bevor RL-Agent und adaptive Threshold-Anpassung aktiv werden
     min_trades_for_adaptive: int = field(

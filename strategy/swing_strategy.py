@@ -1235,7 +1235,7 @@ class SwingStrategy:
         """
         Zweistufiger Partial Take-Profit:
           Stufe 1 (count=0): Bei +partial_tp_pct% → sell_frac% verkaufen, SL → Breakeven
-          Stufe 2 (count=1): Bei +partial_tp2_pct% → 50% der verbleibenden Shares verkaufen
+          Stufe 2 (count=1): Bei +partial_tp2_pct% → 40% der verbleibenden Shares verkaufen
         """
         gain = (price - pos.entry_price) / pos.entry_price
         count = pos.partial_tp_count
@@ -1246,9 +1246,9 @@ class SwingStrategy:
             level_label = f"Stufe 1 ({sell_frac*100:.0f}% bei +{gain*100:.1f}%)"
             sl_note = f"SL → Breakeven ${new_sl:.2f}"
         elif count == 1 and gain >= config.partial_tp2_pct:
-            sell_frac = 0.50  # 50% der verbleibenden Shares (= 25% der ursprünglichen)
+            sell_frac = 0.40  # 40% der verbleibenden Shares → mehr Position bleibt offen
             new_sl = pos.stop_loss  # Trailing hält bereits; SL nicht senken
-            level_label = f"Stufe 2 (25% bei +{gain*100:.1f}%)"
+            level_label = f"Stufe 2 (40% Rest bei +{gain*100:.1f}%)"
             sl_note = f"SL bleibt ${new_sl:.2f} (Trailing)"
         else:
             return None
