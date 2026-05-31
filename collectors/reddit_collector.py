@@ -8,7 +8,7 @@ from typing import List, Dict, Optional
 
 import requests
 
-SUBREDDITS = ["stocks", "wallstreetbets", "investing", "StockMarket", "SecurityAnalysis"]
+SUBREDDITS = ["stocks", "wallstreetbets", "investing", "StockMarket", "SecurityAnalysis", "wallstreetbetsGER"]
 
 TICKER_TO_NAME: Dict[str, str] = {
     "AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA", "TSLA": "Tesla",
