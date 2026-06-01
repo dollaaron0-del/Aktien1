@@ -1036,7 +1036,16 @@ def run_analysis_cycle(
             ticker, analysis.direction, analysis.sentiment_score,
             analysis.recommendation, analysis.confidence,
         )
-        _analysis_log.store(analysis)
+        # Echte Nicht-Signale (Score ~0.5, HOLD/SKIP, keine Position) nicht ins Log –
+        # verhindert Flut von sinnlosen 0.5-Einträgen.
+        _is_noise = (
+            0.43 <= analysis.sentiment_score <= 0.57
+            and analysis.recommendation in ("HOLD", "SKIP")
+            and not portfolio.get_position(ticker)
+            and ticker not in _force_claude_tickers
+        )
+        if not _is_noise:
+            _analysis_log.store(analysis)
 
         # Follow-Up für Headline-Signal-Ticker: Ergebnis per Telegram
         if ticker in _headline_meta:

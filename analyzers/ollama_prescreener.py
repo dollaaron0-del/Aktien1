@@ -364,6 +364,9 @@ class OllamaPrescreener:
             if confidence == "LOW":
                 if score < 0.35:
                     return False, f"Ollama: klar BEARISH ({score:.2f}, LOW) – kein Trade möglich"
+                # Echter Neutral-Bereich: kein Signal, Claude sparen
+                if 0.43 <= score <= 0.57 and direction == "NEUTRAL":
+                    return False, f"Ollama: echtes Neutral ({score:.2f}, LOW) – kein Trade-Signal"
                 return True, ""
             if confidence == "HIGH":
                 if score < self.bearish_skip:
