@@ -631,42 +631,52 @@ with tab_regime:
 
         comp_rows = []
         labels = {
-            "vix":            ("VIX – Angst-Index",         "30%"),
-            "yield_curve":    ("Zinskurve (2y vs 10y)",      "25%"),
-            "sp500_ma200":    ("S&P 500 vs 200-Tage-MA",     "20%"),
-            "sector_breadth": ("Marktbreite (Sektor-Trends)","15%"),
-            "credit_spread":  ("Credit Spread (HYG/IEI)",    "10%"),
-            "claude_macro":   ("Claude Makro-Analyse",        "20%*"),
+            "vix":            ("VIX – Angst-Index",          "30%"),
+            "yield_curve":    ("Zinskurve (2y vs 10y)",       "25%"),
+            "sp500_ma200":    ("S&P 500 vs 200-Tage-MA",      "20%"),
+            "sector_breadth": ("Marktbreite (Sektor-Trends)", "15%"),
+            "credit_spread":  ("Credit Spread (HYG/IEI)",     "10%"),
+            "claude_macro":   ("Claude Makro-Analyse",         "20%*"),
         }
         for key, (name, weight) in labels.items():
             comp = components.get(key, {})
             if not comp:
                 continue
             score_c = comp.get("score", 0)
-            label_c = comp.get("label", "")
-            # Build detail string
-            detail = label_c
-            if key == "vix" and comp.get("value"):
+            label_c = comp.get("label", "") or ""
+            if key == "vix" and comp.get("value") is not None:
                 detail = f"VIX={comp['value']:.1f} · {label_c}"
             elif key == "yield_curve" and comp.get("spread_pct") is not None:
                 detail = f"Spread={comp['spread_pct']:.2f}% · {label_c}"
             elif key == "sp500_ma200" and comp.get("gap_pct") is not None:
                 detail = f"Gap={comp['gap_pct']:+.1f}% · {label_c}"
             elif key == "sector_breadth":
-                detail = comp.get("label", "")
+                detail = label_c
+            elif key == "credit_spread":
+                r = comp.get("ratio")
+                detail = (f"HYG/IEI={r:.4f} · {label_c}" if r is not None else label_c)
             elif key == "claude_macro":
                 detail = comp.get("summary", "")[:80]
+            else:
+                detail = label_c
+            # Mini-Gauge als HTML: farbiger Balken pro Score
+            _sc = min(max(float(score_c), 0.0), 1.0)
+            _bar_col = ("#00c853" if _sc < 0.25 else
+                        "#ffd600" if _sc < 0.45 else
+                        "#ff6d00" if _sc < 0.65 else "#d50000")
             comp_rows.append({
                 "Signal":   name,
                 "Gewicht":  weight,
-                "Score":    round(score_c, 3),
+                "Score":    _sc,
                 "Detail":   detail,
             })
 
         if comp_rows:
             df_comp = pd.DataFrame(comp_rows)
             st.dataframe(
-                df_comp.style.background_gradient(subset=["Score"], cmap="RdYlGn_r", vmin=0, vmax=1),
+                df_comp.style
+                    .format({"Score": "{:.3f}"})
+                    .background_gradient(subset=["Score"], cmap="RdYlGn_r", vmin=0, vmax=1),
                 use_container_width=True, hide_index=True,
             )
 
