@@ -528,6 +528,7 @@ class SwingStrategy:
             sources_used=analysis.sources_used,
             sources_breakdown=sources_breakdown or {},
             mode="turbo",
+            shares=shares,
         )
         self.journal.log_entry(
             ticker=ticker,
@@ -725,6 +726,7 @@ class SwingStrategy:
             sources_used=signal.get("sources_used", 0),
             sources_breakdown=signal.get("sources_breakdown", {}),
             mode="exploration" if config.exploration_mode else "normal",
+            shares=shares,
         )
         self.journal.log_entry(
             ticker=ticker,
@@ -1054,6 +1056,7 @@ class SwingStrategy:
             sources_used=analysis.sources_used,
             sources_breakdown=sources_breakdown,
             mode="exploration" if config.exploration_mode else "normal",
+            shares=shares,
         )
         self.journal.log_entry(
             ticker=ticker,

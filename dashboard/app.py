@@ -501,6 +501,12 @@ with tab_portfolio:
         import altair as _alt
         df_hist = pd.DataFrame(history[::-1])
         df_hist["snapshot_date"] = pd.to_datetime(df_hist["snapshot_date"])
+        # Ausreißer entfernen: Werte >20× Startkapital sind Datenfehler (z.B. falscher yfinance-Preis)
+        _cap = config.initial_capital * 20
+        df_hist = df_hist[df_hist["total_value"] <= _cap]
+        if df_hist.empty:
+            df_hist = pd.DataFrame(history[::-1])
+            df_hist["snapshot_date"] = pd.to_datetime(df_hist["snapshot_date"])
         _start_val = float(df_hist["total_value"].iloc[0])
         _port_line = _alt.Chart(df_hist).mark_line(color="#00e676", strokeWidth=2).encode(
             x=_alt.X("snapshot_date:T", title="Datum"),
@@ -1622,18 +1628,14 @@ with tab_trades:
                 "direction_correct": "Richtung ✓", "target_hit": "Zielkurs ✓",
                 "sell_reason_category": "Exit-Typ", "sell_reason": "Grund",
             })
-            # Gewinn $ berechnen: (Verkauf - Einstieg) × Shares
-            if "shares" in pd.DataFrame(recent).columns:
+            # Gewinn $ = (Verkauf - Einstieg) × Shares
+            _raw = pd.DataFrame(recent)
+            if "shares" in _raw.columns and _raw["shares"].notna().any() and (_raw["shares"] > 0).any():
                 df_tr["Gewinn $"] = (
-                    (df_tr["Verkauf $"] - df_tr["Einstieg $"]) * pd.DataFrame(recent)["shares"]
+                    (df_tr["Verkauf $"] - df_tr["Einstieg $"]) * _raw["shares"]
                 ).round(2)
-            elif "Einstieg $" in df_tr.columns and "Rendite %" in df_tr.columns:
-                # Fallback: Näherung über invested_amount wenn vorhanden
-                raw = pd.DataFrame(recent)
-                if "invested_amount" in raw.columns:
-                    df_tr["Gewinn $"] = (raw["invested_amount"] * df_tr["Rendite %"] / 100).round(2)
-                else:
-                    df_tr["Gewinn $"] = None
+            else:
+                df_tr["Gewinn $"] = None
             for col in ["Richtung ✓", "Zielkurs ✓"]:
                 if col in df_tr.columns:
                     df_tr[col] = df_tr[col].apply(lambda v: "✓" if v == 1 else "✗")

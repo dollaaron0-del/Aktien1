@@ -35,7 +35,8 @@ class PerformanceTracker:
                 actual_return_pct     REAL,
                 direction_correct     INTEGER,
                 target_hit            INTEGER,
-                mode                  TEXT DEFAULT 'normal'  -- 'normal'|'exploration'|'turbo'
+                mode                  TEXT DEFAULT 'normal',  -- 'normal'|'exploration'|'turbo'
+                shares                REAL DEFAULT 0.0
             );
             CREATE TABLE IF NOT EXISTS portfolio_snapshots (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,12 +47,16 @@ class PerformanceTracker:
                 phase           TEXT NOT NULL
             );
         """)
-        # Migrate existing DBs: add mode column if missing
-        try:
-            self._conn.execute("ALTER TABLE predictions ADD COLUMN mode TEXT DEFAULT 'normal'")
-            self._conn.commit()
-        except Exception:
-            pass  # column already exists
+        # Migrate existing DBs: add columns if missing
+        for _col, _def in [
+            ("mode",   "TEXT DEFAULT 'normal'"),
+            ("shares", "REAL DEFAULT 0.0"),
+        ]:
+            try:
+                self._conn.execute(f"ALTER TABLE predictions ADD COLUMN {_col} {_def}")
+                self._conn.commit()
+            except Exception:
+                pass  # column already exists
 
     def record_prediction(
         self,
@@ -65,14 +70,15 @@ class PerformanceTracker:
         sources_used: int,
         sources_breakdown: Optional[Dict[str, int]] = None,
         mode: str = "normal",
+        shares: float = 0.0,
     ) -> int:
         import json as _json
         cursor = self._conn.execute(
             """INSERT INTO predictions
                (ticker, entry_date, entry_price, predicted_target_price,
                 predicted_hold_days, predicted_direction, sentiment_score,
-                confidence, sources_used, sources_breakdown, mode)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                confidence, sources_used, sources_breakdown, mode, shares)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 ticker,
                 datetime.utcnow().isoformat(),
@@ -85,6 +91,7 @@ class PerformanceTracker:
                 sources_used,
                 _json.dumps(sources_breakdown or {}),
                 mode,
+                shares,
             ),
         )
         self._conn.commit()
@@ -317,7 +324,7 @@ class PerformanceTracker:
             """SELECT ticker, entry_date, entry_price, sell_price,
                       actual_return_pct, actual_hold_days, predicted_hold_days,
                       predicted_target_price, direction_correct, target_hit,
-                      sell_reason, sell_reason_category
+                      sell_reason, sell_reason_category, shares
                FROM predictions
                WHERE sell_date IS NOT NULL
                ORDER BY sell_date DESC LIMIT ?""",
