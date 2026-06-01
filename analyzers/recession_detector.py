@@ -324,16 +324,23 @@ class RecessionDetector:
         return bear_pct, score
 
     def _credit_spread_signal(self) -> Tuple[Optional[float], float]:
-        """HYG (high yield) vs IEI (7-10yr treasury) – flight to safety indicator."""
+        """HYG (high yield) vs IEI (7-10yr treasury) – flight to safety indicator.
+        Score basiert auf 1-Jahres-Perzentil: niedriges HYG/IEI = Stress = hoher Score.
+        Selbst-kalibrierend – unabhängig von Absolut-Preisniveaus."""
         try:
-            hyg  = yf.Ticker("HYG").history(period="2d")
-            iei  = yf.Ticker("IEI").history(period="2d")
-            if not hyg.empty and not iei.empty:
-                ratio = float(hyg["Close"].iloc[-1]) / float(iei["Close"].iloc[-1])
-                # Ratio falls in stress (HYG drops, IEI rises)
-                # Approximate normal ~1.0, stressed ~0.85
-                score = max(0.0, min(1.0, (1.05 - ratio) / 0.20))
-                return ratio, score
+            hyg = yf.Ticker("HYG").history(period="1y")
+            iei = yf.Ticker("IEI").history(period="1y")
+            if len(hyg) < 20 or len(iei) < 20:
+                return None, 0.2
+            n = min(len(hyg), len(iei))
+            ratios = hyg["Close"].values[-n:] / iei["Close"].values[-n:]
+            ratio_now = float(ratios[-1])
+            lo, hi = float(ratios.min()), float(ratios.max())
+            if hi <= lo:
+                return ratio_now, 0.2
+            # Invertiert: ratio am 1J-Tief = Score 1.0 (Stress), Hoch = Score 0.0
+            score = max(0.0, min(1.0, 1.0 - (ratio_now - lo) / (hi - lo)))
+            return ratio_now, round(score, 3)
         except Exception:
             pass
         return None, 0.2
