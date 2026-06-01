@@ -590,18 +590,33 @@ with tab_regime:
 
         st.divider()
 
-        # Score gauge (progress bar)
+        # Score gauge – farbige Zonen + Nadel an aktueller Position
         st.subheader("Rezessions-Score-Gauge")
-        score_pct = score
-        bar_color = color
+        _needle_pct = min(score * 100, 100)
         st.markdown(
-            f"""<div style='background:#1e2130;border-radius:8px;padding:6px;'>
-            <div style='background:{bar_color};width:{score_pct*100:.1f}%;height:22px;
-                        border-radius:6px;transition:width 0.4s;'></div>
+            f"""<div style='position:relative;margin-bottom:4px;'>
+              <div style='
+                background:linear-gradient(to right,
+                  #00c853 0%,   #00c853 25%,
+                  #ffd600 25%,  #ffd600 45%,
+                  #ff6d00 45%,  #ff6d00 65%,
+                  #d50000 65%,  #d50000 100%);
+                height:26px;border-radius:8px;position:relative;'>
+                <!-- Schwellen-Markierungen -->
+                <div style='position:absolute;left:25%;top:0;width:2px;height:100%;background:rgba(0,0,0,0.35);'></div>
+                <div style='position:absolute;left:45%;top:0;width:2px;height:100%;background:rgba(0,0,0,0.35);'></div>
+                <div style='position:absolute;left:65%;top:0;width:2px;height:100%;background:rgba(0,0,0,0.35);'></div>
+                <!-- Nadel -->
+                <div style='position:absolute;left:{_needle_pct:.1f}%;top:-5px;
+                  transform:translateX(-50%);width:3px;height:36px;
+                  background:white;border-radius:2px;
+                  box-shadow:0 0 5px rgba(0,0,0,0.9);'></div>
+              </div>
             </div>
-            <div style='display:flex;justify-content:space-between;font-size:0.75rem;color:#888;margin-top:2px;'>
-            <span>0 – BULL</span><span>0.25 – NEUTRAL</span>
-            <span>0.45 – BEAR</span><span>0.65+ – CRISIS</span><span>1.0</span>
+            <div style='display:flex;justify-content:space-between;
+                        font-size:0.72rem;color:#888;margin-top:2px;'>
+              <span>0 – BULL</span><span>0.25 – NEUTRAL</span>
+              <span>0.45 – BEAR</span><span>0.65+ – CRISIS</span><span>1.0</span>
             </div>""",
             unsafe_allow_html=True,
         )
