@@ -385,6 +385,13 @@ class ClaudeAnalyzer:
             any(src in (item.get("source") or "") for src in _high_priority_sources)
             for item in news_items
         )
+        # Frugal Full-Analysis: nur harte Quellen (SEC 8-K, Earnings Transcript)
+        # blockieren den Ollama-Pfad — schwache Quellen (Analyst Rating, Short Interest)
+        # werden von Ollama genauso gut verarbeitet, kein Grund für Claude-Eskalation.
+        _has_hard_priority = any(
+            any(src in (item.get("source") or "") for src in _ALWAYS_CLAUDE_SOURCES)
+            for item in news_items
+        )
         # Smart buy threshold: 32b gets 0.70, smaller models get configured value
         _buy_min = config.frugal_buy_min_score
         if config.frugal_smart_mode and prescreener and prescreener.capability == "HIGH":
@@ -394,7 +401,7 @@ class ClaudeAnalyzer:
             and prescreener
             and not force_claude
             and not open_position
-            and not _has_high_priority
+            and not _has_hard_priority  # nur SEC 8-K / Earnings blockieren; schwache Quellen OK
         ):
             result_data = prescreener.full_analysis(
                 ticker=ticker,
