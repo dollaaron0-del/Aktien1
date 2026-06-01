@@ -1265,6 +1265,110 @@ def run_bot_loop(
     schedule.every(2).hours.do(_geopolitical_radar_job)
     _geopolitical_radar_job()   # Sofort beim Start
 
+    # ── PEAD-Scanner: täglich morgens + stündlich während Handelszeiten ──────
+    def _pead_scan_job():
+        """
+        Post-Earnings Drift: Aktien mit starkem Earnings-Beat (≥5%) werden
+        24-48h nach dem Report analysiert — statistischer Drift-Vorteil.
+        Läuft nur an Wochentagen.
+        """
+        try:
+            local_now = datetime.now()
+            if local_now.weekday() >= 5:
+                return
+            from analyzers.pead_tracker import PEADTracker
+            from analyzers.user_request_queue import add_ticker as _req_ticker
+            from bot.runner import _get_watchlist
+            watchlist = _get_watchlist(portfolio)
+            tracker_pead = PEADTracker()
+            tracker_pead.scan_watchlist(watchlist)  # Neue Beats registrieren
+            ready = tracker_pead.get_ready_for_analysis()
+            if not ready:
+                return
+            notifier = TelegramNotifier()
+            queued_tickers = []
+            for entry in ready:
+                t = entry["ticker"]
+                _req_ticker(t, meta={
+                    "signal_type":   "PEAD",
+                    "score":         min(0.90, 0.70 + entry.get("surprise_pct", 0.05) * 2),
+                    "headline":      f"PEAD: {entry.get('label','BEAT')} {entry.get('surprise_pct',0)*100:+.1f}% EPS-Surprise",
+                    "from_headline": False,
+                    "pead":          True,
+                })
+                tracker_pead.mark_queued(t)
+                queued_tickers.append(t)
+            tracker_pead.cleanup_expired()
+            if queued_tickers:
+                msg = "\n".join(f"  • <b>{t}</b>" for t in queued_tickers)
+                notifier.send(
+                    f"📈 <b>PEAD-Scanner</b>\n\n{msg}\n\n"
+                    f"Earnings-Beat erkannt → Post-Drift-Analyse gestartet."
+                )
+                console.print(
+                    f"  [bold green]📈 PEAD: {', '.join(queued_tickers)} → Queue[/bold green]"
+                )
+                safe_run_analysis_cycle(
+                    portfolio, broker, strategy, tracker, phase_ctrl,
+                    archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+                    earnings_strategy,
+                )
+        except Exception as e:
+            log.warning("PEAD-Scan-Job fehlgeschlagen: %s", e)
+
+    schedule.every().hour.do(_pead_scan_job)
+
+    # ── Short-Squeeze-Scanner: alle 4 Stunden während Handelszeiten ──────────
+    def _short_squeeze_scan_job():
+        """
+        Scannt Watchlist auf Short-Squeeze-Setups: Short-Interest >15% + positiver Trend.
+        Ticker mit Squeeze-Potenzial kommen in die Analyse-Queue.
+        Läuft nur an Handelstagen.
+        """
+        try:
+            local_now = datetime.now()
+            if local_now.weekday() >= 5 or not (8 <= local_now.hour < 22):
+                return
+            from analyzers.short_squeeze_detector import ShortSqueezeDetector
+            from analyzers.user_request_queue import add_ticker as _req_ticker
+            detector = ShortSqueezeDetector()
+            hits = detector.scan_watchlist(list(config.watchlist))
+            if not hits:
+                return
+            notifier = TelegramNotifier()
+            for h in hits:
+                t = h["ticker"]
+                signal_item = detector.build_signal_item(t, h)
+                _req_ticker(t, meta={
+                    "signal_type":   "SHORT_SQUEEZE",
+                    "score":         min(0.88, 0.65 + h.get("squeeze_score", 0.2)),
+                    "headline":      signal_item["title"],
+                    "from_headline": False,
+                    "squeeze_setup": True,
+                })
+            tickers_str = ", ".join(h["ticker"] for h in hits)
+            notifier.send(
+                f"🎯 <b>Short-Squeeze-Scanner</b>\n\n"
+                + "\n".join(
+                    f"  • <b>{h['ticker']}</b> – SI {h.get('si_pct',0):.1f}% | "
+                    f"DtC {h.get('days_to_cover',0):.1f}"
+                    for h in hits
+                )
+                + f"\n\n🔍 Analyse gestartet."
+            )
+            console.print(
+                f"  [bold yellow]🎯 Short-Squeeze: {tickers_str} → Queue[/bold yellow]"
+            )
+            safe_run_analysis_cycle(
+                portfolio, broker, strategy, tracker, phase_ctrl,
+                archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+                earnings_strategy,
+            )
+        except Exception as e:
+            log.warning("Short-Squeeze-Scan-Job fehlgeschlagen: %s", e)
+
+    schedule.every(4).hours.do(_short_squeeze_scan_job)
+
     # ── Intraday-Scan: optionales drittes Analysefenster ────────────────────
     if config.intraday_scan_enabled:
         def _intraday_scan_job():

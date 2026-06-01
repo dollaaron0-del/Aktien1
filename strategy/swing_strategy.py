@@ -265,6 +265,26 @@ class SwingStrategy:
         if not in_strong:
             return f"[{ticker}] 📉 Sektor schwach: {sector_reason} – übersprungen."
 
+        # Trend-Filter: Kauf nur oberhalb EMA50 (bestätigter Aufwärtstrend)
+        _trend_enabled = os.getenv("TREND_FILTER_ENABLED", "true").lower() == "true"
+        if _trend_enabled:
+            try:
+                import yfinance as _yf
+                _df = _yf.Ticker(ticker).history(period="3mo")
+                if _df is not None and len(_df) >= 50:
+                    _ema50 = float(_df["Close"].ewm(span=50, adjust=False).mean().iloc[-1])
+                    if current_price < _ema50:
+                        log.info(
+                            "[%s] Trend-Filter: Kurs $%.2f unter EMA50 $%.2f – übersprungen.",
+                            ticker, current_price, _ema50,
+                        )
+                        return (
+                            f"[{ticker}] 📉 Trend-Filter: Kurs ${current_price:.2f} "
+                            f"unter EMA50 ${_ema50:.2f} – kein Kauf gegen den Trend."
+                        )
+            except Exception as _te:
+                log.debug("Trend-Filter fehlgeschlagen für %s: %s", ticker, _te)
+
         # Earnings filter: skip buy if earnings imminent
         if self.earnings_filter:
             ec = self.earnings_filter.check(ticker)
