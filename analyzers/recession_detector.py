@@ -194,9 +194,16 @@ class RecessionDetector:
 
         # 5. Credit spread (HYG vs IEI)
         cs, credit_score = self._credit_spread_signal()
+        _cs_label = (
+            "Eng (niedrig)"   if credit_score < 0.25 else
+            "Leicht erhöht"   if credit_score < 0.45 else
+            "Erhöht ⚠"        if credit_score < 0.65 else
+            "Stress 🚨"
+        )
         components["credit_spread"] = {
             "ratio": round(cs, 4) if cs is not None else None,
             "score": round(credit_score, 3),
+            "label": _cs_label,
         }
 
         # Weighted quantitative score (before Claude)
@@ -325,11 +332,11 @@ class RecessionDetector:
 
     def _credit_spread_signal(self) -> Tuple[Optional[float], float]:
         """HYG (high yield) vs IEI (7-10yr treasury) – flight to safety indicator.
-        Score basiert auf 1-Jahres-Perzentil: niedriges HYG/IEI = Stress = hoher Score.
-        Selbst-kalibrierend – unabhängig von Absolut-Preisniveaus."""
+        Score basiert auf 2-Jahres-Perzentil: niedriges HYG/IEI = Stress = hoher Score.
+        2-Jahres-Fenster verhindert, dass ein einzelnes Stressjahr als 'Normal' gilt."""
         try:
-            hyg = yf.Ticker("HYG").history(period="1y")
-            iei = yf.Ticker("IEI").history(period="1y")
+            hyg = yf.Ticker("HYG").history(period="2y")
+            iei = yf.Ticker("IEI").history(period="2y")
             if len(hyg) < 20 or len(iei) < 20:
                 return None, 0.2
             n = min(len(hyg), len(iei))
@@ -338,7 +345,7 @@ class RecessionDetector:
             lo, hi = float(ratios.min()), float(ratios.max())
             if hi <= lo:
                 return ratio_now, 0.2
-            # Invertiert: ratio am 1J-Tief = Score 1.0 (Stress), Hoch = Score 0.0
+            # Invertiert: ratio am 2J-Tief = Score 1.0 (Stress), Hoch = Score 0.0
             score = max(0.0, min(1.0, 1.0 - (ratio_now - lo) / (hi - lo)))
             return ratio_now, round(score, 3)
         except Exception:
