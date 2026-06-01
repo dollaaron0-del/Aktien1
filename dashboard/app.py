@@ -501,12 +501,11 @@ with tab_portfolio:
         import altair as _alt
         df_hist = pd.DataFrame(history[::-1])
         df_hist["snapshot_date"] = pd.to_datetime(df_hist["snapshot_date"])
-        # Ausreißer entfernen: Werte >20× Startkapital sind Datenfehler (z.B. falscher yfinance-Preis)
-        _cap = config.initial_capital * 20
-        df_hist = df_hist[df_hist["total_value"] <= _cap]
-        if df_hist.empty:
-            df_hist = pd.DataFrame(history[::-1])
-            df_hist["snapshot_date"] = pd.to_datetime(df_hist["snapshot_date"])
+        # Ausreißer entfernen: Punkte die >5× dem Median aller Werte liegen sind Datenfehler
+        _med = df_hist["total_value"].median()
+        _clean = df_hist[df_hist["total_value"] <= _med * 5]
+        if not _clean.empty:
+            df_hist = _clean
         _start_val = float(df_hist["total_value"].iloc[0])
         _port_line = _alt.Chart(df_hist).mark_line(color="#00e676", strokeWidth=2).encode(
             x=_alt.X("snapshot_date:T", title="Datum"),
@@ -1628,13 +1627,20 @@ with tab_trades:
                 "direction_correct": "Richtung ✓", "target_hit": "Zielkurs ✓",
                 "sell_reason_category": "Exit-Typ", "sell_reason": "Grund",
             })
-            # Gewinn $ = (Verkauf - Einstieg) × Shares
-            _raw = pd.DataFrame(recent)
-            if "shares" in _raw.columns and _raw["shares"].notna().any() and (_raw["shares"] > 0).any():
-                df_tr["Gewinn $"] = (
-                    (df_tr["Verkauf $"] - df_tr["Einstieg $"]) * _raw["shares"]
-                ).round(2)
-            else:
+            # Gewinn $ aus portfolio.trade_history() – hat pnl für alle Trades (alt+neu)
+            try:
+                _th = portfolio.trade_history()
+                # Neueste SELLs zuerst pro Ticker (passt zu recent = sell_date DESC)
+                _sell_pnl: dict = {}
+                for _t in reversed(_th):
+                    if _t.action == "SELL":
+                        _sell_pnl.setdefault(_t.ticker, []).append(round(_t.pnl, 2))
+                _raw2 = pd.DataFrame(recent)
+                def _get_pnl(row):
+                    lst = _sell_pnl.get(row["ticker"], [])
+                    return lst.pop(0) if lst else None
+                df_tr["Gewinn $"] = _raw2.apply(_get_pnl, axis=1)
+            except Exception:
                 df_tr["Gewinn $"] = None
             for col in ["Richtung ✓", "Zielkurs ✓"]:
                 if col in df_tr.columns:
