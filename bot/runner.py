@@ -55,6 +55,11 @@ from collectors.tradingview_webhook import get_pending_sells, get_pending_macro_
 console = Console()
 log = get_logger(__name__)
 
+import threading as _threading
+_cycle_lock = _threading.Lock()
+_last_cycle_start: Optional[datetime] = None
+_MIN_CYCLE_GAP_MINUTES = int(os.getenv("MIN_CYCLE_GAP_MINUTES", "20"))
+
 _dynamic_watchlist  = DynamicWatchlist(max_picks=config.scan_max_picks or 12) if config.auto_scan_watchlist else None
 _rl_agent           = RLAgent()
 _earnings_predictor = EarningsPredictor()
@@ -559,21 +564,43 @@ def safe_run_analysis_cycle(*args, **kwargs) -> None:
     Fehler-sicherer Wrapper um run_analysis_cycle.
     Fängt alle unbehandelten Exceptions, loggt den vollen Traceback
     und schickt ihn per Telegram — der Bot-Loop läuft weiter.
+    Enthält einen Lock + Mindestabstand (MIN_CYCLE_GAP_MINUTES, Standard 20 Min)
+    um gleichzeitige und zu schnell aufeinanderfolgende Zyklen zu verhindern.
     Alle Aufruforte in scheduler.py sollten diesen Wrapper verwenden.
     """
+    global _last_cycle_start
+    now = datetime.now()
+
+    if not _cycle_lock.acquire(blocking=False):
+        log.info("safe_run_analysis_cycle: Zyklus läuft bereits – Aufruf übersprungen.")
+        return
+
     try:
-        run_analysis_cycle(*args, **kwargs)
-    except Exception as _fatal:
-        _tb = traceback.format_exc()
-        log.error("Analyse-Zyklus FATAL – ungefangene Exception:\n%s", _tb)
+        if _last_cycle_start is not None:
+            elapsed_min = (now - _last_cycle_start).total_seconds() / 60
+            if elapsed_min < _MIN_CYCLE_GAP_MINUTES:
+                log.info(
+                    "safe_run_analysis_cycle: letzter Zyklus vor %.0f Min – "
+                    "Mindestabstand %d Min nicht erreicht, übersprungen.",
+                    elapsed_min, _MIN_CYCLE_GAP_MINUTES,
+                )
+                return
+        _last_cycle_start = now
         try:
-            TelegramNotifier().send(
-                f"❌ <b>Analyse-Zyklus abgebrochen</b>\n\n"
-                f"Fehler: <code>{str(_fatal)[:400]}</code>\n\n"
-                f"Details: <code>journalctl -u aktien_bot -n 80</code>"
-            )
-        except Exception:
-            pass
+            run_analysis_cycle(*args, **kwargs)
+        except Exception as _fatal:
+            _tb = traceback.format_exc()
+            log.error("Analyse-Zyklus FATAL – ungefangene Exception:\n%s", _tb)
+            try:
+                TelegramNotifier().send(
+                    f"❌ <b>Analyse-Zyklus abgebrochen</b>\n\n"
+                    f"Fehler: <code>{str(_fatal)[:400]}</code>\n\n"
+                    f"Details: <code>journalctl -u aktien_bot -n 80</code>"
+                )
+            except Exception:
+                pass
+    finally:
+        _cycle_lock.release()
 
 
 def run_analysis_cycle(
