@@ -954,7 +954,7 @@ def run_bot_loop(
     _headline_scan_job()   # Einmal sofort beim Start ausführen
 
     # ── Momentum/Hype-Scanner: alle 45 Minuten während Handelszeiten ─────────
-    _MOMENTUM_COOLDOWN_HOURS = int(os.getenv("MOMENTUM_COOLDOWN_HOURS", "3"))
+    _MOMENTUM_COOLDOWN_HOURS = int(os.getenv("MOMENTUM_COOLDOWN_HOURS", "8"))
     _momentum_last_queued: dict = {}   # ticker → datetime der letzten Queue-Eintragung
 
     def _momentum_scan_job():
@@ -963,8 +963,8 @@ def run_bot_loop(
         (Volumen ≥ 2× Schnitt UND Kurs ≥ +2%). Wer gerade gehyped wird,
         kommt sofort in die Analyse-Queue und löst eine Sofort-Analyse aus.
         Läuft nur an Handelstagen 08:00–22:00 Lokalzeit.
-        Cooldown: Dieselbe Aktie wird frühestens nach MOMENTUM_COOLDOWN_HOURS (3h)
-        erneut analysiert, um Doppelanalysen zu vermeiden.
+        Cooldown: Dieselbe Aktie wird frühestens nach MOMENTUM_COOLDOWN_HOURS (8h)
+        erneut analysiert — effektiv einmal pro Handelstag.
         """
         import datetime as _dt
         try:
@@ -985,16 +985,34 @@ def run_bot_loop(
 
             # Cooldown-Filter: Ticker die in den letzten N Stunden bereits analysiert wurden
             cutoff = local_now - _dt.timedelta(hours=_MOMENTUM_COOLDOWN_HOURS)
+            today_str = local_now.date().isoformat()
+
+            # Zusätzlich: Ticker aus dem Analysis-Cache prüfen (heute bereits analysiert?)
+            _analyzed_today: set = set()
+            try:
+                import json as _json
+                _cache_path = os.path.join(os.path.dirname(__file__), "..", "data", "analysis_cache.json")
+                with open(_cache_path) as _cf:
+                    _cache_data = _json.load(_cf)
+                for _t, _d in _cache_data.items():
+                    if isinstance(_d, dict) and (_d.get("updated_at") or "").startswith(today_str):
+                        _analyzed_today.add(_t.upper())
+            except Exception:
+                pass
+
             new_hits = [
                 h for h in hits
-                if _momentum_last_queued.get(h["ticker"]) is None
-                or _momentum_last_queued[h["ticker"]] < cutoff
+                if h["ticker"].upper() not in _analyzed_today
+                and (
+                    _momentum_last_queued.get(h["ticker"]) is None
+                    or _momentum_last_queued[h["ticker"]] < cutoff
+                )
             ]
             if not new_hits:
                 skipped = [h["ticker"] for h in hits]
                 log.debug(
-                    "Momentum-Scanner: alle Kandidaten noch im Cooldown (%dh): %s",
-                    _MOMENTUM_COOLDOWN_HOURS, skipped,
+                    "Momentum-Scanner: alle Kandidaten im Cooldown oder heute analysiert: %s",
+                    skipped,
                 )
                 return
 
