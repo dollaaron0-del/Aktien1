@@ -501,9 +501,10 @@ with tab_portfolio:
         import altair as _alt
         df_hist = pd.DataFrame(history[::-1])
         df_hist["snapshot_date"] = pd.to_datetime(df_hist["snapshot_date"])
-        # Ausreißer entfernen: Punkte die >5× dem Median aller Werte liegen sind Datenfehler
-        _med = df_hist["total_value"].median()
-        _clean = df_hist[df_hist["total_value"] <= _med * 5]
+        # Ausreißer entfernen: Punkte die >5× dem Minimum (= echter Baseline) liegen sind
+        # Datenfehler (z.B. korruptes Portfolio-Cash nach Mehrfach-Neustart).
+        _min_val = df_hist["total_value"].min()
+        _clean = df_hist[df_hist["total_value"] <= _min_val * 5]
         if not _clean.empty:
             df_hist = _clean
         _start_val = float(df_hist["total_value"].iloc[0])
