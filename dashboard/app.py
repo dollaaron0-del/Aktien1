@@ -1622,17 +1622,29 @@ with tab_trades:
                 "direction_correct": "Richtung ✓", "target_hit": "Zielkurs ✓",
                 "sell_reason_category": "Exit-Typ", "sell_reason": "Grund",
             })
+            # Gewinn $ berechnen: (Verkauf - Einstieg) × Shares
+            if "shares" in pd.DataFrame(recent).columns:
+                df_tr["Gewinn $"] = (
+                    (df_tr["Verkauf $"] - df_tr["Einstieg $"]) * pd.DataFrame(recent)["shares"]
+                ).round(2)
+            elif "Einstieg $" in df_tr.columns and "Rendite %" in df_tr.columns:
+                # Fallback: Näherung über invested_amount wenn vorhanden
+                raw = pd.DataFrame(recent)
+                if "invested_amount" in raw.columns:
+                    df_tr["Gewinn $"] = (raw["invested_amount"] * df_tr["Rendite %"] / 100).round(2)
+                else:
+                    df_tr["Gewinn $"] = None
             for col in ["Richtung ✓", "Zielkurs ✓"]:
                 if col in df_tr.columns:
                     df_tr[col] = df_tr[col].apply(lambda v: "✓" if v == 1 else "✗")
-            desired = ["Ticker", "Einstieg $", "Verkauf $", "Rendite %", "Tage (Ist)",
+            desired = ["Ticker", "Einstieg $", "Verkauf $", "Gewinn $", "Rendite %", "Tage (Ist)",
                        "Tage (Plan)", "Zielkurs $", "Richtung ✓", "Zielkurs ✓", "Exit-Typ", "Grund"]
             existing = [c for c in desired if c in df_tr.columns]
             st.dataframe(
                 df_tr[existing].style.map(
                     lambda v: ("color: #00e676" if isinstance(v, (int, float)) and v >= 0
                                else ("color: #f44336" if isinstance(v, (int, float)) and v < 0 else "")),
-                    subset=["Rendite %"],
+                    subset=[c for c in ["Rendite %", "Gewinn $"] if c in existing],
                 ),
                 use_container_width=True, hide_index=True,
             )
