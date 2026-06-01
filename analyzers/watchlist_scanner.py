@@ -25,6 +25,8 @@ DEFAULT_UNIVERSE = [
     "ASML", "TSM", "AMAT", "LRCX", "MU", "MRVL", "ARM",
     # EU – Deutschland (XETRA)
     "RHM.DE", "SAP.DE", "SIE.DE", "IFX.DE", "BMW.DE", "MBG.DE", "ALV.DE", "MTX.DE", "ENR.DE",
+    # EU Aktien als US-ADRs (für NYSE-Handelszeiten)
+    "SAP", "ASML", "SMSN", "NVO",
     # EU – Rüstung & Verteidigung (aktueller Megatrend)
     "AIR.PA", "BA.L", "BAESY",
     # EU – Energie / Industrie
@@ -48,7 +50,11 @@ class WatchlistScanner:
         self.max_picks = max_picks
 
     def scan(self, exclude: List[str] = None) -> List[Dict]:
-        """Returns stocks with unusual BUYING momentum (volume up AND price up)."""
+        """Returns stocks with unusual BUYING momentum (volume up AND price up).
+        Erkennt zwei Muster:
+          1. Starker Einzeltag: Volume ≥ 2× + Kurs ≥ +2% heute
+          2. Anhaltender Trend: ≥3 grüne Tage in Folge + Kurs ≥ +1% heute + Volume ≥ 1.5×
+        """
         exclude = set(exclude or [])
         candidates: List[Dict] = []
         for ticker in self.universe:
@@ -57,11 +63,16 @@ class WatchlistScanner:
             metrics = self._compute_metrics(ticker)
             if not metrics:
                 continue
-            # Both conditions must be true: real buying pressure (not just volatility)
-            if (
+            strong_day = (
                 metrics["volume_ratio"] >= self.min_volume_ratio
                 and metrics["change_pct"] >= self.min_price_change_pct
-            ):
+            )
+            sustained_trend = (
+                metrics.get("streak_days", 0) >= 3
+                and metrics["change_pct"] >= 1.0
+                and metrics["volume_ratio"] >= 1.5
+            )
+            if strong_day or sustained_trend:
                 candidates.append(metrics)
 
         # Rank by combined momentum score: volume × price move
