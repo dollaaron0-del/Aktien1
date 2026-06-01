@@ -954,13 +954,19 @@ def run_bot_loop(
     _headline_scan_job()   # Einmal sofort beim Start ausführen
 
     # ── Momentum/Hype-Scanner: alle 45 Minuten während Handelszeiten ─────────
+    _MOMENTUM_COOLDOWN_HOURS = int(os.getenv("MOMENTUM_COOLDOWN_HOURS", "3"))
+    _momentum_last_queued: dict = {}   # ticker → datetime der letzten Queue-Eintragung
+
     def _momentum_scan_job():
         """
         Scannt das Universum auf Aktien mit ungewöhnlichem Kaufdruck
         (Volumen ≥ 2× Schnitt UND Kurs ≥ +2%). Wer gerade gehyped wird,
         kommt sofort in die Analyse-Queue und löst eine Sofort-Analyse aus.
         Läuft nur an Handelstagen 08:00–22:00 Lokalzeit.
+        Cooldown: Dieselbe Aktie wird frühestens nach MOMENTUM_COOLDOWN_HOURS (3h)
+        erneut analysiert, um Doppelanalysen zu vermeiden.
         """
+        import datetime as _dt
         try:
             local_now = datetime.now()
             if local_now.weekday() >= 5 or not (8 <= local_now.hour < 22):
@@ -976,8 +982,24 @@ def run_bot_loop(
             hits = scanner.scan(exclude=exclude)
             if not hits:
                 return
+
+            # Cooldown-Filter: Ticker die in den letzten N Stunden bereits analysiert wurden
+            cutoff = local_now - _dt.timedelta(hours=_MOMENTUM_COOLDOWN_HOURS)
+            new_hits = [
+                h for h in hits
+                if _momentum_last_queued.get(h["ticker"]) is None
+                or _momentum_last_queued[h["ticker"]] < cutoff
+            ]
+            if not new_hits:
+                skipped = [h["ticker"] for h in hits]
+                log.debug(
+                    "Momentum-Scanner: alle Kandidaten noch im Cooldown (%dh): %s",
+                    _MOMENTUM_COOLDOWN_HOURS, skipped,
+                )
+                return
+
             notifier = TelegramNotifier()
-            for h in hits:
+            for h in new_hits:
                 _req_ticker(h["ticker"], meta={
                     "signal_type":   "MOMENTUM",
                     "score":         min(0.95, 0.70 + h["volume_ratio"] * 0.05),
@@ -985,10 +1007,12 @@ def run_bot_loop(
                     "from_headline": False,
                     "momentum":      True,
                 })
+                _momentum_last_queued[h["ticker"]] = local_now
+
             msg = "\n".join(
                 f"  • <b>{h['ticker']}</b> +{h['change_pct']:.1f}% | "
                 f"Vol ×{h['volume_ratio']:.1f} | {h['streak_days']}d↑"
-                for h in hits
+                for h in new_hits
             )
             notifier.send(
                 f"📈 <b>Momentum-Scanner</b>\n\n{msg}\n\n"
@@ -996,8 +1020,8 @@ def run_bot_loop(
             )
             console.print(
                 f"  [bold green]📈 Momentum-Scanner: "
-                f"{len(hits)} Hype-Kandidaten → "
-                f"{', '.join(h['ticker'] for h in hits)}[/bold green]"
+                f"{len(new_hits)} Hype-Kandidaten → "
+                f"{', '.join(h['ticker'] for h in new_hits)}[/bold green]"
             )
             safe_run_analysis_cycle(
                 portfolio, broker, strategy, tracker, phase_ctrl,
