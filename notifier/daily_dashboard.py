@@ -22,6 +22,7 @@ from logger import get_logger
 log = get_logger(__name__)
 
 _SENT_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "dashboard_sent.json")
+_LOCK_FILE = _SENT_FILE + ".lock"
 
 
 def _atomic_save(path: str, data: dict) -> None:
@@ -55,6 +56,34 @@ class DailyDashboard:
 
     def mark_sent(self) -> None:
         _atomic_save(_SENT_FILE, {"last_sent": date.today().isoformat()})
+
+    def try_claim_send(self) -> bool:
+        """Atomarer Lock: gibt True zurück wenn DIESE Instanz senden darf.
+        Verhindert Doppel-Sends bei mehreren gleichzeitig laufenden Bot-Prozessen.
+        """
+        today = date.today().isoformat()
+        try:
+            # Exklusiver Lock via O_CREAT|O_EXCL (atomar auf Linux)
+            fd = os.open(_LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, today.encode())
+            os.close(fd)
+        except FileExistsError:
+            # Anderer Prozess hat den Lock — prüfen ob er von heute ist
+            try:
+                with open(_LOCK_FILE) as f:
+                    lock_date = f.read().strip()
+                if lock_date == today:
+                    return False   # Heute bereits gesendet
+                # Lock vom Vortag → überschreiben
+                os.unlink(_LOCK_FILE)
+                fd = os.open(_LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(fd, today.encode())
+                os.close(fd)
+            except Exception:
+                return False
+        except Exception:
+            return True   # Lock fehlgeschlagen → trotzdem senden (Fallback)
+        return True
 
     def generate(
         self,

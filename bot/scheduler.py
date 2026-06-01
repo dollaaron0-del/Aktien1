@@ -1423,6 +1423,9 @@ def run_bot_loop(
     def _daily_dashboard_job():
         if not _dashboard.should_send():
             return
+        if not _dashboard.try_claim_send():
+            log.debug("Daily Dashboard: anderer Prozess hat bereits gesendet – übersprungen.")
+            return
         try:
             msg = _dashboard.generate(
                 portfolio=portfolio,
