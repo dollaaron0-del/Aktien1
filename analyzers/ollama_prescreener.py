@@ -228,13 +228,12 @@ class OllamaPrescreener:
                 latency_ms=0,
             )
 
-        # Hochprioritäre Quellen IMMER zu Claude
-        always_sources = _ALWAYS_CLAUDE_SOURCES.copy()
-        if self.capability in ("LOW", "MEDIUM"):
-            always_sources |= _WEAK_MODEL_CLAUDE_SOURCES
+        # Nur echte Hochprioritäts-Quellen (SEC 8-K, Earnings Transcript) direkt zu Claude.
+        # Schwache Quellen (Analyst Rating, Short Interest, 13F) werden von Ollama selbst
+        # anhand des Inhalts bewertet – das spart ~40% unnötige Claude-Aufrufe.
         high_priority = [
             item for item in news_items
-            if any(src in (item.get("source") or "") for src in always_sources)
+            if any(src in (item.get("source") or "") for src in _ALWAYS_CLAUDE_SOURCES)
         ]
         if high_priority:
             return PrescreenResult(

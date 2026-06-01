@@ -178,7 +178,7 @@ class Config:
     # offene Positionen, SEC/Earnings-Quellen und manuelle Dashboard-Anfragen.
     # Einsparung: ~85% weniger Claude-API-Kosten.
     frugal_mode: bool = field(
-        default_factory=lambda: os.getenv("FRUGAL_MODE", "false").lower() in ("1", "true", "yes")
+        default_factory=lambda: os.getenv("FRUGAL_MODE", "true").lower() in ("1", "true", "yes")
     )
     # Smart Frugal: passt Schwellen automatisch an Modellgröße an.
     # true (default) = 32b-Modell filtert aggressiver als 8b-Modell.
