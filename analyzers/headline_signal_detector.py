@@ -1,413 +1,256 @@
 """
-HeadlineSignalDetector – Scannt allgemeine Börsennachrichten ohne Ticker-Vorgabe.
+Headline Signal Detector
 
-Ziel: Aktien frühzeitig entdecken BEVOR sie auf der Watchlist stehen.
-Workflow:
-  1. Stündlich: allgemeine Markt-Nachrichten laden (RSS + NewsAPI + Yahoo)
-  2. Ticker aus Schlagzeilen extrahieren (Regex + Firmenname-Mapping)
-  3. Signal-Typ und Stärke bestimmen (M&A, FDA, Earnings-Überraschung, etc.)
-  4. Starke Signale → BenchList (werden beim nächsten Zyklus von Claude bewertet)
-  5. Sehr starke Signale → Telegram sofort
-
-Signal-Kategorien (Stärke 0–1):
-  ACQUISITION  0.90  "acquired", "merger", "takeover", "buyout"
-  FDA_APPROVAL 0.88  "FDA approves", "approval granted", "cleared by FDA"
-  EARNINGS_BIG 0.80  "beats estimates", "record earnings", "raises guidance"
-  CONTRACT_WIN 0.75  "awarded contract", "wins deal", "$Xbn contract"
-  BREAKOUT     0.72  "all-time high", "52-week high", "record revenue"
-  SPIN_OFF     0.70  "spinoff", "spin-off", "separates", "divests"
-  UPGRADE      0.65  "upgrades to buy", "price target raised", "overweight"
-  DOWNGRADE    0.30  "downgrades", "price target cut", "underperform"
-  EARNINGS_BAD 0.20  "misses estimates", "lowers guidance", "below expectations"
+Scannt allgemeine Marktnachrichten nach handlungsrelevanten Signalen.
+Erkennt 12 Signaltypen mit Konfidenzwerten.
+Löst bei starken Signalen Telegram-Alert aus.
 """
 from __future__ import annotations
 
-import re
 import json
 import os
-import time
-import tempfile
-from dataclasses import dataclass, field
+import re
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple
-
-import requests
+from typing import Dict, List, Optional, Tuple
 
 from logger import get_logger
 
 log = get_logger(__name__)
 
-_STATE_FILE = os.path.join("data", "headline_scanner_state.json")
+_STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "headline_scanner_state.json")
 
-# ── Signal-Definitionen ───────────────────────────────────────────────────────
+# Signal patterns: (regex, base_score, signal_type)
+_SIGNAL_PATTERNS: List[Tuple[str, float, str]] = [
+    (r"acqui[rs]|merger|takeover|buyout",          0.90, "ACQUISITION"),
+    (r"fda.*approv|approved.*fda|breakthrough.*therapy", 0.88, "FDA_APPROVAL"),
+    (r"beat.*estimate|earnings.*beat|surpass.*expectation", 0.80, "EARNINGS_BEAT"),
+    (r"contract.*award|won.*contract|awarded.*billion", 0.75, "CONTRACT_WIN"),
+    (r"breakout|new.*52.week.*high|all.time.*high",  0.72, "BREAKOUT"),
+    (r"spin.?off|split.*company|carve.?out",         0.70, "SPIN_OFF"),
+    (r"upgrad|raised.*target|buy.*rating",           0.65, "UPGRADE"),
+    (r"short.*squeeze|short.*interest.*high",        0.68, "SHORT_SQUEEZE"),
+    (r"partner|joint.*venture|collaboration|deal.*sign", 0.65, "PARTNERSHIP"),
+    (r"downgrad|cut.*target|sell.*rating",           0.28, "DOWNGRADE"),
+    (r"miss.*estimate|earnings.*miss|below.*expectation", 0.20, "EARNINGS_MISS"),
+    (r"recall|safety.*concern|investigation.*product", 0.15, "RECALL"),
+]
+
+# Ticker extraction patterns
+_TICKER_DOLLAR  = re.compile(r'\$([A-Z]{1,5})')
+_TICKER_PARENS  = re.compile(r'\(([A-Z]{1,5})\)')
+_TICKER_UPPER   = re.compile(r'\b([A-Z]{2,5})\b')
+
+# Common false-positives to ignore
+_IGNORE_WORDS = {
+    "CEO", "CFO", "COO", "CTO", "IPO", "ETF", "USD", "EUR", "GDP", "CPI",
+    "FDA", "SEC", "NYSE", "NASDAQ", "UK", "US", "EU", "THE", "AND", "FOR",
+    "NEW", "INC", "LLC", "LTD", "PLC", "NOT", "BUT", "ALL", "BIG",
+}
+
+
+@dataclass_like  # using plain class below for compatibility
+class HeadlineSignal:
+    pass
+
+
+from dataclasses import dataclass
+
 
 @dataclass
 class HeadlineSignal:
-    ticker:      str
+    ticker: str
     signal_type: str
-    score:       float
-    headline:    str
-    source:      str
-    detected_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-
-
-_SIGNAL_PATTERNS: List[Tuple[str, float, List[str]]] = [
-    # (signal_type, score, keyword_list)
-    ("ACQUISITION",   0.90, [
-        "acquir", "merger", "takeover", "buyout", "to be acquired",
-        "acquisition", "agreed to buy", "purchase agreement",
-    ]),
-    ("FDA_APPROVAL",  0.88, [
-        "fda approv", "fda clears", "fda grants", "approved by fda",
-        "nda approved", "bla approved", "regulatory approval",
-    ]),
-    ("EARNINGS_BEAT", 0.80, [
-        "beats estimate", "beat estimate", "record earnings", "record revenue",
-        "raises guidance", "raised guidance", "raises full-year", "raises annual",
-        "record profit", "above consensus", "tops estimate", "exceeded estimate",
-        "lifts guidance", "lifted guidance", "increases guidance",
-    ]),
-    ("CONTRACT_WIN",  0.75, [
-        "awarded contract", "wins contract", "secures contract",
-        "billion contract", "million contract", "government contract",
-        "defense contract", "awarded deal",
-    ]),
-    ("BREAKOUT",      0.72, [
-        "all-time high", "52-week high", "record high", "new high",
-        "record revenue", "revenue record",
-    ]),
-    ("SPIN_OFF",      0.70, [
-        "spin-off", "spinoff", "spin off", "separates unit",
-        "divests", "carve-out", "ipo planned",
-    ]),
-    ("UPGRADE",       0.65, [
-        "upgraded to buy", "upgrades to buy", "raised to buy",
-        "price target raised", "price target increased", "overweight initiated",
-        "outperform initiated", "strong buy",
-    ]),
-    ("SHORT_SQUEEZE", 0.68, [
-        "short squeeze", "short interest drops", "covering shorts",
-        "heavily shorted", "most shorted",
-    ]),
-    ("PARTNERSHIP",   0.65, [
-        "partnership with", "strategic alliance", "joint venture",
-        "collaboration with", "licensing agreement",
-    ]),
-    ("DOWNGRADE",     0.28, [
-        "downgraded", "downgrade to sell", "price target cut",
-        "price target lowered", "underperform", "underweight",
-    ]),
-    ("EARNINGS_MISS", 0.20, [
-        "misses estimate", "missed estimate", "below estimate",
-        "lowers guidance", "lowered guidance", "disappointing earnings",
-        "below consensus", "shortfall",
-    ]),
-    ("RECALL",        0.15, [
-        "product recall", "recalls its", "safety recall",
-        "voluntary recall", "fda recall", "drug recall",
-        "fda warning", "safety warning",
-    ]),
-]
-
-# Ticker-Blacklist: Wörter die wie Ticker aussehen aber keine sind
-_WORD_BLACKLIST = {
-    "A", "I", "IT", "AT", "BE", "BY", "OR", "AND", "FOR", "THE", "IN",
-    "IS", "TO", "OF", "ON", "AS", "CEO", "CFO", "COO", "IPO", "ETF",
-    "USA", "GDP", "FED", "CPI", "NYSE", "SEC", "FDA", "ETF", "USD",
-    "EUR", "GBP", "JPY", "AI", "EV", "US", "UK", "EU", "Q1", "Q2",
-    "Q3", "Q4", "YOY", "QOQ", "YTD", "EPS", "PE", "PEG", "NDA", "BLA",
-}
-
-# Bekannte Firmenname → Ticker (ergänzt durch yfinance Lookup für unbekannte)
-_NAME_TO_TICKER: Dict[str, str] = {
-    "nvidia": "NVDA", "apple": "AAPL", "microsoft": "MSFT",
-    "amazon": "AMZN", "alphabet": "GOOGL", "google": "GOOGL",
-    "meta": "META", "tesla": "TSLA", "netflix": "NFLX",
-    "amd": "AMD", "intel": "INTC", "qualcomm": "QCOM",
-    "salesforce": "CRM", "oracle": "ORCL", "sap": "SAP.DE",
-    "asml": "ASML", "lvmh": "MC.PA", "siemens": "SIE.DE",
-    "rheinmetall": "RHM.DE", "airbus": "AIR.PA", "biontech": "BNTX",
-    "moderna": "MRNA", "pfizer": "PFE", "merck": "MRK",
-    "novo nordisk": "NVO", "eli lilly": "LLY", "abbvie": "ABBV",
-    "berkshire": "BRK-B", "jpmorgan": "JPM", "goldman sachs": "GS",
-    "morgan stanley": "MS", "blackrock": "BLK",
-    "shopify": "SHOP", "snowflake": "SNOW", "crowdstrike": "CRWD",
-    "palantir": "PLTR", "coinbase": "COIN", "robinhood": "HOOD",
-    "arm holdings": "ARM", "supermicro": "SMCI",
-}
-
-# RSS-Feeds für allgemeine Börsennachrichten (kein API-Key nötig)
-_RSS_FEEDS = [
-    ("Reuters Business",    "https://feeds.reuters.com/reuters/businessNews"),
-    ("Yahoo Finance",       "https://finance.yahoo.com/news/rssindex"),
-    ("MarketWatch",         "https://feeds.marketwatch.com/marketwatch/topstories"),
-    ("Seeking Alpha",       "https://seekingalpha.com/market_currents.xml"),
-    ("CNBC Markets",        "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069"),
-    ("GlobeNewswire",       "https://www.globenewswire.com/RssFeed/industry/9550"),
-    ("PR Newswire Finance", "https://www.prnewswire.com/rss/financial-news-and-business.rss"),
-]
-
-_TIMEOUT = 10
-_HEADERS = {"User-Agent": "Mozilla/5.0 StockSentimentBot/1.0"}
-_MIN_SCORE_FOR_BENCH  = 0.60   # Ab hier → BenchList
-_MIN_SCORE_FOR_NOTIFY = 0.85   # Ab hier → Telegram sofort
-_MAX_SIGNALS_PER_RUN  = 15     # Pro Scan-Lauf max. Signale verarbeiten
+    score: float
+    headline: str
+    source: str
+    detected_at: str
 
 
 class HeadlineSignalDetector:
     """
-    Scannt allgemeine Marktnachrichten und leitet starke Signale
-    automatisch in die BenchList weiter.
+    Scannt RSS-Feeds und NewsAPI nach handlungsrelevanten Schlagzeilen.
+    Extrahiert Ticker-Symbole und ordnet Signaltypen zu.
     """
 
-    def __init__(self, state_path: str = _STATE_FILE):
-        self._state_path = state_path
-        os.makedirs("data", exist_ok=True)
+    # Strong signal threshold → add to BenchList
+    STRONG_THRESHOLD = 0.60
+    # Very strong threshold → immediate Telegram alert
+    VERY_STRONG_THRESHOLD = 0.85
 
-    # ── Haupt-Methode ─────────────────────────────────────────────────────────
+    def __init__(self, newsapi_key: str = "", telegram_notifier=None):
+        self.newsapi_key = newsapi_key
+        self.notifier   = telegram_notifier
+        self._state: Dict = self._load_state()
 
-    def scan(self) -> List[HeadlineSignal]:
+    def scan(self, bench_list: Optional[List[str]] = None) -> List[HeadlineSignal]:
         """
-        Lädt allgemeine Marktnachrichten, extrahiert Signale und gibt
-        alle gefundenen Signale zurück.
+        Hauptmethode: Scannt Quellen, filtert Duplikate, gibt Signale zurück.
+        Starke Signale werden dem bench_list hinzugefügt.
         """
-        headlines = self._fetch_headlines()
-        if not headlines:
-            log.debug("HeadlineScanner: keine Schlagzeilen geladen")
-            return []
+        articles = self._fetch_articles()
+        signals  = []
+        added_to_bench = []
 
-        seen_titles = self._load_seen_titles()
-        new_signals: List[HeadlineSignal] = []
-
-        for title, source in headlines:
-            key = title.lower()[:80]
-            if key in seen_titles:
-                continue
-            seen_titles.add(key)
-
-            signal = self._detect_signal(title, source)
-            if signal:
-                new_signals.append(signal)
-                if len(new_signals) >= _MAX_SIGNALS_PER_RUN:
-                    break
-
-        self._save_seen_titles(seen_titles)
-
-        if new_signals:
-            log.info(
-                "HeadlineScanner: %d neue Signale gefunden",
-                len(new_signals),
-            )
-        return new_signals
-
-    def process_signals(
-        self,
-        signals: List[HeadlineSignal],
-        notify_fn=None,
-    ) -> List[str]:
-        """
-        Verarbeitet Signale: starke → BenchList, sehr starke → Telegram.
-        Gibt Liste der hinzugefügten Ticker zurück.
-        """
-        if not signals:
-            return []
-
-        from analyzers.bench_list import BenchList
-        bench = BenchList()
-        added: List[str] = []
-        notify_msgs: List[str] = []
-
-        for sig in signals:
-            if sig.score < _MIN_SCORE_FOR_BENCH:
+        for article in articles:
+            title = article.get("title", "")
+            if not title or self._is_duplicate(title):
                 continue
 
-            bench.add(
-                sig.ticker,
-                score=sig.score,
-                reason=f"{sig.signal_type}: {sig.headline[:80]}",
-            )
-            added.append(sig.ticker)
+            signal = self._classify(article)
+            if signal is None:
+                continue
 
-            if sig.score >= _MIN_SCORE_FOR_NOTIFY and notify_fn:
-                emoji = _signal_emoji(sig.signal_type)
-                notify_msgs.append(
-                    f"{emoji} <b>{sig.ticker}</b> – {sig.signal_type}\n"
-                    f"<i>{sig.headline[:120]}</i>\n"
-                    f"Quelle: {sig.source} | Score: {sig.score:.2f}"
-                )
+            signals.append(signal)
+            self._mark_seen(title)
 
-        if notify_msgs and notify_fn:
-            header = "📰 <b>Headline-Scanner – Starke Signale</b>\n\n"
-            notify_fn(header + "\n\n".join(notify_msgs[:5]))
+            # Add strong signals to BenchList
+            if bench_list is not None and signal.score >= self.STRONG_THRESHOLD:
+                if signal.ticker and signal.ticker not in bench_list:
+                    bench_list.append(signal.ticker)
+                    added_to_bench.append(signal.ticker)
 
-        if added:
-            log.info(
-                "HeadlineScanner → BenchList: %s",
-                ", ".join(added[:10]),
-            )
+            # Immediate Telegram for very strong signals
+            if self.notifier and signal.score >= self.VERY_STRONG_THRESHOLD:
+                self._send_alert(signal)
 
-        return added
+        if added_to_bench:
+            log.info("HeadlineScanner: %d Ticker zu BenchList hinzugefügt: %s",
+                     len(added_to_bench), added_to_bench)
 
-    # ── Schlagzeilen laden ────────────────────────────────────────────────────
+        self._save_state()
+        return signals
 
-    def _fetch_headlines(self) -> List[Tuple[str, str]]:
-        """Lädt Schlagzeilen aus RSS-Feeds + optional NewsAPI."""
-        results: List[Tuple[str, str]] = []
+    def _fetch_articles(self) -> List[Dict]:
+        articles = []
 
-        for feed_name, url in _RSS_FEEDS:
-            try:
-                resp = requests.get(url, timeout=_TIMEOUT, headers=_HEADERS)
-                if resp.status_code != 200:
-                    continue
-                items = self._parse_rss(resp.text, feed_name)
-                results.extend(items)
-            except Exception as e:
-                log.debug("RSS %s fehlgeschlagen: %s", feed_name, e)
-
-        # NewsAPI allgemeine Finanz-Schlagzeilen (wenn Key vorhanden)
+        # RSS Feeds
+        rss_urls = [
+            "https://feeds.reuters.com/reuters/businessNews",
+            "https://feeds.finance.yahoo.com/rss/2.0/headline",
+            "https://www.marketwatch.com/rss/topstories",
+        ]
         try:
-            from config import config
-            if config.newsapi_key:
-                from collectors.news_api_collector import NewsAPICollector
-                items = NewsAPICollector().collect_general(
-                    "stock market earnings acquisition FDA merger",
-                    max_results=30, days_back=1,
-                )
-                for item in items:
-                    t = item.get("title") or ""
-                    if t:
-                        results.append((t, item.get("source", "NewsAPI")))
-        except Exception as e:
-            log.debug("NewsAPI-Headline-Fetch fehlgeschlagen: %s", e)
-
-        log.debug("HeadlineScanner: %d Schlagzeilen geladen", len(results))
-        return results
-
-    def _parse_rss(self, xml_text: str, source: str) -> List[Tuple[str, str]]:
-        """Extrahiert Titel aus RSS-XML."""
-        import xml.etree.ElementTree as ET
-        results = []
-        try:
-            root = ET.fromstring(xml_text)
-            ns   = {"atom": "http://www.w3.org/2005/Atom"}
-            # RSS 2.0
-            for item in root.iter("item"):
-                title_el = item.find("title")
-                if title_el is not None and title_el.text:
-                    results.append((title_el.text.strip(), source))
-            # Atom
-            for entry in root.findall(".//atom:entry", ns):
-                title_el = entry.find("atom:title", ns)
-                if title_el is not None and title_el.text:
-                    results.append((title_el.text.strip(), source))
+            import feedparser
+            for url in rss_urls:
+                feed = feedparser.parse(url)
+                for entry in feed.entries[:30]:
+                    articles.append({
+                        "title":   entry.get("title", ""),
+                        "summary": entry.get("summary", ""),
+                        "source":  url.split("/")[2],
+                        "link":    entry.get("link", ""),
+                    })
         except Exception:
             pass
-        return results
 
-    # ── Signal-Erkennung ──────────────────────────────────────────────────────
+        # NewsAPI
+        if self.newsapi_key:
+            try:
+                import requests
+                resp = requests.get(
+                    "https://newsapi.org/v2/top-headlines",
+                    params={"category": "business", "language": "en",
+                            "pageSize": 50, "apiKey": self.newsapi_key},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    for a in resp.json().get("articles", []):
+                        articles.append({
+                            "title":   a.get("title", ""),
+                            "summary": a.get("description", ""),
+                            "source":  a.get("source", {}).get("name", ""),
+                        })
+            except Exception:
+                pass
 
-    def _detect_signal(self, headline: str, source: str) -> Optional[HeadlineSignal]:
-        """Prüft Schlagzeile auf Signal-Muster und extrahiert Ticker."""
-        lower = headline.lower()
+        return articles
 
-        matched_type = None
-        matched_score = 0.0
-        for sig_type, score, keywords in _SIGNAL_PATTERNS:
-            if any(kw in lower for kw in keywords):
-                if score > matched_score:
-                    matched_type = sig_type
-                    matched_score = score
+    def _classify(self, article: Dict) -> Optional[HeadlineSignal]:
+        """Versucht einen Signaltyp und Ticker zu extrahieren."""
+        title = (article.get("title") or "").lower()
+        full  = title + " " + (article.get("summary") or "").lower()
 
-        if not matched_type:
+        best_type  = None
+        best_score = 0.0
+        for pattern, score, sig_type in _SIGNAL_PATTERNS:
+            if re.search(pattern, full, re.IGNORECASE):
+                if score > best_score:
+                    best_score = score
+                    best_type  = sig_type
+
+        if best_type is None:
             return None
 
-        ticker = self._extract_ticker(headline)
+        # Extract ticker
+        ticker = self._extract_ticker(article.get("title", ""))
         if not ticker:
             return None
 
         return HeadlineSignal(
             ticker=ticker,
-            signal_type=matched_type,
-            score=matched_score,
-            headline=headline,
-            source=source,
+            signal_type=best_type,
+            score=best_score,
+            headline=article.get("title", "")[:200],
+            source=article.get("source", ""),
+            detected_at=datetime.utcnow().isoformat(),
         )
 
-    def _extract_ticker(self, headline: str) -> Optional[str]:
-        """
-        Extrahiert Ticker aus Schlagzeile.
-        Strategie: explizite $TICKER > Grossbuchstaben-Muster > Firmenname-Mapping.
-        """
-        # 1. Explizite $TICKER Notation (Twitter-Style)
-        dollar_match = re.search(r'\$([A-Z]{1,5}(?:\.[A-Z]{1,2})?)', headline)
-        if dollar_match:
-            t = dollar_match.group(1)
-            if t not in _WORD_BLACKLIST:
-                return t
+    def _extract_ticker(self, text: str) -> Optional[str]:
+        """Extrahiert Ticker aus Überschrift."""
+        # $TICKER notation (highest priority)
+        m = _TICKER_DOLLAR.search(text)
+        if m:
+            return m.group(1)
 
-        # 2. Ticker in Klammern: "Company Name (TICK)"  oder  "Company (NYSE: TICK)"
-        paren_match = re.search(
-            r'\((?:NYSE:|NASDAQ:|XTRA:|ETR:)?\s*([A-Z]{2,5}(?:[.\-][A-Z]{1,2})?)\)',
-            headline
-        )
-        if paren_match:
-            t = paren_match.group(1)
-            if t not in _WORD_BLACKLIST:
-                return t
+        # (TICKER) in parentheses
+        m = _TICKER_PARENS.search(text)
+        if m and m.group(1) not in _IGNORE_WORDS:
+            return m.group(1)
 
-        # 3. Firmenname-Mapping (Wortgrenzen-Check verhindert Substring-Fehler)
-        lower = headline.lower()
-        for name, ticker in _NAME_TO_TICKER.items():
-            # Wortgrenze simulieren: Leerzeichen oder Satzanfang/-ende
-            pattern = r'(?<![a-z])' + re.escape(name) + r'(?![a-z])'
-            if re.search(pattern, lower):
-                return ticker
-
-        # 4. Grossbuchstaben-Muster (letzter Ausweg, fehleranfällig)
-        words = re.findall(r'\b([A-Z]{2,5})\b', headline)
-        for word in words:
-            if word not in _WORD_BLACKLIST and len(word) >= 2:
-                return word
+        # Uppercase word (lowest priority, many false positives)
+        matches = _TICKER_UPPER.findall(text)
+        for match in matches:
+            if match not in _IGNORE_WORDS and len(match) >= 2:
+                return match
 
         return None
 
-    # ── State-Persistenz ─────────────────────────────────────────────────────
+    def _is_duplicate(self, title: str) -> bool:
+        seen = self._state.get("seen_titles", {})
+        cutoff = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+        # Clean old entries
+        self._state["seen_titles"] = {
+            t: ts for t, ts in seen.items() if ts > cutoff
+        }
+        return title in self._state["seen_titles"]
 
-    def _load_seen_titles(self) -> set:
+    def _mark_seen(self, title: str) -> None:
+        if "seen_titles" not in self._state:
+            self._state["seen_titles"] = {}
+        self._state["seen_titles"][title] = datetime.utcnow().isoformat()
+
+    def _send_alert(self, signal: HeadlineSignal) -> None:
+        msg = (
+            f"🚨 <b>Starkes Signal: {signal.ticker}</b>\n"
+            f"Typ: {signal.signal_type} (Score: {signal.score:.2f})\n"
+            f"📰 {signal.headline[:200]}"
+        )
         try:
-            with open(self._state_path, encoding="utf-8") as f:
-                data = json.load(f)
-                # Nur letzte 24h behalten
-                cutoff = (datetime.utcnow() - timedelta(hours=24)).isoformat()
-                return {k for k, v in data.items() if v >= cutoff}
+            self.notifier.send(msg)
         except Exception:
-            return set()
+            pass
 
-    def _save_seen_titles(self, seen: set) -> None:
-        dirpath = os.path.dirname(self._state_path) or "."
-        os.makedirs(dirpath, exist_ok=True)
-        now = datetime.utcnow().isoformat()
+    def _load_state(self) -> Dict:
         try:
-            fd, tmp = tempfile.mkstemp(dir=dirpath, suffix=".tmp")
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump({k: now for k in seen}, f)
-            os.replace(tmp, self._state_path)
-        except Exception as e:
-            log.debug("HeadlineScanner: State speichern fehlgeschlagen: %s", e)
+            with open(_STATE_FILE) as f:
+                return json.load(f)
+        except Exception:
+            return {}
 
-
-def _signal_emoji(signal_type: str) -> str:
-    return {
-        "ACQUISITION":   "🤝",
-        "FDA_APPROVAL":  "💊",
-        "EARNINGS_BEAT": "📈",
-        "CONTRACT_WIN":  "📋",
-        "BREAKOUT":      "🚀",
-        "SPIN_OFF":      "✂️",
-        "UPGRADE":       "⬆️",
-        "SHORT_SQUEEZE": "⚡",
-        "PARTNERSHIP":   "🔗",
-        "DOWNGRADE":     "⬇️",
-        "EARNINGS_MISS": "📉",
-        "RECALL":        "⚠️",
-    }.get(signal_type, "📰")
+    def _save_state(self) -> None:
+        os.makedirs(os.path.dirname(_STATE_FILE), exist_ok=True)
+        try:
+            with open(_STATE_FILE, "w") as f:
+                json.dump(self._state, f)
+        except Exception:
+            pass

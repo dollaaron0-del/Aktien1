@@ -213,5 +213,5 @@ def invalidate_cache_if_crash(threshold_pct: float = 3.0) -> Tuple[bool, float]:
             return True, change_pct
         return False, change_pct
     except Exception as exc:
-        log.debug("invalidate_cache_if_crash fehlgeschlagen: %s", exc)
-        return False, 0.0
+        log.warning("invalidate_cache_if_crash fehlgeschlagen – Prüfung übersprungen: %s", exc)
+        return False, None  # None = Prüfung fehlgeschlagen (nicht: kein Crash)

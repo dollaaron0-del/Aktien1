@@ -1,123 +1,126 @@
 """
-Conditional Entry Watcher – bedingte Einstiege bei Wunschkursniveau.
+Conditional Entry Watcher
 
-Wenn Claude eine Aktie mit SKIP bewertet aber ein bullisches Potential
-sieht, speichert er einen Einstiegspreis (entry_trigger_price). Sobald
-der Kurs diesen Level erreicht, wird der Trade sofort ohne neuen
-Analyse-Zyklus ausgeführt.
-
-Persistenz: data/conditional_entries.json
-Ablauf: 3 Tage (danach muss die Aktie neu analysiert werden)
+Speichert bedingte Kaufaufträge ("Wenn Preis X erreicht wird, kaufe").
+Persistiert in data/conditional_entries.json.
+Prüft bei jedem Preis-Update ob ein Trigger ausgelöst wird.
 """
 from __future__ import annotations
 
 import json
 import os
-import tempfile
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from dataclasses import dataclass, asdict, field
+from datetime import datetime
+from typing import Dict, List, Optional
 
-_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "conditional_entries.json")
-_EXPIRY_DAYS = 7
+from logger import get_logger
+
+log = get_logger(__name__)
+
+_STORE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "conditional_entries.json")
 
 
 @dataclass
 class ConditionalEntry:
-    ticker:                 str
-    trigger_price:          float     # Kauf wenn Kurs <= trigger_price
-    price_at_creation:      float     # Kurs bei der Analyse (Referenz)
-    sentiment_score:        float
-    confidence:             str
-    entry_rationale:        str
-    bull_case:              str
-    bear_case:              str
-    suggested_hold_days:    int
-    target_price:           Optional[float]
-    target_price_rationale: str
-    key_catalysts:          List[str] = field(default_factory=list)
-    risk_factors:           List[str] = field(default_factory=list)
-    created_at:             str = ""
-    expires_at:             str = ""
+    ticker: str
+    trigger_price: float          # Preis bei dem gekauft werden soll
+    price_at_creation: float      # Preis als der Eintrag erstellt wurde
+    sentiment_score: float        # Sentiment-Score bei Erstellung
+    expires_at: str               # ISO-Timestamp: Ablaufdatum
+    ibkr_order_id: Optional[str] = None   # Optionale IBKR-Order-ID
+    shares_reserved: float = 0.0          # Reservierte Anteile (0 = noch nicht berechnet)
 
     @property
-    def pct_to_trigger(self) -> float:
-        """Wie weit muss der Kurs noch fallen bis zum Trigger (%)."""
+    def is_expired(self) -> bool:
+        try:
+            return datetime.utcnow() > datetime.fromisoformat(self.expires_at)
+        except Exception:
+            return False
+
+    @property
+    def trigger_distance_pct(self) -> float:
+        """Wie weit der aktuelle Preis vom Trigger entfernt ist."""
         if self.price_at_creation <= 0:
             return 0.0
-        return (self.price_at_creation - self.trigger_price) / self.price_at_creation * 100
+        return (self.trigger_price - self.price_at_creation) / self.price_at_creation * 100
 
 
 class ConditionalEntryWatcher:
+    """Verwaltet und prüft bedingte Kaufaufträge."""
+
+    def __init__(self, store_file: str = _STORE_FILE, default_expiry_days: int = 7):
+        self._store_file = store_file
+        self._default_expiry_days = default_expiry_days
+        self._entries: Dict[str, ConditionalEntry] = {}
+        self._load()
 
     def add(self, entry: ConditionalEntry) -> None:
-        entries = self._load()
-        entries = [e for e in entries if e.ticker != entry.ticker]
-        entries.append(entry)
-        self._save(entries)
-
-    def get_active(self) -> List[ConditionalEntry]:
-        now = datetime.utcnow().isoformat()[:16]
-        return [e for e in self._load() if e.expires_at >= now]
-
-    def remove(self, ticker: str) -> None:
-        self._save([e for e in self._load() if e.ticker != ticker])
-
-    def cleanup_expired(self) -> int:
-        all_e = self._load()
-        now = datetime.utcnow().isoformat()[:16]
-        active = [e for e in all_e if e.expires_at >= now]
-        if len(active) < len(all_e):
-            self._save(active)
-        return len(all_e) - len(active)
-
-    def check_triggered(self, prices: Dict[str, float]) -> List[ConditionalEntry]:
-        """Gibt alle Einträge zurück deren Trigger-Preis erreicht oder unterschritten wurde."""
-        return [
-            e for e in self.get_active()
-            if prices.get(e.ticker) and prices[e.ticker] <= e.trigger_price
-        ]
-
-    @staticmethod
-    def build(ticker: str, trigger_price: float, current_price: float, analysis) -> "ConditionalEntry":
-        now = datetime.utcnow()
-        return ConditionalEntry(
-            ticker=ticker,
-            trigger_price=round(trigger_price, 4),
-            price_at_creation=current_price,
-            sentiment_score=analysis.sentiment_score,
-            confidence=analysis.confidence,
-            entry_rationale=analysis.entry_rationale,
-            bull_case=analysis.bull_case,
-            bear_case=analysis.bear_case,
-            suggested_hold_days=analysis.suggested_hold_days,
-            target_price=analysis.target_price,
-            target_price_rationale=getattr(analysis, "target_price_rationale", ""),
-            key_catalysts=list(analysis.key_catalysts or []),
-            risk_factors=list(analysis.risk_factors or []),
-            created_at=now.isoformat()[:16],
-            expires_at=(now + timedelta(days=_EXPIRY_DAYS)).isoformat()[:16],
+        """Fügt neuen Eintrag hinzu (überschreibt alten für gleichen Ticker)."""
+        self._entries[entry.ticker] = entry
+        self._save()
+        log.info(
+            "Conditional Entry gesetzt: %s @ $%.2f (Trigger-Distanz: %+.1f%%)",
+            entry.ticker, entry.trigger_price, entry.trigger_distance_pct,
         )
 
-    def _load(self) -> List[ConditionalEntry]:
-        try:
-            with open(_FILE) as f:
-                data = json.load(f)
-            result = []
-            for d in data:
-                d.setdefault("key_catalysts", [])
-                d.setdefault("risk_factors", [])
-                d.setdefault("target_price_rationale", "")
-                result.append(ConditionalEntry(**d))
-            return result
-        except Exception:
-            return []
+    def remove(self, ticker: str) -> None:
+        if ticker in self._entries:
+            del self._entries[ticker]
+            self._save()
 
-    def _save(self, entries: List[ConditionalEntry]) -> None:
-        os.makedirs(os.path.dirname(_FILE), exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            mode="w", dir=os.path.dirname(_FILE), suffix=".tmp", delete=False
-        ) as tmp:
-            json.dump([asdict(e) for e in entries], tmp, indent=2)
-            tmp_path = tmp.name
-        os.replace(tmp_path, _FILE)
+    def get_all(self) -> List[ConditionalEntry]:
+        """Gibt alle nicht abgelaufenen Einträge zurück."""
+        return [e for e in self._entries.values() if not e.is_expired]
+
+    def check_triggered(self, prices: Dict[str, float]) -> List[ConditionalEntry]:
+        """
+        Prüft ob Trigger-Preise erreicht wurden.
+        Gibt Liste ausgelöster Einträge zurück und entfernt sie.
+        """
+        triggered = []
+        to_remove = []
+
+        for ticker, entry in list(self._entries.items()):
+            if entry.is_expired:
+                to_remove.append(ticker)
+                continue
+            price = prices.get(ticker)
+            if price is None:
+                continue
+            # Trigger: Preis erreicht oder überschritten (aufwärts)
+            if price >= entry.trigger_price:
+                triggered.append(entry)
+                to_remove.append(ticker)
+                log.info(
+                    "Conditional Entry ausgelöst: %s @ $%.2f (Trigger war $%.2f)",
+                    ticker, price, entry.trigger_price,
+                )
+
+        for t in to_remove:
+            self._entries.pop(t, None)
+        if to_remove:
+            self._save()
+
+        return triggered
+
+    def _load(self) -> None:
+        try:
+            with open(self._store_file) as f:
+                raw = json.load(f)
+            for ticker, d in raw.items():
+                try:
+                    self._entries[ticker] = ConditionalEntry(**d)
+                except Exception:
+                    pass
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            log.warning("ConditionalEntryWatcher: Laden fehlgeschlagen: %s", e)
+
+    def _save(self) -> None:
+        os.makedirs(os.path.dirname(self._store_file), exist_ok=True)
+        try:
+            with open(self._store_file, "w") as f:
+                json.dump({k: asdict(v) for k, v in self._entries.items()}, f, indent=2)
+        except Exception as e:
+            log.warning("ConditionalEntryWatcher: Speichern fehlgeschlagen: %s", e)
