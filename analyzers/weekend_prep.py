@@ -127,6 +127,23 @@ class WeekendPrep:
         log.info("WeekendPrep: Briefing gespeichert (Woche %s)", week_start)
         return briefing
 
+    def get_current_briefing(self) -> Optional[str]:
+        """Gibt das Briefing für die aktuelle (oder nächste) Handelswoche zurück.
+        Auf Wochenende: sucht nach Montag der NÄCHSTEN Woche.
+        Unter der Woche: sucht nach Montag der AKTUELLEN Woche."""
+        from datetime import date
+        today = date.today()
+        if today.weekday() >= 5:
+            days_to_monday = (7 - today.weekday()) % 7 or 7
+            monday = (today + timedelta(days=days_to_monday)).isoformat()
+        else:
+            monday = (today - timedelta(days=today.weekday())).isoformat()
+        row = self._conn.execute(
+            "SELECT briefing FROM weekly_briefings WHERE week_start=? ORDER BY created_at DESC LIMIT 1",
+            (monday,),
+        ).fetchone()
+        return row[0] if row else None
+
     def get_latest_briefing(self) -> Optional[str]:
         """Gibt das neueste gespeicherte Briefing zurück."""
         row = self._conn.execute(
