@@ -78,6 +78,11 @@ class PerformanceTracker:
         """Fügt fehlende Spalten zur bestehenden DB hinzu (Schema-Migration)."""
         existing = {row[1] for row in self._conn.execute("PRAGMA table_info(predictions)")}
         pred_migrations = [
+            # Core-Spalten die in alten DBs fehlen können
+            ("predicted_at",   "ALTER TABLE predictions ADD COLUMN predicted_at TEXT DEFAULT '2000-01-01T00:00:00'"),
+            ("sentiment_score","ALTER TABLE predictions ADD COLUMN sentiment_score REAL DEFAULT 0.0"),
+            ("entry_price",    "ALTER TABLE predictions ADD COLUMN entry_price REAL DEFAULT 0.0"),
+            # Später hinzugefügte Spalten
             ("exit_price",     "ALTER TABLE predictions ADD COLUMN exit_price REAL"),
             ("exit_reason",    "ALTER TABLE predictions ADD COLUMN exit_reason TEXT"),
             ("exit_category",  "ALTER TABLE predictions ADD COLUMN exit_category TEXT"),
@@ -93,11 +98,16 @@ class PerformanceTracker:
                 log.info("DB-Migration: Spalte '%s' zu predictions hinzugefügt", col)
 
         snap_existing = {row[1] for row in self._conn.execute("PRAGMA table_info(portfolio_snapshots)")}
-        if "daily_pnl" not in snap_existing:
-            self._conn.execute(
-                "ALTER TABLE portfolio_snapshots ADD COLUMN daily_pnl REAL DEFAULT 0.0"
-            )
-            log.info("DB-Migration: Spalte 'daily_pnl' zu portfolio_snapshots hinzugefügt")
+        snap_migrations = [
+            ("recorded_at", "ALTER TABLE portfolio_snapshots ADD COLUMN recorded_at TEXT DEFAULT '2000-01-01T00:00:00'"),
+            ("cash",        "ALTER TABLE portfolio_snapshots ADD COLUMN cash REAL DEFAULT 0.0"),
+            ("n_positions", "ALTER TABLE portfolio_snapshots ADD COLUMN n_positions INTEGER DEFAULT 0"),
+            ("daily_pnl",   "ALTER TABLE portfolio_snapshots ADD COLUMN daily_pnl REAL DEFAULT 0.0"),
+        ]
+        for col, sql in snap_migrations:
+            if col not in snap_existing:
+                self._conn.execute(sql)
+                log.info("DB-Migration: Spalte '%s' zu portfolio_snapshots hinzugefügt", col)
 
         self._conn.commit()
 
