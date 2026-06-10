@@ -245,6 +245,20 @@ class PerformanceTracker:
             "period_days": days,
         }
 
+    def get_value_history(self, days: int = 30) -> List[Dict]:
+        """Portfolio-Wert-Verlauf aus portfolio_snapshots für die letzten N Tage."""
+        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        rows = self._conn.execute(
+            """
+            SELECT recorded_at, total_value, cash, n_positions, daily_pnl
+            FROM portfolio_snapshots
+            WHERE recorded_at > ?
+            ORDER BY recorded_at ASC
+            """,
+            (cutoff,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_risk_metrics(self, days: int = 90) -> Dict:
         """Sharpe, Sortino, Calmar, Max Drawdown."""
         cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
