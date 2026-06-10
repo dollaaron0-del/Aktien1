@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 import yfinance as yf
 
@@ -133,9 +133,7 @@ class WeekendPrep:
         return briefing
 
     def get_current_briefing(self) -> Optional[str]:
-        """Gibt das Briefing für die aktuelle (oder nächste) Handelswoche zurück.
-        Auf Wochenende: sucht nach Montag der NÄCHSTEN Woche.
-        Unter der Woche: sucht nach Montag der AKTUELLEN Woche."""
+        """Gibt das Briefing für die aktuelle (oder nächste) Handelswoche zurück."""
         from datetime import date
         today = date.today()
         if today.weekday() >= 5:
@@ -149,15 +147,26 @@ class WeekendPrep:
         ).fetchone()
         return row[0] if row else None
 
-    def get_latest_briefing(self) -> Optional[str]:
-        """Gibt das neueste gespeicherte Briefing zurück."""
-        row = self._conn.execute(
-            "SELECT briefing, created_at FROM weekly_briefings ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        if not row:
-            return None
-        ts = row[1][:16] if row[1] else "unbekannt"
-        return f"[Erstellt: {ts}]\n\n{row[0]}"
+    def get_latest_briefing(self, limit: int = 1) -> Union[Optional[str], List[str]]:
+        """Gibt das/die neueste(n) gespeicherte(n) Briefing(s) zurück.
+
+        limit=1 (Standard): gibt einen einzelnen String zurück (rückwärtskompatibel).
+        limit>1: gibt eine Liste von Strings zurück.
+        """
+        rows = self._conn.execute(
+            "SELECT briefing, created_at FROM weekly_briefings ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+        if not rows:
+            return None if limit == 1 else []
+
+        results = []
+        for row in rows:
+            ts = row[1][:16] if row[1] else "unbekannt"
+            results.append(f"[Erstellt: {ts}]\n\n{row[0]}")
+
+        return results[0] if limit == 1 else results
 
     def get_briefing_age_hours(self) -> Optional[float]:
         """Gibt das Alter des neuesten Briefings in Stunden zurück."""
