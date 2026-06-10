@@ -76,6 +76,7 @@ class WeekendPrep:
         self.watchlist = watchlist or []
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
         self._conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._init_db()
 
@@ -147,26 +148,33 @@ class WeekendPrep:
         ).fetchone()
         return row[0] if row else None
 
-    def get_latest_briefing(self, limit: int = 1) -> Union[Optional[str], List[str]]:
+    def get_latest_briefing(self, limit: int = 1) -> Union[Optional[str], List[Dict]]:
         """Gibt das/die neueste(n) gespeicherte(n) Briefing(s) zurück.
 
         limit=1 (Standard): gibt einen einzelnen String zurück (rückwärtskompatibel).
-        limit>1: gibt eine Liste von Strings zurück.
+        limit>1: gibt eine Liste von Dicts zurück mit keys: week_start, briefing, created_at.
         """
         rows = self._conn.execute(
-            "SELECT briefing, created_at FROM weekly_briefings ORDER BY id DESC LIMIT ?",
+            "SELECT id, week_start, briefing, created_at FROM weekly_briefings ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
 
         if not rows:
             return None if limit == 1 else []
 
-        results = []
-        for row in rows:
-            ts = row[1][:16] if row[1] else "unbekannt"
-            results.append(f"[Erstellt: {ts}]\n\n{row[0]}")
+        if limit == 1:
+            row = rows[0]
+            ts = (row["created_at"] or "")[:16] or "unbekannt"
+            return f"[Erstellt: {ts}]\n\n{row['briefing']}"
 
-        return results[0] if limit == 1 else results
+        return [
+            {
+                "week_start": row["week_start"],
+                "briefing":   row["briefing"],
+                "created_at": row["created_at"] or "",
+            }
+            for row in rows
+        ]
 
     def get_briefing_age_hours(self) -> Optional[float]:
         """Gibt das Alter des neuesten Briefings in Stunden zurück."""
@@ -238,20 +246,14 @@ class WeekendPrep:
         return {"current": None, "label": "Unbekannt"}
 
     def _get_earnings_calendar(self) -> List[Dict]:
-        """
-        Earnings der nächsten Woche aus yfinance für Watchlist-Ticker.
-        Gibt Liste von {ticker, date, expected_eps} zurück.
-        """
         results = []
-        # Nächste 7 Tage
         now = datetime.utcnow()
         end = now + timedelta(days=7)
-        for ticker in (self.watchlist or [])[:30]:  # max 30 für Speed
+        for ticker in (self.watchlist or [])[:30]:
             try:
                 cal = yf.Ticker(ticker).calendar
                 if cal is None or cal.empty:
                     continue
-                # Earnings Date ist oft ein Index
                 if hasattr(cal, "columns") and "Earnings Date" in cal.columns:
                     ed = cal["Earnings Date"].iloc[0]
                 elif hasattr(cal, "index") and "Earnings Date" in cal.index:
@@ -265,7 +267,6 @@ class WeekendPrep:
         return results
 
     def _detect_macro_events(self) -> List[str]:
-        """Einfache Heuristik: erkennt bekannte Makro-Event-Wörter in aktuellen Nachrichten."""
         events = []
         keywords = ["FOMC", "Fed", "ECB", "EZB", "BoE", "CPI", "PPI", "NFP", "GDP", "PCE",
                     "Zinsentscheidung", "Zinserhöhung", "Zinssenkung", "Inflation", "Arbeitsmarkt"]
@@ -292,11 +293,9 @@ class WeekendPrep:
     # ── Claude briefing generator ─────────────────────────────────────────────
 
     def _generate_briefing(self, raw: Dict) -> str:
-        """Sendet alle gesammelten Daten an Claude und erhält ein strukturiertes Briefing."""
         if not self.api_key:
             return self._fallback_briefing(raw)
 
-        # Daten komprimieren für Prompt
         us_top = sorted(
             raw.get("us_sectors", {}).items(),
             key=lambda x: abs(x[1].get("change_pct", 0)), reverse=True
@@ -314,18 +313,10 @@ class WeekendPrep:
         events = raw.get("macro_events", [])
         earnings = raw.get("earnings", [])
 
-        us_lines = "\n".join(
-            f"  {v['name']}: {v['change_pct']:+.1f}%" for _, v in us_top
-        )
-        eu_lines = "\n".join(
-            f"  {v['name']}: {v['change_pct']:+.1f}%" for _, v in eu_top
-        ) if eu_top else "  (keine EU-Daten)"
-        crypto_lines = "\n".join(
-            f"  {v['name']}: {v['change_pct']:+.1f}%" for _, v in crypto_top
-        ) if crypto_top else "  (keine Krypto-Daten)"
-        macro_lines = "\n".join(
-            f"  {v['name']}: {v['change_pct']:+.1f}% (${v['price']})" for v in macro.values()
-        ) if macro else "  (keine Makro-Daten)"
+        us_lines = "\n".join(f"  {v['name']}: {v['change_pct']:+.1f}%" for _, v in us_top)
+        eu_lines = "\n".join(f"  {v['name']}: {v['change_pct']:+.1f}%" for _, v in eu_top) if eu_top else "  (keine EU-Daten)"
+        crypto_lines = "\n".join(f"  {v['name']}: {v['change_pct']:+.1f}%" for _, v in crypto_top) if crypto_top else "  (keine Krypto-Daten)"
+        macro_lines = "\n".join(f"  {v['name']}: {v['change_pct']:+.1f}% (${v['price']})" for v in macro.values()) if macro else "  (keine Makro-Daten)"
         vix_line = (
             f"VIX: {vix['current']} ({vix['label']}) | Δ Woche: {vix['change']:+.1f}"
             if vix.get("current") else "VIX: Unbekannt"
@@ -384,7 +375,6 @@ Sei direkt, konkret und aktionsorientiert. Kein Marketing-Sprech."""
             return self._fallback_briefing(raw)
 
     def _fallback_briefing(self, raw: Dict) -> str:
-        """Einfaches Text-Briefing ohne Claude, falls API nicht verfügbar."""
         lines = ["# Wochenvorbereitung (ohne KI-Analyse)\n"]
 
         vix = raw.get("vix", {})
@@ -427,7 +417,6 @@ Sei direkt, konkret und aktionsorientiert. Kein Marketing-Sprech."""
 # ── Helper ────────────────────────────────────────────────────────────────────
 
 def pd_timestamp_in_range(ts, start: datetime, end: datetime) -> bool:
-    """Prüft ob ein pandas Timestamp oder datetime im Bereich liegt."""
     try:
         import pandas as pd
         if isinstance(ts, pd.Timestamp):
