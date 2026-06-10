@@ -72,6 +72,34 @@ class PerformanceTracker:
             );
         """)
         self._conn.commit()
+        self._migrate()
+
+    def _migrate(self):
+        """Fügt fehlende Spalten zur bestehenden DB hinzu (Schema-Migration)."""
+        existing = {row[1] for row in self._conn.execute("PRAGMA table_info(predictions)")}
+        pred_migrations = [
+            ("exit_price",     "ALTER TABLE predictions ADD COLUMN exit_price REAL"),
+            ("exit_reason",    "ALTER TABLE predictions ADD COLUMN exit_reason TEXT"),
+            ("exit_category",  "ALTER TABLE predictions ADD COLUMN exit_category TEXT"),
+            ("pnl_pct",        "ALTER TABLE predictions ADD COLUMN pnl_pct REAL"),
+            ("hold_days",      "ALTER TABLE predictions ADD COLUMN hold_days INTEGER"),
+            ("outcome",        "ALTER TABLE predictions ADD COLUMN outcome TEXT"),
+            ("debate_winner",  "ALTER TABLE predictions ADD COLUMN debate_winner TEXT"),
+            ("debate_correct", "ALTER TABLE predictions ADD COLUMN debate_correct INTEGER DEFAULT 0"),
+        ]
+        for col, sql in pred_migrations:
+            if col not in existing:
+                self._conn.execute(sql)
+                log.info("DB-Migration: Spalte '%s' zu predictions hinzugefügt", col)
+
+        snap_existing = {row[1] for row in self._conn.execute("PRAGMA table_info(portfolio_snapshots)")}
+        if "daily_pnl" not in snap_existing:
+            self._conn.execute(
+                "ALTER TABLE portfolio_snapshots ADD COLUMN daily_pnl REAL DEFAULT 0.0"
+            )
+            log.info("DB-Migration: Spalte 'daily_pnl' zu portfolio_snapshots hinzugefügt")
+
+        self._conn.commit()
 
     # ── Prediction tracking ───────────────────────────────────────────────────
 
