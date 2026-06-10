@@ -996,7 +996,16 @@ def run_bot_loop(
         schedule.every(5).minutes.do(_ibkr_fill_check_job)
 
     # ── SL/TP-Check alle 30 Minuten ─────────────────────────────────────────
-    schedule.every(30).minutes.do(strategy.check_open_positions)
+    def _sl_tp_check_job():
+        try:
+            positions = portfolio.all_positions()
+            if not positions:
+                return
+            prices = broker.get_prices(list(positions.keys()))
+            strategy.check_exits(prices)
+        except Exception as _e:
+            log.warning("SL/TP-Check fehlgeschlagen: %s", _e)
+    schedule.every(30).minutes.do(_sl_tp_check_job)
 
     # ── Positions-Aging-Check alle 4 Stunden ────────────────────────────────
     def _position_aging_job():

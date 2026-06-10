@@ -15,7 +15,7 @@ from analyzers.conditional_entry import ConditionalEntry, ConditionalEntryWatche
 
 log = get_logger(__name__)
 
-# ── Trailing-Stop-Stufen ──────────────────────────────────────────────────────
+# ── Trailing-Stop-Stufen ──────────────────────────────────────────────
 # Jede Stufe: (Gewinn-Schwelle %, neuer SL als % vom Einstieg)
 _TRAILING_STEPS = [
     (0.08, 0.02),   # +8%  → SL auf +2%
@@ -100,7 +100,7 @@ class SwingStrategy:
         self._daily_loss_usd: float = 0.0
         self._daily_loss_date: str = ""
 
-    # ── Public entry points ───────────────────────────────────────────────────
+    # ── Public entry points ───────────────────────────────────────────────
 
     def evaluate(
         self,
@@ -139,7 +139,30 @@ class SwingStrategy:
         """Returns triggered conditional entries."""
         return self._conditional_watcher.check_triggered(prices)
 
-    # ── Core evaluation logic ─────────────────────────────────────────────────
+    def build_open_position_context(self, ticker: str) -> Optional[dict]:
+        """Returns a context dict for an open position (for Claude thesis-check), or None."""
+        pos = self.portfolio.all_positions().get(ticker)
+        if pos is None:
+            return None
+        try:
+            prices = self.broker.get_prices([ticker])
+            current_price = prices.get(ticker) or pos.entry_price
+            gain_pct = (current_price - pos.entry_price) / pos.entry_price * 100
+        except Exception:
+            current_price = pos.entry_price
+            gain_pct = 0.0
+        return {
+            "ticker":        ticker,
+            "entry_price":   pos.entry_price,
+            "current_price": round(current_price, 4),
+            "gain_pct":      round(gain_pct, 2),
+            "entry_date":    pos.entry_date,
+            "stop_loss":     pos.stop_loss,
+            "take_profit":   pos.take_profit,
+            "rationale":     getattr(pos, "rationale", ""),
+        }
+
+    # ── Core evaluation logic ───────────────────────────────────────────────
 
     def _evaluate_inner(
         self,
@@ -293,7 +316,7 @@ class SwingStrategy:
             hold_days=hold_days,
         )
 
-    # ── Exit logic ────────────────────────────────────────────────────────────
+    # ── Exit logic ─────────────────────────────────────────────────────────────
 
     def _check_exit(self, ticker: str, pos: Position, price: float, regime: str) -> Optional[StrategyResult]:
         """Check one position for exit conditions."""
@@ -379,7 +402,7 @@ class SwingStrategy:
                     self.portfolio.update_position_state(ticker, stop_loss=round(new_sl, 4))
                 break
 
-    # ── Position sizing ───────────────────────────────────────────────────────
+    # ── Position sizing ─────────────────────────────────────────────────────
 
     def _calc_position_size(
         self, analysis, current_price: float, params, config
@@ -416,7 +439,7 @@ class SwingStrategy:
 
         return round(base, 2)
 
-    # ── Circuit breaker ───────────────────────────────────────────────────────
+    # ── Circuit breaker ─────────────────────────────────────────────────────
 
     def _circuit_breaker_active(self, config) -> bool:
         """Returns True if daily loss limit exceeded."""

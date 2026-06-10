@@ -83,12 +83,17 @@ class WeekendPrep:
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS weekly_briefings (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_at  TEXT NOT NULL,
+                created_at  TEXT,
                 week_start  TEXT NOT NULL,
                 briefing    TEXT NOT NULL,
                 raw_data    TEXT
             )
         """)
+        # Migration: add created_at to databases created before this column existed
+        try:
+            self._conn.execute("ALTER TABLE weekly_briefings ADD COLUMN created_at TEXT")
+        except Exception:
+            pass  # column already exists
         self._conn.commit()
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -139,7 +144,7 @@ class WeekendPrep:
         else:
             monday = (today - timedelta(days=today.weekday())).isoformat()
         row = self._conn.execute(
-            "SELECT briefing FROM weekly_briefings WHERE week_start=? ORDER BY created_at DESC LIMIT 1",
+            "SELECT briefing FROM weekly_briefings WHERE week_start=? ORDER BY id DESC LIMIT 1",
             (monday,),
         ).fetchone()
         return row[0] if row else None
@@ -151,7 +156,8 @@ class WeekendPrep:
         ).fetchone()
         if not row:
             return None
-        return f"[Erstellt: {row[1][:16]}]\n\n{row[0]}"
+        ts = row[1][:16] if row[1] else "unbekannt"
+        return f"[Erstellt: {ts}]\n\n{row[0]}"
 
     def get_briefing_age_hours(self) -> Optional[float]:
         """Gibt das Alter des neuesten Briefings in Stunden zurück."""
