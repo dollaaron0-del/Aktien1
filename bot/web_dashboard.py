@@ -262,16 +262,21 @@ class _ReuseHTTPServer(HTTPServer):
     allow_reuse_address = True  # avoids "Address already in use" on restart
 
 
-def _serve(port: int) -> None:
+def start_dashboard(port: int = 8080) -> None:
+    """Startet den Dashboard-Server als Hintergrund-Thread.
+    Bindet den Port synchron, um Konflikte (z.B. nginx/Streamlit auf demselben
+    Port) sofort zu erkennen – dann wird der interne Server sauber übersprungen
+    statt eine irreführende Erfolgsmeldung zu loggen."""
+    log = get_logger(__name__)
     try:
         server = _ReuseHTTPServer(("0.0.0.0", port), _DashboardHandler)
-        server.serve_forever()
-    except Exception as e:
-        get_logger(__name__).warning("Dashboard-Server Fehler auf Port %d: %s", port, e)
-
-
-def start_dashboard(port: int = 8080) -> None:
-    """Startet den Dashboard-Server als Hintergrund-Thread."""
-    thread = threading.Thread(target=_serve, args=(port,), daemon=True)
+    except OSError as e:
+        log.info(
+            "Web-Dashboard übersprungen – Port %d belegt (%s). "
+            "Vermutlich nginx/Streamlit; interner Server nicht erforderlich.",
+            port, e,
+        )
+        return
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    get_logger(__name__).info("Web-Dashboard gestartet auf Port %d", port)
+    log.info("Web-Dashboard gestartet auf Port %d", port)
