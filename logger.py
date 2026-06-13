@@ -104,7 +104,7 @@ def get_logger(name: str) -> logging.Logger:
         console_handler.setFormatter(StructuredJsonFormatter())
     else:
         fmt = "%(asctime)s [%(levelname)-8s] %(name)s: %(message)s"
-        console_handler.setFormatter(logging.Formatter(fmt, datefmt="%H:%M:%S"))
+        console_handler.setFormatter(logging.Formatter(fmt, datefmt="%Y-%m-%d %H:%M:%S"))
 
     root.addHandler(console_handler)
 
@@ -122,7 +122,13 @@ def get_logger(name: str) -> logging.Logger:
             root.warning("Logger: File-Handler fehlgeschlagen – %s", e)
 
     # Noisy third-party logger dämpfen
-    for noisy in ("yfinance", "urllib3", "requests", "httpx", "praw"):
+    for noisy in ("urllib3", "requests", "httpx", "praw", "ib_insync"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    # yfinance loggt erwartbares Rauschen ("possibly delisted", "HTTP Error
+    # quoteSummary") auf ERROR-Level – würde die WARNING-Schwelle passieren.
+    # Unser Code behandelt fehlende Kurse selbst (Ticker wird übersprungen),
+    # daher komplett stummschalten.
+    logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
     return logger
