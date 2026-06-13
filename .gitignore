@@ -3,6 +3,15 @@ __pycache__/
 *.pyc
 .env
 
+# Laufzeit & Cruft (nicht committen)
+venv/
+logs/
+nohup.out
+*.bak
+*.bak_*
+*.bak.*
+dashboard.bak/
+
 # RuFlo runtime state (nicht committen)
 .claude-flow/daemon-state.json
 .claude-flow/daemon.pid

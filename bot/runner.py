@@ -700,7 +700,7 @@ def run_analysis_cycle(
 
     # Check stop-loss / take-profit first (no Claude needed)
     try:
-        exit_actions = strategy.check_open_positions()
+        exit_actions = strategy.check_exits()
         for action in exit_actions:
             console.print(f"  [yellow]{action}[/yellow]")
         cycle_actions.extend(exit_actions)

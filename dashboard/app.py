@@ -1026,19 +1026,19 @@ with tab_network:
             _DASH_THEMES = {
                 # ── KI & Tech ────────────────────────────────────────────────
                 "AI_CHIPS":           ["NVDA","AMD","AVGO","ARM","INTC","TSM","ASML","AMAT","LRCX","KLAC",
-                                       "MU","MRVL","SMCI","DELL","ASM.AS"],
-                "AI_HYPERSCALER":     ["MSFT","GOOGL","META","AMZN","ORCL","IBM","SNOW","PLTR"],
+                                       "MU","MRVL","SMCI","DELL","ASM.AS", "AAPL", "ANET", "AIXA.DE"],
+                "AI_HYPERSCALER":     ["MSFT","GOOGL","META","AMZN","ORCL","IBM","SNOW","PLTR", "BIDU", "VNET"],
                 "AI_SOFTWARE":        ["CRM","NOW","PANW","ADBE","INTU","PLTR","CRWD","FTNT","ZS",
-                                       "DDOG","NET","S","OKTA","MDB","HUBS"],
+                                       "DDOG","NET","S","OKTA","MDB","HUBS", "SNOW", "DBX"],
                 "ENTERPRISE_SOFTWARE":["SAP.DE","SAP","CRM","NOW","ORCL","MSFT","INTU","WDAY"],
                 "SEMICONDUCTORS":     ["TSM","ASML","NVDA","AMD","AVGO","QCOM","TXN","AMAT",
-                                       "LRCX","KLAC","MU","MRVL","ARM","ASM.AS"],
+                                       "LRCX","KLAC","MU","MRVL","ARM","ASM.AS", "WOLF", "CDNS", "ON"],
                 # ── Verteidigung ──────────────────────────────────────────────
-                "DEFENSE_US":         ["LMT","RTX","NOC","GD","HII","LDOS","CACI","BA","HEI"],
+                "DEFENSE_US":         ["LMT","RTX","NOC","GD","HII","LDOS","CACI","BA","HEI", "LHX"],
                 "DEFENSE_EU":         ["RHM.DE","AIR.PA","BAES.L","MTX.DE","SAAB.ST"],
                 # ── Energie & Rohstoffe ───────────────────────────────────────
                 "OIL_GAS":            ["XOM","CVX","COP","OXY","PSX","VLO","SLB","HAL",
-                                       "BKR","TTE.PA","SHEL","SHEL.L"],
+                                       "BKR","TTE.PA","SHEL","SHEL.L", "BP"],
                 "CLEAN_ENERGY":       ["NEE","ENPH","FSLR","BEP","NESTE.HE","RWE.DE",
                                        "ORSTED.CO","SEDG","RUN","PLUG","BE","ALP"],
                 # ── Rohstoffe & Bergbau ───────────────────────────────────────
@@ -1046,9 +1046,9 @@ with tab_network:
                 # ── Gesundheit & Pharma ───────────────────────────────────────
                 "GLP1_OBESITY":       ["LLY","NVO","AMGN","ABBV","PFE","VKTX","MED"],
                 "BIOTECH_HEALTH":     ["LLY","NVO","MRNA","BNTX","REGN","VRTX","ABBV","JNJ",
-                                       "TMO","ABT","GILD","MRK","BMY","BIIB","ILMN","MDT","AZN","AZN.L","ALNY"],
+                                       "TMO","ABT","GILD","MRK","BMY","BIIB","ILMN","MDT","AZN","AZN.L","ALNY", "PFE", "ELV", "MCK"],
                 # ── Finanzen ─────────────────────────────────────────────────
-                "FINANCIALS":         ["GS","JPM","MS","BAC","BNP.PA","BRK-B","C","WFC","BLK","SCHW"],
+                "FINANCIALS":         ["GS","JPM","MS","BAC","BNP.PA","BRK-B","C","WFC","BLK","SCHW", "BRK.B"],
                 # ── Immobilien ───────────────────────────────────────────────
                 "REAL_ESTATE":        ["AVB","ARE","O","VTR","PLD","SPG","EQR","PSA"],
                 # ── Zahlungen & Fintech ───────────────────────────────────────
@@ -1063,20 +1063,24 @@ with tab_network:
                 # ── E-Commerce & Konsum ───────────────────────────────────────
                 "ECOMMERCE_CONSUMER": ["AMZN","SHOP","MELI","WMT","COST","HD","NFLX","EBAY","ETSY",
                                        "NKE","LULU","TJX","ULTA","MCD","MC.PA","JD","EL","SBUX",
-                                       "KMB","PG","CL","IMAX"],
+                                       "KMB","PG","CL","IMAX", "BABA", "DIS", "KO", "SNAP", "MO", "MDLZ"],
                 # ── Europäische Industrie ─────────────────────────────────────
                 "EU_INDUSTRIAL":      ["SAP.DE","SIE.DE","ALV.DE","BMW.DE","MBG.DE","IFX.DE",
-                                       "ENGI.PA","RWE.DE","DSV.CO","AIR.PA"],
+                                       "ENGI.PA","RWE.DE","DSV.CO","AIR.PA", "ADS.DE"],
                 # ── Safe-Haven ────────────────────────────────────────────────
-                "SAFE_HAVEN":         ["GLD","SLV","GDX","NEM","GOLD","AEM","WPM"],
+                "SAFE_HAVEN":         ["GLD","SLV","GDX","NEM","GOLD","AEM","WPM", "SPY", "QQQ"],
                 # ── EV & Mobilität ────────────────────────────────────────────
-                "EV_AUTO":            ["TSLA","BYD","NIO","RIVN","LCID","GM","F","STLA"],
+                "EV_AUTO":            ["TSLA","BYD","NIO","RIVN","LCID","GM","F","STLA", "TTM"],
             }
             _DASH_T2T: dict = {}
             for _th, _tks in _DASH_THEMES.items():
                 for _tk in _tks:
                     _DASH_T2T.setdefault(_tk, []).append(_th)
             _get_themes = lambda t: _DASH_T2T.get(t.upper(), [])
+            # Catch-all: unklassifizierte Ticker -> Sonstige
+            for _ct in list(_nodes.keys()):
+                if not _DASH_T2T.get(_ct.upper(), []):
+                    _DASH_T2T[_ct.upper()] = ["SONSTIGE"]
             for from_t in list(_nodes.keys()):
                 for to_t in _get_related(from_t):
                     if to_t not in _nodes:

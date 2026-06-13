@@ -119,6 +119,7 @@ class ClaudeAnalyzer:
 
     def __init__(self, api_key: str = "", model: str = "claude-sonnet-4-5"):
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "")
+        self.ollama_ratio = float(os.environ.get("OLLAMA_RATIO", 0.6))
         self.model = model
         self._trust_filter = NewsTrustFilter()
         self._call_count = 0
@@ -127,11 +128,14 @@ class ClaudeAnalyzer:
     def analyze(
         self,
         ticker: str,
-        news: List[Dict],
-        current_price: float,
+        news: List[Dict] = None,
+        current_price: float = None,
         existing_position=None,
         is_crypto: bool = False,
         use_ollama: bool = False,
+        news_items=None,
+        price_data=None,
+        **kwargs,
     ) -> AnalysisResult:
         """
         Main analysis entry point.
@@ -139,6 +143,10 @@ class ClaudeAnalyzer:
         - Tries Ollama pre-screen if enabled
         - Falls back to Claude if needed
         """
+        if news is None:
+            news = news_items or []
+        if current_price is None and price_data is not None:
+            current_price = price_data if isinstance(price_data, (int, float)) else (price_data or {}).get("price") or (price_data or {}).get("close") or 0.0
         if not news:
             return self._empty_result(ticker)
 
@@ -148,6 +156,9 @@ class ClaudeAnalyzer:
             filtered = news[:10]
 
         # Format news text
+        import random
+        ollama_enabled = os.environ.get("OLLAMA_ENABLED", "true").lower() in ("true", "1", "yes")
+        use_ollama = use_ollama or (ollama_enabled and bool(self.api_key) and random.random() < self.ollama_ratio)
         news_text = self._format_news(filtered[:15])
 
         # Ollama pre-screen
@@ -157,7 +168,7 @@ class ClaudeAnalyzer:
                 # If Ollama gives strong signal, skip Claude
                 if (
                     not self.api_key
-                    or (ollama_result.confidence != "HIGH" and not self._has_hard_priority_sources(filtered))
+                    or not self._has_hard_priority_sources(filtered)
                 ):
                     return ollama_result
 
