@@ -29,6 +29,17 @@ class ConditionalEntry:
     expires_at: str               # ISO-Timestamp: Ablaufdatum
     ibkr_order_id: Optional[str] = None   # Optionale IBKR-Order-ID
     shares_reserved: float = 0.0          # Reservierte Anteile (0 = noch nicht berechnet)
+    # Analyse-Kontext (wird beim Auslösen für den Trade & die Telegram-Nachricht gebraucht)
+    created_at: str = ""
+    confidence: str = "MEDIUM"
+    entry_rationale: str = ""
+    bull_case: str = ""
+    bear_case: str = ""
+    risk_factors: List[str] = field(default_factory=list)
+    key_catalysts: List[str] = field(default_factory=list)
+    suggested_hold_days: int = 0
+    target_price: Optional[float] = None
+    target_price_rationale: str = ""
 
     @property
     def is_expired(self) -> bool:
@@ -43,6 +54,11 @@ class ConditionalEntry:
         if self.price_at_creation <= 0:
             return 0.0
         return (self.trigger_price - self.price_at_creation) / self.price_at_creation * 100
+
+    @property
+    def pct_to_trigger(self) -> float:
+        """Alias für trigger_distance_pct – Distanz Trigger ↔ Erstellungskurs in %."""
+        return self.trigger_distance_pct
 
 
 class ConditionalEntryWatcher:
@@ -71,6 +87,41 @@ class ConditionalEntryWatcher:
     def get_all(self) -> List[ConditionalEntry]:
         """Gibt alle nicht abgelaufenen Einträge zurück."""
         return [e for e in self._entries.values() if not e.is_expired]
+
+    def get_active(self) -> List[ConditionalEntry]:
+        """Alias für get_all() – alle aktiven (nicht abgelaufenen) Einträge."""
+        return self.get_all()
+
+    @staticmethod
+    def build(
+        ticker: str,
+        trigger_price: float,
+        current_price: float,
+        analysis,
+        expiry_days: int = 7,
+    ) -> "ConditionalEntry":
+        """Erzeugt einen ConditionalEntry aus einem AnalysisResult.
+        Übernimmt den Analyse-Kontext (Bull/Bear-Case, Kursziel etc.), damit der
+        Trade beim Auslösen ohne erneute Claude-Analyse ausgeführt werden kann."""
+        from datetime import timedelta
+        now = datetime.utcnow()
+        return ConditionalEntry(
+            ticker=ticker,
+            trigger_price=float(trigger_price),
+            price_at_creation=float(current_price),
+            sentiment_score=float(getattr(analysis, "sentiment_score", 0.5) or 0.5),
+            expires_at=(now + timedelta(days=expiry_days)).isoformat(),
+            created_at=now.isoformat(),
+            confidence=getattr(analysis, "confidence", "MEDIUM") or "MEDIUM",
+            entry_rationale=getattr(analysis, "entry_rationale", "") or "",
+            bull_case=getattr(analysis, "bull_case", "") or "",
+            bear_case=getattr(analysis, "bear_case", "") or "",
+            risk_factors=list(getattr(analysis, "risk_factors", []) or []),
+            key_catalysts=list(getattr(analysis, "key_catalysts", []) or []),
+            suggested_hold_days=int(getattr(analysis, "suggested_hold_days", 0) or 0),
+            target_price=getattr(analysis, "target_price", None),
+            target_price_rationale=getattr(analysis, "target_price_rationale", "") or "",
+        )
 
     def check_triggered(self, prices: Dict[str, float]) -> List[ConditionalEntry]:
         """
@@ -107,11 +158,21 @@ class ConditionalEntryWatcher:
         try:
             with open(self._store_file) as f:
                 raw = json.load(f)
-            for ticker, d in raw.items():
+            # Unterstützt beide Formate: {ticker: {...}} und [{...}, ...]
+            if isinstance(raw, dict):
+                records = raw.values()
+            elif isinstance(raw, list):
+                records = raw
+            else:
+                records = []
+            from dataclasses import fields as _dc_fields
+            _valid = {f.name for f in _dc_fields(ConditionalEntry)}
+            for d in records:
                 try:
-                    self._entries[ticker] = ConditionalEntry(**d)
-                except Exception:
-                    pass
+                    entry = ConditionalEntry(**{k: v for k, v in d.items() if k in _valid})
+                    self._entries[entry.ticker] = entry
+                except Exception as _le:
+                    log.debug("Eintrag übersprungen: %s", _le)
         except FileNotFoundError:
             pass
         except Exception as e:

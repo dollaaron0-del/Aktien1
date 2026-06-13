@@ -48,11 +48,6 @@ _IGNORE_WORDS = {
 }
 
 
-@dataclass_like  # using plain class below for compatibility
-class HeadlineSignal:
-    pass
-
-
 from dataclasses import dataclass
 
 

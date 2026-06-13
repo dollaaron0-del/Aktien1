@@ -23,6 +23,7 @@ class AnalysisResult:
     key_catalysts: List[str] = field(default_factory=list)
     suggested_hold_days: int = 14
     target_price: Optional[float] = None
+    target_price_rationale: str = ""
     thesis_valid: Optional[bool] = None
     thesis_break_reason: str = ""
     sources_used: Dict[str, int] = field(default_factory=dict)
@@ -284,6 +285,7 @@ class ClaudeAnalyzer:
                 key_catalysts=data.get("key_catalysts", []),
                 suggested_hold_days=int(data.get("suggested_hold_days", 14)),
                 target_price=data.get("target_price"),
+                target_price_rationale=data.get("target_price_rationale", ""),
                 bull_case=data.get("bull_case", ""),
                 bear_case=data.get("bear_case", ""),
                 debate_winner=data.get("debate_winner", "DRAW"),
