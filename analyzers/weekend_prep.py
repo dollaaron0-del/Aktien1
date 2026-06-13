@@ -90,11 +90,12 @@ class WeekendPrep:
                 raw_data    TEXT
             )
         """)
-        # Migration: add created_at to databases created before this column existed
-        try:
-            self._conn.execute("ALTER TABLE weekly_briefings ADD COLUMN created_at TEXT")
-        except Exception:
-            pass  # column already exists
+        # Migration: fehlende Spalten ergänzen (alte vs. neue DB-Schemata abgleichen)
+        for col in ("created_at", "generated_at"):
+            try:
+                self._conn.execute(f"ALTER TABLE weekly_briefings ADD COLUMN {col} TEXT")
+            except Exception:
+                pass  # Spalte existiert bereits
         self._conn.commit()
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -125,9 +126,12 @@ class WeekendPrep:
 
         # 6. Speichern
         week_start = (datetime.utcnow() - timedelta(days=datetime.utcnow().weekday())).strftime("%Y-%m-%d")
+        _now_iso = datetime.utcnow().isoformat()
+        # generated_at mitschreiben: in alten DBs ist die Spalte NOT NULL
         self._conn.execute(
-            "INSERT INTO weekly_briefings (created_at, week_start, briefing, raw_data) VALUES (?,?,?,?)",
-            (datetime.utcnow().isoformat(), week_start, briefing, json.dumps(raw, default=str)),
+            "INSERT INTO weekly_briefings (created_at, generated_at, week_start, briefing, raw_data) "
+            "VALUES (?,?,?,?,?)",
+            (_now_iso, _now_iso, week_start, briefing, json.dumps(raw, default=str)),
         )
         self._conn.commit()
         log.info("WeekendPrep: Briefing gespeichert (Woche %s)", week_start)
