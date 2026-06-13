@@ -12,8 +12,20 @@ Warum Volume/OI wichtig ist:
   eine bevorstehende Kursbewegung wetten.
 """
 from datetime import datetime
+from math import isnan
 from typing import List, Dict, Optional
 import yfinance as yf
+
+
+def _safe_num(value, default=0.0) -> float:
+    """Wandelt einen Wert robust in float um – fängt None und NaN ab.
+    yfinance liefert für leere Options-Zellen NaN (truthy!), weshalb
+    `int(x or 0)` bei NaN crasht (`cannot convert float NaN to integer`)."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    return float(default) if isnan(v) else v
 
 
 class OptionsFlowCollector:
@@ -60,9 +72,9 @@ class OptionsFlowCollector:
                 total_call_vol += cv
                 # Volume/OI ratio + OTM sweep detection for calls
                 for _, row in calls.iterrows():
-                    vol = int(row.get("volume", 0) or 0)
-                    oi  = int(row.get("openInterest", 0) or 0)
-                    strike = float(row.get("strike", 0) or 0)
+                    vol = int(_safe_num(row.get("volume", 0)))
+                    oi  = int(_safe_num(row.get("openInterest", 0)))
+                    strike = _safe_num(row.get("strike", 0))
                     if vol < 100:
                         continue
                     # Volume/OI: new money entering
@@ -84,9 +96,9 @@ class OptionsFlowCollector:
                 pv = int(puts["volume"].fillna(0).sum())
                 total_put_vol += pv
                 for _, row in puts.iterrows():
-                    vol = int(row.get("volume", 0) or 0)
-                    oi  = int(row.get("openInterest", 0) or 0)
-                    strike = float(row.get("strike", 0) or 0)
+                    vol = int(_safe_num(row.get("volume", 0)))
+                    oi  = int(_safe_num(row.get("openInterest", 0)))
+                    strike = _safe_num(row.get("strike", 0))
                     if vol < 100:
                         continue
                     if oi > 0 and vol / oi >= self.min_vol_oi_ratio and vol >= self.min_sweep_volume:
