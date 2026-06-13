@@ -184,7 +184,7 @@ class PerformanceTracker:
         hold_days: int = 0,
     ) -> None:
         row = self._conn.execute(
-            "SELECT entry_price, direction, debate_winner FROM predictions WHERE id=?",
+            "SELECT entry_price, direction, debate_winner, predicted_at FROM predictions WHERE id=?",
             (prediction_id,),
         ).fetchone()
         if not row:
@@ -193,6 +193,14 @@ class PerformanceTracker:
         entry_price   = float(row["entry_price"])
         direction     = row["direction"]
         debate_winner = row["debate_winner"] or ""
+
+        # hold_days automatisch aus predicted_at ableiten, wenn nicht übergeben
+        if not hold_days and row["predicted_at"]:
+            try:
+                _pa = datetime.fromisoformat(row["predicted_at"])
+                hold_days = max(0, (datetime.utcnow() - _pa).days)
+            except Exception:
+                pass
 
         pnl_pct = (exit_price - entry_price) / entry_price * 100 if entry_price > 0 else 0.0
         outcome = "WIN" if pnl_pct > 0 else "LOSS"

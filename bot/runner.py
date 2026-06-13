@@ -1144,6 +1144,24 @@ def run_analysis_cycle(
             # Nur echte Käufe/Verkäufe in die Tages-Zusammenfassung
             if "GEKAUFT" in action or "VERKAUFT" in action:
                 cycle_actions.append(action)
+                # Prediction-Tracking: Kauf = neue Vorhersage, Verkauf = Outcome.
+                # Speist Genauigkeits-Reports, Reflektion, Kalibrierung, adaptive Schwellen.
+                _px = float((price_data or {}).get("current_price") or 0)
+                if _px > 0:
+                    try:
+                        if "GEKAUFT" in action:
+                            # Idempotent: pro Ticker nur eine offene Vorhersage
+                            if tracker.open_prediction_id(ticker) is None:
+                                tracker.record_prediction(
+                                    ticker, analysis.direction, analysis.confidence,
+                                    analysis.sentiment_score, _px, analysis.debate_winner,
+                                )
+                        else:  # VERKAUFT
+                            _pid = tracker.open_prediction_id(ticker)
+                            if _pid is not None:
+                                tracker.record_outcome(_pid, _px, exit_reason=action)
+                    except Exception as _pt_err:
+                        log.debug("Prediction-Tracking Fehler [%s]: %s", ticker, _pt_err)
                 # Lessons-Memo nach jedem Verkauf aktualisieren
                 if reflection and "VERKAUFT" in action:
                     new_memo = reflection.generate_memo()
