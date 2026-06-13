@@ -2,11 +2,14 @@
 Stock Relations Graph – thematische Verbindungen zwischen Aktien.
 
 Kombiniert:
-  • Statische Themen-Cluster (kuratiert, Stand 2025/26)
+  • Statische Themen-Cluster (kuratiert, Stand 2026)
   • Dynamisch gelernte Beziehungen aus echten Bot-BUY-Signalen
 
 Wenn Aktie A ein BUY-Signal hat, sucht der Runner automatisch verwandte
 Kandidaten aus demselben Thema und ergänzt die Analyseschlange.
+
+Die Themen-Cluster (``THEMES``) sind die zentrale Single Source of Truth –
+auch das Dashboard importiert sie von hier, statt eine eigene Kopie zu pflegen.
 """
 import json
 import os
@@ -29,47 +32,82 @@ _THEMES: Dict[str, List[str]] = {
 
     # KI – Chips & Hardware ───────────────────────────────────────────────────
     "AI_CHIPS": [
-        "NVDA", "AMD", "AVGO", "ARM", "INTC",
-        "TSM", "ASML", "AMAT", "LRCX", "KLAC", "MU", "MRVL",
+        "NVDA", "AMD", "AVGO", "ARM", "INTC", "TSM", "ASML",
+        "AMAT", "LRCX", "KLAC", "MU", "MRVL", "QCOM",
+        "SMCI", "DELL", "ANET", "ASM.AS", "AIXA.DE",
     ],
 
     # KI – Hyperscaler & Cloud ────────────────────────────────────────────────
     "AI_HYPERSCALER": [
         "MSFT", "GOOGL", "META", "AMZN", "ORCL",
-        "IBM", "SNOW", "PLTR",
+        "IBM", "SNOW", "PLTR", "BIDU", "VNET",
     ],
 
     # KI – Software & Agenten ─────────────────────────────────────────────────
     "AI_SOFTWARE": [
         "CRM", "NOW", "PANW", "ADBE", "INTU", "SNOW", "PLTR",
+        "CRWD", "FTNT", "ZS", "DDOG", "NET", "S", "OKTA",
+        "MDB", "HUBS", "DBX",
+    ],
+
+    # Cybersecurity ───────────────────────────────────────────────────────────
+    "CYBERSECURITY": [
+        "PANW", "CRWD", "ZS", "FTNT", "S", "OKTA", "NET",
+        "CYBR", "TENB", "RBRK", "QLYS", "VRNS",
     ],
 
     # Rüstung & Verteidigung – USA ────────────────────────────────────────────
     "DEFENSE_US": [
         "LMT", "RTX", "NOC", "GD", "HII", "LDOS", "CACI",
+        "BA", "HEI", "LHX", "AXON",
     ],
 
     # Rüstung & Verteidigung – Europa (NATO-Aufrüstung) ───────────────────────
     "DEFENSE_EU": [
         "RHM.DE", "AIR.PA", "BAES.L", "MTX.DE", "SAAB.ST",
+        "HO.PA", "LDO.MI",
     ],
 
     # Halbleiter-Lieferkette ──────────────────────────────────────────────────
     "SEMICONDUCTORS": [
         "TSM", "ASML", "NVDA", "AMD", "AVGO", "QCOM", "TXN",
         "AMAT", "LRCX", "KLAC", "MU", "MRVL", "ARM",
+        "ASM.AS", "WOLF", "CDNS", "SNPS", "ON",
+    ],
+
+    # Quantencomputing ────────────────────────────────────────────────────────
+    "QUANTUM_COMPUTING": [
+        "IONQ", "RGTI", "QBTS", "QUBT", "ARQQ",
+        "IBM", "GOOGL", "HON",
+    ],
+
+    # Robotik & Humanoide / Automatisierung ───────────────────────────────────
+    "ROBOTICS_AUTOMATION": [
+        "TSLA", "NVDA", "ISRG", "ROK", "TER", "ZBRA",
+        "PATH", "SYM", "ABBN.SW", "KUKA.DE",
+    ],
+
+    # Weltraum & Satelliten ───────────────────────────────────────────────────
+    "SPACE_ECONOMY": [
+        "RKLB", "LUNR", "ASTS", "PL", "RDW", "BA", "LMT", "NOC",
     ],
 
     # Öl & Gas ────────────────────────────────────────────────────────────────
     "OIL_GAS": [
         "XOM", "CVX", "COP", "OXY", "PSX", "VLO",
         "SLB", "HAL", "BKR",
-        "TTE.PA", "SHEL.L",
+        "TTE.PA", "SHEL", "BP",
+    ],
+
+    # Nuklear & Uran ──────────────────────────────────────────────────────────
+    "NUCLEAR_URANIUM": [
+        "CCJ", "LEU", "UEC", "OKLO", "SMR", "NNE",
+        "DNN", "UUUU", "URA", "CEG", "VST",
     ],
 
     # GLP-1 / Adipositas-Medikamente ──────────────────────────────────────────
     "GLP1_OBESITY": [
-        "LLY", "NVO", "AMGN", "ABBV", "PFE", "VKTX",
+        "LLY", "NVO", "AMGN", "ABBV", "PFE", "VKTX", "MED",
     ],
 
     # Payments & Fintech ──────────────────────────────────────────────────────
@@ -79,47 +117,170 @@ _THEMES: Dict[str, List[str]] = {
 
     # Krypto-Proxy ────────────────────────────────────────────────────────────
     "CRYPTO_PROXY": [
-        "COIN", "MSTR", "RIOT", "MARA", "CLSK",
+        "COIN", "MSTR", "RIOT", "MARA", "CLSK", "HUT", "BMNR",
+    ],
+
+    # Banken & Finanzwerte ────────────────────────────────────────────────────
+    "FINANCIALS": [
+        "GS", "JPM", "MS", "BAC", "C", "WFC", "BLK", "SCHW",
+        "BRK-B", "BNP.PA",
     ],
 
     # Rechenzentren & Strom (KI-Infrastruktur) ────────────────────────────────
     "DATA_CENTER_POWER": [
         "EQIX", "DLR", "AMT",
-        "NRG", "CEG", "VST", "OKLO",
+        "NRG", "CEG", "VST", "OKLO", "VRT", "ETN", "GEV",
     ],
 
     # Europäische Industrie & Tech ────────────────────────────────────────────
     "EU_INDUSTRIAL": [
         "SAP.DE", "SIE.DE", "ALV.DE", "BMW.DE", "MBG.DE",
-        "IFX.DE", "ENGI.PA", "RWE.DE",
+        "IFX.DE", "ENGI.PA", "RWE.DE", "DSV.CO", "AIR.PA", "ADS.DE",
+    ],
+
+    # Industrie & Logistik (USA) ──────────────────────────────────────────────
+    "INDUSTRIALS": [
+        "CAT", "HON", "GE", "DE", "UPS", "FDX", "EMR",
+        "ETN", "MMM", "ITW", "PH", "XPO", "GXO",
+    ],
+
+    # Immobilien (REITs) ──────────────────────────────────────────────────────
+    "REAL_ESTATE": [
+        "AVB", "ARE", "O", "VTR", "PLD", "SPG", "EQR", "PSA",
+    ],
+
+    # Bergbau & Metalle ───────────────────────────────────────────────────────
+    "MINING_METALS": [
+        "BHP", "RIO", "FCX", "VALE", "AA", "SCCO",
+        "NEM", "GOLD", "AEM", "WPM",
     ],
 
     # Safe-Haven & Edelmetalle ────────────────────────────────────────────────
     "SAFE_HAVEN": [
         "GLD", "SLV", "GDX", "NEM", "GOLD", "AEM", "WPM",
+        "SPY", "QQQ",
     ],
 
     # E-Commerce & Konsum ─────────────────────────────────────────────────────
     "ECOMMERCE_CONSUMER": [
         "AMZN", "SHOP", "MELI", "WMT", "COST", "HD", "NFLX",
+        "EBAY", "ETSY", "BABA", "JD", "SBUX", "MC.PA",
+    ],
+
+    # EV & Mobilität ──────────────────────────────────────────────────────────
+    "EV_AUTO": [
+        "TSLA", "RIVN", "LCID", "GM", "F", "STLA",
+        "NIO", "XPEV", "LI", "BYDDY",
     ],
 
     # Erneuerbare Energie ─────────────────────────────────────────────────────
     "CLEAN_ENERGY": [
-        "NEE", "ENPH", "FSLR", "BEP",
+        "NEE", "ENPH", "FSLR", "BEP", "SEDG", "RUN", "PLUG", "BE",
         "NESTE.HE", "RWE.DE", "ORSTED.CO",
     ],
 
     # Enterprise Software ─────────────────────────────────────────────────────
     "ENTERPRISE_SOFTWARE": [
-        "SAP.DE", "CRM", "NOW", "ORCL", "MSFT", "INTU", "WDAY",
+        "SAP", "CRM", "NOW", "ORCL", "MSFT", "INTU", "WDAY",
     ],
 
     # Gesundheit & Biotechnologie ─────────────────────────────────────────────
     "BIOTECH_HEALTH": [
         "LLY", "NVO", "MRNA", "BNTX", "REGN", "VRTX",
-        "ABBV", "JNJ", "TMO", "ABT",
+        "ABBV", "JNJ", "TMO", "ABT", "GILD", "MRK", "BMY",
+        "AZN", "AZN.L", "ALNY",
     ],
+}
+
+# Öffentlicher Alias – zentrale Single Source of Truth für Themen-Cluster.
+# Dashboard & Analyzer importieren THEMES von hier, statt eigene Kopien zu pflegen.
+THEMES = _THEMES
+
+# ── Cross-Listing-Kanonisierung ──────────────────────────────────────────────
+# Gleiche Firma an verschiedenen Börsenplätzen → ein kanonischer Ticker.
+# Verhindert, dass Runner & Dashboard dieselbe Firma doppelt führen/analysieren.
+# Schlüssel = Zweit-Listing, Wert = kanonischer (i. d. R. US-)Ticker.
+CROSS_LISTINGS: Dict[str, str] = {
+    "ASML.AS":   "ASML",
+    "ASMI.AS":   "ASM.AS",   # ASM International – Amsterdam-Varianten
+    "NOVO-B.CO": "NVO",
+    "BAES.L":    "BA",        # BAE Systems – UK vs. US
+    "SHEL.L":    "SHEL",
+    "TTE.PA":    "TTE",
+    "SAP.DE":    "SAP",       # SAP US-ADR
+    "LVMH.PA":   "MC.PA",     # LVMH
+}
+
+
+def canonical(ticker: str) -> str:
+    """Kanonischer Ticker einer Firma (Zweit-Listings → Haupt-Listing)."""
+    return CROSS_LISTINGS.get(ticker.upper(), ticker.upper())
+
+
+# ── Themen-Anzeige-Metadaten ─────────────────────────────────────────────────
+# Deutsches Label + Farbe je Thema – zentral, damit das Dashboard sie importiert
+# statt eigener Kopien. Jedes Thema in THEMES MUSS hier einen Eintrag haben;
+# tests/test_stock_relations.py erzwingt das (verhindert stillen Drift bei neuen
+# Themen). Pflege ein neues Thema also immer an diesen drei Stellen: THEMES,
+# THEME_LABELS_DE, THEME_COLORS.
+THEME_LABELS_DE: Dict[str, str] = {
+    "AI_CHIPS":            "KI-Chips",
+    "AI_HYPERSCALER":      "Hyperscaler",
+    "AI_SOFTWARE":         "KI-Software",
+    "CYBERSECURITY":       "Cybersecurity",
+    "ENTERPRISE_SOFTWARE": "Enterprise SW",
+    "SEMICONDUCTORS":      "Halbleiter",
+    "QUANTUM_COMPUTING":   "Quantum",
+    "ROBOTICS_AUTOMATION": "Robotik",
+    "SPACE_ECONOMY":       "Weltraum",
+    "DEFENSE_US":          "Rüstung USA",
+    "DEFENSE_EU":          "Rüstung EU",
+    "OIL_GAS":             "Öl & Gas",
+    "NUCLEAR_URANIUM":     "Nuklear & Uran",
+    "CLEAN_ENERGY":        "Erneuerbare",
+    "GLP1_OBESITY":        "GLP-1",
+    "BIOTECH_HEALTH":      "Biotech",
+    "PAYMENTS_FINTECH":    "Payments",
+    "CRYPTO_PROXY":        "Krypto",
+    "FINANCIALS":          "Finanzen",
+    "DATA_CENTER_POWER":   "Rechenzentren",
+    "EU_INDUSTRIAL":       "EU Industrie",
+    "INDUSTRIALS":         "Industrie",
+    "REAL_ESTATE":         "Immobilien",
+    "MINING_METALS":       "Rohstoffe",
+    "SAFE_HAVEN":          "Safe-Haven",
+    "ECOMMERCE_CONSUMER":  "E-Commerce",
+    "EV_AUTO":             "EV & Auto",
+}
+
+THEME_COLORS: Dict[str, str] = {
+    "AI_CHIPS":            "#7B68EE",
+    "AI_HYPERSCALER":      "#3498DB",
+    "AI_SOFTWARE":         "#5DADE2",
+    "CYBERSECURITY":       "#546E7A",
+    "ENTERPRISE_SOFTWARE": "#1ABC9C",
+    "SEMICONDUCTORS":      "#9B59B6",
+    "QUANTUM_COMPUTING":   "#00ACC1",
+    "ROBOTICS_AUTOMATION": "#FF7043",
+    "SPACE_ECONOMY":       "#5C6BC0",
+    "DEFENSE_US":          "#E74C3C",
+    "DEFENSE_EU":          "#C0392B",
+    "OIL_GAS":             "#F39C12",
+    "NUCLEAR_URANIUM":     "#C0CA33",
+    "CLEAN_ENERGY":        "#2ECC71",
+    "GLP1_OBESITY":        "#FF69B4",
+    "BIOTECH_HEALTH":      "#E91E63",
+    "PAYMENTS_FINTECH":    "#00BCD4",
+    "CRYPTO_PROXY":        "#FFD700",
+    "FINANCIALS":          "#2980B9",
+    "DATA_CENTER_POWER":   "#4CAF50",
+    "EU_INDUSTRIAL":       "#E67E22",
+    "INDUSTRIALS":         "#795548",
+    "REAL_ESTATE":         "#AB47BC",
+    "MINING_METALS":       "#8D6E63",
+    "SAFE_HAVEN":          "#BDC3C7",
+    "ECOMMERCE_CONSUMER":  "#26C6DA",
+    "EV_AUTO":             "#43A047",
 }
 
 # Reverse-Index: ticker → themes (wird beim Import gebaut)
@@ -165,29 +326,44 @@ class StockRelations:
     def get_related(self, ticker: str, limit: int = 6) -> List[str]:
         """
         Verwandte Ticker: dynamisch gelernte zuerst, dann Themen-Cluster.
-        Der Ticker selbst wird nie zurückgegeben.
+
+        Statische Kandidaten werden nach Anzahl gemeinsamer Themen gerankt –
+        ein Ticker, der mit dem Ausgangswert mehrere Cluster teilt (z. B. NVDA
+        in AI_CHIPS *und* SEMICONDUCTORS), gilt als stärker verwandt und steht
+        weiter vorne. Der Ticker selbst wird nie zurückgegeben.
         """
         upper  = ticker.upper()
-        seen   = {upper}
+        # Dedup pro Firma (kanonisch): verhindert, dass z. B. SAP und SAP.DE
+        # beide zurückkommen und der Runner dieselbe Firma doppelt analysiert.
+        seen_canon = {canonical(upper)}
         result: List[str] = []
+
+        def _take(t: str) -> bool:
+            c = canonical(t)
+            if c in seen_canon:
+                return False
+            seen_canon.add(c)
+            result.append(t)
+            return len(result) >= limit
 
         # 1. Dynamisch gelernte Verbindungen aus echten Bot-Signalen
         for entry in self._graph.get(upper, []):
             for t in entry["related"]:
-                if t not in seen:
-                    seen.add(t)
-                    result.append(t)
-                    if len(result) >= limit:
-                        return result
+                if _take(t):
+                    return result
 
-        # 2. Statische Themen-Cluster als Fallback
-        for theme in _TICKER_TO_THEMES.get(upper, []):
-            for t in _THEMES[theme]:
-                if t not in seen:
-                    seen.add(t)
-                    result.append(t)
-                    if len(result) >= limit:
-                        return result
+        # 2. Statische Themen-Cluster, gerankt nach gemeinsamen Themen
+        own_themes = _TICKER_TO_THEMES.get(upper, [])
+        if own_themes:
+            shared: Dict[str, int] = {}
+            for theme in own_themes:
+                for t in _THEMES[theme]:
+                    if canonical(t) not in seen_canon:
+                        shared[t] = shared.get(t, 0) + 1
+            # Mehr gemeinsame Themen zuerst; bei Gleichstand alphabetisch (stabil)
+            for t in sorted(shared, key=lambda x: (-shared[x], x)):
+                if _take(t):
+                    return result
 
         return result
 

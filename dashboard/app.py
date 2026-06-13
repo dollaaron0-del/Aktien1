@@ -950,22 +950,8 @@ with tab_network:
                 _show_edges = st.checkbox("Verbindungslinien anzeigen", value=False)
 
             # ── Cross-Listing-Deduplizierung: gleiche Firma, verschiedene Börsenplätze ──
-            # Schlüssel = Duplikat, Wert = kanonischer Ticker (der behalten wird)
-            _CANONICAL = {
-                "ASML.AS":    "ASML",
-                "NOVO-B.CO":  "NVO",
-                "BAES.L":     "BA",       # BAE Systems – UK vs US
-                "SHEL.L":     "SHEL",
-                "TTE.PA":     "TTE",
-                "AIR.PA":     "AIR.PA",   # kein US-Listing → behalten
-                "RHM.DE":     "RHM.DE",   # kein US-Listing → behalten
-                "SAP.DE":     "SAP",      # SAP US ADR
-                "SIE.DE":     "SIE.DE",
-                "BMW.DE":     "BMW.DE",
-                "MC.PA":      "MC.PA",    # LVMH
-                "LVMH.PA":    "MC.PA",
-                "OR.PA":      "OR.PA",
-            }
+            # Zentrale Map aus analyzers/stock_relations (Single Source of Truth).
+            from analyzers.stock_relations import CROSS_LISTINGS as _CANONICAL
 
             # ── Node-Daten aus BotDataBridge (einheitliche Quelle) ──────────────
             _rec_color = {"BUY": "#00e676", "HOLD": "#ffd740", "SELL": "#f44336", "SKIP": "#888888"}
@@ -1022,56 +1008,20 @@ with tab_network:
             _edge_seen: set = set()
             _get_related = lambda t: _net_rel.get_related(t)[:6]
 
-            # Themen-Mapping direkt im Dashboard (unabhängig von StockRelations-Version)
-            _DASH_THEMES = {
-                # ── KI & Tech ────────────────────────────────────────────────
-                "AI_CHIPS":           ["NVDA","AMD","AVGO","ARM","INTC","TSM","ASML","AMAT","LRCX","KLAC",
-                                       "MU","MRVL","SMCI","DELL","ASM.AS", "AAPL", "ANET", "AIXA.DE"],
-                "AI_HYPERSCALER":     ["MSFT","GOOGL","META","AMZN","ORCL","IBM","SNOW","PLTR", "BIDU", "VNET"],
-                "AI_SOFTWARE":        ["CRM","NOW","PANW","ADBE","INTU","PLTR","CRWD","FTNT","ZS",
-                                       "DDOG","NET","S","OKTA","MDB","HUBS", "SNOW", "DBX"],
-                "ENTERPRISE_SOFTWARE":["SAP.DE","SAP","CRM","NOW","ORCL","MSFT","INTU","WDAY"],
-                "SEMICONDUCTORS":     ["TSM","ASML","NVDA","AMD","AVGO","QCOM","TXN","AMAT",
-                                       "LRCX","KLAC","MU","MRVL","ARM","ASM.AS", "WOLF", "CDNS", "ON"],
-                # ── Verteidigung ──────────────────────────────────────────────
-                "DEFENSE_US":         ["LMT","RTX","NOC","GD","HII","LDOS","CACI","BA","HEI", "LHX"],
-                "DEFENSE_EU":         ["RHM.DE","AIR.PA","BAES.L","MTX.DE","SAAB.ST"],
-                # ── Energie & Rohstoffe ───────────────────────────────────────
-                "OIL_GAS":            ["XOM","CVX","COP","OXY","PSX","VLO","SLB","HAL",
-                                       "BKR","TTE.PA","SHEL","SHEL.L", "BP"],
-                "CLEAN_ENERGY":       ["NEE","ENPH","FSLR","BEP","NESTE.HE","RWE.DE",
-                                       "ORSTED.CO","SEDG","RUN","PLUG","BE","ALP"],
-                # ── Rohstoffe & Bergbau ───────────────────────────────────────
-                "MINING_METALS":      ["BHP","RIO","FCX","VALE","AA","NEM","GOLD","AEM","WPM","SCCO","CHME","DD","LYB"],
-                # ── Gesundheit & Pharma ───────────────────────────────────────
-                "GLP1_OBESITY":       ["LLY","NVO","AMGN","ABBV","PFE","VKTX","MED"],
-                "BIOTECH_HEALTH":     ["LLY","NVO","MRNA","BNTX","REGN","VRTX","ABBV","JNJ",
-                                       "TMO","ABT","GILD","MRK","BMY","BIIB","ILMN","MDT","AZN","AZN.L","ALNY", "PFE", "ELV", "MCK"],
-                # ── Finanzen ─────────────────────────────────────────────────
-                "FINANCIALS":         ["GS","JPM","MS","BAC","BNP.PA","BRK-B","C","WFC","BLK","SCHW", "BRK.B"],
-                # ── Immobilien ───────────────────────────────────────────────
-                "REAL_ESTATE":        ["AVB","ARE","O","VTR","PLD","SPG","EQR","PSA"],
-                # ── Zahlungen & Fintech ───────────────────────────────────────
-                "PAYMENTS_FINTECH":   ["V","MA","AXP","PYPL","SQ","SOFI","NU","HOOD"],
-                # ── Krypto ───────────────────────────────────────────────────
-                "CRYPTO_PROXY":       ["COIN","MSTR","RIOT","MARA","CLSK"],
-                # ── Infrastruktur & Strom ─────────────────────────────────────
-                "DATA_CENTER_POWER":  ["EQIX","DLR","AMT","NRG","CEG","VST","OKLO","VRT"],
-                # ── Industrie & Logistik ──────────────────────────────────────
-                "INDUSTRIALS":        ["CAT","HON","GE","DE","XPO","UPS","FDX","GXO","EMR",
-                                       "ETN","MMM","RPM","SPXC","UP","GFL","ITW","PH"],
-                # ── E-Commerce & Konsum ───────────────────────────────────────
-                "ECOMMERCE_CONSUMER": ["AMZN","SHOP","MELI","WMT","COST","HD","NFLX","EBAY","ETSY",
-                                       "NKE","LULU","TJX","ULTA","MCD","MC.PA","JD","EL","SBUX",
-                                       "KMB","PG","CL","IMAX", "BABA", "DIS", "KO", "SNAP", "MO", "MDLZ"],
-                # ── Europäische Industrie ─────────────────────────────────────
-                "EU_INDUSTRIAL":      ["SAP.DE","SIE.DE","ALV.DE","BMW.DE","MBG.DE","IFX.DE",
-                                       "ENGI.PA","RWE.DE","DSV.CO","AIR.PA", "ADS.DE"],
-                # ── Safe-Haven ────────────────────────────────────────────────
-                "SAFE_HAVEN":         ["GLD","SLV","GDX","NEM","GOLD","AEM","WPM", "SPY", "QQQ"],
-                # ── EV & Mobilität ────────────────────────────────────────────
-                "EV_AUTO":            ["TSLA","BYD","NIO","RIVN","LCID","GM","F","STLA", "TTM"],
-            }
+            # Themen-Mapping aus der zentralen Single Source of Truth
+            # (analyzers/stock_relations.THEMES) – kein dupliziertes Cluster-Dict
+            # mehr, damit Bot-Netz und Dashboard nicht auseinanderdriften.
+            from analyzers.stock_relations import THEMES as _CENTRAL_THEMES
+            _DASH_THEMES = {_th: list(_tks) for _th, _tks in _CENTRAL_THEMES.items()}
+            # Dashboard-only Ergänzungen (rein visuelle Cluster, die der Bot
+            # nicht zur Kandidaten-Expansion braucht):
+            _DASH_THEMES.setdefault("ECOMMERCE_CONSUMER", []).extend(
+                ["NKE","LULU","TJX","ULTA","MCD","EL","KMB","PG","CL",
+                 "DIS","KO","SNAP","MO","MDLZ"]
+            )
+            _DASH_THEMES.setdefault("BIOTECH_HEALTH", []).extend(
+                ["BIIB","ILMN","MDT","ELV","MCK"]
+            )
             _DASH_T2T: dict = {}
             for _th, _tks in _DASH_THEMES.items():
                 for _tk in _tks:
@@ -1138,6 +1088,14 @@ with tab_network:
                     "ECOMMERCE_CONSUMER": ( 0.40, -0.60),
                     "EV_AUTO":            ( 0.65, -0.50),
                 }
+                # Auto-Platzierung: zentral neu hinzugefügte Themen ohne handgesetztes
+                # Zentrum landen deterministisch auf einem Außenring – so verschwindet
+                # nie wieder ein Thema still, nur weil die Layout-Map nicht gepflegt wurde.
+                import math as _math_ac
+                _missing_themes = [th for th in _CENTRAL_THEMES if th not in _theme_centers]
+                for _i, _th in enumerate(sorted(_missing_themes)):
+                    _ang = 2 * _math_ac.pi * _i / max(len(_missing_themes), 1)
+                    _theme_centers[_th] = (1.18 * _math_ac.cos(_ang), 1.18 * _math_ac.sin(_ang))
                 # Primär-Thema: erster Eintrag aus get_themes() → bestimmt den Cluster
                 # Mehrfachthemen landen im ersten (wichtigsten) Cluster, nicht im Durchschnitt
                 _theme_to_tickers: dict = {}
@@ -1176,54 +1134,12 @@ with tab_network:
                 )
 
                 # ── Theme-Farben & deutsche Labels ─────────────────────────
-                _theme_colors = {
-                    "AI_CHIPS":           "#7B68EE",
-                    "SEMICONDUCTORS":     "#9B59B6",
-                    "AI_HYPERSCALER":     "#3498DB",
-                    "AI_SOFTWARE":        "#5DADE2",
-                    "ENTERPRISE_SOFTWARE":"#1ABC9C",
-                    "DEFENSE_US":         "#E74C3C",
-                    "DEFENSE_EU":         "#C0392B",
-                    "OIL_GAS":            "#F39C12",
-                    "CLEAN_ENERGY":       "#2ECC71",
-                    "GLP1_OBESITY":       "#FF69B4",
-                    "BIOTECH_HEALTH":     "#E91E63",
-                    "PAYMENTS_FINTECH":   "#00BCD4",
-                    "CRYPTO_PROXY":       "#FFD700",
-                    "DATA_CENTER_POWER":  "#4CAF50",
-                    "SAFE_HAVEN":         "#BDC3C7",
-                    "EU_INDUSTRIAL":      "#E67E22",
-                    "ECOMMERCE_CONSUMER": "#26C6DA",
-                    "FINANCIALS":         "#2980B9",
-                    "INDUSTRIALS":        "#795548",
-                    "EV_AUTO":            "#43A047",
-                    "MINING_METALS":      "#8D6E63",
-                    "REAL_ESTATE":        "#AB47BC",
-                }
-                _theme_labels_de = {
-                    "AI_CHIPS":           "KI-Chips",
-                    "SEMICONDUCTORS":     "Halbleiter",
-                    "AI_HYPERSCALER":     "Hyperscaler",
-                    "AI_SOFTWARE":        "KI-Software",
-                    "ENTERPRISE_SOFTWARE":"Enterprise SW",
-                    "DEFENSE_US":         "Rüstung USA",
-                    "DEFENSE_EU":         "Rüstung EU",
-                    "OIL_GAS":            "Öl & Gas",
-                    "CLEAN_ENERGY":       "Erneuerbare",
-                    "GLP1_OBESITY":       "GLP-1",
-                    "BIOTECH_HEALTH":     "Biotech",
-                    "PAYMENTS_FINTECH":   "Payments",
-                    "CRYPTO_PROXY":       "Krypto",
-                    "DATA_CENTER_POWER":  "Rechenzentren",
-                    "SAFE_HAVEN":         "Safe-Haven",
-                    "EU_INDUSTRIAL":      "EU Industrie",
-                    "ECOMMERCE_CONSUMER": "E-Commerce",
-                    "FINANCIALS":         "Finanzen",
-                    "INDUSTRIALS":        "Industrie",
-                    "EV_AUTO":            "EV & Auto",
-                    "MINING_METALS":      "Rohstoffe",
-                    "REAL_ESTATE":        "Immobilien",
-                }
+                # Zentral aus analyzers/stock_relations (Single Source of Truth);
+                # keine lokalen Kopien mehr → kein Drift bei neuen Themen.
+                from analyzers.stock_relations import (
+                    THEME_COLORS as _theme_colors,
+                    THEME_LABELS_DE as _theme_labels_de,
+                )
 
                 # ── Hintergrund-Zonen: Polygon-Kreise (fill="toself" funktioniert immer) ──
                 import math as _math
