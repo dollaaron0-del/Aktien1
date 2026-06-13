@@ -1190,9 +1190,11 @@ def run_analysis_cycle(
     # Record portfolio snapshot
     prices = broker.get_prices(list(portfolio.all_positions().keys()))
     total_value = portfolio.total_value(prices)
-    positions_value = total_value - portfolio.cash
     phase = phase_ctrl.current_phase(total_value)
-    tracker.record_snapshot(total_value, portfolio.cash, positions_value, phase)
+    # record_snapshot erwartet (total_value, cash, n_positions); daily_pnl wird
+    # intern aus dem letzten Snapshot berechnet. Früher wurden hier fälschlich
+    # positions_value (statt Anzahl) und phase (statt pnl) übergeben.
+    tracker.record_snapshot(total_value, portfolio.cash, len(portfolio.all_positions()))
 
     # Clean up news older than 32 days
     archive.cleanup_old(keep_days=32)

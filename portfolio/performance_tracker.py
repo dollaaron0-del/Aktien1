@@ -222,9 +222,15 @@ class PerformanceTracker:
         total_value: float,
         cash: float,
         n_positions: int,
-        daily_pnl: float = 0.0,
+        daily_pnl: Optional[float] = None,
     ) -> None:
         now_iso = datetime.utcnow().isoformat()
+        # daily_pnl automatisch aus dem letzten Snapshot ableiten, wenn nicht übergeben
+        if daily_pnl is None:
+            prev = self._conn.execute(
+                "SELECT total_value FROM portfolio_snapshots ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            daily_pnl = (total_value - prev[0]) if prev and prev[0] is not None else 0.0
         cols = {
             "recorded_at": now_iso,
             "total_value": total_value,
