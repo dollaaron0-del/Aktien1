@@ -1532,7 +1532,7 @@ with tab_briefing:
     with b_col2:
         if st.button("🔄 Neues Briefing generieren", use_container_width=True):
             with st.spinner("Claude bereitet Wochenbriefing vor…"):
-                result = weekend_prep.generate_briefing(newsapi_key=config.newsapi_key)
+                result = weekend_prep.run()
             if result:
                 st.success("Briefing generiert!")
                 st.rerun()

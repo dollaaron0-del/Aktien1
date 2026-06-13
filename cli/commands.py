@@ -70,76 +70,17 @@ def _send_briefing_telegram(briefing: str, earnings: dict):
 
 def run_weekend_prep(wp: WeekendPrep):
     console.rule("[bold blue]Wochenvorbereitung")
-    console.print("[cyan]Sammle Earnings-Kalender, Marktdaten und Makro-News...[/cyan]")
+    console.print(
+        "[cyan]Sammle Earnings-Kalender, Marktdaten und Makro-News, "
+        "generiere Wochenbriefing mit Claude...[/cyan]"
+    )
 
-    # Show what we find before generating briefing
-    earnings = wp.collect_earnings_calendar()
-    sentiment = wp.collect_market_sentiment()
-
-    # Earnings table (US + EU)
-    wl_earn  = earnings.get("watchlist_earnings", [])
-    brd_earn = earnings.get("broader_earnings", [])
-    eu_earn  = earnings.get("eu_earnings", [])
-    if wl_earn or brd_earn or eu_earn:
-        et = Table(title=f"Quartalszahlen nächste Woche ({earnings['week']})", box=box.ROUNDED)
-        et.add_column("Ticker", style="cyan")
-        et.add_column("Name")
-        et.add_column("Wochentag")
-        et.add_column("Datum")
-        et.add_column("Typ")
-        for e in wl_earn:
-            et.add_row(e["ticker"], "", e["weekday"], e["date"], "[bold yellow]⚠ Watchlist[/bold yellow]")
-        for e in brd_earn[:6]:
-            et.add_row(e["ticker"], "", e["weekday"], e["date"], "[dim]US Mover[/dim]")
-        for e in eu_earn[:6]:
-            flag = "[bold yellow]⚠ EU Watch[/bold yellow]" if e.get("in_watchlist") else "[dim]EU[/dim]"
-            et.add_row(e["ticker"], e.get("name", ""), e["weekday"], e["date"], flag)
-        console.print(et)
-    else:
-        console.print("[dim]Keine bekannten Earnings für nächste Woche gefunden.[/dim]")
-
-    # EZB / BoE Warnung
-    if sentiment.get("ecb_next_week"):
-        console.print(f"  [bold yellow]🏦 EZB Zinsentscheid nächste Woche: {sentiment['ecb_next_week']}[/bold yellow]")
-    if sentiment.get("boe_next_week"):
-        console.print(f"  [bold yellow]🏦 BoE Zinsentscheid nächste Woche: {sentiment['boe_next_week']}[/bold yellow]")
-
-    # Sector & index table (US + EU)
-    if sentiment.get("indices"):
-        it = Table(title="Markt letzte Woche (US + EU + Asien)", box=box.SIMPLE)
-        it.add_column("Index / Indikator")
-        it.add_column("Wert", justify="right")
-        it.add_column("Woche", justify="right")
-        for name, data in sentiment["indices"].items():
-            chg = data["week_change_pct"]
-            chg_str = f"[green]+{chg:.2f}%[/green]" if chg >= 0 else f"[red]{chg:.2f}%[/red]"
-            extra = f"  {sentiment.get('vix_signal', '')}" if name == "VIX (Angst-Index)" else ""
-            it.add_row(name + extra, str(data["value"]), chg_str)
-        console.print(it)
-
-    # Crypto weekend
-    if sentiment.get("crypto"):
-        ct = Table(title="Krypto (7-Tage)", box=box.SIMPLE)
-        ct.add_column("Coin")
-        ct.add_column("Preis", justify="right")
-        ct.add_column("7d", justify="right")
-        for name, data in sentiment["crypto"].items():
-            chg = data["week_change_pct"]
-            chg_str = f"[green]+{chg:.1f}%[/green]" if chg >= 0 else f"[red]{chg:.1f}%[/red]"
-            ct.add_row(name, f"${data['price']:,.0f}", chg_str)
-        console.print(ct)
-
-    vix = sentiment.get("vix")
-    if vix:
-        vix_color = "green" if vix < 20 else ("yellow" if vix < 28 else "red")
-        console.print(f"\n  VIX: [{vix_color}]{vix}[/{vix_color}] – {sentiment.get('vix_signal', '')}")
-
-    # Generate Claude briefing
-    console.print("\n[cyan]Generiere Wochenbriefing mit Claude...[/cyan]")
-    briefing = wp.generate_briefing(newsapi_key=config.newsapi_key)
+    # WeekendPrep.run() sammelt Sektor-Performance, VIX, Earnings-Kalender und
+    # Makro-Events, generiert das Claude-Briefing und speichert es in der DB.
+    briefing = wp.run()
     if briefing:
         console.print(Panel(briefing, title="Wochenbriefing für die nächste Handelswoche", border_style="cyan"))
-        _send_briefing_telegram(briefing, earnings)
+        _send_briefing_telegram(briefing, {})
     else:
         console.print("[red]Briefing konnte nicht generiert werden (API-Fehler oder kein Key).[/red]")
 
