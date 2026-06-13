@@ -147,6 +147,11 @@ class PerformanceTracker:
 
         self._conn.commit()
 
+        # Vorhandene Spalten merken: alte DBs haben zusätzliche NOT-NULL-Spalten
+        # (snapshot_date, positions_value, phase) ohne Default. record_snapshot()
+        # muss diese mitbefüllen, sonst → NOT NULL constraint failed.
+        self._snap_cols = {row[1] for row in self._conn.execute("PRAGMA table_info(portfolio_snapshots)")}
+
     # ── Prediction tracking ───────────────────────────────────────────────────
 
     def record_prediction(
@@ -219,13 +224,27 @@ class PerformanceTracker:
         n_positions: int,
         daily_pnl: float = 0.0,
     ) -> None:
+        now_iso = datetime.utcnow().isoformat()
+        cols = {
+            "recorded_at": now_iso,
+            "total_value": total_value,
+            "cash": cash,
+            "n_positions": n_positions,
+            "daily_pnl": daily_pnl,
+        }
+        # Legacy-NOT-NULL-Spalten alter DBs mitbefüllen (ohne Default → sonst Crash)
+        legacy = getattr(self, "_snap_cols", set())
+        if "snapshot_date" in legacy:
+            cols["snapshot_date"] = now_iso[:10]
+        if "positions_value" in legacy:
+            cols["positions_value"] = total_value - cash
+        if "phase" in legacy:
+            cols["phase"] = ""
+        col_names = ", ".join(cols)
+        placeholders = ", ".join("?" for _ in cols)
         self._conn.execute(
-            """
-            INSERT INTO portfolio_snapshots
-                (recorded_at, total_value, cash, n_positions, daily_pnl)
-            VALUES (?,?,?,?,?)
-            """,
-            (datetime.utcnow().isoformat(), total_value, cash, n_positions, daily_pnl),
+            f"INSERT INTO portfolio_snapshots ({col_names}) VALUES ({placeholders})",
+            tuple(cols.values()),
         )
         self._conn.commit()
 
