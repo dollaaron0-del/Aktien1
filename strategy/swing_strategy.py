@@ -258,27 +258,39 @@ class SwingStrategy:
             # Check conditional entry
             trigger = getattr(analysis, "entry_trigger_price", None)
             if trigger and trigger > current_price * 0.98:
+                # build() erfasst Analyse-Kontext (Bull/Bear, Kursziel) und
+                # erzwingt den 3-Tage-Halte-Floor (sonst 0-Tage-Exit beim Trigger).
                 self._conditional_watcher.add(
-                    ConditionalEntry(
-                        ticker=ticker,
-                        trigger_price=trigger,
-                        price_at_creation=current_price,
-                        sentiment_score=sentiment,
-                        expires_at=(datetime.utcnow() + timedelta(days=7)).isoformat(),
-                    )
+                    ConditionalEntryWatcher.build(ticker, trigger, current_price, analysis)
                 )
             return StrategyResult("SKIP", ticker, f"Kein Kaufsignal: {recommendation}/{direction}")
 
         if sentiment < threshold:
             return StrategyResult("SKIP", ticker, f"Sentiment {sentiment:.2f} < Schwelle {threshold:.2f}")
 
-        # Max positions
+        # Max positions (dynamisch nach Portfolio-Größe via FocusController –
+        # config.max_positions existiert nicht; früher self.focus.get_max_positions).
         n_pos = len(self.portfolio.all_positions())
-        max_pos = config.max_positions
+        try:
+            max_pos = self.focus_ctrl.get_max_positions(self.portfolio.total_value({}))
+        except Exception:
+            max_pos = 12
         if n_pos >= max_pos:
-            # Queue the signal
+            # Queue the signal (vormerken bis ein Slot frei wird)
             if self.signal_queue:
-                self.signal_queue.add(ticker, sentiment, analysis)
+                self.signal_queue.enqueue(
+                    ticker=ticker,
+                    sentiment_score=sentiment,
+                    confidence=confidence,
+                    target_price=getattr(analysis, "target_price", None),
+                    direction=direction,
+                    entry_rationale=getattr(analysis, "entry_rationale", "") or "",
+                    key_catalysts=list(getattr(analysis, "key_catalysts", []) or []),
+                    risk_factors=list(getattr(analysis, "risk_factors", []) or []),
+                    sources_used=int(getattr(analysis, "sources_used", 0) or 0),
+                    sources_breakdown=getattr(analysis, "sources_breakdown", {}) or {},
+                    suggested_hold_days=int(getattr(analysis, "suggested_hold_days", 0) or 0),
+                )
             return StrategyResult("SKIP", ticker, f"Max Positionen ({max_pos}) erreicht – Signal in Queue")
 
         # Earnings filter
@@ -303,7 +315,9 @@ class SwingStrategy:
         tp_pct = params.tp_pct
 
         # Hold days
-        suggested = getattr(analysis, "suggested_hold_days", config.hold_days)
+        # config.hold_days existiert nicht – Literal-Default (Analyse liefert i.d.R.
+        # suggested_hold_days; greift nur als Fallback). Floor unten via max(3,…).
+        suggested = getattr(analysis, "suggested_hold_days", 14) or 14
         hold_days = max(3, int(suggested * params.hold_days_mult))
 
         stop_loss   = round(current_price * (1 - sl_pct), 4)

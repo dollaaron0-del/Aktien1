@@ -674,6 +674,15 @@ def run_analysis_cycle(
 
     cycle_log = get_logger(__name__)
 
+    # Führt die StrategyResult-Entscheidungen der (reinen) SwingStrategy aus.
+    from strategy.executor import TradeExecutor
+    from strategy.swing_strategy import StrategyResult
+    executor = TradeExecutor(portfolio, broker, getattr(strategy, "journal", None))
+
+    # Regime-Default, falls kein Hedge aktiv ist oder der Regime-Check scheitert –
+    # sonst NameError weiter unten (check_exits / evaluate brauchen regime).
+    regime = "NEUTRAL"
+
     # ── Regime check + hedge evaluation ──────────────────────────────────────
     if hedge_strategy:
         macro_news_for_regime = []
@@ -719,10 +728,20 @@ def run_analysis_cycle(
 
     # Check stop-loss / take-profit first (no Claude needed)
     try:
-        exit_actions = strategy.check_exits()
-        for action in exit_actions:
-            console.print(f"  [yellow]{action}[/yellow]")
-        cycle_actions.extend(exit_actions)
+        _open_tickers = list(portfolio.all_positions().keys())
+        _exit_prices = broker.get_prices(_open_tickers) if _open_tickers else {}
+        for _res in strategy.check_exits(_exit_prices, regime):
+            _p = portfolio.get_position(_res.ticker)
+            _dh = 0
+            if _p:
+                try:
+                    _dh = (datetime.utcnow() - datetime.fromisoformat(_p.entry_date)).days
+                except Exception:
+                    _dh = 0
+            action = executor.execute(_res, days_held=_dh)
+            if action:
+                console.print(f"  [yellow]{action}[/yellow]")
+                cycle_actions.append(action)
     except Exception as _sl_err:
         cycle_log.error("SL/TP-Check fehlgeschlagen: %s", _sl_err, exc_info=True)
         console.print(f"  [dim red]⚠ SL/TP-Check fehlgeschlagen: {_sl_err}[/dim red]")
@@ -735,16 +754,22 @@ def run_analysis_cycle(
             pos = portfolio.get_position(tv_ticker)
             if pos:
                 price = broker.get_price(tv_ticker) or pos.entry_price
-                action = strategy._do_close(
-                    tv_ticker, pos, price,
-                    f"TradingView SELL-Signal ({sig.get('strategy', 'TV')})"
+                _dh = 0
+                try:
+                    _dh = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
+                except Exception:
+                    _dh = 0
+                action = executor.execute(
+                    StrategyResult(
+                        "SELL", tv_ticker,
+                        f"TradingView SELL-Signal ({sig.get('strategy', 'TV')})",
+                        shares=pos.shares, price=price,
+                    ),
+                    days_held=_dh,
                 )
-                msg = (
-                    f"[{tv_ticker}] 📉 TradingView SELL ({sig.get('strategy', 'TV')}) "
-                    f"@ ${price:.2f}"
-                )
-                console.print(f"  [bold red]{msg}[/bold red]")
-                cycle_actions.append(msg)
+                console.print(f"  [bold red]{action}[/bold red]")
+                if action:
+                    cycle_actions.append(action)
             else:
                 console.print(
                     f"  [dim]TradingView SELL [{tv_ticker}]: keine offene Position[/dim]"
@@ -1160,7 +1185,12 @@ def run_analysis_cycle(
             except Exception as e:
                 log.debug("Stock-Relations Fehler: %s", e)
 
-        action = strategy.evaluate(analysis, sources_breakdown)
+        _cur_px = float((price_data or {}).get("current_price") or 0)
+        if _cur_px > 0:
+            _result = strategy.evaluate(ticker, analysis, _cur_px, regime)
+            action = executor.execute(_result, analysis=analysis, sources_breakdown=sources_breakdown)
+        else:
+            action = f"[{ticker}] Kein Kurs verfügbar – übersprungen"
         if action:
             if "GEKAUFT" in action:
                 color = "bold green"

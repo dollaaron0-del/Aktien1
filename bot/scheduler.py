@@ -253,6 +253,12 @@ def run_bot_loop(
 ) -> None:
     """Main bot event loop – sets up schedule and runs until Ctrl+C."""
 
+    # Führt StrategyResult-Entscheidungen der reinen SwingStrategy aus
+    # (SL/TP-Job, Conditional Entries). Siehe strategy/executor.py.
+    from strategy.executor import TradeExecutor
+    from strategy.swing_strategy import StrategyResult
+    _executor = TradeExecutor(portfolio, broker, getattr(strategy, "journal", None))
+
     try:
         start_dashboard(port=int(os.getenv("DASHBOARD_PORT", "8080")))
     except Exception as _de:
@@ -908,16 +914,12 @@ def run_bot_loop(
                     bear_case=entry.bear_case,
                     debate_winner="BULL",
                 )
-                action = strategy.evaluate(analysis, {}, force_entry=True)
-                if action and ("GEKAUFT" in action or "kaufen" in action.lower()):
+                result = strategy.evaluate(entry.ticker, analysis, price, "NEUTRAL")
+                action = _executor.execute(result, analysis=analysis)
+                if action and "GEKAUFT" in action:
                     watcher.remove(entry.ticker)
-                    notifier.send(
-                        f"📌 <b>Conditional Entry ausgeführt: {entry.ticker}</b>\n\n"
-                        f"Kurs ${price:.2f} hat den Trigger ${entry.trigger_price:.2f} erreicht.\n\n"
-                        f"<b>Bull-Case:</b> {entry.bull_case}\n"
-                        f"<b>Halteziel:</b> {entry.suggested_hold_days}d"
-                        + (f"\n<b>Kursziel:</b> ${entry.target_price:.2f}" if entry.target_price else "")
-                    )
+                    # Executor hat bereits die Standard-Kauf-Benachrichtigung
+                    # gesendet (inkl. "[Conditional Entry @ …]"-Kontext).
                     log.info("Conditional Entry ausgeführt: %s @ $%.2f", entry.ticker, price)
                 else:
                     log.info(
@@ -1001,7 +1003,17 @@ def run_bot_loop(
             if not positions:
                 return
             prices = broker.get_prices(list(positions.keys()))
-            strategy.check_exits(prices)
+            for _res in strategy.check_exits(prices):
+                _p = portfolio.get_position(_res.ticker)
+                _dh = 0
+                if _p:
+                    try:
+                        _dh = (datetime.utcnow() - datetime.fromisoformat(_p.entry_date)).days
+                    except Exception:
+                        _dh = 0
+                _act = _executor.execute(_res, days_held=_dh)
+                if _act:
+                    console.print(f"  [yellow]{_act}[/yellow]")
         except Exception as _e:
             log.warning("SL/TP-Check fehlgeschlagen: %s", _e)
     schedule.every(30).minutes.do(_sl_tp_check_job)

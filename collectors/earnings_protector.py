@@ -73,6 +73,10 @@ def _check_and_protect(strategy: "SwingStrategy") -> None:
     log.info("Earnings-Protector: prüfe %d offene Positionen...", len(positions))
     closed = 0
 
+    from strategy.executor import TradeExecutor
+    from strategy.swing_strategy import StrategyResult
+    _executor = TradeExecutor(portfolio, broker, getattr(strategy, "journal", None))
+
     for ticker, pos in positions:
         try:
             result = ef.check(ticker)
@@ -81,10 +85,11 @@ def _check_and_protect(strategy: "SwingStrategy") -> None:
             days_until = result.get("days_until", "?")
             earnings_date = result.get("date", "unbekannt")
             price = broker.get_price(ticker) or pos.entry_price
-            strategy._do_close(
-                ticker, pos, price,
+            _executor.execute(StrategyResult(
+                "SELL", ticker,
                 f"Earnings-Schutz: {ticker} meldet in {days_until}d ({earnings_date})",
-            )
+                shares=pos.shares, price=price,
+            ))
             log.info(
                 "Earnings-Protector [%s]: Position geschlossen – Earnings in %s Tagen (%s)",
                 ticker, days_until, earnings_date,

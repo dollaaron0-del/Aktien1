@@ -1,0 +1,144 @@
+"""
+Tests für strategy/executor.py – führt StrategyResult-Entscheidungen aus.
+
+Deckt die kritischen Ausführungs-Feinheiten ab, die beim unvollständigen
+SwingStrategy-Umbau (7.6.2026) verloren gingen:
+- Neukauf öffnet Position + Broker-Order
+- Scale-in (Position existiert) überschreibt NICHT (open_position ist REPLACE)
+- Voll-Exit schließt Position
+- Partial-TP löst nur Broker-Order aus (Buch schon von Engine mutiert)
+- Order-Fehlschlag öffnet keine Position
+"""
+import types
+
+import pytest
+
+import portfolio.portfolio as port_mod
+from portfolio.portfolio import Portfolio, Position
+from strategy.swing_strategy import StrategyResult
+from strategy.executor import TradeExecutor, _NullNotifier
+
+
+class FakeBroker:
+    """Broker-Doppelgänger: füllt immer (oder nie), zählt Aufrufe."""
+    def __init__(self, fill=True):
+        self.fill = fill
+        self.buys = []
+        self.sells = []
+
+    def _result(self, ticker, shares, price):
+        if not self.fill:
+            return {"status": "rejected", "error": "Testfehler"}
+        return {"status": "filled", "ticker": ticker, "shares": shares,
+                "fill_price": price, "market_price": price}
+
+    def buy(self, ticker, shares, price):
+        self.buys.append((ticker, shares, price))
+        return self._result(ticker, shares, price)
+
+    def sell(self, ticker, shares, price):
+        self.sells.append((ticker, shares, price))
+        return self._result(ticker, shares, price)
+
+
+def make_portfolio(tmp_path, monkeypatch, capital=100_000.0):
+    db_file = str(tmp_path / "data" / "portfolio.db")
+    (tmp_path / "data").mkdir(exist_ok=True)
+    monkeypatch.setattr(port_mod, "PORTFOLIO_DB", db_file)
+    return Portfolio(initial_capital=capital)
+
+
+def make_exec(portfolio, fill=True):
+    broker = FakeBroker(fill=fill)
+    ex = TradeExecutor(portfolio, broker, journal=None, notifier=_NullNotifier())
+    return ex, broker
+
+
+_ANALYSIS = types.SimpleNamespace(
+    sentiment_score=0.9, confidence="HIGH", direction="BULLISH",
+    entry_rationale="Test-Kauf", key_catalysts=["k1"], risk_factors=["r1"],
+    target_price=180.0,
+)
+
+
+def test_buy_opens_position(tmp_path, monkeypatch):
+    p = make_portfolio(tmp_path, monkeypatch)
+    ex, broker = make_exec(p)
+    res = StrategyResult("BUY", "AAPL", "Test-Kauf", shares=10, price=150.0,
+                         stop_loss=139.5, take_profit=180.0, hold_days=14)
+    out = ex.execute(res, analysis=_ANALYSIS)
+    assert "GEKAUFT" in out
+    assert broker.buys == [("AAPL", 10, 150.0)]
+    pos = p.get_position("AAPL")
+    assert pos is not None and pos.shares == 10
+    assert pos.target_hold_days == 14
+    assert p.cash == pytest.approx(100_000.0 - 10 * 150.0)
+
+
+def test_scale_in_does_not_overwrite(tmp_path, monkeypatch):
+    """BUY bei offener Position wird übersprungen – kein REPLACE."""
+    p = make_portfolio(tmp_path, monkeypatch)
+    p.open_position(Position(
+        ticker="AAPL", shares=10, entry_price=150.0,
+        entry_date="2026-06-10T00:00:00", stop_loss=135.0, take_profit=180.0,
+        target_hold_days=14,
+    ))
+    ex, broker = make_exec(p)
+    res = StrategyResult("BUY", "AAPL", "Scale-in", shares=5, price=160.0)
+    out = ex.execute(res, analysis=_ANALYSIS)
+    assert "GEKAUFT" not in out
+    assert broker.buys == []                       # keine Order
+    assert p.get_position("AAPL").shares == 10     # unverändert
+
+
+def test_full_sell_closes_position(tmp_path, monkeypatch):
+    p = make_portfolio(tmp_path, monkeypatch)
+    p.open_position(Position(
+        ticker="AAPL", shares=10, entry_price=150.0,
+        entry_date="2026-06-10T00:00:00", stop_loss=135.0, take_profit=180.0,
+        target_hold_days=14,
+    ))
+    ex, broker = make_exec(p)
+    res = StrategyResult("SELL", "AAPL", "Take-Profit erreicht @ $170.00",
+                         shares=10, price=170.0)
+    out = ex.execute(res, days_held=5)
+    assert "VERKAUFT" in out
+    assert broker.sells == [("AAPL", 10, 170.0)]
+    assert p.get_position("AAPL") is None          # geschlossen
+
+
+def test_partial_tp_sells_without_closing(tmp_path, monkeypatch):
+    """Partial-TP: Engine hat das Buch schon reduziert → nur Broker-Order, kein close."""
+    p = make_portfolio(tmp_path, monkeypatch)
+    p.open_position(Position(
+        ticker="AAPL", shares=10, entry_price=150.0,
+        entry_date="2026-06-10T00:00:00", stop_loss=135.0, take_profit=180.0,
+        target_hold_days=14,
+    ))
+    ex, broker = make_exec(p)
+    res = StrategyResult("SELL", "AAPL", "Partial-TP Stufe 1: 35% @ +10.0%",
+                         shares=3.5, price=165.0)
+    out = ex.execute(res)
+    assert "VERKAUFT" not in out                    # darf Vorhersage nicht schließen
+    assert "Partial-TP" in out
+    assert broker.sells == [("AAPL", 3.5, 165.0)]
+    assert p.get_position("AAPL") is not None        # Position bleibt offen
+
+
+def test_failed_buy_opens_no_position(tmp_path, monkeypatch):
+    p = make_portfolio(tmp_path, monkeypatch)
+    ex, broker = make_exec(p, fill=False)
+    res = StrategyResult("BUY", "AAPL", "Test", shares=10, price=150.0,
+                         stop_loss=139.5, take_profit=180.0, hold_days=14)
+    out = ex.execute(res, analysis=_ANALYSIS)
+    assert "fehlgeschlagen" in out
+    assert p.get_position("AAPL") is None
+    assert p.cash == pytest.approx(100_000.0)        # kein Cash abgebucht
+
+
+def test_skip_and_hold_strings(tmp_path, monkeypatch):
+    p = make_portfolio(tmp_path, monkeypatch)
+    ex, _ = make_exec(p)
+    assert "übersprungen" in ex.execute(StrategyResult("SKIP", "AAPL", "Sentiment zu niedrig"))
+    assert ex.execute(StrategyResult("HOLD", "AAPL", "Position läuft")) == "[AAPL] Position läuft"
+    assert ex.execute(None) is None
