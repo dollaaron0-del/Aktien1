@@ -136,6 +136,27 @@ def test_failed_buy_opens_no_position(tmp_path, monkeypatch):
     assert p.cash == pytest.approx(100_000.0)        # kein Cash abgebucht
 
 
+def test_ibkr_down_does_not_paper_fall_back(tmp_path, monkeypatch):
+    """IBKR-Order-Fehler (status=error, 'reason') → keine Position, kein Cash-Abzug.
+    Kein stiller Paper-Trade als Ersatz."""
+    p = make_portfolio(tmp_path, monkeypatch)
+
+    class DownIBKR:
+        def buy(self, t, s, pr):
+            return {"status": "error", "reason": "IBKR nicht verbunden"}
+        def sell(self, t, s, pr):
+            return {"status": "error", "reason": "IBKR nicht verbunden"}
+
+    ex = TradeExecutor(p, DownIBKR(), journal=None, notifier=_NullNotifier())
+    out = ex.execute(StrategyResult("BUY", "AAPL", "x", shares=10, price=150.0,
+                                    stop_loss=139.5, take_profit=180.0, hold_days=14),
+                     analysis=_ANALYSIS)
+    assert "fehlgeschlagen" in out
+    assert "IBKR nicht verbunden" in out          # Grund wird durchgereicht
+    assert p.get_position("AAPL") is None
+    assert p.cash == pytest.approx(100_000.0)
+
+
 def test_skip_and_hold_strings(tmp_path, monkeypatch):
     p = make_portfolio(tmp_path, monkeypatch)
     ex, _ = make_exec(p)

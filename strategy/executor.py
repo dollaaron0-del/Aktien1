@@ -44,6 +44,14 @@ def _fill_price(fill, fallback: float) -> float:
     return float(fallback)
 
 
+def _fail_reason(fill) -> str:
+    """Fehlergrund aus einem nicht-gefüllten Fill (IBKR nutzt 'reason',
+    Paper/Alpaca ggf. 'error'; sonst Roh-Status)."""
+    if isinstance(fill, dict):
+        return str(fill.get("reason") or fill.get("error") or fill.get("status") or "unbekannt")
+    return str(fill)
+
+
 class TradeExecutor:
     def __init__(self, portfolio, broker, journal=None, notifier=None):
         self.portfolio = portfolio
@@ -97,7 +105,7 @@ class TradeExecutor:
 
         fill = self.broker.buy(ticker, shares, result.price)
         if not _is_filled(fill):
-            warn = (fill or {}).get("error") if isinstance(fill, dict) else str(fill)
+            warn = _fail_reason(fill)
             return f"[{ticker}] ⛔ BUY-Order fehlgeschlagen: {warn}"
         actual_price = _fill_price(fill, result.price)
 
@@ -155,7 +163,7 @@ class TradeExecutor:
             sell_shares = result.shares
             fill = self.broker.sell(ticker, sell_shares, result.price)
             if not _is_filled(fill):
-                warn = (fill or {}).get("error") if isinstance(fill, dict) else str(fill)
+                warn = _fail_reason(fill)
                 self.notifier.send(
                     f"🚨 <b>{ticker} Partial-TP Broker-Order FEHLGESCHLAGEN</b>\n"
                     f"Buch wurde bereits reduziert – bitte Broker manuell prüfen! ({warn})"
@@ -172,7 +180,7 @@ class TradeExecutor:
         sell_shares = pos.shares
         fill = self.broker.sell(ticker, sell_shares, result.price)
         if not _is_filled(fill):
-            warn = (fill or {}).get("error") if isinstance(fill, dict) else str(fill)
+            warn = _fail_reason(fill)
             self.notifier.send(
                 f"🚨 <b>{ticker} SELL-Order FEHLGESCHLAGEN</b> ({result.reason})\n"
                 f"Position bleibt offen – bitte manuell im Broker prüfen!\nFehler: {warn}"

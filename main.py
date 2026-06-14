@@ -272,9 +272,15 @@ def main():
                 f"({config.ibkr_host}:{config.ibkr_port})[/green]"
             )
         else:
+            # KEIN Paper-Fallback im IBKR-Modus: der IBKRBroker bleibt aktiv.
+            # Preise laufen über seinen yfinance/price_cache-Fallback weiter,
+            # aber buy()/sell() liefern bei fehlender Verbindung {"status":"error"}
+            # → es wird NIE still ein Paper-Trade gebucht. Reconnect erfolgt
+            # automatisch beim nächsten Order-/Preis-Aufruf (_ensure_connected).
             console.print(
-                "[dim]ℹ IBKR nicht verbunden "
-                f"({config.ibkr_host}:{config.ibkr_port}) – Paper-Broker aktiv.[/dim]"
+                "[bold yellow]⚠ IBKR nicht verbunden "
+                f"({config.ibkr_host}:{config.ibkr_port}) – KEIN Paper-Fallback. "
+                "Orders schlagen fehl bis IBKR erreichbar ist (Preise via yfinance).[/bold yellow]"
             )
             try:
                 import os as _os, time as _time
@@ -289,13 +295,14 @@ def main():
                     TelegramNotifier().send(
                         f"⚠️ <b>IBKR-Verbindung fehlgeschlagen</b>\n\n"
                         f"Host: {config.ibkr_host}:{config.ibkr_port}\n"
-                        f"Bot läuft im Paper-Modus – keine echten Orders!\n\n"
-                        f"IB Gateway prüfen und Bot neu starten."
+                        f"<b>Kein Paper-Fallback</b> – Orders werden NICHT ausgeführt, "
+                        f"bis IBKR erreichbar ist.\n\n"
+                        f"IB Gateway prüfen (Bot reconnectet automatisch)."
                     )
                     open(_cooldown_file, "w").close()
             except Exception:
                 pass
-            broker = PaperBroker()
+            # broker bleibt der IBKRBroker (kein PaperBroker-Ersatz).
     else:
         broker = PaperBroker()
     portfolio = Portfolio(initial_capital=config.initial_capital)
