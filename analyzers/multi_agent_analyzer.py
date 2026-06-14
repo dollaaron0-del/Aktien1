@@ -51,7 +51,7 @@ _RISK_SYSTEM = (
 _AGENT_USER_TEMPLATE = """Analysiere folgende Aktie für einen Swing-Trade (3–30 Tage).
 
 Ticker: {ticker}
-
+{context_block}
 === MARKTDATEN ===
 {price_data}
 
@@ -98,7 +98,12 @@ class MultiAgentAnalyzer:
         lessons_memo: Optional[str] = None,
         weekly_briefing: Optional[str] = None,
         technical: Optional[TechnicalSnapshot] = None,
+        macro_brief: str = "",
+        geo_context=None,
+        **kwargs,
     ) -> AnalysisResult:
+        # **kwargs schluckt zusätzliche Runner-Argumente (pattern_result,
+        # onchain_snapshot, eu_market_snapshot, force_claude …) ohne TypeError.
         if not _MULTI_AGENT_ENABLED:
             log.warning("[%s] MultiAgentAnalyzer deaktiviert (MULTI_AGENT_ENABLED=false)", ticker)
             return self._empty_result(ticker, "MULTI_AGENT_ENABLED=false")
@@ -113,6 +118,7 @@ class MultiAgentAnalyzer:
 
         price_text = self._format_price(price_data or {})
         news_text = self._format_news(news_items)
+        context_block = self._build_context_block(macro_brief, geo_context)
 
         agents = {
             "bull": _BULL_SYSTEM,
@@ -132,6 +138,7 @@ class MultiAgentAnalyzer:
                     price_text,
                     news_text,
                     len(news_items),
+                    context_block,
                 ): name
                 for name, system_prompt in agents.items()
             }
@@ -154,6 +161,21 @@ class MultiAgentAnalyzer:
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
+    @staticmethod
+    def _build_context_block(macro_brief: str = "", geo_context=None) -> str:
+        """Makro- + Geopolitik-Block für den Agenten-Prompt (leer wenn nichts da)."""
+        parts = []
+        if macro_brief:
+            parts.append(macro_brief.strip())
+        if geo_context:
+            geo_txt = geo_context if isinstance(geo_context, str) else str(geo_context)
+            geo_txt = geo_txt.strip()
+            if geo_txt:
+                parts.append("=== GEOPOLITIK ===\n" + geo_txt)
+        if not parts:
+            return ""
+        return "\n" + "\n\n".join(parts) + "\n"
+
     def _call_agent(
         self,
         name: str,
@@ -162,6 +184,7 @@ class MultiAgentAnalyzer:
         price_text: str,
         news_text: str,
         n_news: int,
+        context_block: str = "",
     ) -> _AgentResult:
         system_blocks = [
             {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}
@@ -171,6 +194,7 @@ class MultiAgentAnalyzer:
             price_data=price_text,
             news_text=news_text,
             n_news=n_news,
+            context_block=context_block,
         )
         message = self._client.messages.create(
             model=config.claude_model,

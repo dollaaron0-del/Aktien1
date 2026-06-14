@@ -739,6 +739,19 @@ def run_analysis_cycle(
     _force_claude_tickers: set = set()
     _headline_meta: Dict[str, dict] = {}
     active_watchlist, _bench_geo_contexts = _get_watchlist(portfolio)
+
+    # Makro-Lagebericht einmal pro Lauf bauen – fließt als Kontext in jede
+    # Einzelanalyse, damit jede Aktie im aktuellen Makro-Umfeld bewertet wird.
+    _macro_brief = ""
+    try:
+        from analyzers.macro_context import get_macro_brief
+        _macro_brief = get_macro_brief()
+        if _macro_brief:
+            log.info("Makro-Kontext aktiv (%d Zeichen) – fließt in Analyse-Prompts ein.",
+                     len(_macro_brief))
+    except Exception as _mc_err:
+        log.warning("Makro-Kontext konnte nicht gebaut werden: %s", _mc_err)
+
     for _t, _meta in _requested:
         if _t not in active_watchlist:
             log.info("Nutzeranfrage: %s wird in diesem Zyklus analysiert", _t)
@@ -1028,6 +1041,7 @@ def run_analysis_cycle(
             onchain_snapshot=onchain_snapshot,
             eu_market_snapshot=_eu_market_ctx if _is_eu_stock(ticker) else None,
             geo_context=_geo_ctx,
+            macro_brief=_macro_brief,
             force_claude=ticker in _force_claude_tickers,
         )
 

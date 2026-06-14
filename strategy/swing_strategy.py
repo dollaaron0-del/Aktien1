@@ -237,6 +237,18 @@ class SwingStrategy:
         # Buy threshold (adjusted by regime)
         threshold = config.buy_threshold + params.buy_threshold_adj
 
+        # Makro-Gegenwind erhöht die Kaufschwelle (asymmetrisch: nur strenger,
+        # nie lockerer – Rückenwind soll keine schwachen Signale durchwinken).
+        try:
+            from analyzers.macro_context import get_macro_context
+            macro_bias = get_macro_context().bias_score()
+            if macro_bias <= -0.6:
+                threshold += 0.08
+            elif macro_bias <= -0.3:
+                threshold += 0.05
+        except Exception:
+            pass
+
         # Direction must be bullish
         if direction not in ("BULLISH",) or recommendation not in ("BUY",):
             # Check conditional entry
@@ -432,6 +444,16 @@ class SwingStrategy:
                 base *= risk_mult
             except Exception:
                 pass
+
+        # Makro-Modifier (VIX × Makro-Kalender × Sektor-Rotation).
+        # Regime ist bereits über params.position_size_mult abgedeckt – hier
+        # kommen die übrigen, bislang ungenutzten Makro-Faktoren hinzu.
+        try:
+            from analyzers.macro_context import get_macro_context
+            ticker = getattr(analysis, "ticker", "") or ""
+            base *= get_macro_context().size_modifier(ticker)
+        except Exception:
+            pass
 
         # Min/max guardrails
         base = max(base, 10.0)

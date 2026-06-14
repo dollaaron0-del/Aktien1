@@ -38,11 +38,15 @@ class AnalysisResult:
 
 _SYSTEM_PROMPT = """Du bist ein erfahrener Aktienanalyst spezialisiert auf kurzfristige Swing-Trades (1–4 Wochen).
 Deine Aufgabe: Analysiere News-Artikel und liefere eine strukturierte Kaufentscheidung.
+Wichtig: Gewichte die aktuelle Makro-Lage (Marktregime, VIX, Risk-On/Off, Rezessionsrisiko,
+anstehende FOMC/CPI-Termine) in deiner Einschätzung – ein bullishes Einzelsignal bei
+Risk-Off-Marktumfeld oder kurz vor einem FOMC-Termin verdient mehr Vorsicht (niedrigere
+Konfidenz / konservativeres Kursziel).
 Antworte IMMER mit validem JSON. Kein Text vor oder nach dem JSON."""
 
 _USER_TEMPLATE_STANDARD = """
 Analysiere folgende News für {ticker} (aktueller Preis: ${price:.2f}):
-
+{context_block}
 {news_text}
 
 Antworte NUR mit diesem JSON-Format:
@@ -66,7 +70,7 @@ Antworte NUR mit diesem JSON-Format:
 _USER_TEMPLATE_THESIS_CHECK = """
 Du hast {ticker} gekauft bei ${entry_price:.2f} (jetzt: ${current_price:.2f}, Gewinn: {gain_pct:+.1f}%).
 Ursprüngliche Kaufbegründung: {original_rationale}
-
+{context_block}
 Aktuelle News:
 {news_text}
 
@@ -80,7 +84,7 @@ Ist die Kaufthese noch intakt? Antworte NUR mit JSON:
 
 _USER_TEMPLATE_CRYPTO = """
 Analysiere folgende Krypto-News für {ticker} (aktueller Preis: ${price:.2f}):
-
+{context_block}
 {news_text}
 
 Berücksichtige: On-Chain-Daten, Marktstruktur, regulatorische Risiken, Whale-Bewegungen.
@@ -136,6 +140,8 @@ class ClaudeAnalyzer:
         use_ollama: bool = False,
         news_items=None,
         price_data=None,
+        macro_brief: str = "",
+        geo_context=None,
         **kwargs,
     ) -> AnalysisResult:
         """
@@ -143,9 +149,13 @@ class ClaudeAnalyzer:
         - Filters and ranks news by trust
         - Tries Ollama pre-screen if enabled
         - Falls back to Claude if needed
+
+        macro_brief / geo_context fließen als Kontext-Block in den Prompt, damit
+        jede Aktie im aktuellen Makro- und geopolitischen Umfeld bewertet wird.
         """
         if news is None:
             news = news_items or []
+        context_block = self._build_context_block(macro_brief, geo_context)
         if current_price is None and price_data is not None:
             current_price = price_data if isinstance(price_data, (int, float)) else (price_data or {}).get("price") or (price_data or {}).get("close") or 0.0
         if not news:
@@ -164,7 +174,7 @@ class ClaudeAnalyzer:
 
         # Ollama pre-screen
         if use_ollama or not self.api_key:
-            ollama_result = self._try_ollama(ticker, news_text, current_price, is_crypto)
+            ollama_result = self._try_ollama(ticker, news_text, current_price, is_crypto, context_block)
             if ollama_result is not None:
                 # If Ollama gives strong signal, skip Claude
                 if (
@@ -175,16 +185,34 @@ class ClaudeAnalyzer:
 
         # Thesis check for existing position
         if existing_position is not None:
-            return self._thesis_check(ticker, news_text, current_price, existing_position)
+            return self._thesis_check(ticker, news_text, current_price, existing_position, context_block)
 
         # Full Claude analysis
-        return self._claude_analysis(ticker, news_text, current_price, is_crypto)
+        return self._claude_analysis(ticker, news_text, current_price, is_crypto, context_block)
+
+    @staticmethod
+    def _build_context_block(macro_brief: str = "", geo_context=None) -> str:
+        """Baut den optionalen Kontext-Block (Makro + Geopolitik) für den Prompt."""
+        parts = []
+        if macro_brief:
+            parts.append(macro_brief.strip())
+        if geo_context:
+            geo_txt = geo_context if isinstance(geo_context, str) else str(geo_context)
+            geo_txt = geo_txt.strip()
+            if geo_txt:
+                parts.append("GEOPOLITIK: " + geo_txt)
+        if not parts:
+            return ""
+        return "\n" + "\n\n".join(parts) + "\n"
 
     def _claude_analysis(
-        self, ticker: str, news_text: str, price: float, is_crypto: bool
+        self, ticker: str, news_text: str, price: float, is_crypto: bool,
+        context_block: str = "",
     ) -> AnalysisResult:
         template = _USER_TEMPLATE_CRYPTO if is_crypto else _USER_TEMPLATE_STANDARD
-        prompt = template.format(ticker=ticker, price=price, news_text=news_text)
+        prompt = template.format(
+            ticker=ticker, price=price, news_text=news_text, context_block=context_block
+        )
 
         try:
             import anthropic
@@ -207,7 +235,8 @@ class ClaudeAnalyzer:
             return self._empty_result(ticker)
 
     def _thesis_check(
-        self, ticker: str, news_text: str, current_price: float, position
+        self, ticker: str, news_text: str, current_price: float, position,
+        context_block: str = "",
     ) -> AnalysisResult:
         gain_pct = (current_price - position.entry_price) / position.entry_price * 100
         prompt = _USER_TEMPLATE_THESIS_CHECK.format(
@@ -217,6 +246,7 @@ class ClaudeAnalyzer:
             gain_pct=gain_pct,
             original_rationale=position.rationale[:300],
             news_text=news_text,
+            context_block=context_block,
         )
         try:
             import anthropic
@@ -241,13 +271,15 @@ class ClaudeAnalyzer:
             return result
 
     def _try_ollama(
-        self, ticker: str, news_text: str, price: float, is_crypto: bool
+        self, ticker: str, news_text: str, price: float, is_crypto: bool,
+        context_block: str = "",
     ) -> Optional[AnalysisResult]:
         """Versucht lokale Ollama-Analyse (kostenfrei)."""
         try:
             import requests
             prompt = _USER_TEMPLATE_STANDARD.format(
-                ticker=ticker, price=price, news_text=news_text[:3000]
+                ticker=ticker, price=price, news_text=news_text[:3000],
+                context_block=context_block,
             )
             resp = requests.post(
                 "http://localhost:11434/api/generate",
