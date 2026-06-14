@@ -36,6 +36,10 @@ _TRAILING_STEPS_CRISIS = [
 # Konfidenz-basierte Positionsgrößen
 _CONFIDENCE_SIZING = {"HIGH": 1.0, "MEDIUM": 0.70, "LOW": 0.45}
 
+# Mindest-Haltedauer in Tagen – verhindert Sofort-Exit von Positionen, deren
+# target_hold_days fälschlich 0 ist (gleicher Floor wie der Entry-Pfad, max(3,…)).
+_MIN_HOLD_DAYS = 3
+
 # Partial-TP Stufen: (Gewinn%, Anteil Verkauf)
 _PARTIAL_TP_STAGES = [
     (0.10, 0.35),   # bei +10%: 35% der Position verkaufen
@@ -358,7 +362,11 @@ class SwingStrategy:
         # 5. Hold-time expiry
         entry_dt = datetime.fromisoformat(pos.entry_date) if isinstance(pos.entry_date, str) else pos.entry_date
         days_held = (datetime.utcnow() - entry_dt).days
-        if days_held >= pos.target_hold_days:
+        # Mindest-Haltedauer erzwingen: Positionen mit target_hold_days=0 (z.B. aus
+        # Conditional Entries mit ungesetztem suggested_hold_days) würden sonst beim
+        # nächsten Check sofort wieder verkauft – purer Slippage-Verlust (vgl. CRM/CAT).
+        effective_hold = max(int(pos.target_hold_days or 0), _MIN_HOLD_DAYS)
+        if days_held >= effective_hold:
             # Only sell if not profitable enough to extend
             if gain_pct < 0.05:
                 return StrategyResult("SELL", ticker,

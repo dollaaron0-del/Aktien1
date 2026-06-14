@@ -118,7 +118,9 @@ class ConditionalEntryWatcher:
             bear_case=getattr(analysis, "bear_case", "") or "",
             risk_factors=list(getattr(analysis, "risk_factors", []) or []),
             key_catalysts=list(getattr(analysis, "key_catalysts", []) or []),
-            suggested_hold_days=int(getattr(analysis, "suggested_hold_days", 0) or 0),
+            # Floor 3 Tage: SKIP-Analysen liefern oft suggested_hold_days=0, was
+            # sonst zu Sofort-Exit nach dem Trigger führt (vgl. CRM/CAT-Bug).
+            suggested_hold_days=max(3, int(getattr(analysis, "suggested_hold_days", 0) or 0)),
             target_price=getattr(analysis, "target_price", None),
             target_price_rationale=getattr(analysis, "target_price_rationale", "") or "",
         )
