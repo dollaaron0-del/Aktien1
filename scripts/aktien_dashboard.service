@@ -19,7 +19,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=/home/user/Aktien
-ExecStart=/usr/local/bin/streamlit run /home/user/Aktien/dashboard/app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --browser.gatherUsageStats=false
+ExecStart=/usr/local/bin/streamlit run /home/user/Aktien/dashboard/app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --browser.gatherUsageStats=false --server.runOnSave=true --server.fileWatcherType=poll
 Restart=always
 RestartSec=15
 Environment=PYTHONUNBUFFERED=1
