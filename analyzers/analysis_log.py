@@ -21,6 +21,15 @@ class AnalysisLog:
         self._conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._init_db()
+        self._migrate()
+
+    def _migrate(self):
+        """Fügt neue Spalten zu bestehenden DBs hinzu (idempotent)."""
+        try:
+            self._conn.execute("ALTER TABLE analyses ADD COLUMN sources_breakdown TEXT")
+            self._conn.commit()
+        except Exception:
+            pass  # Spalte existiert bereits
 
     def _init_db(self):
         self._conn.executescript("""
@@ -56,8 +65,14 @@ class AnalysisLog:
         # mal int, mal {} (Default). Die Spalte ist INTEGER → hier zu einer Zahl
         # normalisieren, sonst crasht SQLite ("type 'dict' is not supported") und
         # reißt den gesamten Analyse-Zyklus ab.
+        # sources_used kann Dict[str,int] (Quelle→Anzahl) oder int sein. Den int-Sum
+        # in sources_used speichern (Spalte ist INTEGER), den vollen Breakdown als
+        # JSON in sources_breakdown – das ermöglicht später eine fundierte Auswertung,
+        # welche Collectors real beitragen (Basis für Abschalt-Entscheidungen).
         _sources = analysis.sources_used
+        _breakdown = None
         if isinstance(_sources, dict):
+            _breakdown = json.dumps(_sources) if _sources else None
             _sources = sum(_sources.values()) if _sources else 0
         elif not isinstance(_sources, int):
             try:
@@ -69,8 +84,8 @@ class AnalysisLog:
                (analyzed_at, ticker, recommendation, direction, sentiment_score,
                 confidence, entry_rationale, bull_case, bear_case, debate_winner,
                 key_catalysts, risk_factors, target_price, suggested_hold,
-                sources_used, exchange)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                sources_used, sources_breakdown, exchange)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 datetime.utcnow().isoformat(),
                 analysis.ticker,
@@ -87,10 +102,49 @@ class AnalysisLog:
                 analysis.target_price,
                 analysis.suggested_hold_days,
                 _sources,
+                _breakdown,
                 exchange,
             ),
         )
         self._conn.commit()
+
+    def get_source_contributions(self, days: int = 30) -> List[Dict]:
+        """Aggregiert den Beitrag jedes Collectors über die letzten `days` Tage.
+
+        Liefert pro Quelle: Summe der Treffer, Anzahl Analysen mit >0 Treffern und
+        deren Anteil. Quellen mit 0 Treffern über viele Analysen sind Abschalt-
+        Kandidaten (sofern nicht nur ein fehlender API-Key die Ursache ist).
+        """
+        from datetime import timedelta
+        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        rows = self._conn.execute(
+            "SELECT sources_breakdown FROM analyses "
+            "WHERE analyzed_at > ? AND sources_breakdown IS NOT NULL",
+            (cutoff,),
+        ).fetchall()
+        totals: Dict[str, int] = {}
+        nonzero: Dict[str, int] = {}
+        n = 0
+        for (raw,) in rows:
+            try:
+                d = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            n += 1
+            for src, cnt in d.items():
+                totals[src] = totals.get(src, 0) + int(cnt or 0)
+                if cnt:
+                    nonzero[src] = nonzero.get(src, 0) + 1
+        out = [
+            {
+                "source": src,
+                "total_hits": totals[src],
+                "analyses_with_hits": nonzero.get(src, 0),
+                "pct_analyses": round(100 * nonzero.get(src, 0) / n, 1) if n else 0.0,
+            }
+            for src in sorted(totals, key=lambda s: totals[s], reverse=True)
+        ]
+        return out
 
     def get_recent(self, limit: int = 100, ticker: Optional[str] = None) -> List[Dict]:
         if ticker:
