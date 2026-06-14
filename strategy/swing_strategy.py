@@ -428,7 +428,14 @@ class SwingStrategy:
         self, analysis, current_price: float, params, config
     ) -> float:
         """Calculate dollar position size."""
-        base = self.portfolio.cash * config.max_position_pct
+        # Basis ist ein Anteil der GESAMT-EQUITY (Cash + Positionswert), nicht
+        # nur des Rest-Cash. Sonst schrumpfen spätere Käufe im selben Zyklus,
+        # weil das Cash mit jedem Buy sinkt. total_value({}) bewertet bestehende
+        # Positionen mangels Live-Preisen mit dem Einstandspreis – stabile,
+        # ausreichende Schätzung für das Sizing. Die finale Liquiditätsgrenze
+        # (cash * 0.40 weiter unten) verhindert weiterhin ein Überziehen.
+        equity = self.portfolio.total_value({})
+        base = equity * config.max_position_pct
 
         # Regime multiplier
         base *= params.position_size_mult
