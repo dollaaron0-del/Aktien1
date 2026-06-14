@@ -209,6 +209,7 @@ CROSS_LISTINGS: Dict[str, str] = {
     "TTE.PA":    "TTE",
     "SAP.DE":    "SAP",       # SAP US-ADR
     "LVMH.PA":   "MC.PA",     # LVMH
+    "GOOG":      "GOOGL",     # Alphabet – C-Aktie auf A-Aktie (stimmrechtslos)
 }
 
 

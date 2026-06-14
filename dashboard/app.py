@@ -1093,9 +1093,12 @@ with tab_network:
                 # nie wieder ein Thema still, nur weil die Layout-Map nicht gepflegt wurde.
                 import math as _math_ac
                 _missing_themes = [th for th in _CENTRAL_THEMES if th not in _theme_centers]
+                # Oberer Bogen (27°–153°): hält den unteren Rand für die
+                # "Sonstige"-Gruppe frei und vermeidet Kollisionen mit dem Band.
                 for _i, _th in enumerate(sorted(_missing_themes)):
-                    _ang = 2 * _math_ac.pi * _i / max(len(_missing_themes), 1)
-                    _theme_centers[_th] = (1.18 * _math_ac.cos(_ang), 1.18 * _math_ac.sin(_ang))
+                    _frac = _i / max(len(_missing_themes) - 1, 1)
+                    _ang  = _math_ac.pi * (0.15 + 0.70 * _frac)
+                    _theme_centers[_th] = (1.12 * _math_ac.cos(_ang), 1.12 * _math_ac.sin(_ang))
                 # Primär-Thema: erster Eintrag aus get_themes() → bestimmt den Cluster
                 # Mehrfachthemen landen im ersten (wichtigsten) Cluster, nicht im Durchschnitt
                 _theme_to_tickers: dict = {}
@@ -1119,18 +1122,31 @@ with tab_network:
                         _angle = 2 * math.pi * _i / _n - math.pi / 2
                         _pos[t] = (_cx + _r * math.cos(_angle), _cy + _r * math.sin(_angle))
 
-                # Ticker ohne Thema: äußerer Ring (1.10–1.25) damit Cluster nicht verdeckt
+                # Ticker ohne Sektor: kompakte, beschriftete "Sonstige"-Gruppe als
+                # Raster-Band am unteren Rand – zusammengefasst statt rund um die
+                # Karte verstreut. Fängt auch künftige (z. B. ausländische) Ticker
+                # automatisch auf, ohne dass die Mapping-Tabelle gepflegt werden muss.
+                _sonstige_set = set(_no_theme)
                 _n_nt = len(_no_theme)
-                for _i, t in enumerate(sorted(_no_theme)):
-                    _angle = 2 * math.pi * _i / max(_n_nt, 1)
-                    _r_nt  = 1.10 + 0.05 * (_i % 3)  # 3 konzentrische Außenringe
-                    _pos[t] = (_r_nt * math.cos(_angle), _r_nt * math.sin(_angle))
+                if _n_nt:
+                    _sb_cols = max(1, min(16, math.ceil(math.sqrt(_n_nt * 3.5))))
+                    _sb_rows = math.ceil(_n_nt / _sb_cols)
+                    _sb_x0, _sb_x1 = -1.16,  1.16     # Bandbreite
+                    _sb_yt, _sb_yb = -0.82, -1.07     # oben → unten
+                    for _i, t in enumerate(sorted(_no_theme)):
+                        _row, _col = divmod(_i, _sb_cols)
+                        # Anzahl in dieser Reihe (letzte Reihe ggf. unvoll) → zentriert
+                        _in_row = _sb_cols if _row < _sb_rows - 1 else (_n_nt - _sb_cols * (_sb_rows - 1))
+                        _fx = (_col + 0.5) / _in_row
+                        _fy = _row / max(_sb_rows - 1, 1)
+                        _pos[t] = (_sb_x0 + _fx * (_sb_x1 - _sb_x0),
+                                   _sb_yt + _fy * (_sb_yb - _sb_yt))
 
                 _n_themed = len(_ticker_list) - _n_nt
                 st.caption(
                     f"Sektoren erkannt: {len(_theme_to_tickers)} | "
                     f"Ticker mit Sektor: {_n_themed} | "
-                    f"Ohne Sektor: {_n_nt}"
+                    f"Sonstige (ohne Sektor): {_n_nt}"
                 )
 
                 # ── Theme-Farben & deutsche Labels ─────────────────────────
@@ -1140,6 +1156,10 @@ with tab_network:
                     THEME_COLORS as _theme_colors,
                     THEME_LABELS_DE as _theme_labels_de,
                 )
+                # "Sonstige" ist ein reines Anzeige-Cluster (kein Bot-Thema) –
+                # Farbe & Label nur hier, damit Rand und Band-Label stimmen.
+                _theme_colors    = {**_theme_colors,    "SONSTIGE": "#7c8aa0"}
+                _theme_labels_de = {**_theme_labels_de, "SONSTIGE": "Sonstige"}
 
                 # ── Hintergrund-Zonen: Polygon-Kreise (fill="toself" funktioniert immer) ──
                 import math as _math
@@ -1245,6 +1265,13 @@ with tab_network:
                         "PAYMENTS_FINTECH":   ( 0.0,  1.0),
                         "AI_HYPERSCALER":     ( 0.0,  1.0),  # → oben (war oben-rechts, deckte KI-Chips)
                         "ENTERPRISE_SOFTWARE":( 1.0,  0.0),
+                        # Untere Cluster: Labels seitlich, damit sie nicht ins
+                        # "Sonstige"-Band am unteren Rand hineinragen.
+                        "ECOMMERCE_CONSUMER": ( 1.0,  0.0),
+                        "EV_AUTO":            ( 1.0,  0.0),
+                        "MINING_METALS":      (-1.0,  0.0),
+                        "OIL_GAS":            (-1.0,  0.0),
+                        "CLEAN_ENERGY":       (-1.0,  0.0),
                     }
                     if _theme in _dir_overrides:
                         _nx, _ny = _dir_overrides[_theme]
@@ -1295,6 +1322,30 @@ with tab_network:
                     _conn_y += [lay, ly, None]
                     _conn_colors.append(lc)
 
+                # ── "Sonstige"-Band: Hintergrund-Rechteck + Gruppen-Label ──
+                if _sonstige_set:
+                    _sc  = _theme_colors["SONSTIGE"]
+                    _sr8, _sg8, _sb8 = int(_sc[1:3], 16), int(_sc[3:5], 16), int(_sc[5:7], 16)
+                    _zone_traces.append(go.Scatter(
+                        x=[-1.22, 1.22, 1.22, -1.22, -1.22],
+                        y=[-0.78, -0.78, -1.10, -1.10, -0.78],
+                        mode="lines",
+                        fill="toself",
+                        fillcolor=f"rgba({_sr8},{_sg8},{_sb8},0.10)",
+                        line=dict(color=f"rgba({_sr8},{_sg8},{_sb8},0.55)", width=1.2, dash="dot"),
+                        hoverinfo="none", showlegend=False,
+                    ))
+                    _zone_annotations.append(dict(
+                        x=-1.20, y=-0.745,
+                        text=f"<b>Sonstige · {len(_sonstige_set)}</b>",
+                        showarrow=False,
+                        xanchor="left", yanchor="bottom",
+                        xref="x", yref="y",
+                        font=dict(size=10, color="#ffffff"),
+                        bgcolor=f"rgba({_sr8},{_sg8},{_sb8},0.85)",
+                        bordercolor=_sc, borderwidth=1, borderpad=4, opacity=0.95,
+                    ))
+
                 # Alle Verbindungslinien als ein Trace (gleiche Farbe geht nicht pro Segment,
                 # deshalb hellgrau — Label-Farbe identifiziert den Cluster bereits)
                 _conn_trace = go.Scatter(
@@ -1326,7 +1377,11 @@ with tab_network:
                 _node_x      = [_pos[t][0] for t in _ticker_list]
                 _node_y      = [_pos[t][1] for t in _ticker_list]
                 _node_colors = [_nodes[t]["color"] for t in _ticker_list]
-                _node_sizes  = [16 + 6 * _conn_count[t] for t in _ticker_list]
+                # Sonstige-Knoten kleiner & einheitlich → ruhiges, dichtes Band
+                _node_sizes  = [
+                    10 if t in _sonstige_set else 16 + 6 * _conn_count[t]
+                    for t in _ticker_list
+                ]
 
                 # Knotenrand in Themenfarbe → sofort sichtbare Sektor-Zugehörigkeit
                 _node_borders = [
@@ -1349,8 +1404,12 @@ with tab_network:
                 ]
 
                 # Label: Kürzel + 1. Wort des Firmennamens
+                # (im Sonstige-Band nur das Kürzel → weniger Gedränge)
                 _node_labels = []
                 for t in _ticker_list:
+                    if t in _sonstige_set:
+                        _node_labels.append(t)
+                        continue
                     _nm = _ALL_NAMES.get(t.upper(), "")
                     _short = _nm.split()[0][:9] if _nm else ""
                     _node_labels.append(f"{t} · {_short}" if _short else t)

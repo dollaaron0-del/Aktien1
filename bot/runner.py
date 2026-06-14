@@ -1032,9 +1032,13 @@ def run_analysis_cycle(
         )
 
         _print_analysis(analysis)
+        # store(ticker, direction, sentiment_score, confidence, recommendation)
+        # confidence = Konviktion (HIGH/MEDIUM/LOW), recommendation = Aktion (BUY/HOLD/SKIP).
+        # Reihenfolge muss zur Signatur passen, sonst landen Aktion und Konviktion
+        # vertauscht im Cache (Dashboard zeigt dann ~0 BUY, TV-Filter falsch).
         _analysis_cache.store(
             ticker, analysis.direction, analysis.sentiment_score,
-            analysis.recommendation, analysis.confidence,
+            analysis.confidence, analysis.recommendation,
         )
         # Echte Nicht-Signale (Score ~0.5, HOLD/SKIP, keine Position) nicht ins Log –
         # verhindert Flut von sinnlosen 0.5-Einträgen.
