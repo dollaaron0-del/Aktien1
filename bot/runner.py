@@ -618,8 +618,27 @@ def run_analysis_cycle(
     rule_suffix = "  [bold yellow][EXPLORATION][/bold yellow]" if config.exploration_mode else ""
     _cycle_ts = datetime.now().strftime('%Y-%m-%d %H:%M')
     console.rule(f"[bold blue]Analyse-Zyklus – {_cycle_ts}{rule_suffix}")
+
+    # Makro-Lagebericht einmal pro Lauf bauen – fließt als Kontext in jede
+    # Einzelanalyse und wird hier transparent auf Konsole/Log/Telegram ausgegeben.
+    _macro_brief = ""
     try:
-        TelegramNotifier().send(f"🔄 <b>Analyse-Zyklus gestartet</b> – {_cycle_ts}")
+        from analyzers.macro_context import get_macro_brief
+        _macro_brief = get_macro_brief()
+    except Exception as _mc_err:
+        log.warning("Makro-Kontext konnte nicht gebaut werden: %s", _mc_err)
+    if _macro_brief:
+        log.info("Makro-Kontext:\n%s", _macro_brief)
+        console.print(f"[cyan]{_macro_brief}[/cyan]")
+
+    try:
+        _start_msg = f"🔄 <b>Analyse-Zyklus gestartet</b> – {_cycle_ts}"
+        if _macro_brief:
+            # Erste Zeile ist die Überschrift des Briefs → durch fette Telegram-
+            # Überschrift ersetzen, Rest (Bullet-Zeilen) unverändert anhängen.
+            _body = _macro_brief.split("\n", 1)[1] if "\n" in _macro_brief else _macro_brief
+            _start_msg += f"\n\n📊 <b>Makro-Lage</b>\n{_body}"
+        TelegramNotifier().send(_start_msg)
     except Exception:
         pass
 
@@ -739,18 +758,6 @@ def run_analysis_cycle(
     _force_claude_tickers: set = set()
     _headline_meta: Dict[str, dict] = {}
     active_watchlist, _bench_geo_contexts = _get_watchlist(portfolio)
-
-    # Makro-Lagebericht einmal pro Lauf bauen – fließt als Kontext in jede
-    # Einzelanalyse, damit jede Aktie im aktuellen Makro-Umfeld bewertet wird.
-    _macro_brief = ""
-    try:
-        from analyzers.macro_context import get_macro_brief
-        _macro_brief = get_macro_brief()
-        if _macro_brief:
-            log.info("Makro-Kontext aktiv (%d Zeichen) – fließt in Analyse-Prompts ein.",
-                     len(_macro_brief))
-    except Exception as _mc_err:
-        log.warning("Makro-Kontext konnte nicht gebaut werden: %s", _mc_err)
 
     for _t, _meta in _requested:
         if _t not in active_watchlist:
