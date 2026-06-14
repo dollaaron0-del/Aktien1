@@ -93,12 +93,34 @@ def main():
         conn.close()
         return
 
+    # Für jede gelöschte Position einen Gegen-SELL ins Trade-Log buchen, damit
+    # keine Phantom-Trades (BUY ohne SELL) zurückbleiben. Sonst driften Trade-Log
+    # und Positions-Tabelle auseinander (siehe portfolio/integrity.py).
+    from datetime import datetime
+    now = datetime.utcnow().isoformat()
+    for ticker, shares, price, _date in positions:
+        cur.execute(
+            """
+            INSERT INTO trades (ticker, action, shares, price, timestamp, pnl, reason)
+            VALUES (?, 'SELL', ?, ?, ?, 0.0, 'Portfolio-Reset')
+            """,
+            (ticker, shares, price, now),
+        )
+
     # Positionen löschen
     cur.execute("DELETE FROM positions")
 
-    # Cash setzen
+    # Cash setzen + Reset-Marker für die Cash-Identitätsprüfung
     cur.execute(
         "INSERT OR REPLACE INTO portfolio_meta (key, value) VALUES ('cash', ?)",
+        (str(new_cash),),
+    )
+    cur.execute(
+        "INSERT OR REPLACE INTO portfolio_meta (key, value) VALUES ('reset_at', ?)",
+        (now,),
+    )
+    cur.execute(
+        "INSERT OR REPLACE INTO portfolio_meta (key, value) VALUES ('epoch_cash', ?)",
         (str(new_cash),),
     )
     conn.commit()

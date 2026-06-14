@@ -299,6 +299,17 @@ def main():
     else:
         broker = PaperBroker()
     portfolio = Portfolio(initial_capital=config.initial_capital)
+    # Buchhaltungs-Integrität prüfen: erkennt Trade-Log/Positions-Drift
+    # (z.B. nach einem Reset, der Positionen löscht aber Trades stehen lässt).
+    try:
+        from portfolio.integrity import check_integrity
+        _ir = check_integrity(portfolio._conn, config.initial_capital)
+        if not _ir.ok:
+            log.warning(_ir.summary())
+        else:
+            log.info(_ir.summary())
+    except Exception as _ie:
+        log.debug("Portfolio-Integritätscheck übersprungen: %s", _ie)
     tracker = PerformanceTracker()
     phase_ctrl = _make_phase_ctrl()
     focus_ctrl = _make_focus_ctrl()
