@@ -125,6 +125,12 @@ class ClaudeAnalyzer:
     def __init__(self, api_key: str = "", model: str = "claude-sonnet-4-5"):
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "")
         self.ollama_ratio = float(os.environ.get("OLLAMA_RATIO", 0.6))
+        # Lokales Ollama-Modell für die Vorfilterung. Muss ein tatsächlich
+        # geladenes Modell sein (siehe `ollama list`), sonst schlägt jeder
+        # Prescreen fehl und es wird immer auf Claude zurückgefallen.
+        self.ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
+        self.ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+        self.ollama_timeout = int(os.environ.get("OLLAMA_TIMEOUT", "60"))
         self.model = model
         self._trust_filter = NewsTrustFilter()
         self._call_count = 0
@@ -282,9 +288,9 @@ class ClaudeAnalyzer:
                 context_block=context_block,
             )
             resp = requests.post(
-                "http://localhost:11434/api/generate",
-                json={"model": "llama3", "prompt": prompt, "stream": False},
-                timeout=30,
+                f"{self.ollama_url}/api/generate",
+                json={"model": self.ollama_model, "prompt": prompt, "stream": False},
+                timeout=self.ollama_timeout,
             )
             if resp.status_code == 200:
                 text = resp.json().get("response", "")
