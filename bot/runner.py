@@ -1070,7 +1070,12 @@ def run_analysis_cycle(
             and ticker not in _force_claude_tickers
         )
         if not _is_noise:
-            _analysis_log.store(analysis)
+            # Persistenz-Fehler eines einzelnen Tickers darf den gesamten
+            # Analyse-Zyklus nicht abreißen (vgl. sources_used-dict-Crash).
+            try:
+                _analysis_log.store(analysis)
+            except Exception as _store_err:
+                log.warning("Analysis-Log store(%s) fehlgeschlagen: %s", ticker, _store_err)
 
         # Follow-Up für Headline-Signal-Ticker: Ergebnis per Telegram
         if ticker in _headline_meta:

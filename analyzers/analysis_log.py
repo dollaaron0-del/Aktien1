@@ -52,6 +52,18 @@ class AnalysisLog:
         from analyzers.claude_analyzer import AnalysisResult
         if not isinstance(analysis, AnalysisResult):
             return
+        # sources_used ist je nach Analyzer-Pfad mal Dict[str,int] (Quelle→Anzahl),
+        # mal int, mal {} (Default). Die Spalte ist INTEGER → hier zu einer Zahl
+        # normalisieren, sonst crasht SQLite ("type 'dict' is not supported") und
+        # reißt den gesamten Analyse-Zyklus ab.
+        _sources = analysis.sources_used
+        if isinstance(_sources, dict):
+            _sources = sum(_sources.values()) if _sources else 0
+        elif not isinstance(_sources, int):
+            try:
+                _sources = int(_sources)
+            except (TypeError, ValueError):
+                _sources = 0
         self._conn.execute(
             """INSERT INTO analyses
                (analyzed_at, ticker, recommendation, direction, sentiment_score,
@@ -74,7 +86,7 @@ class AnalysisLog:
                 json.dumps(analysis.risk_factors or []),
                 analysis.target_price,
                 analysis.suggested_hold_days,
-                analysis.sources_used,
+                _sources,
                 exchange,
             ),
         )
