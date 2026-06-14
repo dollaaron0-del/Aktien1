@@ -23,6 +23,7 @@ Unterstützte Ticker-Formate:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from typing import Dict, List, Optional
@@ -105,8 +106,18 @@ class IBKRBroker:
             log.info("IBKR: Verbindungsversuch %s:%d (clientId=%d) …", _HOST, _PORT, _CLIENT_ID)
             ib.connect(_HOST, _PORT, clientId=_CLIENT_ID, readonly=False, timeout=10)
             log.info("IBKR: TCP-Verbindung hergestellt – frage Konten ab …")
+        except (asyncio.TimeoutError, TimeoutError, ConnectionError, OSError) as e:
+            # Erwartbar, wenn das IB Gateway nicht läuft oder dessen Verbindung
+            # zu den IB-Servern unterbrochen ist. Kein Traceback – der Aufrufer
+            # fällt sauber auf den Paper-Broker zurück und alarmiert via Telegram.
+            log.warning(
+                "IBKR nicht erreichbar (%s:%d): %s – Paper-Broker übernimmt.",
+                _HOST, _PORT, type(e).__name__,
+            )
+            self._connected = False
+            return False
         except Exception as e:
-            log.exception("IBKR connect() fehlgeschlagen (%s:%d): %s", _HOST, _PORT, e)
+            log.exception("IBKR connect() unerwartet fehlgeschlagen (%s:%d): %s", _HOST, _PORT, e)
             self._connected = False
             return False
 
