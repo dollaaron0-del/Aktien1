@@ -68,8 +68,19 @@ def _bullish_analysis():
         ticker="NVDA", sentiment_score=0.95, confidence="HIGH",
         direction="BULLISH", recommendation="BUY", suggested_hold_days=10,
         entry_rationale="Starkes Momentum", key_catalysts=["Earnings-Beat"],
-        risk_factors=["Bewertung"], target_price=160.0,
+        risk_factors=["Bewertung"], target_price=160.0, sources_used=5,
     )
+
+
+def test_too_few_sources_skips(tmp_path, monkeypatch):
+    """Informationsdichte-Boden: 0 Quellen → kein Kauf (SKIP)."""
+    p = make_portfolio(tmp_path, monkeypatch)
+    strat = make_strategy(p)
+    a = _bullish_analysis()
+    a.sources_used = 0
+    result = strat.evaluate("NVDA", a, current_price=120.0, regime="NEUTRAL")
+    assert result.action == "SKIP"
+    assert "Quellen" in result.reason
 
 
 def test_bullish_signal_results_in_buy(tmp_path, monkeypatch):

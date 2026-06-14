@@ -250,8 +250,8 @@ class SwingStrategy:
                 threshold += 0.08
             elif macro_bias <= -0.3:
                 threshold += 0.05
-        except Exception:
-            pass
+        except Exception as _e:
+            log.debug("Makro-Bias-Threshold übersprungen [%s]: %s", ticker, _e)
 
         # Direction must be bullish
         if direction not in ("BULLISH",) or recommendation not in ("BUY",):
@@ -267,6 +267,21 @@ class SwingStrategy:
 
         if sentiment < threshold:
             return StrategyResult("SKIP", ticker, f"Sentiment {sentiment:.2f} < Schwelle {threshold:.2f}")
+
+        # Informationsdichte-Boden: nicht auf zu dünner Quellenlage handeln.
+        # (Beim 7.6.-Umbau verloren gegangen – hier wiederhergestellt.)
+        min_src = config.expl_min_sources if getattr(config, "exploration_mode", False) else config.min_sources
+        _su = getattr(analysis, "sources_used", 0)
+        # sources_used ist je nach Analyzer-Pfad int ODER Dict[str,int] (Quelle→Anzahl).
+        if isinstance(_su, dict):
+            n_src = sum(int(v or 0) for v in _su.values())
+        else:
+            try:
+                n_src = int(_su or 0)
+            except (TypeError, ValueError):
+                n_src = 0
+        if n_src < min_src:
+            return StrategyResult("SKIP", ticker, f"Zu wenige Quellen ({n_src} < {min_src}) – übersprungen")
 
         # Max positions (dynamisch nach Portfolio-Größe via FocusController –
         # config.max_positions existiert nicht; früher self.focus.get_max_positions).
@@ -329,8 +344,8 @@ class SwingStrategy:
                 rl_decision = rl_agent.decide(ticker, sentiment, current_price)
                 if rl_decision == "SKIP":
                     return StrategyResult("SKIP", ticker, "RL-Agent: SKIP")
-            except Exception:
-                pass
+            except Exception as _e:
+                log.debug("RL-Agent-Veto übersprungen [%s]: %s", ticker, _e)
 
         rationale = getattr(analysis, "entry_rationale", "") or getattr(analysis, "recommendation", "")
         catalysts  = getattr(analysis, "key_catalysts", []) or []
@@ -463,16 +478,16 @@ class SwingStrategy:
             try:
                 kelly_mult = self.kelly_sizer.fraction
                 base = min(base, self.portfolio.cash * kelly_mult)
-            except Exception:
-                pass
+            except Exception as _e:
+                log.debug("Kelly-Sizing übersprungen: %s", _e)
 
         # Goal risk
         if self.goal_risk_assessor:
             try:
                 risk_mult = self.goal_risk_assessor.position_size_multiplier()
                 base *= risk_mult
-            except Exception:
-                pass
+            except Exception as _e:
+                log.debug("Goal-Risk-Sizing übersprungen: %s", _e)
 
         # Makro-Modifier (VIX × Makro-Kalender × Sektor-Rotation).
         # Regime ist bereits über params.position_size_mult abgedeckt – hier
@@ -481,8 +496,8 @@ class SwingStrategy:
             from analyzers.macro_context import get_macro_context
             ticker = getattr(analysis, "ticker", "") or ""
             base *= get_macro_context().size_modifier(ticker)
-        except Exception:
-            pass
+        except Exception as _e:
+            log.debug("Makro-Size-Modifier übersprungen: %s", _e)
 
         # Min/max guardrails
         base = max(base, 10.0)

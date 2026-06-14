@@ -146,6 +146,39 @@ class AnalysisLog:
         ]
         return out
 
+    def source_health(self, days: int = 7, min_analyses: int = 20, weak_pct: float = 10.0) -> Dict:
+        """Klassifiziert jede Quelle als tot/schwach/gesund über die letzten `days`.
+
+        - tot:    0 Treffer über alle Analysen (Kandidat: fehlender API-Key oder defekt)
+        - schwach: trägt in < `weak_pct` % der Analysen bei
+        - gesund: darüber
+        `reliable` ist False, wenn weniger als `min_analyses` Analysen vorliegen
+        (dann ist die Aussage statistisch zu dünn – z.B. direkt nach einem Crash).
+        """
+        contribs = self.get_source_contributions(days=days)
+        from datetime import timedelta
+        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        n = self._conn.execute(
+            "SELECT COUNT(*) FROM analyses WHERE analyzed_at > ? AND sources_breakdown IS NOT NULL",
+            (cutoff,),
+        ).fetchone()[0]
+        dead, weak, healthy = [], [], []
+        for c in contribs:
+            if c["total_hits"] == 0:
+                dead.append(c["source"])
+            elif c["pct_analyses"] < weak_pct:
+                weak.append(c["source"])
+            else:
+                healthy.append(c["source"])
+        return {
+            "n_analyses": n,
+            "reliable": n >= min_analyses,
+            "dead": dead,
+            "weak": weak,
+            "healthy": healthy,
+            "days": days,
+        }
+
     def get_recent(self, limit: int = 100, ticker: Optional[str] = None) -> List[Dict]:
         if ticker:
             rows = self._conn.execute(

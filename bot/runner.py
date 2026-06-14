@@ -1187,8 +1187,15 @@ def run_analysis_cycle(
 
         _cur_px = float((price_data or {}).get("current_price") or 0)
         if _cur_px > 0:
-            _result = strategy.evaluate(ticker, analysis, _cur_px, regime)
-            action = executor.execute(_result, analysis=analysis, sources_breakdown=sources_breakdown)
+            # Fehler bei EINEM Ticker darf den restlichen Zyklus nicht abreißen
+            # und muss sichtbar sein (nicht still verschluckt – vgl. Execution-Bug).
+            try:
+                _result = strategy.evaluate(ticker, analysis, _cur_px, regime)
+                action = executor.execute(_result, analysis=analysis, sources_breakdown=sources_breakdown)
+            except Exception as _exec_err:
+                log.error("Evaluate/Execute [%s] fehlgeschlagen: %s", ticker, _exec_err, exc_info=True)
+                console.print(f"  [bold red]⚠ {ticker}: Entscheidung/Ausführung fehlgeschlagen – {_exec_err}[/bold red]")
+                action = None
         else:
             action = f"[{ticker}] Kein Kurs verfügbar – übersprungen"
         if action:
