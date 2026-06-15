@@ -25,7 +25,7 @@ _COST_PER_CLAUDE_CALL = float(os.getenv("CLAUDE_COST_PER_CALL", "0.027"))
 # Prompt caching: cached tokens cost ~10% of normal input price
 _CACHE_DISCOUNT = 0.90  # 90% saved on cached tokens (~3000 tokens × $0.015/1k × 0.9 ≈ $0.04/call)
 # Maximale tägliche Claude-Kosten (Schutz vor Runaway-Kosten)
-_MAX_DAILY_COST_USD = float(os.getenv("MAX_DAILY_COST_USD", "5.00"))
+_MAX_DAILY_COST_USD = float(os.getenv("MAX_DAILY_COST_USD", "1.00"))
 
 
 class APICostTracker:

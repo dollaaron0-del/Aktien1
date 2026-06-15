@@ -195,6 +195,41 @@ def test_budget_exhausted_avoids_claude(monkeypatch):
     assert res.recommendation == "BUY"      # statt Claude
 
 
+def test_no_credit_blocks_claude_and_falls_back(monkeypatch):
+    """Guthaben-Fehler (_claude_analysis→None) → lokale Ausweich-Analyse, Claude
+    wird für den Rest gesperrt; Folgeaufruf ruft Claude gar nicht mehr."""
+    a, fake = _analyzer(monkeypatch, frugal=True)
+    calls = {"claude": 0}
+
+    def _no_credit(*args, **kwargs):
+        calls["claude"] += 1
+        return None                              # simuliert Guthaben-/Auth-Fehler
+    monkeypatch.setattr(a, "_claude_analysis", _no_credit)
+
+    # 1. Aufruf mit Katalysator → Claude versucht (None) → lokal + sperren
+    r1 = a.analyze(ticker="CAT",
+                   news_items=[{"source": "SEC 8-K", "title": "x"}],
+                   price_data={"current_price": 10.0})
+    assert r1.recommendation == "BUY"            # lokale Ausweich-Analyse
+    assert a._claude_blocked is True
+    assert calls["claude"] == 1
+
+    # 2. Aufruf: Claude ist gesperrt → wird NICHT mehr gerufen
+    r2 = a.analyze(ticker="CAT2",
+                   news_items=[{"source": "SEC 8-K", "title": "y"}],
+                   price_data={"current_price": 11.0})
+    assert r2.recommendation == "BUY"
+    assert calls["claude"] == 1                  # unverändert → kein weiterer Claude-Call
+
+
+def test_is_claude_unavailable_error():
+    from analyzers.claude_analyzer import ClaudeAnalyzer as CA
+    assert CA._is_claude_unavailable_error(Exception("Your credit balance is too low"))
+    assert CA._is_claude_unavailable_error(Exception("authentication_error 401"))
+    assert not CA._is_claude_unavailable_error(Exception("overloaded_error 529"))
+    assert not CA._is_claude_unavailable_error(Exception("timeout"))
+
+
 def test_force_claude_bypasses_local(monkeypatch):
     a, fake = _analyzer(monkeypatch, frugal=True)
     sentinel = AnalysisResult("FRC", 0.6, "BULLISH", "MEDIUM", "HOLD",

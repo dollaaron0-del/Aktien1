@@ -138,6 +138,7 @@ class ClaudeAnalyzer:
         self._local_count = 0          # via Ollama/MLX abgehandelt (kein Claude)
         self._compress_count = 0       # News lokal komprimiert vor Claude
         self._prescreener = None       # lazy: OllamaPrescreener oder MLXPrescreener
+        self._claude_blocked = False   # True nach erkanntem Guthaben-/Auth-Fehler
         try:
             from analyzers.api_cost_tracker import APICostTracker
             self._cost_tracker = APICostTracker()
@@ -227,37 +228,65 @@ class ClaudeAnalyzer:
                 ):
                     return ollama_result
 
-        # Kosten-Bremse: hartes Tages-Budget für Claude (MAX_DAILY_COST_USD).
-        # Ist es erschöpft, wird KEIN Claude mehr gerufen – stattdessen lokal
-        # ausweichen (Ollama), sonst SKIP. Verhindert Kosten-Runaways wie den
-        # Tag, an dem das Anthropic-Guthaben leerlief.
-        if self.api_key and self._cost_tracker is not None:
-            ok, reason = self._cost_tracker.check_daily_limit()
-            if not ok:
+        # Claude verfügbar? Drei harte Sperren – greift EINE, übernimmt Ollama
+        # ausnahmslos alles (auch Katalysatoren & force_claude):
+        #   1. kein API-Key
+        #   2. Guthaben-/Auth-Fehler heute schon erkannt (_claude_blocked)
+        #   3. Tages-Budget MAX_DAILY_COST_USD erreicht
+        claude_ok = bool(self.api_key) and not self._claude_blocked
+        if claude_ok and self._cost_tracker is not None:
+            allowed, reason = self._cost_tracker.check_daily_limit()
+            if not allowed:
                 log.warning("[%s] Claude-Budget: %s", ticker, reason)
-                local = (
-                    self._frugal_thesis_check(ticker, news_text, current_price, existing_position, context_block)
-                    if existing_position is not None
-                    else self._frugal_local_analysis(ticker, news, price_data, current_price, is_crypto)
-                )
-                if local is not None:
-                    self._cost_tracker.record(claude_called=False, ollama_used=True)
-                    return local
-                return self._empty_result(ticker)
+                claude_ok = False
+
+        if not claude_ok:
+            return self._local_fallback(
+                ticker, news, news_text, price_data, current_price,
+                is_crypto, existing_position, context_block,
+            )
 
         # Claude übernimmt jetzt die finale Analyse. Im Frugal-Modus lässt Ollama
         # die News vorher lokal zu einem kompakten Briefing eindampfen → weniger
         # Claude-Input-Tokens (günstiger), fokussierterer Prompt.
         claude_news = self._claude_news_text(ticker, news, news_text)
 
-        # Thesis check for existing position
         if existing_position is not None:
             result = self._thesis_check(ticker, claude_news, current_price, existing_position, context_block)
         else:
             result = self._claude_analysis(ticker, claude_news, current_price, is_crypto, context_block)
+
+        # None = Claude hart nicht verfügbar (Guthaben/Auth) → für den Rest des
+        # Prozesses sperren und sofort lokal ausweichen.
+        if result is None:
+            self._claude_blocked = True
+            log.warning("[%s] Claude nicht verfügbar (Guthaben/Auth) – Ollama übernimmt ab jetzt alles", ticker)
+            return self._local_fallback(
+                ticker, news, news_text, price_data, current_price,
+                is_crypto, existing_position, context_block,
+            )
+
         if self._cost_tracker is not None:
             self._cost_tracker.record(claude_called=True)
         return result
+
+    def _local_fallback(
+        self, ticker, news, news_text, price_data, current_price,
+        is_crypto, existing_position, context_block,
+    ) -> AnalysisResult:
+        """Ollama übernimmt vollständig (Budget erschöpft / kein Guthaben /
+        force-unabhängig). Liefert lokale Analyse bzw. Thesis-Check; nur wenn die
+        lokale Engine ebenfalls ausfällt → leeres Ergebnis (SKIP)."""
+        local = (
+            self._frugal_thesis_check(ticker, news_text, current_price, existing_position, context_block)
+            if existing_position is not None
+            else self._frugal_local_analysis(ticker, news, price_data, current_price, is_crypto)
+        )
+        if local is not None:
+            if self._cost_tracker is not None:
+                self._cost_tracker.record(claude_called=False, ollama_used=True)
+            return local
+        return self._empty_result(ticker)
 
     # ── Frugal-Modus: lokale Engine (Ollama/MLX) ─────────────────────────────
 
@@ -445,6 +474,10 @@ class ClaudeAnalyzer:
             return self._parse_response(ticker, resp.content[0].text)
         except Exception as e:
             log.warning("Claude-Analyse fehlgeschlagen für %s: %s", ticker, e)
+            # Guthaben-/Auth-Fehler → None signalisieren (Aufrufer sperrt Claude
+            # und weicht auf Ollama aus). Soft-Fehler → leeres Ergebnis.
+            if self._is_claude_unavailable_error(e):
+                return None
             return self._empty_result(ticker)
 
     def _thesis_check(
@@ -479,9 +512,21 @@ class ClaudeAnalyzer:
             return result
         except Exception as e:
             log.warning("Thesis-Check fehlgeschlagen für %s: %s", ticker, e)
+            if self._is_claude_unavailable_error(e):
+                return None
             result = self._empty_result(ticker)
             result.thesis_valid = True
             return result
+
+    @staticmethod
+    def _is_claude_unavailable_error(e: Exception) -> bool:
+        """Erkennt harte Nicht-Verfügbarkeit (Guthaben leer / Auth) – im
+        Unterschied zu transienten Fehlern. Dann übernimmt Ollama ausnahmslos."""
+        s = str(e).lower()
+        return any(k in s for k in (
+            "credit balance", "too low", "billing", "insufficient",
+            "authentication", "invalid x-api-key", "401", "403", "permission",
+        ))
 
     def _try_ollama(
         self, ticker: str, news_text: str, price: float, is_crypto: bool,
