@@ -420,6 +420,28 @@ class IBKRBroker:
             log.warning("IBKR get_account: %s", e)
             return None
 
+    def positions(self) -> Optional[Dict[str, float]]:
+        """Tatsächlich bei IBKR gehaltene Positionen als {symbol: shares}.
+
+        Gibt **None** zurück, wenn der Stand nicht ermittelbar ist (nicht
+        verbunden / Fehler). Aufrufer dürfen None NICHT als "flach" deuten –
+        sonst würde ein Verbindungsabriss fälschlich alle Buch-Positionen als
+        Phantome markieren. Ein leeres Dict {} heißt dagegen sicher "flach".
+        """
+        if not self._ensure_connected():
+            return None
+        try:
+            account = getattr(self, "_active_account", _ACCOUNT) or _ACCOUNT \
+                or (self._ib.managedAccounts() or [""])[0]
+            result: Dict[str, float] = {}
+            for p in self._ib.positions(account):
+                sym = p.contract.symbol
+                result[sym] = result.get(sym, 0.0) + float(p.position)
+            return result
+        except Exception as e:
+            log.warning("IBKR positions(): %s", e)
+            return None
+
     def disconnect(self):
         if self._ib and self._ib.isConnected():
             self._ib.disconnect()

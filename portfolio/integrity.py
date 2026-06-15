@@ -242,3 +242,103 @@ def reconcile(
     finally:
         if owns:
             conn.close()
+
+
+@dataclass
+class BrokerReconcileReport:
+    reconciled: Dict[str, float] = field(default_factory=dict)        # Buch-Position ohne IBKR-Deckung → ausgebucht
+    partial_mismatch: Dict[str, tuple] = field(default_factory=dict)  # ticker -> (ibkr_held, buch_shares)
+    untracked: Dict[str, float] = field(default_factory=dict)         # bei IBKR gehalten, aber nicht im Buch
+
+    @property
+    def ok(self) -> bool:
+        return not (self.reconciled or self.partial_mismatch or self.untracked)
+
+    def summary(self) -> str:
+        if self.ok:
+            return "Broker-Abgleich: OK (Buch ↔ IBKR deckungsgleich)."
+        parts = ["Broker-Abgleich: ⚠️ Buch ↔ IBKR weicht ab:"]
+        if self.reconciled:
+            parts.append("  • Phantome ausgebucht (nicht bei IBKR): "
+                         + ", ".join(f"{t} ({s:g})" for t, s in self.reconciled.items()))
+        if self.partial_mismatch:
+            parts.append("  • Teil-Abweichung (nur gemeldet, NICHT geändert): "
+                         + ", ".join(f"{t} (IBKR {h:g} / Buch {b:g})"
+                                     for t, (h, b) in self.partial_mismatch.items()))
+        if self.untracked:
+            parts.append("  • Bei IBKR gehalten, nicht im Buch: "
+                         + ", ".join(f"{t} ({s:g})" for t, s in self.untracked.items()))
+        return "\n".join(parts)
+
+
+def _norm(sym: str) -> str:
+    """Ticker auf IBKR-Basissymbol normalisieren (z.B. 'ASML.AS' → 'ASML')."""
+    return (sym or "").split(".")[0].upper()
+
+
+def reconcile_against_broker(
+    db: Union[str, sqlite3.Connection],
+    broker_positions: Dict[str, float],
+    reason: str = "Reset-Bereinigung: nicht in IBKR (Broker-Abgleich)",
+) -> BrokerReconcileReport:
+    """Gleicht das Positions-Buch gegen die TATSÄCHLICHEN Broker-Positionen ab.
+
+    `broker_positions` = {symbol: shares} vom Broker. WICHTIG: der Aufrufer darf
+    diese Funktion nur mit einem real ermittelten Stand aufrufen – niemals mit
+    {} wenn der Broker nur offline war (sonst würden alle Buch-Positionen als
+    Phantome ausgebucht). `broker.positions()` liefert dafür None statt {}.
+
+    Voll-Phantome (Broker hält ~0 des Symbols) werden cash-neutral ausgebucht:
+    Position gelöscht + Gegen-SELL zum Einstiegspreis (pnl=0, Buchungs-Reason),
+    sodass das Trade-Log netto flach bleibt und der Cash-Stand (durch Reset
+    bewusst gesetzt) unangetastet bleibt. Teil-Abweichungen werden nur GEMELDET,
+    nicht automatisch verändert (zu selten/riskant für Auto-Repair).
+    """
+    from datetime import datetime
+
+    rep = BrokerReconcileReport()
+    held_by_base: Dict[str, float] = {}
+    for sym, qty in (broker_positions or {}).items():
+        held_by_base[_norm(sym)] = held_by_base.get(_norm(sym), 0.0) + float(qty)
+
+    conn, owns = _connect(db)
+    try:
+        rows = conn.execute(
+            "SELECT ticker, shares, entry_price, currency, fx_rate_at_entry FROM positions"
+        ).fetchall()
+        book_bases = {_norm(r[0]) for r in rows}
+        now = datetime.utcnow().isoformat()
+        with conn:
+            for r in rows:
+                ticker = r[0]
+                shares = float(r[1])
+                held = held_by_base.get(_norm(ticker), 0.0)
+                if held + _SHARE_EPS >= shares:
+                    continue  # voll gedeckt – ok
+                if held <= _SHARE_EPS:
+                    # Voll-Phantom → ausbuchen (cash-neutral)
+                    conn.execute("DELETE FROM positions WHERE ticker=?", (ticker,))
+                    conn.execute(
+                        """
+                        INSERT INTO trades
+                            (ticker, action, shares, price, timestamp, pnl, reason, currency, fx_rate)
+                        VALUES (?, 'SELL', ?, ?, ?, 0.0, ?, ?, ?)
+                        """,
+                        (ticker, shares, float(r[2] or 0.0), now, reason,
+                         (r[3] or "USD"), float(r[4] or 1.0)),
+                    )
+                    rep.reconciled[ticker] = round(shares, 4)
+                else:
+                    # Teil-Deckung → nur melden, Buch unangetastet
+                    rep.partial_mismatch[ticker] = (round(held, 4), round(shares, 4))
+            # Bei IBKR gehalten, aber nicht im Buch → melden (kein Auto-Adopt)
+            for base, qty in held_by_base.items():
+                if abs(qty) > _SHARE_EPS and base not in book_bases:
+                    rep.untracked[base] = round(qty, 4)
+        if rep.reconciled:
+            log.warning("Broker-Abgleich: %d Phantom-Position(en) ausgebucht: %s",
+                        len(rep.reconciled), ", ".join(rep.reconciled))
+        return rep
+    finally:
+        if owns:
+            conn.close()

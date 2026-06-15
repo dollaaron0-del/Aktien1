@@ -317,6 +317,32 @@ def main():
             log.info(_ir.summary())
     except Exception as _ie:
         log.debug("Portfolio-Integritätscheck übersprungen: %s", _ie)
+    # Broker-Abgleich (IBKR): Buch gegen TATSÄCHLICHE Broker-Positionen prüfen –
+    # bucht Phantome aus, die nie real ausgeführt wurden, und verhindert so, dass
+    # ein Exit-Signal einen ungewollten Short eröffnet. Nur wenn der Broker eine
+    # positions()-API hat (IBKR) und einen echten Stand liefert (None = offline →
+    # NICHT als 'flach' werten, Abgleich überspringen).
+    try:
+        _pos_fn = getattr(broker, "positions", None)
+        if callable(_pos_fn):
+            _bpos = _pos_fn()
+            if _bpos is None:
+                log.info("Broker-Abgleich übersprungen – IBKR-Positionen nicht ermittelbar (offline?).")
+            else:
+                from portfolio.integrity import reconcile_against_broker
+                _br = reconcile_against_broker(portfolio._conn, _bpos)
+                if _br.ok:
+                    log.info(_br.summary())
+                else:
+                    log.warning(_br.summary())
+                    try:
+                        from notifier.telegram_notifier import TelegramNotifier
+                        TelegramNotifier().send("🔄 <b>Broker-Abgleich beim Start</b>\n"
+                                                + _br.summary())
+                    except Exception:
+                        pass
+    except Exception as _be:
+        log.debug("Broker-Abgleich übersprungen: %s", _be)
     tracker = PerformanceTracker()
     phase_ctrl = _make_phase_ctrl()
     focus_ctrl = _make_focus_ctrl()

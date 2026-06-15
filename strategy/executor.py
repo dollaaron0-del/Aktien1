@@ -118,6 +118,42 @@ class TradeExecutor:
                 self._notifier = _NullNotifier()
         return self._notifier
 
+    # ── Broker-Deckungs-Check (Anti-Short bei Buch/IBKR-Desync) ──────────────
+    def _broker_held(self, ticker: str) -> Optional[float]:
+        """Tatsächlich beim Broker gehaltene Stückzahl für `ticker`.
+
+        None = nicht prüfbar (Broker ohne positions()-API wie Paper/Alpaca,
+        oder Stand nicht ermittelbar) → Guard greift bewusst NICHT, weil ein
+        nicht-deckbarer Sell im No-Fallback-Modus ohnehin sicher errort statt
+        zu shorten. Ein leeres {} heißt sicher 'flach' → 0.0."""
+        pos_fn = getattr(self.broker, "positions", None)
+        if not callable(pos_fn):
+            return None
+        try:
+            held = pos_fn()
+        except Exception:
+            return None
+        if held is None:
+            return None
+        base = ticker.split(".")[0].upper()
+        return float(held.get(ticker) or held.get(base) or 0.0)
+
+    def _short_guard_blocks(self, ticker: str, sell_shares: float) -> Optional[str]:
+        """Gibt eine Fehlermeldung zurück, wenn der Broker WENIGER hält als
+        verkauft werden soll (→ Order würde einen Short eröffnen). Sonst None."""
+        held = self._broker_held(ticker)
+        if held is None or held + 1e-4 >= sell_shares:
+            return None
+        warn = f"IBKR hält {held:g}, Buch will {sell_shares:g} verkaufen"
+        if _throttle_should_send(f"DESYNC:{ticker}", f"{held:g}/{sell_shares:g}"):
+            self.notifier.send(
+                f"⚠️ <b>{ticker} SELL übersprungen – Buch/IBKR-Desync</b>\n"
+                f"{warn} → Order würde shorten, daher blockiert.\n"
+                f"Buch gegen IBKR abgleichen (Startup-Reconcile prüft das beim Neustart)."
+            )
+        log.error("[%s] SELL übersprungen (Anti-Short): %s", ticker, warn)
+        return warn
+
     # ── Public ──────────────────────────────────────────────────────────────
     def execute(
         self,
@@ -210,6 +246,9 @@ class TradeExecutor:
         # Broker-Order auslösen, NICHT close_position().
         if is_partial:
             sell_shares = result.shares
+            blocked = self._short_guard_blocks(ticker, sell_shares)
+            if blocked:
+                return f"[{ticker}] ⛔ Partial-TP übersprungen (Desync): {blocked}"
             fill = self.broker.sell(ticker, sell_shares, result.price)
             if not _is_filled(fill):
                 warn = _fail_reason(fill)
@@ -227,6 +266,9 @@ class TradeExecutor:
 
         # Voll-Exit
         sell_shares = pos.shares
+        blocked = self._short_guard_blocks(ticker, sell_shares)
+        if blocked:
+            return f"[{ticker}] ⛔ SELL übersprungen (Desync): {blocked}"
         fill = self.broker.sell(ticker, sell_shares, result.price)
         if not _is_filled(fill):
             warn = _fail_reason(fill)

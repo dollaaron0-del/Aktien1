@@ -5,7 +5,7 @@ import pytest
 
 import portfolio.portfolio as port_mod
 from portfolio.portfolio import Portfolio, Position
-from portfolio.integrity import check_integrity, reconcile
+from portfolio.integrity import check_integrity, reconcile, reconcile_against_broker
 
 
 def make_portfolio(tmp_path, monkeypatch, capital=100_000.0):
@@ -96,3 +96,35 @@ def test_reset_marker_suppresses_cash_drift(tmp_path, monkeypatch):
     rep = check_integrity(p._conn, 100_000.0)
     # Keine Trades nach dem (zukünftigen) Reset-Marker → keine Orphans/Drift
     assert rep.ok, rep.summary()
+
+
+# ── Broker-Abgleich (Buch ↔ IBKR) ────────────────────────────────────────────
+
+def test_broker_reconcile_books_out_phantom(tmp_path, monkeypatch):
+    """Buch-Position, die IBKR gar nicht hält → cash-neutral ausgebucht."""
+    p = make_portfolio(tmp_path, monkeypatch)
+    p.open_position(make_position("MSFT", 57.91, 417.35))
+    cash_before = p.cash
+    rep = reconcile_against_broker(p._conn, broker_positions={})  # IBKR flach
+    assert "MSFT" in rep.reconciled
+    assert p.get_position("MSFT") is None            # Position weg
+    assert p.cash == pytest.approx(cash_before)      # Cash unverändert (Buchungs-SELL)
+    # Trade-Log bleibt netto flach → kein Orphan
+    assert check_integrity(p._conn, 100_000.0).orphan_trades == {}
+
+
+def test_broker_reconcile_keeps_covered_position(tmp_path, monkeypatch):
+    """IBKR deckt die Buch-Position (auch mit Suffix-Symbol) → nichts ändern."""
+    p = make_portfolio(tmp_path, monkeypatch)
+    p.open_position(make_position("ASML.AS", 15, 1390.0))
+    rep = reconcile_against_broker(p._conn, broker_positions={"ASML": 15.0})
+    assert rep.ok
+    assert p.get_position("ASML.AS") is not None
+
+
+def test_broker_reconcile_reports_untracked(tmp_path, monkeypatch):
+    """Bei IBKR gehalten, aber nicht im Buch → nur gemeldet, nicht adoptiert."""
+    p = make_portfolio(tmp_path, monkeypatch)
+    rep = reconcile_against_broker(p._conn, broker_positions={"NVDA": 5.0})
+    assert rep.untracked == {"NVDA": 5.0}
+    assert rep.reconciled == {}

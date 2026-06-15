@@ -163,3 +163,53 @@ def test_skip_and_hold_strings(tmp_path, monkeypatch):
     assert "übersprungen" in ex.execute(StrategyResult("SKIP", "AAPL", "Sentiment zu niedrig"))
     assert ex.execute(StrategyResult("HOLD", "AAPL", "Position läuft")) == "[AAPL] Position läuft"
     assert ex.execute(None) is None
+
+
+class FakeBrokerWithPositions(FakeBroker):
+    """Broker mit positions()-API (wie IBKR) für den Anti-Short-Guard."""
+    def __init__(self, held: dict, fill=True):
+        super().__init__(fill=fill)
+        self._held = dict(held)
+
+    def positions(self):
+        return dict(self._held)
+
+
+def _exec_with(p, broker, monkeypatch, tmp_path):
+    import strategy.executor as ex_mod
+    monkeypatch.setattr(ex_mod, "_THROTTLE_FILE", tmp_path / "throttle.json")
+    return TradeExecutor(p, broker, journal=None, notifier=_NullNotifier())
+
+
+def test_short_guard_blocks_sell_when_broker_flat(tmp_path, monkeypatch):
+    """Buch hält MSFT, IBKR ist flach → SELL muss blockiert werden (kein Short)."""
+    p = make_portfolio(tmp_path, monkeypatch)
+    p.open_position(Position(
+        ticker="MSFT", shares=57.91, entry_price=417.35,
+        entry_date="2026-06-06T00:00:00", stop_loss=392.0, take_profit=475.0,
+        target_hold_days=8,
+    ))
+    broker = FakeBrokerWithPositions(held={})            # IBKR hält nichts
+    ex = _exec_with(p, broker, monkeypatch, tmp_path)
+    out = ex.execute(StrategyResult("SELL", "MSFT", "Stop-Loss", shares=57.91, price=410.0),
+                     days_held=9)
+    assert "übersprungen" in out and "Desync" in out
+    assert broker.sells == []                            # KEINE Order an Broker
+    assert p.get_position("MSFT") is not None            # Position unangetastet
+
+
+def test_sell_proceeds_when_broker_covers(tmp_path, monkeypatch):
+    """IBKR deckt die Buch-Position → SELL läuft normal durch."""
+    p = make_portfolio(tmp_path, monkeypatch)
+    p.open_position(Position(
+        ticker="AAPL", shares=10, entry_price=150.0,
+        entry_date="2026-06-10T00:00:00", stop_loss=135.0, take_profit=180.0,
+        target_hold_days=14,
+    ))
+    broker = FakeBrokerWithPositions(held={"AAPL": 10})
+    ex = _exec_with(p, broker, monkeypatch, tmp_path)
+    out = ex.execute(StrategyResult("SELL", "AAPL", "Take-Profit @ $170.00",
+                                    shares=10, price=170.0), days_held=5)
+    assert "VERKAUFT" in out
+    assert broker.sells == [("AAPL", 10, 170.0)]
+    assert p.get_position("AAPL") is None
