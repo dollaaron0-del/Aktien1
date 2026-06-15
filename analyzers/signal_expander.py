@@ -50,6 +50,11 @@ _DEFAULT_TTL_DAYS = 7
 # zur Analyse-Watchlist promoted und voll (Claude) eingeschätzt. So werden nicht
 # Dutzende einmaliger Social-Erwähnungen jeden Zyklus teuer analysiert.
 _READY_WEIGHT = 1.0          # Schwelle für "genug Infos → analysieren"
+# Deckel: max. so viele Small-Caps pro Zyklus frisch eskalieren lassen. Schützt
+# die Analyse-Watchlist vor plötzlichen Schwüngen (z.B. 30+ Ticker auf einmal),
+# die jeden Zyklus teuer/langsam machen. Übrige reife Ticker behalten ihr
+# Gewicht und rücken in den Folgezyklen nach (höchstes Gewicht zuerst).
+_MAX_PROMOTE_PER_CYCLE = int(os.getenv("SIGNAL_MAX_PROMOTE_PER_CYCLE", "8"))
 _W_INSIDER    = 1.0          # starkes Einzelsignal → sofort bereit
 _W_CONTRACT   = 1.0
 _W_OPTIONS    = 0.6
@@ -176,13 +181,15 @@ class SignalDrivenExpander:
 
     @staticmethod
     def _is_ready(entry: Dict) -> bool:
-        """Eskalations-Kriterium, abwärtskompatibel zu Alt-Einträgen ohne weight."""
+        """Bereit-für-Analyse-Kriterium. Maßgeblich ist das ready-Flag, das in
+        _add_tickers gedeckelt gesetzt wird – so begrenzt der Promote-Deckel auch,
+        was tatsächlich analysiert wird. Alt-Einträge ohne 'weight' (Legacy) haben
+        kein Flag und werden weiter gewicht-/signalbasiert beurteilt."""
         if entry.get("ready"):
             return True
-        weight = entry.get("weight")
-        if weight is None:  # Legacy: aus signals-Zahl ableiten
-            weight = entry.get("signals", 1) * _W_MENTION
-        return weight >= _READY_WEIGHT
+        if "weight" not in entry:  # Legacy: aus signals-Zahl ableiten
+            return entry.get("signals", 1) * _W_MENTION >= _READY_WEIGHT
+        return False
 
     def get_all_entries(self) -> List[Dict]:
         """Alle Einträge mit Metadaten (für Dashboard)."""
@@ -247,6 +254,7 @@ class SignalDrivenExpander:
         Gibt frisch promotete Ticker zurück (die jetzt analysiert werden sollen)."""
         data = self._load()
         promoted: List[str] = []
+        eligible: List[str] = []          # Schwelle erreicht, wartet auf Promote-Slot
         now = datetime.utcnow()
         expires = (now + timedelta(days=self.ttl_days)).isoformat()
 
@@ -269,34 +277,47 @@ class SignalDrivenExpander:
                     "weight":     round(weight, 3),
                     "ready":      False,
                 }
-            # Eskalation: Schwelle erstmals erreicht → promoten
-            if not entry.get("ready") and entry["weight"] >= _READY_WEIGHT:
-                entry["ready"] = True
-                entry["promoted_at"] = now.isoformat()
-                promoted.append(ticker)
+
+        # Promote-Kandidaten = ALLE aktiven Einträge über Schwelle, die noch nicht
+        # ready sind (frisch übergelaufene + Rückstau aus vorigen, gedeckelten
+        # Zyklen). So rücken übrige Ticker auch ohne neues Signal nach.
+        for ticker, entry in data.items():
+            if entry.get("ready"):
+                continue
+            try:
+                if datetime.fromisoformat(entry["expires_at"]) <= now:
+                    continue
+            except Exception:
+                continue
+            w = entry.get("weight", entry.get("signals", 1) * _W_MENTION)
+            if w >= _READY_WEIGHT:
+                eligible.append(ticker)
+
+        # Deckel: nur die Top-N Kandidaten (höchstes Gewicht zuerst) eskalieren
+        # diesen Zyklus. Der Rest bleibt ready=False, behält Gewicht und rückt in
+        # Folgezyklen nach – verhindert, dass ein Schwung die Watchlist flutet.
+        eligible.sort(
+            key=lambda t: data[t].get("weight", data[t].get("signals", 1) * _W_MENTION),
+            reverse=True,
+        )
+        for ticker in eligible[:_MAX_PROMOTE_PER_CYCLE]:
+            data[ticker]["ready"] = True
+            data[ticker]["promoted_at"] = now.isoformat()
+            promoted.append(ticker)
 
         self._save(data)
 
-        # Frisch promotete Ticker in BenchList + Telegram-Hinweis
+        # Frisch promotete Ticker still in die BenchList aufnehmen – KEINE
+        # Telegram-Nachricht. Die Eskalation läuft passiv im Hintergrund; der
+        # aktuelle Stand (📥 sammelt / 🔬 in Analyse + Gewicht) ist jederzeit im
+        # Dashboard-Small-Cap-Radar einsehbar. Sonst flutet jeder Zyklus mit
+        # Dutzenden Small-Caps das Telegram.
         if promoted:
             try:
                 from analyzers.bench_list import BenchList
                 bench = BenchList()
                 for ticker in promoted:
                     bench.add(ticker, reason=data[ticker].get("reason", "Signal-Expander"), score=0.5)
-            except Exception:
-                pass
-            try:
-                from notifier.telegram_notifier import TelegramNotifier
-                _lines = "\n".join(
-                    f"• <b>{t}</b> – {data[t].get('reason','')} "
-                    f"(Gewicht {data[t].get('weight',0):.1f}, {data[t].get('signals',0)} Signale)"
-                    for t in promoted
-                )
-                TelegramNotifier().send(
-                    "📡 <b>Small-Cap eskaliert → Analyse</b>\n\n"
-                    "Genug Signale gesammelt, wird jetzt eingeschätzt:\n" + _lines
-                )
             except Exception:
                 pass
 

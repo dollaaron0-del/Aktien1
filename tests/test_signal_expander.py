@@ -65,6 +65,22 @@ def test_legacy_entry_without_weight_is_compatible(tmp_path):
     assert "OLD" in e.get_ready_tickers()                    # 5×0.34 ≥ 1.0
 
 
+def test_promotion_capped_per_cycle(tmp_path, monkeypatch):
+    """Schwung von Eskalationen wird pro Zyklus gedeckelt; Rest rückt nach."""
+    monkeypatch.setattr(se, "_MAX_PROMOTE_PER_CYCLE", 3)
+    e = _expander(tmp_path)
+    items = [
+        {"source": "SEC Form 4", "ticker": t, "action": "buy", "value": 500_000}
+        for t in ("AAA", "BBB", "CCC", "DDD", "EEE")
+    ]
+    promoted = e.process_news_items(items)
+    assert len(promoted) == 3                                 # Deckel greift
+    # Folgezyklus (ohne neue Signale): übrige reife Ticker rücken nach
+    rest = e.process_news_items([])
+    assert sorted(promoted + rest) == ["AAA", "BBB", "CCC", "DDD", "EEE"]
+    assert len(e.get_ready_tickers()) == 5
+
+
 def test_promotion_is_idempotent(tmp_path):
     """Einmal promotet → weitere Signale promoten nicht erneut (kein Spam)."""
     e = _expander(tmp_path)
