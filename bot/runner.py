@@ -324,6 +324,11 @@ def _safe_collect(collector_name: str, fn, *args, **kwargs) -> List[Dict]:
         return fn(*args, **kwargs) or []
     except Exception as e:
         _collect_log.warning("Collector %s fehlgeschlagen: %s", collector_name, e)
+        try:
+            from analyzers.source_monitor import get_monitor
+            get_monitor().note_error(collector_name)
+        except Exception:
+            pass
         return []
 
 
@@ -410,6 +415,16 @@ def collect_news(ticker: str, archive: NewsArchive, collectors: Dict) -> tuple:
                 items = []
             sources_breakdown[name] = len(items)
             all_items.extend(items)
+
+    # Live-Quellen-Health: Artikel-Counts je Quelle für die Zyklus-Auswertung
+    # melden (nur tatsächlich aktive Collector – nicht konfigurierte zählen nicht).
+    try:
+        from analyzers.source_monitor import get_monitor
+        _mon = get_monitor()
+        for _name in active_collectors:
+            _mon.note_result(_name, sources_breakdown.get(_name, 0))
+    except Exception:
+        pass
 
     archive.store(ticker, all_items)
 
@@ -658,6 +673,13 @@ def run_analysis_cycle(
         log.error("Collector-Initialisierung fehlgeschlagen: %s", _col_err, exc_info=True)
         TelegramNotifier().send(f"❌ <b>Analyse-Fehler</b>\nCollector-Init fehlgeschlagen: <code>{_col_err}</code>")
         return
+
+    # Live-Quellen-Health: Zyklus-Erfassung zurücksetzen (Counts/Fehler je Quelle).
+    try:
+        from analyzers.source_monitor import get_monitor
+        get_monitor().start_cycle()
+    except Exception:
+        pass
 
     # Inject continuous learning memo into Claude's system prompt
     lessons_memo = reflection.get_active_memo() if reflection else None
@@ -1400,6 +1422,15 @@ def run_analysis_cycle(
 
     # Send Telegram daily summary
     notifier = TelegramNotifier()
+
+    # Live-Quellen-Health auswerten: plötzlich tote/fehlerhafte Quellen sofort
+    # (gedrosselt) melden, statt erst im 7-Tage-Report.
+    try:
+        from analyzers.source_monitor import get_monitor
+        get_monitor().finalize_cycle(notifier)
+    except Exception as _sh_err:
+        log.debug("Quellen-Health-Auswertung übersprungen: %s", _sh_err)
+
     notifier.notify_daily_summary(
         total_value=total_value,
         cash=portfolio.cash,
