@@ -1,5 +1,6 @@
 import yfinance as yf
 import requests
+from system.http import http_get
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
@@ -40,7 +41,7 @@ class YahooCollector:
         # Yahoo RSS feed (parsed with stdlib xml to avoid feedparser/sgmllib dep)
         try:
             feed_url = RSS_FEEDS[0].format(ticker=ticker)
-            resp = requests.get(feed_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            resp = http_get(feed_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
             root = ET.fromstring(resp.content)
             ns = {"content": "http://purl.org/rss/1.0/modules/content/"}
             for item in root.iter("item"):

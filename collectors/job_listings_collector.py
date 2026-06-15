@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from typing import List, Dict
 import requests
+from system.http import http_get
 from email.utils import parsedate_to_datetime
 
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; StockBot/1.0)"}
@@ -38,7 +39,7 @@ class JobListingsCollector:
         results = []
         cutoff = datetime.utcnow() - timedelta(days=lookback_days)
         try:
-            resp = requests.get(
+            resp = http_get(
                 "https://layoffs.fyi/feed/",
                 headers=_HEADERS, timeout=10
             )
@@ -90,7 +91,7 @@ class JobListingsCollector:
         # Suche nach Unternehmensname (Ticker als Proxy)
         try:
             url = f"https://www.indeed.com/rss?q={ticker}&sort=date&fromage={lookback_days}"
-            resp = requests.get(url, headers=_HEADERS, timeout=10)
+            resp = http_get(url, headers=_HEADERS, timeout=10)
             if resp.status_code != 200:
                 return []
 

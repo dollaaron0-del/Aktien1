@@ -24,13 +24,14 @@ API: https://data.sec.gov – keine Registrierung, kein API-Key.
 """
 
 import requests
+from system.http import http_get, sec_user_agent
 import json
 import os
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
 _HEADERS = {
-    "User-Agent": "StockSentimentBot/1.0 research@example.com",
+    "User-Agent": sec_user_agent(),
     "Accept": "application/json",
 }
 _TIMEOUT = 15
@@ -114,7 +115,7 @@ class SECEdgarCollector:
 
     def _load_cik_map(self) -> Dict[str, int]:
         try:
-            resp = requests.get(_TICKERS_URL, headers=_HEADERS, timeout=_TIMEOUT)
+            resp = http_get(_TICKERS_URL, headers=_HEADERS, timeout=_TIMEOUT)
             resp.raise_for_status()
             data = resp.json()
             # Format: {"0": {"cik_str": 320193, "ticker": "AAPL", ...}, ...}
@@ -130,7 +131,7 @@ class SECEdgarCollector:
 
     def _fetch_8k_filings(self, ticker: str, cik: int) -> List[Dict]:
         try:
-            resp = requests.get(
+            resp = http_get(
                 _SUBMISSIONS_URL.format(cik=cik),
                 headers=_HEADERS,
                 timeout=_TIMEOUT,

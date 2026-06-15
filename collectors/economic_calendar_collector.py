@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
 import requests
+from system.http import http_get
 
 from logger import get_logger
 
@@ -55,7 +56,7 @@ def _fetch_bls_events(lookahead_days: int = 14) -> List[Dict]:
     )
     for label, url in release_urls.items():
         try:
-            resp = requests.get(url, headers=_HEADERS, timeout=10)
+            resp = http_get(url, headers=_HEADERS, timeout=10)
             if resp.status_code != 200:
                 continue
             for m in _date_re.finditer(resp.text):

@@ -9,6 +9,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from typing import List, Dict
 import requests
+from system.http import http_get
 from email.utils import parsedate_to_datetime
 
 _MOTLEY_RSS = "https://www.fool.com/earnings-call-transcripts/rss.xml"
@@ -30,7 +31,7 @@ class EarningsTranscriptCollector:
         results = []
         cutoff = datetime.utcnow() - timedelta(days=lookback_days)
         try:
-            resp = requests.get(_MOTLEY_RSS, headers=_HEADERS, timeout=12)
+            resp = http_get(_MOTLEY_RSS, headers=_HEADERS, timeout=12)
             if resp.status_code != 200:
                 return []
             root = ET.fromstring(resp.content)
@@ -69,7 +70,7 @@ class EarningsTranscriptCollector:
         results = []
         cutoff = datetime.utcnow() - timedelta(days=lookback_days)
         try:
-            resp = requests.get(_SEEKING_RSS, headers=_HEADERS, timeout=12)
+            resp = http_get(_SEEKING_RSS, headers=_HEADERS, timeout=12)
             if resp.status_code != 200:
                 return []
             root = ET.fromstring(resp.content)

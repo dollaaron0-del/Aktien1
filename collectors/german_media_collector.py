@@ -20,6 +20,7 @@ from email.utils import parsedate_to_datetime
 from typing import List, Dict, Optional
 
 import requests
+from system.http import http_get
 import yfinance as yf
 
 _TIMEOUT = 12
@@ -103,7 +104,7 @@ class GermanMediaCollector:
 
     def _parse_rss(self, url: str, default_source: str, ticker: str) -> List[Dict]:
         try:
-            r = requests.get(url, timeout=_TIMEOUT, headers=_HEADERS)
+            r = http_get(url, timeout=_TIMEOUT, headers=_HEADERS)
             if r.status_code != 200:
                 return []
         except Exception:

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import List, Dict, Optional
 import requests
+from system.http import http_get
 
 
 EXCHANGE_LANG = {
@@ -44,7 +45,7 @@ class EuropeanNewsCollector:
             f"&hl={lang}&gl={country}&ceid={country}:{lang}"
         )
         try:
-            r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            r = http_get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
             if r.status_code != 200:
                 return []
             return self._parse_rss(r.text, ticker, lang)

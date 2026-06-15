@@ -9,6 +9,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from typing import List, Dict
 import requests
+from system.http import http_get
 import yfinance as yf
 
 _BENZINGA_RSS = "https://www.benzinga.com/analyst-ratings/analyst-color/rss"
@@ -93,7 +94,7 @@ class AnalystCollector:
         results = []
         cutoff = datetime.utcnow() - timedelta(days=lookback_days)
         try:
-            resp = requests.get(_BENZINGA_RSS, timeout=10,
+            resp = http_get(_BENZINGA_RSS, timeout=10,
                                 headers={"User-Agent": "Mozilla/5.0"})
             if resp.status_code != 200:
                 return []

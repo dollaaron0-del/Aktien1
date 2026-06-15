@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
 import requests
+from system.http import http_get
 
 from config import config
 
@@ -178,7 +179,7 @@ class QuiverCollector:
             "Authorization": f"Token {config.quiver_api_key}",
         }
         try:
-            resp = requests.get(url, headers=headers, timeout=_TIMEOUT)
+            resp = http_get(url, headers=headers, timeout=_TIMEOUT)
             if resp.status_code == 401:
                 return None
             resp.raise_for_status()

@@ -13,6 +13,7 @@ API: https://api.usaspending.gov – kostenlos, kein API-Key erforderlich.
 """
 
 import requests
+from system.http import http_post
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import yfinance as yf
@@ -90,7 +91,7 @@ class USASpendingCollector:
             "page": 1,
         }
         try:
-            resp = requests.post(
+            resp = http_post(
                 f"{_BASE_URL}/search/spending_by_award/",
                 json=payload,
                 headers=_HEADERS,

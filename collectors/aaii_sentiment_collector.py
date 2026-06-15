@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import List, Dict, Optional
 
 import requests
+from system.http import http_get
 
 from logger import get_logger
 
@@ -81,7 +82,7 @@ def _interpret(bullish: float, bearish: float) -> tuple[str, str, int]:
 
 def _fetch() -> Optional[List[Dict]]:
     try:
-        resp = requests.get(_URL, headers=_HEADERS, timeout=15)
+        resp = http_get(_URL, headers=_HEADERS, timeout=15)
         if resp.status_code != 200:
             log.debug("AAII: HTTP %d", resp.status_code)
             return None

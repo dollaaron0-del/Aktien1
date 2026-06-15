@@ -14,6 +14,7 @@ API: https://api.stocktwits.com/api/2/streams/symbol/{TICKER}.json
 """
 
 import requests
+from system.http import http_get
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
@@ -45,7 +46,7 @@ class StockTwitsCollector:
 
     def _fetch(self, ticker: str) -> List[Dict]:
         try:
-            resp = requests.get(
+            resp = http_get(
                 _BASE_URL.format(ticker=ticker.upper()),
                 headers=_HEADERS,
                 timeout=_TIMEOUT,

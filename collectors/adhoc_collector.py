@@ -33,6 +33,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
 import requests
+from system.http import http_get
 
 from logger import get_logger
 
@@ -147,7 +148,7 @@ def _fetch_gnews(ticker: str) -> List[Dict]:
     )
     url = _GNEWS.format(query=query)
     try:
-        resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+        resp = http_get(url, headers=_HEADERS, timeout=_TIMEOUT)
         if resp.status_code != 200:
             return []
         return _parse_rss(resp.text, ticker, "DGAP/Google-News-DE")
@@ -160,7 +161,7 @@ def _fetch_presseportal(ticker: str) -> List[Dict]:
     """General German financial press releases — filter those mentioning the ticker base."""
     base = ticker.split(".")[0].upper()
     try:
-        resp = requests.get(_PRESSEPORTAL_RSS, headers=_HEADERS, timeout=_TIMEOUT)
+        resp = http_get(_PRESSEPORTAL_RSS, headers=_HEADERS, timeout=_TIMEOUT)
         if resp.status_code != 200:
             return []
         raw_items = _parse_rss(resp.text, ticker, "Presseportal.de")

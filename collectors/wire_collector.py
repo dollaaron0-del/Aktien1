@@ -15,6 +15,7 @@ Strategie: Firmenname wird via yfinance aufgelöst, dann parallele RSS-Suche.
 """
 
 import requests
+from system.http import http_get
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
@@ -95,7 +96,7 @@ class WireCollector:
 
     def _parse_rss(self, ticker: str, url: str, source: str) -> List[Dict]:
         try:
-            resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+            resp = http_get(url, headers=_HEADERS, timeout=_TIMEOUT)
             resp.raise_for_status()
         except Exception:
             return []

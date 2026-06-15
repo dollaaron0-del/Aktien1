@@ -9,6 +9,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from typing import List, Dict
 import requests
+from system.http import http_get
 
 _USPTO_RSS = "https://developer.uspto.gov/api-catalog"
 _GOOGLE_PATENTS_RSS = "https://patents.google.com/rss?assignee={company}&after={date}"
@@ -40,7 +41,7 @@ class PatentCollector:
 
         try:
             url = f"https://patents.google.com/rss?assignee={company}&after={date_str}&num=10"
-            resp = requests.get(url, headers=_HEADERS, timeout=12)
+            resp = http_get(url, headers=_HEADERS, timeout=12)
             if resp.status_code != 200:
                 return []
 
@@ -91,7 +92,7 @@ class PatentCollector:
                 f"&dateRangeField=datePublished&startdt={cutoff.strftime('%Y-%m-%d')}"
                 f"&enddt={datetime.utcnow().strftime('%Y-%m-%d')}&hits.hits.total.value=true"
             )
-            resp = requests.get(url, headers=_HEADERS, timeout=12)
+            resp = http_get(url, headers=_HEADERS, timeout=12)
             if resp.status_code != 200:
                 return []
 

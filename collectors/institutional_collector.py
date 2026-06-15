@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from typing import List, Dict
 import requests
+from system.http import http_get
 
 # Bekannte institutionelle Investoren (CIK → Name)
 _KNOWN_INSTITUTIONS = {
@@ -38,7 +39,7 @@ class InstitutionalCollector:
 
         try:
             url = _EDGAR_SEARCH.format(ticker=ticker, start=start, end=end)
-            resp = requests.get(url, headers=_HEADERS, timeout=15)
+            resp = http_get(url, headers=_HEADERS, timeout=15)
             if resp.status_code != 200:
                 return []
 

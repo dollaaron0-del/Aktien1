@@ -23,8 +23,9 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
 import requests
+from system.http import http_get, sec_user_agent
 
-_HEADERS  = {"User-Agent": "StockSentimentBot/1.0 (educational use)"}
+_HEADERS  = {"User-Agent": sec_user_agent()}
 _TIMEOUT  = 15
 _CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "cache")
 _CACHE_TTL = timedelta(hours=4)
@@ -52,7 +53,7 @@ def _cached_get(cache_key: str, url: str) -> Optional[object]:
     except Exception:
         pass
     try:
-        resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+        resp = http_get(url, headers=_HEADERS, timeout=_TIMEOUT)
         resp.raise_for_status()
         data = resp.json()
     except Exception:
@@ -170,7 +171,7 @@ class InsiderCollector:
             f"sortcol=0&cnt=20&page=1&action=1"
         )
         try:
-            resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+            resp = http_get(url, headers=_HEADERS, timeout=_TIMEOUT)
             resp.raise_for_status()
         except Exception:
             return []
@@ -268,7 +269,7 @@ class InsiderCollector:
             f"?q={query}&forms=144&dateRange=custom&startdt={start}"
         )
         try:
-            resp = requests.get(
+            resp = http_get(
                 url, headers={**_HEADERS, "Accept": "application/json"}, timeout=_TIMEOUT
             )
             resp.raise_for_status()
