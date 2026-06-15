@@ -500,7 +500,9 @@ with tab_portfolio:
     if len(history) >= 2:
         import altair as _alt
         df_hist = pd.DataFrame(history[::-1])
-        df_hist["snapshot_date"] = pd.to_datetime(df_hist["snapshot_date"])
+        # snapshot_date mischt Datum-only (neu) und volle ISO-Zeitstempel (alt) →
+        # format='ISO8601' parst beide Varianten ohne Inferenz-Fehler.
+        df_hist["snapshot_date"] = pd.to_datetime(df_hist["snapshot_date"], format="ISO8601")
         # Ausreißer entfernen: Punkte die >5× dem Minimum (= echter Baseline) liegen sind
         # Datenfehler (z.B. korruptes Portfolio-Cash nach Mehrfach-Neustart).
         _min_val = df_hist["total_value"].min()
