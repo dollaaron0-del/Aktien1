@@ -24,6 +24,7 @@ from collectors import (
     ChineseMediaCollector, WebTrafficCollector, GermanMediaCollector,
     InternationalMediaCollector, QuiverCollector,
     EconomicCalendarCollector, AAIISentimentCollector, AdhocCollector,
+    FDACalendarCollector,
 )
 from collectors.news_archive import NewsArchive
 from collectors.crypto_news_collector import CryptoNewsCollector
@@ -374,6 +375,7 @@ def _make_collectors() -> Dict:
         "econ_calendar":     _safe("econ_cal",        lambda: EconomicCalendarCollector(lookahead_days=14)),
         "aaii_sentiment":    _safe("aaii",            AAIISentimentCollector),
         "adhoc_de":          _safe("adhoc",           AdhocCollector),
+        "fda_calendar":      _safe("fda_calendar",    lambda: FDACalendarCollector(lookahead_days=120, lookback_days=21)),
     }
 
 
