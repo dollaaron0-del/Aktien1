@@ -13,9 +13,14 @@ class _FakePrescreener:
     def __init__(self):
         self.calls = 0
         self.thesis_calls = 0
+        self.compress_calls = 0
 
     def is_available(self):
         return True
+
+    def compress_news(self, ticker, news_items, max_items=20):
+        self.compress_calls += 1
+        return f"BRIEFING zu {ticker}"
 
     def full_analysis(self, ticker, news_items, price_data, buy_min_score):
         self.calls += 1
@@ -138,6 +143,26 @@ def test_frugal_open_position_with_catalyst_goes_to_claude(monkeypatch):
     )
     assert fake.thesis_calls == 0
     assert res.entry_rationale == "claude-thesis"
+
+
+def test_frugal_catalyst_claude_gets_compressed_news(monkeypatch):
+    """Bei Claude-Fällen dampft Ollama die News vorher lokal zu einem Briefing
+    ein (spart Claude-Tokens)."""
+    a, fake = _analyzer(monkeypatch, frugal=True)
+    captured = {}
+    monkeypatch.setattr(
+        a, "_claude_analysis",
+        lambda ticker, news_text, *a_, **k_: captured.update(news_text=news_text)
+        or AnalysisResult(ticker, 0.5, "NEUTRAL", "LOW", "SKIP"),
+    )
+    a.analyze(
+        ticker="CAT",
+        news_items=[{"source": "SEC 8-K", "title": "Material event"}],
+        price_data={"current_price": 20.0},
+    )
+    assert fake.compress_calls == 1
+    assert "Ollama-komprimiert" in captured["news_text"]
+    assert "BRIEFING zu CAT" in captured["news_text"]
 
 
 def test_force_claude_bypasses_local(monkeypatch):

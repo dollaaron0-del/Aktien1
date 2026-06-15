@@ -136,6 +136,7 @@ class ClaudeAnalyzer:
         self._call_count = 0
         self._total_tokens = 0
         self._local_count = 0          # via Ollama/MLX abgehandelt (kein Claude)
+        self._compress_count = 0       # News lokal komprimiert vor Claude
         self._prescreener = None       # lazy: OllamaPrescreener oder MLXPrescreener
 
     def analyze(
@@ -219,12 +220,17 @@ class ClaudeAnalyzer:
                 ):
                     return ollama_result
 
+        # Claude übernimmt jetzt die finale Analyse. Im Frugal-Modus lässt Ollama
+        # die News vorher lokal zu einem kompakten Briefing eindampfen → weniger
+        # Claude-Input-Tokens (günstiger), fokussierterer Prompt.
+        claude_news = self._claude_news_text(ticker, news, news_text)
+
         # Thesis check for existing position
         if existing_position is not None:
-            return self._thesis_check(ticker, news_text, current_price, existing_position, context_block)
+            return self._thesis_check(ticker, claude_news, current_price, existing_position, context_block)
 
         # Full Claude analysis
-        return self._claude_analysis(ticker, news_text, current_price, is_crypto, context_block)
+        return self._claude_analysis(ticker, claude_news, current_price, is_crypto, context_block)
 
     # ── Frugal-Modus: lokale Engine (Ollama/MLX) ─────────────────────────────
 
@@ -290,6 +296,27 @@ class ClaudeAnalyzer:
             return None
         self._local_count += 1
         return self._ollama_full_to_result(ticker, data)
+
+    def _claude_news_text(self, ticker: str, news: List[Dict], raw_text: str) -> str:
+        """Im Frugal-Modus: Ollama/MLX komprimiert die News lokal zu einem
+        Briefing, bevor Claude analysiert (spart Claude-Tokens). Fällt auf die
+        rohen Schlagzeilen zurück, wenn die lokale Engine offline ist oder die
+        Komprimierung scheitert."""
+        from config import config as _cfg
+        if not _cfg.frugal_mode:
+            return raw_text
+        ps = self._get_prescreener()
+        if ps is None or not ps.is_available():
+            return raw_text
+        try:
+            compressed = ps.compress_news(ticker, news)
+        except Exception as e:
+            log.debug("[%s] News-Komprimierung fehlgeschlagen: %s", ticker, e)
+            return raw_text
+        if compressed:
+            self._compress_count += 1
+            return "[Lokales News-Briefing (Ollama-komprimiert)]\n" + compressed
+        return raw_text
 
     def _frugal_thesis_check(
         self, ticker: str, news_text: str, current_price: float, position,
