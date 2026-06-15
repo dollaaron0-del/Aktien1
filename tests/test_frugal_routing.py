@@ -12,6 +12,7 @@ from analyzers.claude_analyzer import ClaudeAnalyzer, AnalysisResult
 class _FakePrescreener:
     def __init__(self):
         self.calls = 0
+        self.thesis_calls = 0
 
     def is_available(self):
         return True
@@ -24,6 +25,11 @@ class _FakePrescreener:
             "entry_rationale": "lokal begründet", "risk_factors": ["r1"],
             "key_catalysts": ["c1"], "summary": "lokale Zusammenfassung",
         }
+
+    def generate(self, prompt, max_tokens=300):
+        self.thesis_calls += 1
+        return ('{"thesis_valid": false, "thesis_break_reason": "Bruch", '
+                '"sentiment_score": 0.3, "recommendation": "SELL"}')
 
 
 def _analyzer(monkeypatch, frugal=True):
@@ -94,6 +100,44 @@ def test_frugal_local_offline_falls_back_to_claude(monkeypatch):
         price_data={"current_price": 8.0},
     )
     assert res.entry_rationale == "claude-fallback"
+
+
+class _Position:
+    entry_price = 10.0
+    rationale = "ursprüngliche Kaufthese"
+
+
+def test_frugal_open_position_uses_local_thesis_check(monkeypatch):
+    """Offene Positionen werden im Frugal-Modus lokal geprüft (Paper-Trading)."""
+    a, fake = _analyzer(monkeypatch, frugal=True)
+    monkeypatch.setattr(a, "_thesis_check", lambda *args, **kw: (_ for _ in ()).throw(
+        AssertionError("Claude-Thesis-Check fälschlich aufgerufen")))
+    res = a.analyze(
+        ticker="POS",
+        news_items=[{"source": "Reuters", "title": "POS schlechte News"}],
+        price_data={"current_price": 12.0},
+        existing_position=_Position(),
+    )
+    assert fake.thesis_calls == 1
+    assert fake.calls == 0                       # full_analysis NICHT (ist Position)
+    assert res.thesis_valid is False
+    assert res.recommendation == "SELL"
+
+
+def test_frugal_open_position_with_catalyst_goes_to_claude(monkeypatch):
+    """Bei echtem Katalysator geht auch der Thesis-Check an Claude."""
+    a, fake = _analyzer(monkeypatch, frugal=True)
+    sentinel = AnalysisResult("POS", 0.4, "BEARISH", "HIGH", "SELL",
+                              entry_rationale="claude-thesis")
+    monkeypatch.setattr(a, "_thesis_check", lambda *args, **kw: sentinel)
+    res = a.analyze(
+        ticker="POS",
+        news_items=[{"source": "SEC 8-K", "title": "Material event"}],
+        price_data={"current_price": 12.0},
+        existing_position=_Position(),
+    )
+    assert fake.thesis_calls == 0
+    assert res.entry_rationale == "claude-thesis"
 
 
 def test_force_claude_bypasses_local(monkeypatch):

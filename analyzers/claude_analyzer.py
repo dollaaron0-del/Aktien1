@@ -175,30 +175,30 @@ class ClaudeAnalyzer:
             filtered = news[:10]
 
         force_claude = bool(kwargs.get("force_claude"))
+        news_text = self._format_news(filtered[:15])
 
         # ── Frugal-Modus (Daten-Sammel-Modus) ────────────────────────────────
-        # Ollama/MLX übernimmt deterministisch ALLE normalen Neu-Analysen. Claude
-        # nur noch für die allernotwendigsten Fälle: echte Katalysatoren
-        # (SEC 8-K / Earnings Transcript), offene Positionen (Thesis-Check =
-        # Exit-Management, strukturell anders) und expliziten Zwang (force_claude
-        # / Dashboard). KEIN Zufalls-Gate, KEIN pauschaler Reuters/Bloomberg-
-        # Fallback mehr – das war der Grund, warum der Modus „schnell auf Claude
-        # zurückfiel".
+        # Ollama/MLX übernimmt deterministisch ALLE Analysen – auch Thesis-/Exit-
+        # Checks offener Positionen (Paper-Trading: kein echtes Geld, der Bot
+        # sammelt Erfahrung; gelegentlich unscharfe Analysen sind akzeptabel).
+        # Claude nur noch bei echten Katalysatoren (SEC 8-K / Earnings) oder
+        # explizitem Zwang (force_claude / Dashboard). KEIN Zufalls-Gate, KEIN
+        # pauschaler Reuters/Bloomberg-Fallback – das war der Grund, warum der
+        # Modus „schnell auf Claude zurückfiel".
         from config import config as _cfg
-        if (
-            _cfg.frugal_mode
-            and not force_claude
-            and existing_position is None
-            and not self._has_catalyst_source(news)
-        ):
-            local = self._frugal_local_analysis(
-                ticker, news, price_data, current_price, is_crypto
-            )
+        if _cfg.frugal_mode and not force_claude and not self._has_catalyst_source(news):
+            if existing_position is not None:
+                local = self._frugal_thesis_check(
+                    ticker, news_text, current_price, existing_position, context_block
+                )
+            else:
+                local = self._frugal_local_analysis(
+                    ticker, news, price_data, current_price, is_crypto
+                )
             if local is not None:
                 return local
             # Lokale Engine offline/Parsing-Fehler → Claude als Sicherheitsnetz.
 
-        # Format news text
         import random
         ollama_enabled = os.environ.get("OLLAMA_ENABLED", "true").lower() in ("true", "1", "yes")
         # Zufalls-Gate nur außerhalb des Frugal-Modus (Legacy-Verhalten).
@@ -207,7 +207,6 @@ class ClaudeAnalyzer:
             and ollama_enabled and bool(self.api_key)
             and random.random() < self.ollama_ratio
         )
-        news_text = self._format_news(filtered[:15])
 
         # Ollama pre-screen (Legacy-Pfad, nur außerhalb Frugal oder ohne API-Key)
         if use_ollama or not self.api_key:
@@ -291,6 +290,48 @@ class ClaudeAnalyzer:
             return None
         self._local_count += 1
         return self._ollama_full_to_result(ticker, data)
+
+    def _frugal_thesis_check(
+        self, ticker: str, news_text: str, current_price: float, position,
+        context_block: str = "",
+    ) -> Optional[AnalysisResult]:
+        """Thesis-/Exit-Check offener Positionen über die lokale Engine
+        (Ollama/MLX). Gleicher Prompt wie der Claude-Thesis-Check. None wenn die
+        Engine offline ist oder das Parsing scheitert (→ Claude-Fallback)."""
+        ps = self._get_prescreener()
+        if ps is None or not ps.is_available():
+            return None
+        try:
+            entry = float(getattr(position, "entry_price", 0) or 0)
+            gain_pct = (current_price - entry) / entry * 100 if entry else 0.0
+            prompt = _USER_TEMPLATE_THESIS_CHECK.format(
+                ticker=ticker,
+                entry_price=entry,
+                current_price=current_price or 0.0,
+                gain_pct=gain_pct,
+                original_rationale=(getattr(position, "rationale", "") or "")[:300],
+                news_text=news_text,
+                context_block=context_block,
+            )
+            raw = ps.generate(prompt, max_tokens=300)
+        except Exception as e:
+            log.warning("[%s] Lokaler Thesis-Check fehlgeschlagen: %s", ticker, e)
+            return None
+        if not raw:
+            return None
+        data = self._safe_json(raw)
+        if not data:
+            return None
+        self._local_count += 1
+        result = self._empty_result(ticker)
+        result.thesis_valid = bool(data.get("thesis_valid", True))
+        result.thesis_break_reason = str(data.get("thesis_break_reason", ""))
+        try:
+            result.sentiment_score = float(data.get("sentiment_score", 0.5))
+        except (TypeError, ValueError):
+            result.sentiment_score = 0.5
+        result.recommendation = str(data.get("recommendation", "HOLD")).upper()
+        return result
 
     @staticmethod
     def _ollama_full_to_result(ticker: str, d: Dict) -> AnalysisResult:

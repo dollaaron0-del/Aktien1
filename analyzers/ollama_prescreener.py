@@ -380,6 +380,11 @@ class OllamaPrescreener:
 
     # ── Ollama API ────────────────────────────────────────────────────────────
 
+    def generate(self, prompt: str, max_tokens: int = 300) -> Optional[str]:
+        """Öffentlicher Roh-Generate (für custom Prompts wie Thesis-Checks).
+        Gibt None bei Fehler/Timeout zurück."""
+        return self._call_ollama(prompt, max_tokens=max_tokens)
+
     def _call_ollama(self, prompt: str, max_tokens: int = 120) -> Optional[str]:
         try:
             resp = requests.post(

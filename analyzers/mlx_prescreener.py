@@ -235,6 +235,11 @@ class MLXPrescreener:
 
     # ── Interne Hilfsmethoden ─────────────────────────────────────────────────
 
+    def generate(self, prompt: str, max_tokens: int = 300) -> Optional[str]:
+        """Öffentlicher Roh-Generate (für custom Prompts wie Thesis-Checks).
+        Gibt None bei Fehler/Timeout zurück."""
+        return self._call(prompt, max_tokens=max_tokens)
+
     def _call(self, prompt: str, max_tokens: int = 200) -> Optional[str]:
         """POST to mlx-lm OpenAI-compatible chat completions endpoint."""
         try:
