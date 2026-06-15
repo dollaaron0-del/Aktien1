@@ -26,6 +26,7 @@ from typing import Dict, List, Optional, Tuple
 
 from collectors.price_cache import get_price as _cached_price, get_prices as _cached_prices
 from logger import get_logger
+from broker.order_result import OrderResult
 
 log = get_logger(__name__)
 
@@ -148,30 +149,26 @@ class PaperBroker:
     def buy(self, ticker: str, shares: float, price: float) -> Dict:
         fill_price, slippage, commission = self._calc_slippage(ticker, price, shares, "BUY")
         self._track_costs(slippage, commission)
-        return {
-            "status":       "filled",
-            "ticker":       ticker,
-            "shares":       shares,
-            "fill_price":   fill_price,
-            "market_price": price,
-            "slippage_usd": round(slippage, 4),
-            "commission":   round(commission, 4),
-            "mode":         "paper",
-        }
+        return OrderResult.filled(
+            ticker, shares, fill_price, mode="paper",
+            extra={
+                "market_price": price,
+                "slippage_usd": round(slippage, 4),
+                "commission":   round(commission, 4),
+            },
+        )
 
     def sell(self, ticker: str, shares: float, price: float) -> Dict:
         fill_price, slippage, commission = self._calc_slippage(ticker, price, shares, "SELL")
         self._track_costs(slippage, commission)
-        return {
-            "status":       "filled",
-            "ticker":       ticker,
-            "shares":       shares,
-            "fill_price":   fill_price,
-            "market_price": price,
-            "slippage_usd": round(slippage, 4),
-            "commission":   round(commission, 4),
-            "mode":         "paper",
-        }
+        return OrderResult.filled(
+            ticker, shares, fill_price, mode="paper",
+            extra={
+                "market_price": price,
+                "slippage_usd": round(slippage, 4),
+                "commission":   round(commission, 4),
+            },
+        )
 
     # ── Krypto-Orders ──────────────────────────────────────────────────────────
 
@@ -191,17 +188,15 @@ class PaperBroker:
         slippage   = abs(fill_price - price) * qty
         commission = max(_MIN_COMMISSION_USD, usd_amount * _COMMISSION_PCT)
         self._track_costs(slippage, commission)
-        return {
-            "status":       "filled",
-            "ticker":       symbol,
-            "qty":          qty,
-            "usd_amount":   usd_amount,
-            "fill_price":   fill_price,
-            "market_price": price,
-            "slippage_usd": round(slippage, 4),
-            "commission":   round(commission, 4),
-            "mode":         "paper",
-        }
+        return OrderResult.filled(
+            symbol, qty, fill_price, mode="paper", usd_amount=usd_amount,
+            extra={
+                "qty":          qty,
+                "market_price": price,
+                "slippage_usd": round(slippage, 4),
+                "commission":   round(commission, 4),
+            },
+        )
 
     def sell_crypto(self, symbol: str, qty: float) -> Dict:
         price = self.get_crypto_price(symbol) or 1.0
@@ -209,16 +204,15 @@ class PaperBroker:
         slippage   = abs(fill_price - price) * qty
         commission = max(_MIN_COMMISSION_USD, price * qty * _COMMISSION_PCT)
         self._track_costs(slippage, commission)
-        return {
-            "status":       "filled",
-            "ticker":       symbol,
-            "qty":          qty,
-            "fill_price":   fill_price,
-            "market_price": price,
-            "slippage_usd": round(slippage, 4),
-            "commission":   round(commission, 4),
-            "mode":         "paper",
-        }
+        return OrderResult.filled(
+            symbol, qty, fill_price, mode="paper",
+            extra={
+                "qty":          qty,
+                "market_price": price,
+                "slippage_usd": round(slippage, 4),
+                "commission":   round(commission, 4),
+            },
+        )
 
     # ── Statistik ─────────────────────────────────────────────────────────────
 

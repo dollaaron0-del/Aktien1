@@ -29,6 +29,7 @@ import time
 from typing import Dict, List, Optional
 
 from logger import get_logger
+from broker.order_result import OrderResult
 
 log = get_logger(__name__)
 
@@ -310,17 +311,13 @@ class IBKRBroker:
                     "IBKR %s %s FILLED @ %.4f",
                     action, contract.symbol, fill_price
                 )
-                return {
-                    "status":     "filled",
-                    "ticker":     contract.symbol,
-                    "shares":     shares,
-                    "fill_price": fill_price,
-                    "order_id":   trade.order.orderId,
-                    "mode":       "ibkr",
-                }
+                return OrderResult.filled(
+                    contract.symbol, shares, fill_price,
+                    order_id=trade.order.orderId, mode="ibkr",
+                )
             if status in ("Cancelled", "Inactive"):
                 log.warning("IBKR Order %s %s: %s", action, contract.symbol, status)
-                return {"status": status.lower(), "ticker": contract.symbol, "mode": "ibkr"}
+                return OrderResult(status.lower(), ticker=contract.symbol, mode="ibkr")
 
         # Timeout: Order ist nicht (voll) gefüllt. Um ein "umgekehrtes Phantom"
         # zu vermeiden (Broker füllt später, das Buch weiß nichts davon), die
@@ -339,10 +336,10 @@ class IBKRBroker:
         # Race: zwischen Timeout und Cancel doch noch voll gefüllt.
         if status == "Filled" or filled_qty >= shares:
             log.info("IBKR %s %s FILLED (kurz vor Cancel) @ %.4f", action, contract.symbol, fill_price)
-            return {
-                "status": "filled", "ticker": contract.symbol, "shares": shares,
-                "fill_price": fill_price, "order_id": trade.order.orderId, "mode": "ibkr",
-            }
+            return OrderResult.filled(
+                contract.symbol, shares, fill_price,
+                order_id=trade.order.orderId, mode="ibkr",
+            )
 
         # Teilausführung: den gefüllten Teil buchen, Rest wurde gecancelt.
         if filled_qty > 0:
@@ -350,94 +347,95 @@ class IBKRBroker:
                 "IBKR %s %s TEILFILL %.4f/%.4f nach Timeout – Rest gecancelt",
                 action, contract.symbol, filled_qty, shares,
             )
-            return {
-                "status": "filled", "ticker": contract.symbol, "shares": filled_qty,
-                "fill_price": fill_price, "order_id": trade.order.orderId,
-                "mode": "ibkr", "partial": True,
-            }
+            return OrderResult.filled(
+                contract.symbol, filled_qty, fill_price,
+                order_id=trade.order.orderId, mode="ibkr", partial=True,
+            )
 
         # Nichts gefüllt – Order gecancelt, kein offener Rest.
         log.warning(
             "IBKR Fill-Timeout %s %s (>%ds) – nicht gefüllt, Order gecancelt",
             action, contract.symbol, _ORDER_TIMEOUT,
         )
-        return {
-            "status": "cancelled", "ticker": contract.symbol, "mode": "ibkr",
-            "reason": f"Fill-Timeout nach {_ORDER_TIMEOUT}s – Order gecancelt",
-        }
+        return OrderResult.cancelled(
+            ticker=contract.symbol, mode="ibkr",
+            reason=f"Fill-Timeout nach {_ORDER_TIMEOUT}s – Order gecancelt",
+        )
 
     def buy(self, ticker: str, shares: float, price: float,
             limit: bool = False, stop_loss: Optional[float] = None,
             take_profit: Optional[float] = None) -> Dict:
         if not self._ensure_connected():
             log.error("IBKR: keine Verbindung – BUY %s nicht ausgeführt", ticker)
-            return {"status": "error", "reason": "IBKR nicht verbunden"}
+            return OrderResult.error(reason="IBKR nicht verbunden", mode="ibkr")
         try:
             contract = self._stock_contract(ticker)
             qualified = self._ib.qualifyContracts(contract)
             if not qualified:
                 log.error("IBKR: Contract-Qualifizierung fehlgeschlagen für %s – BUY abgebrochen", ticker)
-                return {"status": "error", "reason": f"Contract {ticker} nicht qualifizierbar"}
+                return OrderResult.error(ticker=ticker, reason=f"Contract {ticker} nicht qualifizierbar", mode="ibkr")
             whole = _whole_shares(ticker, shares, "BUY")
             if whole <= 0:
-                return {"status": "error",
-                        "reason": f"Positionsgröße {shares:.4f} < 1 Stück – IBKR-API kann keine Teilaktien handeln"}
+                return OrderResult.error(
+                    ticker=ticker, mode="ibkr",
+                    reason=f"Positionsgröße {shares:.4f} < 1 Stück – IBKR-API kann keine Teilaktien handeln")
             return self._place_order(contract, "BUY", whole)
         except Exception as e:
             log.exception("IBKR buy %s: %s", ticker, e)
-            return {"status": "error", "reason": str(e)}
+            return OrderResult.error(reason=str(e), mode="ibkr")
 
     def sell(self, ticker: str, shares: float, price: float) -> Dict:
         if not self._ensure_connected():
             log.error("IBKR: keine Verbindung – SELL %s nicht ausgeführt", ticker)
-            return {"status": "error", "reason": "IBKR nicht verbunden"}
+            return OrderResult.error(reason="IBKR nicht verbunden", mode="ibkr")
         try:
             contract = self._stock_contract(ticker)
             qualified = self._ib.qualifyContracts(contract)
             if not qualified:
                 log.error("IBKR: Contract-Qualifizierung fehlgeschlagen für %s – SELL abgebrochen", ticker)
-                return {"status": "error", "reason": f"Contract {ticker} nicht qualifizierbar"}
+                return OrderResult.error(ticker=ticker, reason=f"Contract {ticker} nicht qualifizierbar", mode="ibkr")
             whole = _whole_shares(ticker, shares, "SELL")
             if whole <= 0:
-                return {"status": "error",
-                        "reason": f"Restbestand {shares:.4f} < 1 Stück – IBKR-API kann keine Teilaktien verkaufen "
-                                  f"(Dust ggf. manuell im Desktop schließen)"}
+                return OrderResult.error(
+                    ticker=ticker, mode="ibkr",
+                    reason=f"Restbestand {shares:.4f} < 1 Stück – IBKR-API kann keine Teilaktien verkaufen "
+                           f"(Dust ggf. manuell im Desktop schließen)")
             return self._place_order(contract, "SELL", whole)
         except Exception as e:
             log.exception("IBKR sell %s: %s", ticker, e)
-            return {"status": "error", "reason": str(e)}
+            return OrderResult.error(reason=str(e), mode="ibkr")
 
     def buy_crypto(self, symbol: str, usd_amount: float) -> Dict:
         if not self._ensure_connected():
-            return {"status": "error", "reason": "IBKR nicht verbunden"}
+            return OrderResult.error(reason="IBKR nicht verbunden", mode="ibkr")
         try:
             price = self.get_crypto_price(symbol)
             if not price:
-                return {"status": "error", "reason": f"Kein Preis für {symbol}"}
+                return OrderResult.error(ticker=symbol, reason=f"Kein Preis für {symbol}", mode="ibkr")
             qty = round(usd_amount / price, 6)
             contract = self._crypto_contract(symbol)
             qualified = self._ib.qualifyContracts(contract)
             if not qualified:
-                return {"status": "error", "reason": f"Crypto-Contract {symbol} nicht qualifizierbar"}
+                return OrderResult.error(ticker=symbol, reason=f"Crypto-Contract {symbol} nicht qualifizierbar", mode="ibkr")
             result = self._place_order(contract, "BUY", qty)
             result["usd_amount"] = usd_amount
             return result
         except Exception as e:
             log.exception("IBKR buy_crypto %s: %s", symbol, e)
-            return {"status": "error", "reason": str(e)}
+            return OrderResult.error(reason=str(e), mode="ibkr")
 
     def sell_crypto(self, symbol: str, qty: float) -> Dict:
         if not self._ensure_connected():
-            return {"status": "error", "reason": "IBKR nicht verbunden"}
+            return OrderResult.error(reason="IBKR nicht verbunden", mode="ibkr")
         try:
             contract = self._crypto_contract(symbol)
             qualified = self._ib.qualifyContracts(contract)
             if not qualified:
-                return {"status": "error", "reason": f"Crypto-Contract {symbol} nicht qualifizierbar"}
+                return OrderResult.error(ticker=symbol, reason=f"Crypto-Contract {symbol} nicht qualifizierbar", mode="ibkr")
             return self._place_order(contract, "SELL", qty)
         except Exception as e:
             log.exception("IBKR sell_crypto %s: %s", symbol, e)
-            return {"status": "error", "reason": str(e)}
+            return OrderResult.error(reason=str(e), mode="ibkr")
 
     # ── Account ───────────────────────────────────────────────────────────────
 
