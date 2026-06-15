@@ -54,7 +54,7 @@ _READY_WEIGHT = 1.0          # Schwelle für "genug Infos → analysieren"
 # die Analyse-Watchlist vor plötzlichen Schwüngen (z.B. 30+ Ticker auf einmal),
 # die jeden Zyklus teuer/langsam machen. Übrige reife Ticker behalten ihr
 # Gewicht und rücken in den Folgezyklen nach (höchstes Gewicht zuerst).
-_MAX_PROMOTE_PER_CYCLE = int(os.getenv("SIGNAL_MAX_PROMOTE_PER_CYCLE", "8"))
+_MAX_PROMOTE_PER_CYCLE = int(os.getenv("SIGNAL_MAX_PROMOTE_PER_CYCLE", "5"))
 _W_INSIDER    = 1.0          # starkes Einzelsignal → sofort bereit
 _W_CONTRACT   = 1.0
 _W_OPTIONS    = 0.6
