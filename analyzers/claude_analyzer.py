@@ -135,6 +135,8 @@ class ClaudeAnalyzer:
         self._trust_filter = NewsTrustFilter()
         self._call_count = 0
         self._total_tokens = 0
+        self._local_count = 0          # via Ollama/MLX abgehandelt (kein Claude)
+        self._prescreener = None       # lazy: OllamaPrescreener oder MLXPrescreener
 
     def analyze(
         self,
@@ -172,13 +174,42 @@ class ClaudeAnalyzer:
         if not filtered:
             filtered = news[:10]
 
+        force_claude = bool(kwargs.get("force_claude"))
+
+        # ── Frugal-Modus (Daten-Sammel-Modus) ────────────────────────────────
+        # Ollama/MLX übernimmt deterministisch ALLE normalen Neu-Analysen. Claude
+        # nur noch für die allernotwendigsten Fälle: echte Katalysatoren
+        # (SEC 8-K / Earnings Transcript), offene Positionen (Thesis-Check =
+        # Exit-Management, strukturell anders) und expliziten Zwang (force_claude
+        # / Dashboard). KEIN Zufalls-Gate, KEIN pauschaler Reuters/Bloomberg-
+        # Fallback mehr – das war der Grund, warum der Modus „schnell auf Claude
+        # zurückfiel".
+        from config import config as _cfg
+        if (
+            _cfg.frugal_mode
+            and not force_claude
+            and existing_position is None
+            and not self._has_catalyst_source(news)
+        ):
+            local = self._frugal_local_analysis(
+                ticker, news, price_data, current_price, is_crypto
+            )
+            if local is not None:
+                return local
+            # Lokale Engine offline/Parsing-Fehler → Claude als Sicherheitsnetz.
+
         # Format news text
         import random
         ollama_enabled = os.environ.get("OLLAMA_ENABLED", "true").lower() in ("true", "1", "yes")
-        use_ollama = use_ollama or (ollama_enabled and bool(self.api_key) and random.random() < self.ollama_ratio)
+        # Zufalls-Gate nur außerhalb des Frugal-Modus (Legacy-Verhalten).
+        use_ollama = use_ollama or (
+            not _cfg.frugal_mode
+            and ollama_enabled and bool(self.api_key)
+            and random.random() < self.ollama_ratio
+        )
         news_text = self._format_news(filtered[:15])
 
-        # Ollama pre-screen
+        # Ollama pre-screen (Legacy-Pfad, nur außerhalb Frugal oder ohne API-Key)
         if use_ollama or not self.api_key:
             ollama_result = self._try_ollama(ticker, news_text, current_price, is_crypto, context_block)
             if ollama_result is not None:
@@ -195,6 +226,87 @@ class ClaudeAnalyzer:
 
         # Full Claude analysis
         return self._claude_analysis(ticker, news_text, current_price, is_crypto, context_block)
+
+    # ── Frugal-Modus: lokale Engine (Ollama/MLX) ─────────────────────────────
+
+    def _get_prescreener(self):
+        """Lazy: liefert die lokale Analyse-Engine. MLX wenn aktiviert, sonst
+        Ollama – beide bieten dieselbe full_analysis()-Schnittstelle. Wird
+        gecacht; bei Init-Fehler None (→ Claude-Fallback)."""
+        if self._prescreener is not None:
+            return self._prescreener
+        from config import config as _cfg
+        try:
+            if _cfg.mlx_enabled:
+                from analyzers.mlx_prescreener import MLXPrescreener
+                self._prescreener = MLXPrescreener(
+                    base_url=_cfg.mlx_url, model=_cfg.mlx_model, timeout=_cfg.mlx_timeout,
+                )
+            else:
+                from analyzers.ollama_prescreener import OllamaPrescreener
+                self._prescreener = OllamaPrescreener(
+                    base_url=_cfg.ollama_url, model=_cfg.ollama_model, timeout=_cfg.ollama_timeout,
+                )
+            # Für den Resource-Manager-Hook (Modellwechsel zur Laufzeit).
+            import analyzers.ollama_prescreener as _opmod
+            _opmod._prescreener_instance = self._prescreener
+        except Exception as e:
+            log.warning("Prescreener-Init fehlgeschlagen: %s", e)
+            self._prescreener = None
+        return self._prescreener
+
+    @staticmethod
+    def _has_catalyst_source(articles: List[Dict]) -> bool:
+        """True wenn ein echter Katalysator dabei ist (SEC 8-K / Earnings-
+        Transcript) – nur diese gehen im Frugal-Modus noch an Claude."""
+        try:
+            from analyzers.ollama_prescreener import _ALWAYS_CLAUDE_SOURCES
+        except Exception:
+            _ALWAYS_CLAUDE_SOURCES = {"SEC 8-K", "Earnings Call Transcript"}
+        for a in articles or []:
+            src = a.get("source") or ""
+            if any(c in src for c in _ALWAYS_CLAUDE_SOURCES):
+                return True
+        return False
+
+    def _frugal_local_analysis(
+        self, ticker: str, news: List[Dict], price_data, current_price, is_crypto: bool,
+    ) -> Optional[AnalysisResult]:
+        """Vollanalyse über die lokale Engine (Ollama/MLX). None wenn die Engine
+        nicht verfügbar ist oder das Parsing scheitert (→ Claude-Fallback)."""
+        ps = self._get_prescreener()
+        if ps is None or not ps.is_available():
+            return None
+        from config import config as _cfg
+        pdata = price_data if isinstance(price_data, dict) else {"current_price": current_price}
+        try:
+            data = ps.full_analysis(
+                ticker=ticker, news_items=news, price_data=pdata,
+                buy_min_score=_cfg.frugal_buy_min_score,
+            )
+        except Exception as e:
+            log.warning("[%s] Lokale Vollanalyse fehlgeschlagen: %s", ticker, e)
+            return None
+        if data is None:
+            return None
+        self._local_count += 1
+        return self._ollama_full_to_result(ticker, data)
+
+    @staticmethod
+    def _ollama_full_to_result(ticker: str, d: Dict) -> AnalysisResult:
+        """Mappt das full_analysis()-Dict der lokalen Engine auf AnalysisResult."""
+        return AnalysisResult(
+            ticker=ticker,
+            sentiment_score=float(d.get("sentiment_score", 0.5)),
+            direction=d.get("direction", "NEUTRAL"),
+            confidence=d.get("confidence", "LOW"),
+            recommendation=d.get("recommendation", "SKIP"),
+            entry_rationale=d.get("entry_rationale", "") or d.get("summary", ""),
+            risk_factors=list(d.get("risk_factors", []) or []),
+            key_catalysts=list(d.get("key_catalysts", []) or []),
+            suggested_hold_days=int(d.get("suggested_hold_days", 14)),
+            bull_case=d.get("summary", ""),
+        )
 
     @staticmethod
     def _build_context_block(macro_brief: str = "", geo_context=None) -> str:
