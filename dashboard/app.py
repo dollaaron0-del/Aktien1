@@ -2005,14 +2005,17 @@ with tab_watchlist:
     st.subheader("📡 Signal-Ticker (Small-Cap-Radar)")
     st.caption(
         "Aktien die durch Insider-Käufe, Social-Spikes, Options-Flow oder "
-        "Regierungsaufträge aufgefallen sind. Werden temporär (7 Tage) beobachtet."
+        "Regierungsaufträge aufgefallen sind. Werden **passiv gesammelt** (📥) und "
+        "erst bei genug Signal-Gewicht zur Analyse eskaliert (🔬). Temporär (7 Tage)."
     )
     _expander = SignalDrivenExpander()
     sig_entries = _expander.get_all_entries()
     if sig_entries:
         df_sig = pd.DataFrame(sig_entries).rename(columns={
             "ticker":     "Ticker",
+            "status":     "Status",
             "reason":     "Signal-Grund",
+            "weight":     "Gewicht",
             "added_at":   "Entdeckt",
             "expires_at": "Läuft ab",
             "active":     "Aktiv",

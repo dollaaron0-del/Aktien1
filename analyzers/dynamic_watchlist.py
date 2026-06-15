@@ -86,12 +86,14 @@ class DynamicWatchlist:
             age_h = self._cache_age_hours(cached)
             print(f"📋 Watchlist geladen (vor {age_h:.1f}h aktualisiert): {', '.join(tickers)}")
 
-        # Signal-Ticker (Insider, Social, Options, Contracts) anhängen
-        signal_tickers = self.expander.get_active_tickers()
+        # Signal-Ticker anhängen – NUR eskalierte (genug Signal-Gewicht gesammelt).
+        # Passiv sammelnde Ticker bleiben im Radar, werden aber nicht jeden Zyklus
+        # teuer analysiert (siehe SignalDrivenExpander.get_ready_tickers).
+        signal_tickers = self.expander.get_ready_tickers()
         for t in signal_tickers:
             if t not in tickers:
                 tickers.append(t)
-                print(f"  📡 Signal-Ticker hinzugefügt: {t}")
+                print(f"  📡 Signal-Ticker (eskaliert) hinzugefügt: {t}")
 
         # Immer aktive Positionen einfügen
         for t in active_tickers:

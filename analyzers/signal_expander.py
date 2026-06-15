@@ -45,6 +45,17 @@ _MIN_SOCIAL_SCORE = 0.25
 # Ablaufzeit in Tagen
 _DEFAULT_TTL_DAYS = 7
 
+# ─── Passive Sammlung → Eskalation ───────────────────────────────────────────
+# Jeder Ticker sammelt erst passiv "Gewicht" an. Erst ab READY_WEIGHT wird er
+# zur Analyse-Watchlist promoted und voll (Claude) eingeschätzt. So werden nicht
+# Dutzende einmaliger Social-Erwähnungen jeden Zyklus teuer analysiert.
+_READY_WEIGHT = 1.0          # Schwelle für "genug Infos → analysieren"
+_W_INSIDER    = 1.0          # starkes Einzelsignal → sofort bereit
+_W_CONTRACT   = 1.0
+_W_OPTIONS    = 0.6
+_W_SOCIAL     = 0.4          # ~3 Erwähnungen bis Eskalation
+_W_MENTION    = 0.34
+
 
 class SignalDrivenExpander:
     """
@@ -63,7 +74,7 @@ class SignalDrivenExpander:
         Analysiert News-Items (aus beliebigen Collectors) auf Signal-Ticker.
         Gibt neu hinzugefügte Ticker zurück.
         """
-        found: Dict[str, str] = {}  # ticker → grund
+        found: Dict[str, tuple] = {}  # ticker → (grund, gewicht)
 
         for item in items:
             source = item.get("source", "").lower()
@@ -79,7 +90,7 @@ class SignalDrivenExpander:
                     value = 0
                 if "buy" in action or "purchase" in action or "acqui" in action:
                     if value >= _MIN_INSIDER_BUY_USD and ticker and ticker not in _BLACKLIST:
-                        found[ticker] = f"Insider-Kauf ${value:,.0f}"
+                        found[ticker] = (f"Insider-Kauf ${value:,.0f}", _W_INSIDER)
 
             # ── US-Regierungsaufträge ─────────────────────────────────────
             elif "usaspending" in source or "contract" in source or "government" in source:
@@ -89,7 +100,7 @@ class SignalDrivenExpander:
                 except Exception:
                     value = 0
                 if value >= _MIN_CONTRACT_USD and ticker and ticker not in _BLACKLIST:
-                    found[ticker] = f"Regierungsauftrag ${value:,.0f}"
+                    found[ticker] = (f"Regierungsauftrag ${value:,.0f}", _W_CONTRACT)
 
             # ── Options-Flow ──────────────────────────────────────────────
             elif "option" in source or "flow" in source:
@@ -99,7 +110,7 @@ class SignalDrivenExpander:
                 except Exception:
                     cp_ratio = 0
                 if cp_ratio >= 3.0 and ticker and ticker not in _BLACKLIST:
-                    found[ticker] = f"Options-Flow C/P={cp_ratio:.1f}"
+                    found[ticker] = (f"Options-Flow C/P={cp_ratio:.1f}", _W_OPTIONS)
 
             # ── Social-Erwähnungen (Reddit / StockTwits) ──────────────────
             elif any(s in source for s in ("reddit", "stocktwits", "twitter")):
@@ -109,12 +120,12 @@ class SignalDrivenExpander:
                 except Exception:
                     score = 0
                 if score >= _MIN_SOCIAL_SCORE and ticker and ticker not in _BLACKLIST:
-                    found[ticker] = f"Social-Signal score={score:.2f}"
+                    found[ticker] = (f"Social-Signal score={score:.2f}", _W_SOCIAL)
                 # Auch Ticker aus Texten extrahieren
                 text = item.get("title", "") + " " + item.get("text", "")
                 for t in self._extract_tickers_from_text(text):
                     if t not in found:
-                        found[t] = f"Social-Erwähnung ({source.split('/')[0]})"
+                        found[t] = (f"Social-Erwähnung ({source.split('/')[0]})", _W_MENTION)
 
         return self._add_tickers(found)
 
@@ -123,13 +134,14 @@ class SignalDrivenExpander:
         Verarbeitet Social-Pulse-Spikes direkt (aus run_social_scan).
         spikes: Liste mit {ticker, spike_ratio, avg_score}
         """
-        found: Dict[str, str] = {}
+        found: Dict[str, tuple] = {}
         for spike in spikes:
             ticker = (spike.get("ticker") or "").upper().strip()
             ratio  = spike.get("spike_ratio", 0)
             score  = spike.get("avg_score", 0)
             if ticker and ticker not in _BLACKLIST and ratio >= 3.0:
-                found[ticker] = f"Social-Spike {ratio:.1f}× (score {score:+.2f})"
+                # Spike ist stärker als eine Einzel-Erwähnung → höheres Gewicht
+                found[ticker] = (f"Social-Spike {ratio:.1f}× (score {score:+.2f})", _W_OPTIONS)
         return self._add_tickers(found)
 
     def get_active_tickers(self) -> List[str]:
@@ -146,6 +158,32 @@ class SignalDrivenExpander:
                 pass
         return active
 
+    def get_ready_tickers(self) -> List[str]:
+        """Nur Ticker die genug Signal-Gewicht gesammelt haben (→ Analyse).
+        Passiv sammelnde Ticker (unter Schwelle) werden NICHT zurückgegeben."""
+        data = self._load()
+        now = datetime.utcnow()
+        ready = []
+        for ticker, entry in data.items():
+            try:
+                if datetime.fromisoformat(entry["expires_at"]) <= now:
+                    continue
+            except Exception:
+                continue
+            if self._is_ready(entry):
+                ready.append(ticker)
+        return ready
+
+    @staticmethod
+    def _is_ready(entry: Dict) -> bool:
+        """Eskalations-Kriterium, abwärtskompatibel zu Alt-Einträgen ohne weight."""
+        if entry.get("ready"):
+            return True
+        weight = entry.get("weight")
+        if weight is None:  # Legacy: aus signals-Zahl ableiten
+            weight = entry.get("signals", 1) * _W_MENTION
+        return weight >= _READY_WEIGHT
+
     def get_all_entries(self) -> List[Dict]:
         """Alle Einträge mit Metadaten (für Dashboard)."""
         data = self._load()
@@ -157,6 +195,7 @@ class SignalDrivenExpander:
                 active  = expires > now
             except Exception:
                 active = False
+            _ready = self._is_ready(entry)
             result.append({
                 "ticker":     ticker,
                 "reason":     entry.get("reason", "–"),
@@ -164,8 +203,11 @@ class SignalDrivenExpander:
                 "expires_at": entry.get("expires_at", "–")[:16],
                 "active":     active,
                 "signals":    entry.get("signals", 1),
+                "weight":     round(entry.get("weight", entry.get("signals", 1) * _W_MENTION), 2),
+                "status":     ("🔬 in Analyse" if (active and _ready)
+                               else "📥 sammelt" if active else "abgelaufen"),
             })
-        result.sort(key=lambda x: (not x["active"], x["expires_at"]), reverse=False)
+        result.sort(key=lambda x: (not x["active"], -x["weight"]))
         return result
 
     def cleanup_expired(self) -> int:
@@ -184,52 +226,81 @@ class SignalDrivenExpander:
         """Verlängert einen bestehenden Ticker um ttl_days."""
         data = self._load()
         if ticker in data:
-            data[ticker]["expires_at"] = (
+            entry = data[ticker]
+            entry["expires_at"] = (
                 datetime.utcnow() + timedelta(days=self.ttl_days)
             ).isoformat()
-            data[ticker]["signals"] = data[ticker].get("signals", 1) + 1
+            entry["signals"] = entry.get("signals", 1) + 1
+            entry["weight"]  = round(entry.get("weight", entry.get("signals", 1) * _W_MENTION) + _W_MENTION, 3)
+            if not entry.get("ready") and entry["weight"] >= _READY_WEIGHT:
+                entry["ready"] = True
+                entry["promoted_at"] = datetime.utcnow().isoformat()
             if reason:
-                data[ticker]["reason"] = reason
+                entry["reason"] = reason
             self._save(data)
 
     # ── Interne Helfer ────────────────────────────────────────────────────────
 
-    def _add_tickers(self, found: Dict[str, str]) -> List[str]:
-        """Fügt neue Ticker hinzu, erneuert bestehende. Gibt neue zurück."""
+    def _add_tickers(self, found: Dict[str, tuple]) -> List[str]:
+        """Sammelt Signale passiv an. Akkumuliert pro Ticker Gewicht; erst ab
+        _READY_WEIGHT wird der Ticker zur Analyse promoted (ready=True).
+        Gibt frisch promotete Ticker zurück (die jetzt analysiert werden sollen)."""
         data = self._load()
-        newly_added = []
+        promoted: List[str] = []
         now = datetime.utcnow()
         expires = (now + timedelta(days=self.ttl_days)).isoformat()
 
-        for ticker, reason in found.items():
+        for ticker, payload in found.items():
             if not self._is_valid_ticker(ticker):
                 continue
+            reason, weight = payload if isinstance(payload, tuple) else (payload, _W_MENTION)
             if ticker in data:
-                data[ticker]["expires_at"] = expires
-                data[ticker]["signals"]    = data[ticker].get("signals", 1) + 1
-                data[ticker]["reason"]     = reason
+                entry = data[ticker]
+                entry["expires_at"] = expires
+                entry["signals"]    = entry.get("signals", 1) + 1
+                entry["weight"]     = round(entry.get("weight", entry.get("signals", 1) * _W_MENTION) + weight, 3)
+                entry["reason"]     = reason
             else:
-                data[ticker] = {
+                entry = data[ticker] = {
                     "reason":     reason,
                     "added_at":   now.isoformat(),
                     "expires_at": expires,
                     "signals":    1,
+                    "weight":     round(weight, 3),
+                    "ready":      False,
                 }
-                newly_added.append(ticker)
+            # Eskalation: Schwelle erstmals erreicht → promoten
+            if not entry.get("ready") and entry["weight"] >= _READY_WEIGHT:
+                entry["ready"] = True
+                entry["promoted_at"] = now.isoformat()
+                promoted.append(ticker)
 
         self._save(data)
 
-        # Neu entdeckte Ticker auch in BenchList merken
-        if newly_added:
+        # Frisch promotete Ticker in BenchList + Telegram-Hinweis
+        if promoted:
             try:
                 from analyzers.bench_list import BenchList
                 bench = BenchList()
-                for ticker in newly_added:
-                    bench.add(ticker, reason=found.get(ticker, "Signal-Expander"), score=0.5)
+                for ticker in promoted:
+                    bench.add(ticker, reason=data[ticker].get("reason", "Signal-Expander"), score=0.5)
+            except Exception:
+                pass
+            try:
+                from notifier.telegram_notifier import TelegramNotifier
+                _lines = "\n".join(
+                    f"• <b>{t}</b> – {data[t].get('reason','')} "
+                    f"(Gewicht {data[t].get('weight',0):.1f}, {data[t].get('signals',0)} Signale)"
+                    for t in promoted
+                )
+                TelegramNotifier().send(
+                    "📡 <b>Small-Cap eskaliert → Analyse</b>\n\n"
+                    "Genug Signale gesammelt, wird jetzt eingeschätzt:\n" + _lines
+                )
             except Exception:
                 pass
 
-        return newly_added
+        return promoted
 
     @staticmethod
     def _extract_tickers_from_text(text: str) -> List[str]:
