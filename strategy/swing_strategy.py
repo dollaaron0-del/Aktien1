@@ -318,6 +318,16 @@ class SwingStrategy:
             if self.correlation_checker.is_correlated(ticker, list(positions.keys())):
                 return StrategyResult("SKIP", ticker, "Zu hohe Sektor-Korrelation")
 
+        # Liquiditäts-Gate: nicht in untradeable Small-Caps kaufen (Ø-Dollar-
+        # Volumen). Fail-open bei Datenausfall (siehe analyzers/liquidity).
+        try:
+            from analyzers.liquidity import check_liquidity
+            liq = check_liquidity(ticker, current_price)
+            if not liq.ok:
+                return StrategyResult("SKIP", ticker, liq.reason)
+        except Exception as _e:
+            log.debug("Liquiditäts-Gate übersprungen [%s]: %s", ticker, _e)
+
         # Position sizing
         position_value = self._calc_position_size(analysis, current_price, params, config)
         if position_value <= 0:
