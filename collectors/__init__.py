@@ -29,6 +29,7 @@ from .aaii_sentiment_collector import AAIISentimentCollector
 from .adhoc_collector import AdhocCollector
 from .fda_calendar_collector import FDACalendarCollector
 from .estimate_revisions_collector import EstimateRevisionsCollector
+from .short_volume_collector import ShortVolumeCollector
 from .reddit_hype_scanner import RedditHypeScanner
 
 __all__ = [
@@ -42,5 +43,6 @@ __all__ = [
     "ChineseMediaCollector", "WebTrafficCollector", "GermanMediaCollector",
     "InternationalMediaCollector", "QuiverCollector",
     "EconomicCalendarCollector", "AAIISentimentCollector", "AdhocCollector",
-    "FDACalendarCollector", "EstimateRevisionsCollector", "RedditHypeScanner",
+    "FDACalendarCollector", "EstimateRevisionsCollector",
+    "ShortVolumeCollector", "RedditHypeScanner",
 ]
