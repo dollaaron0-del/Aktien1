@@ -858,8 +858,25 @@ def run_analysis_cycle(
             except Exception:
                 pass
 
-    for ticker in active_watchlist:
+    _wl_total = len(active_watchlist)
+    _hb_every = max(0, int(os.getenv("HEARTBEAT_EVERY", "20")))  # 0 = Heartbeat aus
+    for _wl_idx, ticker in enumerate(active_watchlist, start=1):
         ticker = _normalize_ticker(ticker)
+
+        # Heartbeat: periodisches Lebenszeichen während des langen Zyklus. Start-
+        # und Ende-Nachricht liegen ~60 Min auseinander; ohne Ping wirkt der Bot
+        # tot ("Analyse-Nachricht, aber keine Ergebnisse").
+        if _hb_every and _wl_idx > 1 and (_wl_idx - 1) % _hb_every == 0:
+            try:
+                _done = _wl_idx - 1
+                _pct = int(_done / _wl_total * 100) if _wl_total else 0
+                _trades = sum(1 for a in cycle_actions if "GEKAUFT" in a or "VERKAUFT" in a)
+                TelegramNotifier().send(
+                    f"⏳ <b>Analyse läuft</b> – {_done}/{_wl_total} Titel ({_pct}%)"
+                    + (f"\n💼 {_trades} Trade(s) bisher" if _trades else "")
+                )
+            except Exception:
+                pass
 
         # Frugal-Modus: frisch gecachte Ticker überspringen (spart ~50% Ollama-Calls)
         if config.frugal_mode and not portfolio.get_position(ticker):

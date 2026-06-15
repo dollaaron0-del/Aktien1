@@ -75,6 +75,32 @@ def test_buy_opens_position(tmp_path, monkeypatch):
     assert p.cash == pytest.approx(100_000.0 - 10 * 150.0)
 
 
+class RoundingBroker(FakeBroker):
+    """IBKR-Doppelgänger: rundet Aktien auf ganze Stück (Teilaktien nicht
+    API-fähig) und meldet die TATSÄCHLICH georderte Menge im Fill zurück."""
+    def buy(self, ticker, shares, price):
+        whole = float(int(shares))
+        self.buys.append((ticker, whole, price))
+        return {"status": "filled", "ticker": ticker, "shares": whole,
+                "fill_price": price, "market_price": price}
+
+
+def test_buy_books_filled_shares_not_requested(tmp_path, monkeypatch):
+    """Bruchteils-BUY: Broker füllt 57 statt 57.91 → Buch MUSS 57 führen,
+    sonst entsteht 0.91 Dust/Phantom, das nie verkäuflich ist."""
+    p = make_portfolio(tmp_path, monkeypatch)
+    broker = RoundingBroker()
+    ex = TradeExecutor(p, broker, journal=None, notifier=_NullNotifier())
+    res = StrategyResult("BUY", "MSFT", "Conditional Entry", shares=57.91,
+                         price=417.35, stop_loss=392.0, take_profit=475.0, hold_days=8)
+    out = ex.execute(res, analysis=_ANALYSIS)
+    assert "GEKAUFT" in out
+    assert broker.buys == [("MSFT", 57.0, 417.35)]
+    pos = p.get_position("MSFT")
+    assert pos is not None and pos.shares == 57.0      # ganze Stück, kein 57.91
+    assert p.cash == pytest.approx(100_000.0 - 57.0 * 417.35)
+
+
 def test_scale_in_does_not_overwrite(tmp_path, monkeypatch):
     """BUY bei offener Position wird übersprungen – kein REPLACE."""
     p = make_portfolio(tmp_path, monkeypatch)

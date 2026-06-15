@@ -38,11 +38,19 @@ class IPOCandidate:
     sector: str
     expected_ticker: Optional[str] = None
     alt_tickers: List[str] = field(default_factory=list)
+    name_aliases: List[str] = field(default_factory=list)
     notes: str = ""
 
     @property
     def auto_watchlist_eligible(self) -> bool:
         return self.expected_valuation_b >= MIN_VALUATION_FOR_WATCHLIST_B
+
+    @property
+    def match_terms(self) -> List[str]:
+        """Begriffe, die im echten Börsen-Firmennamen vorkommen müssen, damit
+        ein Ticker-Treffer als ECHT gilt (verhindert Kollisionen wie
+        SPXC=SPX Technologies statt SpaceX). Fällt auf den Namen zurück."""
+        return self.name_aliases or [self.name]
 
 
 # ── Kuratierte Kandidatenliste (nur etablierte Unicorns) ──────────────────────
@@ -54,6 +62,7 @@ CANDIDATES: Dict[str, IPOCandidate] = {
         sector="KI / Technologie",
         expected_ticker="OAIT",
         alt_tickers=["OPAI", "OAIX"],
+        name_aliases=["OpenAI"],
         notes="ChatGPT-Entwickler · ~$300 Mrd. Bewertung (2025)",
     ),
     "SPACEX": IPOCandidate(
@@ -61,8 +70,9 @@ CANDIDATES: Dict[str, IPOCandidate] = {
         search_terms=["SpaceX IPO", "SpaceX stock market", "SpaceX Börsengang"],
         expected_valuation_b=350,
         sector="Raumfahrt",
-        expected_ticker="SPXC",
-        alt_tickers=["SPACEX", "SPCX"],
+        expected_ticker="SPCX",
+        alt_tickers=["SPACEX"],
+        name_aliases=["SpaceX", "Space Exploration"],
         notes="Falcon 9, Starlink · ~$350 Mrd. Bewertung (2025)",
     ),
     "ANTHROPIC": IPOCandidate(
@@ -71,6 +81,7 @@ CANDIDATES: Dict[str, IPOCandidate] = {
         expected_valuation_b=61,
         sector="KI",
         expected_ticker="ANTH",
+        name_aliases=["Anthropic"],
         notes="Claude-Entwickler · ~$61 Mrd. Bewertung (2025)",
     ),
     "STRIPE": IPOCandidate(
@@ -80,6 +91,7 @@ CANDIDATES: Dict[str, IPOCandidate] = {
         sector="Fintech",
         expected_ticker="STRP",
         alt_tickers=["STRPE"],
+        name_aliases=["Stripe"],
         notes="Zahlungsdienstleister · ~$70 Mrd. Bewertung",
     ),
     "DATABRICKS": IPOCandidate(
@@ -88,6 +100,7 @@ CANDIDATES: Dict[str, IPOCandidate] = {
         expected_valuation_b=62,
         sector="Daten / KI",
         expected_ticker="DBRK",
+        name_aliases=["Databricks"],
         notes="Data-Analytics-Plattform · ~$62 Mrd. Bewertung",
     ),
     "KLARNA": IPOCandidate(
@@ -96,6 +109,7 @@ CANDIDATES: Dict[str, IPOCandidate] = {
         expected_valuation_b=15,
         sector="Fintech / BNPL",
         expected_ticker="KLAR",
+        name_aliases=["Klarna"],
         notes="Buy-Now-Pay-Later · ~$15 Mrd. Bewertung · NYSE 2025 geplant",
     ),
     "CHIME": IPOCandidate(
@@ -103,7 +117,8 @@ CANDIDATES: Dict[str, IPOCandidate] = {
         search_terms=["Chime IPO", "Chime bank IPO", "Chime fintech stock"],
         expected_valuation_b=25,
         sector="Neobank",
-        expected_ticker="CHME",
+        expected_ticker="CHYM",
+        name_aliases=["Chime"],
         notes="US-Neobank · ~$25 Mrd. Bewertung",
     ),
     "SHEIN": IPOCandidate(
@@ -112,6 +127,7 @@ CANDIDATES: Dict[str, IPOCandidate] = {
         expected_valuation_b=66,
         sector="E-Commerce / Mode",
         expected_ticker="SHEI",
+        name_aliases=["Shein"],
         notes="Fast-Fashion · ~$66 Mrd. Bewertung · London-IPO angestrebt",
     ),
 }
@@ -143,15 +159,40 @@ def _keyword_sentiment(texts: List[str]) -> float:
     return bull / total
 
 
-def _check_ticker_live(ticker: str) -> bool:
-    """True wenn yfinance Kursdaten für diesen Ticker liefert."""
+def _resolve_ticker(ticker: str) -> Tuple[bool, str]:
+    """(hat_kurs, börsen_firmenname). Liefert den echten yfinance-Firmennamen
+    mit, damit der Aufrufer Ticker-Kollisionen erkennen kann."""
     try:
         import yfinance as yf
-        info = yf.Ticker(ticker).fast_info
-        price = getattr(info, "last_price", None)
-        return price is not None and price > 0
+        tk = yf.Ticker(ticker)
+        price = getattr(tk.fast_info, "last_price", None)
+        if not (price is not None and price > 0):
+            return False, ""
+        name = ""
+        try:
+            meta = tk.info or {}
+            name = meta.get("shortName") or meta.get("longName") or ""
+        except Exception:
+            name = ""
+        return True, name
     except Exception:
-        return False
+        return False, ""
+
+
+def _check_ticker_live(ticker: str, match_terms: Optional[List[str]] = None) -> Tuple[bool, str]:
+    """(is_live, name): True nur wenn der Ticker einen echten Kurs hat UND der
+    Börsen-Firmenname zu einem der match_terms passt. Ohne Namensabgleich
+    würden geratene Ticker fälschlich auf fremde Firmen matchen (z.B.
+    SPXC=SPX Technologies, ANTH=Anthera Pharma, CHME=China Medicine)."""
+    live, name = _resolve_ticker(ticker)
+    if not live:
+        return False, name
+    if not match_terms:                       # kein Abgleich gewünscht (Alt-Verhalten)
+        return True, name
+    low = name.lower()
+    if name and any(term.lower() in low for term in match_terms if term):
+        return True, name
+    return False, name                        # Kurs da, aber falsche Firma → kein Treffer
 
 
 # ── Datenbank ─────────────────────────────────────────────────────────────────
@@ -218,7 +259,8 @@ class IPOTracker:
         live_ticker = ""
         all_tickers = ([candidate.expected_ticker] if candidate.expected_ticker else []) + candidate.alt_tickers
         for t in all_tickers:
-            if _check_ticker_live(t):
+            ok, _name = _check_ticker_live(t, candidate.match_terms)
+            if ok:
                 is_live = True
                 live_ticker = t
                 break
@@ -260,7 +302,7 @@ class IPOTracker:
                     continue
                 if result["is_live"] and result["live_ticker"]:
                     existing = self._db.execute(
-                        "SELECT slug FROM ipo_live_events WHERE slug=?", (slug,)
+                        "SELECT slug, ticker FROM ipo_live_events WHERE slug=?", (slug,)
                     ).fetchone()
                     if not existing:
                         # Neues IPO erkannt!
@@ -273,6 +315,17 @@ class IPOTracker:
                             import analyzers.user_request_queue as _urq
                             _urq.add_ticker(result["live_ticker"])
                         new_ipos.append({**result, "candidate": candidate})
+                    elif existing["ticker"] != result["live_ticker"]:
+                        # Selbstheilung: früher falscher Ticker (Kollision) →
+                        # auf den namensvalidierten korrigieren, Watchlist nachziehen.
+                        self._db.execute(
+                            "UPDATE ipo_live_events SET ticker=? WHERE slug=?",
+                            (result["live_ticker"], slug),
+                        )
+                        self._db.commit()
+                        if candidate.auto_watchlist_eligible:
+                            import analyzers.user_request_queue as _urq
+                            _urq.add_ticker(result["live_ticker"])
             except Exception:
                 pass
         return new_ipos

@@ -93,6 +93,22 @@ def _fill_price(fill, fallback: float) -> float:
     return float(fallback)
 
 
+def _fill_shares(fill, fallback: float) -> float:
+    """Tatsächlich ausgeführte Stückzahl aus dem Fill. IBKR rundet Aktien auf
+    ganze Stück (Teilaktien nicht API-fähig, Error 10243) und liefert die
+    georderte Menge im Fill zurück. Das Buch MUSS diese echte Menge führen –
+    sonst entstehen Bruchteils-Phantome (z.B. 57.91 angefragt, 57 gefüllt →
+    0.91 Dust, das nie verkäuflich ist)."""
+    if isinstance(fill, dict):
+        fs = fill.get("shares")
+        if fs is not None:
+            try:
+                return float(fs)
+            except (TypeError, ValueError):
+                pass
+    return float(fallback)
+
+
 def _fail_reason(fill) -> str:
     """Fehlergrund aus einem nicht-gefüllten Fill (IBKR nutzt 'reason',
     Paper/Alpaca ggf. 'error'; sonst Roh-Status)."""
@@ -193,6 +209,17 @@ class TradeExecutor:
             warn = _fail_reason(fill)
             return f"[{ticker}] ⛔ BUY-Order fehlgeschlagen: {warn}"
         actual_price = _fill_price(fill, result.price)
+
+        # Buch auf die TATSÄCHLICH gefüllte Menge setzen (IBKR rundet auf ganze
+        # Stück). Sonst führt das Buch z.B. 57.91, der Broker hält 57 → Dust,
+        # das beim Voll-Exit nie verkauft werden kann (Phantom-Position).
+        filled_shares = _fill_shares(fill, shares)
+        if filled_shares <= 0:
+            return f"[{ticker}] ⛔ BUY 0 Stück gefüllt (Teilaktie gerundet) – nicht gebucht"
+        if filled_shares != shares:
+            log.info("[%s] Buchung auf Fill-Menge korrigiert: %.4f → %.4f Stück",
+                     ticker, shares, filled_shares)
+        shares = filled_shares
 
         # SL/TP auf den tatsächlichen Fill-Preis nachziehen, falls abgewichen.
         stop_loss = result.stop_loss
