@@ -370,6 +370,7 @@ def run_bot_loop(
                 safe_run_analysis_cycle,
                 portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
                 weekend_prep_inst, hedge_strategy_inst, earnings_strategy,
+                announce_start=True,
             )
             job._is_analysis_job = True
             review_job = schedule.every().day.at(slot["hhmm"]).do(_monthly_review_check)

@@ -633,6 +633,7 @@ def run_analysis_cycle(
     weekend_prep=None,
     hedge_strategy=None,
     earnings_strategy=None,
+    announce_start: bool = False,
 ):
     rule_suffix = "  [bold yellow][EXPLORATION][/bold yellow]" if config.exploration_mode else ""
     _cycle_ts = datetime.now().strftime('%Y-%m-%d %H:%M')
@@ -650,16 +651,20 @@ def run_analysis_cycle(
         log.info("Makro-Kontext:\n%s", _macro_brief)
         console.print(f"[cyan]{_macro_brief}[/cyan]")
 
-    try:
-        _start_msg = f"🔄 <b>Analyse-Zyklus gestartet</b> – {_cycle_ts}"
-        if _macro_brief:
-            # Erste Zeile ist die Überschrift des Briefs → durch fette Telegram-
-            # Überschrift ersetzen, Rest (Bullet-Zeilen) unverändert anhängen.
-            _body = _macro_brief.split("\n", 1)[1] if "\n" in _macro_brief else _macro_brief
-            _start_msg += f"\n\n📊 <b>Makro-Lage</b>\n{_body}"
-        TelegramNotifier().send(_start_msg)
-    except Exception:
-        pass
+    # Start-Nachricht nur für die geplante (vorbörsliche) Hauptanalyse – nicht für
+    # jeden intraday/getriggerten Zyklus. "Analyse gestartet"-Spam war zu viel;
+    # die relevanten Nachrichten sind Trades und gefundene Titel (Digest am Ende).
+    if announce_start:
+        try:
+            _start_msg = f"🔄 <b>Vorbörsliche Analyse gestartet</b> – {_cycle_ts}"
+            if _macro_brief:
+                # Erste Zeile ist die Überschrift des Briefs → durch fette Telegram-
+                # Überschrift ersetzen, Rest (Bullet-Zeilen) unverändert anhängen.
+                _body = _macro_brief.split("\n", 1)[1] if "\n" in _macro_brief else _macro_brief
+                _start_msg += f"\n\n📊 <b>Makro-Lage</b>\n{_body}"
+            TelegramNotifier().send(_start_msg)
+        except Exception:
+            pass
 
     # Multi-Agent Konsens wenn aktiviert, sonst Standard-Analyzer
     _multi_agent_enabled = os.getenv("MULTI_AGENT_ENABLED", "false").lower() in ("1", "true", "yes")
@@ -808,6 +813,10 @@ def run_analysis_cycle(
     _requested = _urq.consume_all()  # returns List[(ticker, meta)]
     _force_claude_tickers: set = set()
     _headline_meta: Dict[str, dict] = {}
+    # Ergebnisse der Headline-Signal-Ticker werden gesammelt und am Zyklus-Ende
+    # in EINER Digest-Nachricht gemeldet – statt einer Einzelnachricht pro Aktie
+    # (sonst Telegram-Flut bei mehreren getriggerten Titeln).
+    _headline_results: List[str] = []
     active_watchlist, _bench_geo_contexts = _get_watchlist(portfolio)
 
     for _t, _meta in _requested:
@@ -970,10 +979,10 @@ def run_analysis_cycle(
     for _wl_idx, ticker in enumerate(active_watchlist, start=1):
         ticker = _normalize_ticker(ticker)
 
-        # Heartbeat: periodisches Lebenszeichen während des langen Zyklus. Start-
-        # und Ende-Nachricht liegen ~60 Min auseinander; ohne Ping wirkt der Bot
-        # tot ("Analyse-Nachricht, aber keine Ergebnisse").
-        if _hb_every and _wl_idx > 1 and (_wl_idx - 1) % _hb_every == 0:
+        # Heartbeat: periodisches Lebenszeichen während des langen Zyklus. Nur bei
+        # der angekündigten Hauptanalyse (announce_start) – intraday/getriggerte
+        # Zyklen laufen still, dort ist "Analyse läuft"-Spam unerwünscht.
+        if announce_start and _hb_every and _wl_idx > 1 and (_wl_idx - 1) % _hb_every == 0:
             try:
                 _done = _wl_idx - 1
                 _pct = int(_done / _wl_total * 100) if _wl_total else 0
@@ -1240,42 +1249,20 @@ def run_analysis_cycle(
             except Exception as _store_err:
                 log.warning("Analysis-Log store(%s) fehlgeschlagen: %s", ticker, _store_err)
 
-        # Follow-Up für Headline-Signal-Ticker: Ergebnis per Telegram
+        # Headline-Signal-Ticker: Ergebnis als kompakte Zeile sammeln. Versand
+        # erfolgt gebündelt am Zyklus-Ende (eine Digest-Nachricht), nicht pro Aktie.
         if ticker in _headline_meta:
             try:
-                _sig = _headline_meta[ticker]
                 _cur = price_data.get("current_price") if price_data else None
                 _price_str = f" @ ${_cur:.2f}" if _cur else ""
-                if analysis.recommendation == "BUY":
-                    _followup = (
-                        f"✅ <b>Analyse-Ergebnis: {ticker}</b>{_price_str}\n\n"
-                        f"📰 Signal: {_sig.get('signal_type','')} (Score {_sig.get('score',0):.2f})\n"
-                        f"🟢 Empfehlung: <b>KAUFEN</b> (Score {analysis.sentiment_score:.2f}, {analysis.confidence})\n\n"
-                        f"<b>Begründung:</b> {analysis.entry_rationale[:200]}\n\n"
-                        f"<b>Bull-Case:</b> {analysis.bull_case[:150]}"
-                        + (f"\n\n⚠️ Bear-Case: {analysis.bear_case[:120]}" if analysis.bear_case else "")
-                        + (f"\n🎯 Kursziel: ${analysis.target_price:.2f}" if analysis.target_price else "")
-                    )
-                elif analysis.recommendation == "SKIP":
-                    _followup = (
-                        f"⏭️ <b>Analyse-Ergebnis: {ticker}</b>{_price_str}\n\n"
-                        f"📰 Signal: {_sig.get('signal_type','')} (Score {_sig.get('score',0):.2f})\n"
-                        f"🔵 Empfehlung: <b>SKIP</b> (Score {analysis.sentiment_score:.2f}, {analysis.confidence})\n\n"
-                        f"<b>Begründung:</b> {analysis.entry_rationale[:200]}"
-                        + (f"\n\n⚠️ Bear-Case: {analysis.bear_case[:150]}" if analysis.bear_case else "")
-                        + (f"\n\n💡 Einstieg bei: ${analysis.entry_trigger_price:.2f}" if analysis.entry_trigger_price else "")
-                    )
-                else:
-                    _followup = (
-                        f"ℹ️ <b>Analyse-Ergebnis: {ticker}</b>{_price_str}\n\n"
-                        f"📰 Signal: {_sig.get('signal_type','')} (Score {_sig.get('score',0):.2f})\n"
-                        f"Empfehlung: <b>{analysis.recommendation}</b> "
-                        f"(Score {analysis.sentiment_score:.2f}, {analysis.confidence})\n\n"
-                        f"{analysis.entry_rationale[:250]}"
-                    )
-                TelegramNotifier().send(_followup)
+                _rec = analysis.recommendation
+                _rec_icon = {"BUY": "🟢", "SKIP": "⏭️"}.get(_rec, "ℹ️")
+                _headline_results.append(
+                    f"{_rec_icon} <b>{ticker}</b> {_rec} "
+                    f"({analysis.sentiment_score:.2f}){_price_str}"
+                )
             except Exception as _fu_err:
-                log.debug("Follow-Up-Nachricht fehlgeschlagen: %s", _fu_err)
+                log.debug("Headline-Ergebnis sammeln fehlgeschlagen: %s", _fu_err)
 
         # Bei SKIP mit bullischem Potential: Conditional Entry speichern
         if (
@@ -1409,6 +1396,18 @@ def run_analysis_cycle(
                 )
             except Exception as _corr_err:
                 log.debug("Korrektur-Follow-Up fehlgeschlagen: %s", _corr_err)
+
+    # Headline-Analyse: alle Ergebnisse gebündelt in EINER Nachricht (statt einer
+    # Einzelnachricht pro Aktie – das war die Telegram-Flut).
+    if _headline_results:
+        try:
+            TelegramNotifier().send(
+                f"⚡ <b>Headline-Analyse</b> ({len(_headline_results)} Titel)\n"
+                f"━━━━━━━━━━━━━━\n"
+                + "\n".join(_headline_results)
+            )
+        except Exception as _dg_err:
+            log.debug("Headline-Digest fehlgeschlagen: %s", _dg_err)
 
     # Record portfolio snapshot
     prices = broker.get_prices(list(portfolio.all_positions().keys()))
