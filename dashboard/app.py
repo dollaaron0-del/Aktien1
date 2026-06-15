@@ -2008,16 +2008,21 @@ with tab_watchlist:
     st.caption(
         "Aktien die durch Insider-Käufe, Social-Spikes, Options-Flow oder "
         "Regierungsaufträge aufgefallen sind. Werden **passiv gesammelt** (📥) und "
-        "erst bei genug Signal-Gewicht zur Analyse eskaliert (🔬). Temporär (7 Tage)."
+        "erst bei genug Signal-Gewicht **und Bestätigung aus ≥2 Quellen** zur "
+        "Analyse eskaliert (🔬). Max. 3 gleichzeitig in Analyse. Temporär (7 Tage)."
     )
     _expander = SignalDrivenExpander()
     sig_entries = _expander.get_all_entries()
     if sig_entries:
+        for _e in sig_entries:
+            _e["sources"] = ", ".join(_e.get("sources", [])) or "–"
         df_sig = pd.DataFrame(sig_entries).rename(columns={
             "ticker":     "Ticker",
             "status":     "Status",
             "reason":     "Signal-Grund",
             "weight":     "Gewicht",
+            "sources":    "Quellen",
+            "n_sources":  "#Q",
             "added_at":   "Entdeckt",
             "expires_at": "Läuft ab",
             "active":     "Aktiv",

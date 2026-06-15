@@ -31,10 +31,23 @@ _BLACKLIST = {
     "ALL", "ARE", "FOR", "NEW", "NOW", "BIG", "TOP", "MAX", "NET", "PAY",
     "IT", "US", "UK", "EU", "AM", "PM", "DD", "RE", "DM", "PR", "IR",
     "YOLO", "FOMO", "IMO", "ATH", "ATL", "OTC", "RH", "WSB",
+    # Weitere beobachtete Falsch-Positive aus Text-Extraktion (engl. Wörter,
+    # Indizes, falsch geschriebene Ticker):
+    "BUY", "SELL", "HOLD", "HIV", "CEOS", "EV", "Q1", "Q2", "Q3", "Q4",
+    "ADOBE", "TSMC", "WANT", "GAIN", "LOSS", "RISK", "CASH", "DEBT", "BULL",
+    "BEAR", "CALL", "PUT", "LONG", "SHORT", "OPEN", "HIGH", "LOW", "RED",
     # Phantom-/Privatfirmen-Ticker: Social-Cashtags meinen die private Firma,
     # Yahoo liefert dafür aber ein delistetes/Phantom-Listing → kein handelbares
     # Signal. SPCX = "$SpaceX"-Erwähnungen (SpaceX ist privat, kein echter Ticker).
     "SPCX",
+}
+
+# Indizes / breite ETFs: keine Small-Cap-Entdeckungen, gehören nicht in den Radar.
+_INDEX_ETFS = {
+    "SPY", "SPX", "QQQ", "DIA", "IWM", "VOO", "VTI", "VXX", "UVXY", "SQQQ",
+    "TQQQ", "SOXL", "SOXS", "ARKK", "XLK", "XLF", "XLE", "XLV", "XLI", "XLY",
+    "XLP", "XLU", "XLB", "XLRE", "SMH", "ICLN", "GDX", "TLT", "HYG", "GLD",
+    "SLV", "USO", "AGQ", "SIVR", "BTC", "ETH", "DXY",
 }
 
 # Mindest-Kaufvolumen für Insider-Signal (USD)
@@ -50,19 +63,27 @@ _MIN_SOCIAL_SCORE = 0.25
 _DEFAULT_TTL_DAYS = 7
 
 # ─── Passive Sammlung → Eskalation ───────────────────────────────────────────
-# Jeder Ticker sammelt erst passiv "Gewicht" an. Erst ab READY_WEIGHT wird er
-# zur Analyse-Watchlist promoted und voll (Claude) eingeschätzt. So werden nicht
-# Dutzende einmaliger Social-Erwähnungen jeden Zyklus teuer analysiert.
-_READY_WEIGHT = 1.0          # Schwelle für "genug Infos → analysieren"
+# Jeder Ticker sammelt erst passiv "Gewicht" an. Erst wenn er GENUG Gewicht UND
+# Bestätigung aus MEHREREN Quellen hat, wird er zur Analyse-Watchlist promoted
+# und voll (Claude) eingeschätzt. So werden nicht Dutzende einmaliger Social-
+# Erwähnungen jeden Zyklus teuer analysiert – der Hauptfokus bleibt auf der
+# Kern-Marktdaten-Analyse, der Radar liefert nur gelegentlich einen reifen
+# Small-Cap nach.
+_READY_WEIGHT  = 2.0          # Gewichts-Schwelle (≈5-6 Social-Erwähnungen)
+_MIN_SOURCES   = 2           # … UND mind. so viele VERSCHIEDENE Signalquellen
+# Gesamt-Obergrenze: so viele eskalierte Small-Caps dürfen INSGESAMT gleichzeitig
+# in der aktiven Analyse stehen. Anders als der Pro-Zyklus-Deckel begrenzt dies
+# den Gesamtbestand "ready" – verhindert, dass über viele Zyklen Hunderte
+# dauerhaft mitanalysiert werden. Nur die schwersten N (höchstes Gewicht zuerst).
+_MAX_READY_TOTAL = int(os.getenv("SIGNAL_MAX_READY_TOTAL", "3"))
 # Deckel: max. so viele Small-Caps pro Zyklus frisch eskalieren lassen. Schützt
-# die Analyse-Watchlist vor plötzlichen Schwüngen (z.B. 30+ Ticker auf einmal),
-# die jeden Zyklus teuer/langsam machen. Übrige reife Ticker behalten ihr
-# Gewicht und rücken in den Folgezyklen nach (höchstes Gewicht zuerst).
-_MAX_PROMOTE_PER_CYCLE = int(os.getenv("SIGNAL_MAX_PROMOTE_PER_CYCLE", "5"))
-_W_INSIDER    = 1.0          # starkes Einzelsignal → sofort bereit
+# die Analyse-Watchlist vor plötzlichen Schwüngen. Übrige reife Ticker behalten
+# ihr Gewicht und rücken in den Folgezyklen nach (höchstes Gewicht zuerst).
+_MAX_PROMOTE_PER_CYCLE = int(os.getenv("SIGNAL_MAX_PROMOTE_PER_CYCLE", "3"))
+_W_INSIDER    = 1.0          # starkes Einzelsignal – braucht aber 2. Quelle
 _W_CONTRACT   = 1.0
 _W_OPTIONS    = 0.6
-_W_SOCIAL     = 0.4          # ~3 Erwähnungen bis Eskalation
+_W_SOCIAL     = 0.4          # mehrere Erwähnungen sammeln Gewicht an
 _W_MENTION    = 0.34
 
 
@@ -83,7 +104,7 @@ class SignalDrivenExpander:
         Analysiert News-Items (aus beliebigen Collectors) auf Signal-Ticker.
         Gibt neu hinzugefügte Ticker zurück.
         """
-        found: Dict[str, tuple] = {}  # ticker → (grund, gewicht)
+        found: Dict[str, tuple] = {}  # ticker → (grund, gewicht, quelle)
 
         for item in items:
             source = item.get("source", "").lower()
@@ -98,8 +119,8 @@ class SignalDrivenExpander:
                 except Exception:
                     value = 0
                 if "buy" in action or "purchase" in action or "acqui" in action:
-                    if value >= _MIN_INSIDER_BUY_USD and ticker and ticker not in _BLACKLIST:
-                        found[ticker] = (f"Insider-Kauf ${value:,.0f}", _W_INSIDER)
+                    if value >= _MIN_INSIDER_BUY_USD and self._is_valid_ticker(ticker):
+                        found[ticker] = (f"Insider-Kauf ${value:,.0f}", _W_INSIDER, "insider")
 
             # ── US-Regierungsaufträge ─────────────────────────────────────
             elif "usaspending" in source or "contract" in source or "government" in source:
@@ -108,8 +129,8 @@ class SignalDrivenExpander:
                     value = float(str(value).replace(",", "").replace("$", ""))
                 except Exception:
                     value = 0
-                if value >= _MIN_CONTRACT_USD and ticker and ticker not in _BLACKLIST:
-                    found[ticker] = (f"Regierungsauftrag ${value:,.0f}", _W_CONTRACT)
+                if value >= _MIN_CONTRACT_USD and self._is_valid_ticker(ticker):
+                    found[ticker] = (f"Regierungsauftrag ${value:,.0f}", _W_CONTRACT, "contract")
 
             # ── Options-Flow ──────────────────────────────────────────────
             elif "option" in source or "flow" in source:
@@ -118,8 +139,8 @@ class SignalDrivenExpander:
                     cp_ratio = float(cp_ratio)
                 except Exception:
                     cp_ratio = 0
-                if cp_ratio >= 3.0 and ticker and ticker not in _BLACKLIST:
-                    found[ticker] = (f"Options-Flow C/P={cp_ratio:.1f}", _W_OPTIONS)
+                if cp_ratio >= 3.0 and self._is_valid_ticker(ticker):
+                    found[ticker] = (f"Options-Flow C/P={cp_ratio:.1f}", _W_OPTIONS, "options")
 
             # ── Social-Erwähnungen (Reddit / StockTwits) ──────────────────
             elif any(s in source for s in ("reddit", "stocktwits", "twitter")):
@@ -128,13 +149,13 @@ class SignalDrivenExpander:
                     score = float(score)
                 except Exception:
                     score = 0
-                if score >= _MIN_SOCIAL_SCORE and ticker and ticker not in _BLACKLIST:
-                    found[ticker] = (f"Social-Signal score={score:.2f}", _W_SOCIAL)
+                if score >= _MIN_SOCIAL_SCORE and self._is_valid_ticker(ticker):
+                    found[ticker] = (f"Social-Signal score={score:.2f}", _W_SOCIAL, "social")
                 # Auch Ticker aus Texten extrahieren
                 text = item.get("title", "") + " " + item.get("text", "")
                 for t in self._extract_tickers_from_text(text):
                     if t not in found:
-                        found[t] = (f"Social-Erwähnung ({source.split('/')[0]})", _W_MENTION)
+                        found[t] = (f"Social-Erwähnung ({source.split('/')[0]})", _W_MENTION, "mention")
 
         return self._add_tickers(found)
 
@@ -148,9 +169,9 @@ class SignalDrivenExpander:
             ticker = (spike.get("ticker") or "").upper().strip()
             ratio  = spike.get("spike_ratio", 0)
             score  = spike.get("avg_score", 0)
-            if ticker and ticker not in _BLACKLIST and ratio >= 3.0:
+            if self._is_valid_ticker(ticker) and ratio >= 3.0:
                 # Spike ist stärker als eine Einzel-Erwähnung → höheres Gewicht
-                found[ticker] = (f"Social-Spike {ratio:.1f}× (score {score:+.2f})", _W_OPTIONS)
+                found[ticker] = (f"Social-Spike {ratio:.1f}× (score {score:+.2f})", _W_OPTIONS, "social")
         return self._add_tickers(found)
 
     def get_active_tickers(self) -> List[str]:
@@ -168,8 +189,11 @@ class SignalDrivenExpander:
         return active
 
     def get_ready_tickers(self) -> List[str]:
-        """Nur Ticker die genug Signal-Gewicht gesammelt haben (→ Analyse).
-        Passiv sammelnde Ticker (unter Schwelle) werden NICHT zurückgegeben."""
+        """Nur Ticker die eskaliert sind (→ Analyse), hart auf die Gesamt-
+        Obergrenze _MAX_READY_TOTAL gedeckelt (schwerste zuerst). Passiv
+        sammelnde Ticker unter Schwelle werden NICHT zurückgegeben. Der harte
+        Deckel hier ist das Sicherheitsnetz: selbst wenn aus Alt-Daten viele
+        ready-Flags existieren, landen nie mehr als N in der Analyse."""
         data = self._load()
         now = datetime.utcnow()
         ready = []
@@ -180,20 +204,43 @@ class SignalDrivenExpander:
             except Exception:
                 continue
             if self._is_ready(entry):
-                ready.append(ticker)
-        return ready
+                ready.append((ticker, self._weight_of(entry)))
+        ready.sort(key=lambda x: x[1], reverse=True)
+        return [t for t, _ in ready[:_MAX_READY_TOTAL]]
 
     @staticmethod
-    def _is_ready(entry: Dict) -> bool:
-        """Bereit-für-Analyse-Kriterium. Maßgeblich ist das ready-Flag, das in
-        _add_tickers gedeckelt gesetzt wird – so begrenzt der Promote-Deckel auch,
-        was tatsächlich analysiert wird. Alt-Einträge ohne 'weight' (Legacy) haben
-        kein Flag und werden weiter gewicht-/signalbasiert beurteilt."""
-        if entry.get("ready"):
-            return True
-        if "weight" not in entry:  # Legacy: aus signals-Zahl ableiten
-            return entry.get("signals", 1) * _W_MENTION >= _READY_WEIGHT
-        return False
+    def _weight_of(entry: Dict) -> float:
+        return entry.get("weight", entry.get("signals", 1) * _W_MENTION)
+
+    @staticmethod
+    def _sources_of(entry: Dict) -> set:
+        """Distinkte Signalquellen eines Eintrags. Alt-Einträge ohne 'sources'
+        werden grob aus dem Grund-Text abgeleitet (sonst leer = einzelne Quelle)."""
+        if entry.get("sources"):
+            return set(entry["sources"])
+        reason = (entry.get("reason") or "").lower()
+        for key, src in (
+            ("insider", "insider"), ("regierungs", "contract"), ("contract", "contract"),
+            ("options", "options"), ("spike", "social"), ("social", "social"),
+        ):
+            if key in reason:
+                return {src}
+        return set()
+
+    @classmethod
+    def _is_ready(cls, entry: Dict) -> bool:
+        """Bereit-für-Analyse = das ready-Flag, das in _add_tickers gedeckelt und
+        quellen-geprüft gesetzt wird. Kein impliziter Legacy-Pfad mehr: ein
+        Eintrag wird nur über die Eskalations-Logik 'ready'."""
+        return bool(entry.get("ready"))
+
+    @classmethod
+    def _is_eligible(cls, entry: Dict) -> bool:
+        """Eskalations-Kriterium: genug Gewicht UND mind. _MIN_SOURCES
+        verschiedene Signalquellen. Reines Social-Rauschen (nur 'mention'/
+        'social') reicht so nie allein – es braucht Bestätigung."""
+        return (cls._weight_of(entry) >= _READY_WEIGHT
+                and len(cls._sources_of(entry)) >= _MIN_SOURCES)
 
     def get_all_entries(self) -> List[Dict]:
         """Alle Einträge mit Metadaten (für Dashboard)."""
@@ -207,6 +254,7 @@ class SignalDrivenExpander:
             except Exception:
                 active = False
             _ready = self._is_ready(entry)
+            sources = sorted(self._sources_of(entry))
             result.append({
                 "ticker":     ticker,
                 "reason":     entry.get("reason", "–"),
@@ -214,7 +262,9 @@ class SignalDrivenExpander:
                 "expires_at": entry.get("expires_at", "–")[:16],
                 "active":     active,
                 "signals":    entry.get("signals", 1),
-                "weight":     round(entry.get("weight", entry.get("signals", 1) * _W_MENTION), 2),
+                "sources":    sources,
+                "n_sources":  len(sources),
+                "weight":     round(self._weight_of(entry), 2),
                 "status":     ("🔬 in Analyse" if (active and _ready)
                                else "📥 sammelt" if active else "abgelaufen"),
             })
@@ -234,7 +284,9 @@ class SignalDrivenExpander:
         return before - len(data)
 
     def renew(self, ticker: str, reason: str = ""):
-        """Verlängert einen bestehenden Ticker um ttl_days."""
+        """Verlängert einen bestehenden Ticker um ttl_days und akkumuliert
+        Gewicht. Promotet NICHT selbst – die Eskalation (mit Quellen- und
+        Gesamt-Deckel-Prüfung) läuft ausschließlich über _add_tickers."""
         data = self._load()
         if ticker in data:
             entry = data[ticker]
@@ -242,13 +294,33 @@ class SignalDrivenExpander:
                 datetime.utcnow() + timedelta(days=self.ttl_days)
             ).isoformat()
             entry["signals"] = entry.get("signals", 1) + 1
-            entry["weight"]  = round(entry.get("weight", entry.get("signals", 1) * _W_MENTION) + _W_MENTION, 3)
-            if not entry.get("ready") and entry["weight"] >= _READY_WEIGHT:
-                entry["ready"] = True
-                entry["promoted_at"] = datetime.utcnow().isoformat()
+            entry["weight"]  = round(self._weight_of(entry) + _W_MENTION, 3)
             if reason:
                 entry["reason"] = reason
             self._save(data)
+
+    def prune(self) -> Dict[str, int]:
+        """Bereinigt den Bestand: wirft Blacklist-/Index-/Universum-Ticker und
+        ungültige Symbole raus, normalisiert ready-Flags neu (nur die schwersten
+        _MAX_READY_TOTAL eskalierten bleiben in Analyse). Echte Small-Caps
+        behalten Gewicht & Quellen. Idempotent. Gibt Statistik zurück."""
+        data = self._load()
+        removed = 0
+        for ticker in list(data.keys()):
+            if not self._is_valid_ticker(ticker):
+                del data[ticker]
+                removed += 1
+
+        # ready-Flags komplett neu vergeben: nur eskalierte (Gewicht + Quellen),
+        # davon die schwersten N. Alles andere fällt auf "sammelt" zurück.
+        eligible = [t for t, e in data.items() if self._is_eligible(e)]
+        eligible.sort(key=lambda t: self._weight_of(data[t]), reverse=True)
+        keep_ready = set(eligible[:_MAX_READY_TOTAL])
+        for t, e in data.items():
+            e["ready"] = t in keep_ready
+
+        self._save(data)
+        return {"removed": removed, "ready": len(keep_ready), "total": len(data)}
 
     # ── Interne Helfer ────────────────────────────────────────────────────────
 
@@ -265,13 +337,19 @@ class SignalDrivenExpander:
         for ticker, payload in found.items():
             if not self._is_valid_ticker(ticker):
                 continue
-            reason, weight = payload if isinstance(payload, tuple) else (payload, _W_MENTION)
+            if isinstance(payload, tuple):
+                reason  = payload[0]
+                weight  = payload[1] if len(payload) > 1 else _W_MENTION
+                source  = payload[2] if len(payload) > 2 else "mention"
+            else:
+                reason, weight, source = payload, _W_MENTION, "mention"
             if ticker in data:
                 entry = data[ticker]
                 entry["expires_at"] = expires
                 entry["signals"]    = entry.get("signals", 1) + 1
-                entry["weight"]     = round(entry.get("weight", entry.get("signals", 1) * _W_MENTION) + weight, 3)
+                entry["weight"]     = round(self._weight_of(entry) + weight, 3)
                 entry["reason"]     = reason
+                entry["sources"]    = sorted(self._sources_of(entry) | {source})
             else:
                 entry = data[ticker] = {
                     "reason":     reason,
@@ -279,35 +357,35 @@ class SignalDrivenExpander:
                     "expires_at": expires,
                     "signals":    1,
                     "weight":     round(weight, 3),
+                    "sources":    [source],
                     "ready":      False,
                 }
 
-        # Promote-Kandidaten = ALLE aktiven Einträge über Schwelle, die noch nicht
-        # ready sind (frisch übergelaufene + Rückstau aus vorigen, gedeckelten
-        # Zyklen). So rücken übrige Ticker auch ohne neues Signal nach.
-        for ticker, entry in data.items():
-            if entry.get("ready"):
-                continue
-            try:
-                if datetime.fromisoformat(entry["expires_at"]) <= now:
-                    continue
-            except Exception:
-                continue
-            w = entry.get("weight", entry.get("signals", 1) * _W_MENTION)
-            if w >= _READY_WEIGHT:
-                eligible.append(ticker)
+        # Wie viele "ready"-Slots sind insgesamt noch frei? Der Gesamt-Deckel
+        # _MAX_READY_TOTAL begrenzt, wie viele Small-Caps INSGESAMT gleichzeitig
+        # analysiert werden – nicht nur wie viele pro Zyklus dazukommen.
+        active_ready = [
+            t for t, e in data.items()
+            if e.get("ready") and self._not_expired(e, now)
+        ]
+        free_slots = max(0, _MAX_READY_TOTAL - len(active_ready))
+        slots = min(free_slots, _MAX_PROMOTE_PER_CYCLE)
 
-        # Deckel: nur die Top-N Kandidaten (höchstes Gewicht zuerst) eskalieren
-        # diesen Zyklus. Der Rest bleibt ready=False, behält Gewicht und rückt in
-        # Folgezyklen nach – verhindert, dass ein Schwung die Watchlist flutet.
-        eligible.sort(
-            key=lambda t: data[t].get("weight", data[t].get("signals", 1) * _W_MENTION),
-            reverse=True,
-        )
-        for ticker in eligible[:_MAX_PROMOTE_PER_CYCLE]:
-            data[ticker]["ready"] = True
-            data[ticker]["promoted_at"] = now.isoformat()
-            promoted.append(ticker)
+        # Promote-Kandidaten = aktive, noch nicht ready Einträge, die das
+        # Eskalations-Kriterium erfüllen (Gewicht UND ≥2 Quellen). Rückstau aus
+        # vorigen Zyklen rückt mit nach (höchstes Gewicht zuerst).
+        if slots > 0:
+            for ticker, entry in data.items():
+                if entry.get("ready") or not self._not_expired(entry, now):
+                    continue
+                if self._is_eligible(entry):
+                    eligible.append(ticker)
+
+            eligible.sort(key=lambda t: self._weight_of(data[t]), reverse=True)
+            for ticker in eligible[:slots]:
+                data[ticker]["ready"] = True
+                data[ticker]["promoted_at"] = now.isoformat()
+                promoted.append(ticker)
 
         self._save(data)
 
@@ -327,29 +405,48 @@ class SignalDrivenExpander:
 
         return promoted
 
-    @staticmethod
-    def _extract_tickers_from_text(text: str) -> List[str]:
-        """Extrahiert $TICKER und ##TICKER Muster aus Text."""
+    @classmethod
+    def _extract_tickers_from_text(cls, text: str) -> List[str]:
+        """Extrahiert $TICKER und #TICKER Muster aus Text."""
         # $AAPL oder $aapl
         cashtags = re.findall(r'\$([A-Z]{1,5})\b', text.upper())
         # Hashtags wie #AAPL
         hashtags = re.findall(r'#([A-Z]{1,5})\b', text.upper())
-        result = []
-        for t in cashtags + hashtags:
-            if t not in _BLACKLIST and 1 <= len(t) <= 5:
-                result.append(t)
-        return list(set(result))
+        result = [t for t in set(cashtags + hashtags) if cls._is_valid_ticker(t)]
+        return result
 
     @staticmethod
-    def _is_valid_ticker(ticker: str) -> bool:
-        """Grobe Validierung: 1–5 Großbuchstaben, nicht in Blacklist."""
+    def _not_expired(entry: Dict, now: datetime) -> bool:
+        try:
+            return datetime.fromisoformat(entry["expires_at"]) > now
+        except Exception:
+            return False
+
+    @classmethod
+    def _is_valid_ticker(cls, ticker: str) -> bool:
+        """Validierung für den Small-Cap-Radar: 1–5 Großbuchstaben, nicht in
+        Blacklist, kein Index/breiter ETF und nicht bereits im Haupt-
+        Scan-Universum (Mega-/Large-Caps werden ohnehin jeden Zyklus
+        analysiert – sie sind keine Small-Cap-Entdeckung)."""
         if not ticker:
             return False
-        if ticker in _BLACKLIST:
+        if ticker in _BLACKLIST or ticker in _INDEX_ETFS:
+            return False
+        if ticker in cls._main_universe():
             return False
         if not re.match(r'^[A-Z]{1,5}$', ticker):
             return False
         return True
+
+    @staticmethod
+    def _main_universe() -> set:
+        """Haupt-Scan-Universum (Large-/Mega-Caps), lazy geladen um Zirkular-
+        Import mit dynamic_watchlist zu vermeiden. Fällt bei Fehler auf leer."""
+        try:
+            from analyzers.dynamic_watchlist import SCAN_UNIVERSE
+            return set(SCAN_UNIVERSE)
+        except Exception:
+            return set()
 
     def _load(self) -> Dict:
         try:
