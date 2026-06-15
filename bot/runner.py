@@ -837,7 +837,7 @@ def run_analysis_cycle(
             price = collectors["yahoo"].get_price_data(t)
         return t, news_result, price
 
-    _pf_workers = min(len(_normalized_watchlist), 4)  # cap: avoid overwhelming APIs
+    _pf_workers = min(len(_normalized_watchlist), int(os.getenv("PREFETCH_WORKERS", "8")))  # cap: avoid overwhelming APIs
     if _pf_workers > 1:
         with ThreadPoolExecutor(max_workers=_pf_workers) as _pf_pool:
             _pf_futures = {_pf_pool.submit(_prefetch_ticker, t): t for t in _normalized_watchlist}
@@ -857,6 +857,87 @@ def run_analysis_cycle(
                 _prefetch_price[_t] = _pr
             except Exception:
                 pass
+
+    # ── Parallele Analyse-Vorberechnung ──────────────────────────────────────
+    # Der teuerste Teil (Claude-Call + Chart + History + FinBERT) ist read-only
+    # und thread-safe → vorab im Pool berechnen. Alle JSON-Schreiber (velocity,
+    # earnings, signal_expander, cache, log) UND Trades bleiben seriell in der
+    # Schleife. Per ENV abschaltbar (PARALLEL_ANALYSIS=false) als Kill-Switch.
+    _prefetch_analysis: Dict[str, dict] = {}
+
+    def _precompute_analysis(t: str) -> Optional[dict]:
+        _pf = _prefetch_news.get(t)
+        if _pf:
+            _news, _sb = _pf
+        else:
+            _news, _sb = collect_news(t, archive, collectors)
+        _price = _prefetch_price.get(t) or (
+            {"current_price": broker.get_crypto_price(t), "volume": 0}
+            if _is_crypto(t) else collectors["yahoo"].get_price_data(t)
+        )
+        if not _is_crypto(t) and not _price.get("current_price"):
+            return None  # kein Kurs → Schleife überspringt ohnehin (inline)
+        # FinBERT-Signal voranstellen (read-only)
+        try:
+            from analyzers.finbert_analyzer import FinBERTAnalyzer
+            _fb_an = FinBERTAnalyzer()
+            if _fb_an.is_available() and _news:
+                _hl = [(it.get("title") or it.get("text") or "")[:120]
+                       for it in _news if it.get("title") or it.get("text")]
+                if _hl:
+                    _fb_item = _fb_an.build_signal_item(t, _fb_an.analyze_headlines(_hl))
+                    if _fb_item:
+                        _news = [_fb_item] + _news
+        except Exception:
+            pass
+        if not _news:
+            return {"news": _news, "sources_breakdown": _sb, "price_data": _price,
+                    "analysis": None, "pattern_result": None, "onchain": None}
+        _cur_titles = {it.get("title") or "" for it in _news}
+        _hist = archive.get_history(t, days=30, exclude_titles=_cur_titles)
+        _opc = strategy.build_open_position_context(t)
+        _pat = None
+        try:
+            _pat = (_chart_analyzer or ChartPatternAnalyzer()).analyze(t)
+        except Exception:
+            pass
+        _oc = None
+        if _is_crypto(t):
+            try:
+                _base = t.split("/")[0].upper().removesuffix("-USD")
+                _oc = OnChainSignalAnalyzer().analyze(OnChainCollector().collect(_base))
+            except Exception:
+                pass
+        try:
+            _an = analyzer.analyze(
+                ticker=t, news_items=_news, price_data=_price,
+                historical_news=_hist if _hist else None, open_position=_opc,
+                lessons_memo=lessons_memo, weekly_briefing=weekly_briefing,
+                pattern_result=_pat, onchain_snapshot=_oc,
+                eu_market_snapshot=_eu_market_ctx if _is_eu_stock(t) else None,
+                geo_context=_bench_geo_contexts.get(t), macro_brief=_macro_brief,
+                force_claude=t in _force_claude_tickers,
+            )
+        except Exception as _ae:
+            log.debug("Analyse-Prefetch analyze(%s) fehlgeschlagen: %s", t, _ae)
+            _an = None
+        return {"news": _news, "sources_breakdown": _sb, "price_data": _price,
+                "analysis": _an, "pattern_result": _pat, "onchain": _oc}
+
+    _parallel_analysis = os.getenv("PARALLEL_ANALYSIS", "true").lower() in ("1", "true", "yes")
+    _an_workers = min(len(_normalized_watchlist), int(os.getenv("ANALYSIS_WORKERS", "4")))
+    if _parallel_analysis and _an_workers > 1 and not _multi_agent_enabled:
+        log.info("Analyse-Prefetch: %d Titel mit %d Workern", len(_normalized_watchlist), _an_workers)
+        with ThreadPoolExecutor(max_workers=_an_workers) as _an_pool:
+            _an_futs = {_an_pool.submit(_precompute_analysis, t): t for t in _normalized_watchlist}
+            for _an_fut in as_completed(_an_futs):
+                _t = _an_futs[_an_fut]
+                try:
+                    _ctx_r = _an_fut.result()
+                    if _ctx_r:
+                        _prefetch_analysis[_t] = _ctx_r
+                except Exception as _ace:
+                    log.debug("Analyse-Prefetch fehlgeschlagen für %s: %s", _t, _ace)
 
     _wl_total = len(active_watchlist)
     _hb_every = max(0, int(os.getenv("HEARTBEAT_EVERY", "20")))  # 0 = Heartbeat aus
@@ -895,15 +976,21 @@ def run_analysis_cycle(
 
         console.print(f"\n[cyan]Analysiere {ticker}...[/cyan]")
 
-        _pf = _prefetch_news.get(ticker)
-        if _pf:
-            news, sources_breakdown = _pf
+        _ctx = _prefetch_analysis.get(ticker)
+        if _ctx is not None:
+            news = _ctx["news"]
+            sources_breakdown = _ctx["sources_breakdown"]
+            price_data = _ctx["price_data"]
         else:
-            news, sources_breakdown = collect_news(ticker, archive, collectors)
-        price_data = _prefetch_price.get(ticker) or (
-            {"current_price": broker.get_crypto_price(ticker), "volume": 0}
-            if _is_crypto(ticker) else collectors["yahoo"].get_price_data(ticker)
-        )
+            _pf = _prefetch_news.get(ticker)
+            if _pf:
+                news, sources_breakdown = _pf
+            else:
+                news, sources_breakdown = collect_news(ticker, archive, collectors)
+            price_data = _prefetch_price.get(ticker) or (
+                {"current_price": broker.get_crypto_price(ticker), "volume": 0}
+                if _is_crypto(ticker) else collectors["yahoo"].get_price_data(ticker)
+            )
 
         # Kurs-Check vor Claude: kein Kurs → Claude-Aufruf sparen
         if not _is_crypto(ticker) and not price_data.get("current_price"):
@@ -914,7 +1001,7 @@ def run_analysis_cycle(
         try:
             from analyzers.finbert_analyzer import FinBERTAnalyzer
             _finbert = FinBERTAnalyzer()
-            if _finbert.is_available() and news:
+            if _ctx is None and _finbert.is_available() and news:
                 _headlines = [
                     (item.get("title") or item.get("text") or "")[:120]
                     for item in news if item.get("title") or item.get("text")
@@ -1039,7 +1126,10 @@ def run_analysis_cycle(
         # Chart-Muster-Analyse (für Krypto primär, für Aktien als Bestätigung)
         pattern_result = None
         try:
-            pattern_result = (_chart_analyzer or ChartPatternAnalyzer()).analyze(ticker)
+            pattern_result = (
+                _ctx["pattern_result"] if _ctx is not None
+                else (_chart_analyzer or ChartPatternAnalyzer()).analyze(ticker)
+            )
             if pattern_result:
                 sig_color = {"STRONG_BUY": "bold green", "BUY": "green",
                              "STRONG_SELL": "bold red", "SELL": "red"}.get(
@@ -1055,7 +1145,9 @@ def run_analysis_cycle(
 
         # On-Chain-Analyse (nur für Krypto-Assets)
         onchain_snapshot = None
-        if _is_crypto(ticker):
+        if _ctx is not None:
+            onchain_snapshot = _ctx.get("onchain")
+        elif _is_crypto(ticker):
             try:
                 base = ticker.split("/")[0].upper().removesuffix("-USD")
                 metrics = OnChainCollector().collect(base)
@@ -1073,26 +1165,29 @@ def run_analysis_cycle(
             except Exception as e:
                 log.debug("[%s] On-Chain-Analyse fehlgeschlagen: %s", ticker, e)
 
-        console.print(f"  [cyan]Analysiere mit Claude ({config.claude_model})...[/cyan]")
         _geo_ctx = _bench_geo_contexts.get(ticker)
-        if _geo_ctx:
-            log.info("[%s] Geopolitischer Kontext wird an Claude übergeben: %s",
-                     ticker, _geo_ctx.get("kategorie", ""))
-        analysis = analyzer.analyze(
-            ticker=ticker,
-            news_items=news,
-            price_data=price_data,
-            historical_news=historical if historical else None,
-            open_position=open_position_ctx,
-            lessons_memo=lessons_memo,
-            weekly_briefing=weekly_briefing,
-            pattern_result=pattern_result,
-            onchain_snapshot=onchain_snapshot,
-            eu_market_snapshot=_eu_market_ctx if _is_eu_stock(ticker) else None,
-            geo_context=_geo_ctx,
-            macro_brief=_macro_brief,
-            force_claude=ticker in _force_claude_tickers,
-        )
+        if _ctx is not None and _ctx.get("analysis") is not None:
+            analysis = _ctx["analysis"]  # parallel vorberechnet
+        else:
+            console.print(f"  [cyan]Analysiere mit Claude ({config.claude_model})...[/cyan]")
+            if _geo_ctx:
+                log.info("[%s] Geopolitischer Kontext wird an Claude übergeben: %s",
+                         ticker, _geo_ctx.get("kategorie", ""))
+            analysis = analyzer.analyze(
+                ticker=ticker,
+                news_items=news,
+                price_data=price_data,
+                historical_news=historical if historical else None,
+                open_position=open_position_ctx,
+                lessons_memo=lessons_memo,
+                weekly_briefing=weekly_briefing,
+                pattern_result=pattern_result,
+                onchain_snapshot=onchain_snapshot,
+                eu_market_snapshot=_eu_market_ctx if _is_eu_stock(ticker) else None,
+                geo_context=_geo_ctx,
+                macro_brief=_macro_brief,
+                force_claude=ticker in _force_claude_tickers,
+            )
 
         _print_analysis(analysis)
         # store(ticker, direction, sentiment_score, confidence, recommendation)
