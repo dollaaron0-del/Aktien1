@@ -46,6 +46,15 @@ def _analyzer(monkeypatch, frugal=True):
     def _boom(*args, **kwargs):
         raise AssertionError("Claude wurde fälschlich aufgerufen")
     monkeypatch.setattr(a, "_claude_analysis", _boom)
+
+    # Kosten-Tracker deterministisch: Budget standardmäßig OK (sonst hinge der
+    # Test vom echten Tages-Kostenstand ab).
+    class _AllowTracker:
+        def check_daily_limit(self):
+            return (True, "")
+        def record(self, **k):
+            pass
+    a._cost_tracker = _AllowTracker()
     return a, fake
 
 
@@ -163,6 +172,27 @@ def test_frugal_catalyst_claude_gets_compressed_news(monkeypatch):
     assert fake.compress_calls == 1
     assert "Ollama-komprimiert" in captured["news_text"]
     assert "BRIEFING zu CAT" in captured["news_text"]
+
+
+def test_budget_exhausted_avoids_claude(monkeypatch):
+    """Ist das Tages-Budget erschöpft, wird Claude NICHT gerufen – auch nicht bei
+    einem Katalysator. Stattdessen lokale Ausweich-Analyse (kein Spend)."""
+    a, fake = _analyzer(monkeypatch, frugal=True)
+
+    class _BlockTracker:
+        def check_daily_limit(self):
+            return (False, "Tages-Kostenlimit erreicht")
+        def record(self, **k):
+            pass
+    a._cost_tracker = _BlockTracker()
+    # Katalysator-Quelle → würde normalerweise zu Claude (_boom) gehen
+    res = a.analyze(
+        ticker="CAT",
+        news_items=[{"source": "SEC 8-K", "title": "Material event"}],
+        price_data={"current_price": 20.0},
+    )
+    assert fake.calls == 1                  # lokale Ausweich-Analyse lief
+    assert res.recommendation == "BUY"      # statt Claude
 
 
 def test_force_claude_bypasses_local(monkeypatch):

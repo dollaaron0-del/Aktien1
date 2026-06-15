@@ -138,6 +138,11 @@ class ClaudeAnalyzer:
         self._local_count = 0          # via Ollama/MLX abgehandelt (kein Claude)
         self._compress_count = 0       # News lokal komprimiert vor Claude
         self._prescreener = None       # lazy: OllamaPrescreener oder MLXPrescreener
+        try:
+            from analyzers.api_cost_tracker import APICostTracker
+            self._cost_tracker = APICostTracker()
+        except Exception:
+            self._cost_tracker = None  # Kosten-Bremse optional (nie blockieren bei Fehler)
 
     def analyze(
         self,
@@ -197,6 +202,8 @@ class ClaudeAnalyzer:
                     ticker, news, price_data, current_price, is_crypto
                 )
             if local is not None:
+                if self._cost_tracker is not None:
+                    self._cost_tracker.record(claude_called=False, ollama_used=True)
                 return local
             # Lokale Engine offline/Parsing-Fehler → Claude als Sicherheitsnetz.
 
@@ -220,6 +227,24 @@ class ClaudeAnalyzer:
                 ):
                     return ollama_result
 
+        # Kosten-Bremse: hartes Tages-Budget für Claude (MAX_DAILY_COST_USD).
+        # Ist es erschöpft, wird KEIN Claude mehr gerufen – stattdessen lokal
+        # ausweichen (Ollama), sonst SKIP. Verhindert Kosten-Runaways wie den
+        # Tag, an dem das Anthropic-Guthaben leerlief.
+        if self.api_key and self._cost_tracker is not None:
+            ok, reason = self._cost_tracker.check_daily_limit()
+            if not ok:
+                log.warning("[%s] Claude-Budget: %s", ticker, reason)
+                local = (
+                    self._frugal_thesis_check(ticker, news_text, current_price, existing_position, context_block)
+                    if existing_position is not None
+                    else self._frugal_local_analysis(ticker, news, price_data, current_price, is_crypto)
+                )
+                if local is not None:
+                    self._cost_tracker.record(claude_called=False, ollama_used=True)
+                    return local
+                return self._empty_result(ticker)
+
         # Claude übernimmt jetzt die finale Analyse. Im Frugal-Modus lässt Ollama
         # die News vorher lokal zu einem kompakten Briefing eindampfen → weniger
         # Claude-Input-Tokens (günstiger), fokussierterer Prompt.
@@ -227,10 +252,12 @@ class ClaudeAnalyzer:
 
         # Thesis check for existing position
         if existing_position is not None:
-            return self._thesis_check(ticker, claude_news, current_price, existing_position, context_block)
-
-        # Full Claude analysis
-        return self._claude_analysis(ticker, claude_news, current_price, is_crypto, context_block)
+            result = self._thesis_check(ticker, claude_news, current_price, existing_position, context_block)
+        else:
+            result = self._claude_analysis(ticker, claude_news, current_price, is_crypto, context_block)
+        if self._cost_tracker is not None:
+            self._cost_tracker.record(claude_called=True)
+        return result
 
     # ── Frugal-Modus: lokale Engine (Ollama/MLX) ─────────────────────────────
 
