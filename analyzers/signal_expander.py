@@ -31,6 +31,10 @@ _BLACKLIST = {
     "ALL", "ARE", "FOR", "NEW", "NOW", "BIG", "TOP", "MAX", "NET", "PAY",
     "IT", "US", "UK", "EU", "AM", "PM", "DD", "RE", "DM", "PR", "IR",
     "YOLO", "FOMO", "IMO", "ATH", "ATL", "OTC", "RH", "WSB",
+    # Phantom-/Privatfirmen-Ticker: Social-Cashtags meinen die private Firma,
+    # Yahoo liefert dafür aber ein delistetes/Phantom-Listing → kein handelbares
+    # Signal. SPCX = "$SpaceX"-Erwähnungen (SpaceX ist privat, kein echter Ticker).
+    "SPCX",
 }
 
 # Mindest-Kaufvolumen für Insider-Signal (USD)

@@ -81,6 +81,13 @@ def test_promotion_capped_per_cycle(tmp_path, monkeypatch):
     assert len(e.get_ready_tickers()) == 5
 
 
+def test_phantom_ticker_blocked(tmp_path):
+    """SPCX (Yahoo-Phantom für die private SpaceX) darf nicht in den Radar."""
+    e = _expander(tmp_path)
+    e.process_news_items([{"source": "stocktwits", "title": "$SPCX SpaceX to the moon"}])
+    assert e.get_all_entries() == []                         # geblockt, nicht gesammelt
+
+
 def test_promotion_is_idempotent(tmp_path):
     """Einmal promotet → weitere Signale promoten nicht erneut (kein Spam)."""
     e = _expander(tmp_path)
