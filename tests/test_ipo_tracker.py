@@ -12,7 +12,7 @@ from analyzers.ipo_tracker import CANDIDATES, _check_ticker_live
 # Reale yfinance-Auflösungen (Stand: Live-Check 06/2026)
 _FAKE_MARKET = {
     "SPXC": (True, "SPX Technologies, Inc."),          # NICHT SpaceX
-    "SPCX": (True, "Space Exploration Technologies"),  # echter SpaceX
+    "SPCX": (True, "Space Exploration Technologies"),  # Yahoo-Phantom, SpaceX ist privat
     "ANTH": (True, "ANTHERA PHARMACEUTICALS INC"),     # NICHT Anthropic
     "CHME": (True, "China Medicine Corp."),            # NICHT Chime
     "CHYM": (True, "Chime Financial, Inc."),           # echter Chime
@@ -34,9 +34,9 @@ def test_name_validation_rejects_ticker_collision(monkeypatch):
 
 def test_name_validation_accepts_correct_company(monkeypatch):
     monkeypatch.setattr(ipo, "_resolve_ticker", _fake_resolve)
-    ok, name = _check_ticker_live("SPCX", ["SpaceX", "Space Exploration"])
+    ok, name = _check_ticker_live("KLAR", ["Klarna"])
     assert ok is True
-    assert "Space Exploration" in name
+    assert "Klarna" in name
 
 
 def test_pre_ipo_ticker_has_no_price(monkeypatch):
@@ -51,13 +51,14 @@ def test_without_match_terms_keeps_legacy_behaviour(monkeypatch):
     assert ok is True
 
 
-def test_candidate_detection_picks_real_spacex(monkeypatch):
-    """SPACEX-Kandidat: trifft den echten SPCX, nicht eine Kollision."""
+def test_spacex_stays_pre_ipo(monkeypatch):
+    """SpaceX ist privat und hat keinen Ticker – Yahoo-Phantom 'SPCX' darf den
+    Kandidaten NICHT als live markieren."""
     monkeypatch.setattr(ipo, "_resolve_ticker", _fake_resolve)
     cand = CANDIDATES["SPACEX"]
     tickers = ([cand.expected_ticker] if cand.expected_ticker else []) + cand.alt_tickers
     hit = next((t for t in tickers if _check_ticker_live(t, cand.match_terms)[0]), None)
-    assert hit == "SPCX"
+    assert hit is None
 
 
 def test_anthropic_stays_pre_ipo(monkeypatch):

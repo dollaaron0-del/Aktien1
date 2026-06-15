@@ -70,10 +70,15 @@ CANDIDATES: Dict[str, IPOCandidate] = {
         search_terms=["SpaceX IPO", "SpaceX stock market", "SpaceX Börsengang"],
         expected_valuation_b=350,
         sector="Raumfahrt",
-        expected_ticker="SPCX",
-        alt_tickers=["SPACEX"],
+        # KEIN Ticker: SpaceX ist privat. Yahoo liefert für "SPCX" Phantom-Daten
+        # ("Space Exploration Technologies Corp.", ~$2,1 Bio. Marktkap.), die die
+        # Namensvalidierung sogar bestätigt → würde SpaceX fälschlich als live
+        # markieren. Ohne Ticker bleibt SpaceX korrekt Pre-IPO; bei echtem
+        # Börsengang den dann real vergebenen Ticker hier eintragen.
+        expected_ticker=None,
+        alt_tickers=[],
         name_aliases=["SpaceX", "Space Exploration"],
-        notes="Falcon 9, Starlink · ~$350 Mrd. Bewertung (2025)",
+        notes="Falcon 9, Starlink · ~$350 Mrd. Bewertung (2025) · privat, kein Ticker",
     ),
     "ANTHROPIC": IPOCandidate(
         slug="ANTHROPIC", name="Anthropic",
@@ -326,6 +331,19 @@ class IPOTracker:
                         if candidate.auto_watchlist_eligible:
                             import analyzers.user_request_queue as _urq
                             _urq.add_ticker(result["live_ticker"])
+                else:
+                    # Falsch-Positiv-Selbstheilung: Kandidat ist nicht (mehr) live,
+                    # trägt aber noch einen alten live_event (z.B. aus Phantom-/
+                    # Kollisions-Ticker vor der Namensvalidierung). Eintrag entfernen,
+                    # damit der korrekte Pre-IPO-Status zurückkehrt.
+                    stale = self._db.execute(
+                        "SELECT 1 FROM ipo_live_events WHERE slug=?", (slug,)
+                    ).fetchone()
+                    if stale:
+                        self._db.execute(
+                            "DELETE FROM ipo_live_events WHERE slug=?", (slug,)
+                        )
+                        self._db.commit()
             except Exception:
                 pass
         return new_ipos
