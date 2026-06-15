@@ -339,12 +339,17 @@ class PerformanceTracker:
     def get_value_history(self, days: int = 30) -> List[Dict]:
         """Portfolio-Wert-Verlauf aus portfolio_snapshots für die letzten N Tage."""
         cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        # snapshot_date statt recorded_at: recorded_at ist bei Alt-Snapshots ein
+        # Platzhalter (2000-01-01) → unbrauchbar für Filter/Sortierung. snapshot_date
+        # ist durchgängig befüllt und ISO-lexikografisch sortierbar (Datum wie
+        # voller Zeitstempel). Spaltenname entspricht zudem dem, was das Dashboard
+        # erwartet.
         rows = self._conn.execute(
             """
-            SELECT recorded_at, total_value, cash, n_positions, daily_pnl
+            SELECT snapshot_date, total_value, cash, n_positions, daily_pnl
             FROM portfolio_snapshots
-            WHERE recorded_at > ?
-            ORDER BY recorded_at ASC
+            WHERE snapshot_date > ?
+            ORDER BY snapshot_date ASC
             """,
             (cutoff,),
         ).fetchall()
