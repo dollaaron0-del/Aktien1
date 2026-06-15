@@ -2244,13 +2244,14 @@ with st.sidebar:
         c1, c2 = st.columns(2)
         with c1:
             st.metric("Claude-Aufrufe gesamt", cost_summary["claude_calls"])
-            st.metric("Heute Claude-Kosten",   f"${cost_summary['today_cost_usd']:.2f}")
-            st.metric("Gesamt Claude-Kosten",  f"${cost_summary['total_cost_usd']:.2f}")
+            st.metric(f"Heute Claude-Kosten (Limit {cost_summary.get('daily_limit_eur', 1.0):.2f}€)",
+                      f"{cost_summary['today_cost_eur']:.2f}€")
+            st.metric("Gesamt Claude-Kosten",  f"{cost_summary['total_cost_eur']:.2f}€")
         with c2:
             st.metric("Ollama-Skips gesamt",   cost_summary["ollama_skips"],
                       help="Analysen die Claude nicht gerufen haben")
-            st.metric("Heute gespart",         f"${cost_summary['today_saved_usd']:.2f}")
-            st.metric("Gesamt gespart",        f"${cost_summary['total_saved_usd']:.2f}")
+            st.metric("Heute gespart",         f"{cost_summary['today_saved_eur']:.2f}€")
+            st.metric("Gesamt gespart",        f"{cost_summary['total_saved_eur']:.2f}€")
 
         skip_pct = cost_summary["skip_rate_pct"]
         if cost_summary["total_analyses"] > 0:

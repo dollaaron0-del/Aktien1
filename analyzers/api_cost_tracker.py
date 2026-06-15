@@ -18,14 +18,19 @@ log = get_logger(__name__)
 
 _FILE = os.path.join(os.path.dirname(__file__), "..", "data", "api_savings.json")
 
-# Geschätzte Kosten pro Claude-API-Aufruf (claude-opus-4-7, ~1200 Tokens Output)
-# Sonnet 4.6: Input ~3000 Tokens × $0.003/1k = $0.009, Output ~1200 × $0.015/1k = $0.018
-# Gesamt: ~$0.027 pro Aufruf (Sonnet 4.6) – war $0.135 mit Opus 4.7 (5× teurer)
-_COST_PER_CLAUDE_CALL = float(os.getenv("CLAUDE_COST_PER_CALL", "0.027"))
-# Prompt caching: cached tokens cost ~10% of normal input price
-_CACHE_DISCOUNT = 0.90  # 90% saved on cached tokens (~3000 tokens × $0.015/1k × 0.9 ≈ $0.04/call)
-# Maximale tägliche Claude-Kosten (Schutz vor Runaway-Kosten)
-_MAX_DAILY_COST_USD = float(os.getenv("MAX_DAILY_COST_USD", "1.00"))
+# Anthropic rechnet in USD ab; wir führen die Kosten in EUR (Kurs konfigurierbar).
+_EUR_PER_USD = float(os.getenv("EUR_PER_USD", "0.92"))
+# Geschätzte USD-Kosten pro Claude-API-Aufruf (Sonnet 4.6: Input ~3000 Tok ×
+# $0.003/1k + Output ~1200 × $0.015/1k ≈ $0.027).
+_COST_PER_CALL_USD    = float(os.getenv("CLAUDE_COST_PER_CALL", "0.027"))
+# Kosten pro Aufruf in EUR (intern überall in EUR gerechnet).
+_COST_PER_CLAUDE_CALL = round(_COST_PER_CALL_USD * _EUR_PER_USD, 5)
+# Prompt caching: cached tokens kosten ~10% des normalen Input-Preises.
+_CACHE_DISCOUNT = 0.90
+# Maximale tägliche Claude-Kosten in EUR (Schutz vor Runaway-Kosten).
+# Backward-compat: altes MAX_DAILY_COST_USD wird als Fallback gelesen.
+_MAX_DAILY_COST_EUR = float(os.getenv("MAX_DAILY_COST_EUR",
+                                      os.getenv("MAX_DAILY_COST_USD", "1.00")))
 
 
 class APICostTracker:
@@ -36,17 +41,31 @@ class APICostTracker:
     def _load(self) -> Dict:
         try:
             with open(_FILE) as f:
-                return json.load(f)
+                return self._migrate(json.load(f))
         except Exception:
             return {
                 "total_analyses":      0,
                 "claude_calls":        0,
                 "ollama_skips":        0,
                 "ollama_fallbacks":    0,
-                "total_cost_usd":      0.0,
-                "total_saved_usd":     0.0,
+                "total_cost_eur":      0.0,
+                "total_saved_eur":     0.0,
                 "daily": {},
             }
+
+    @staticmethod
+    def _migrate(data: Dict) -> Dict:
+        """Alte USD-Keys auf EUR-Keys umbenennen (Werte werden 1:1 übernommen –
+        die historischen Beträge sind minimal, kein Rückrechnen nötig)."""
+        if "total_cost_usd" in data and "total_cost_eur" not in data:
+            data["total_cost_eur"]  = data.pop("total_cost_usd", 0.0)
+            data["total_saved_eur"] = data.pop("total_saved_usd", 0.0)
+        for day in (data.get("daily") or {}).values():
+            if "cost_usd" in day and "cost" not in day:
+                day["cost"]        = day.pop("cost_usd", 0.0)
+                day["saved"]       = day.pop("saved_usd", 0.0)
+                day["cache_saved"] = day.pop("cache_saved_usd", 0.0)
+        return data
 
     def _save(self) -> None:
         try:
@@ -69,33 +88,33 @@ class APICostTracker:
         if today not in self._data["daily"]:
             self._data["daily"][today] = {
                 "analyses": 0, "claude": 0, "ollama_skips": 0,
-                "cost_usd": 0.0, "saved_usd": 0.0, "cache_saved_usd": 0.0,
+                "cost": 0.0, "saved": 0.0, "cache_saved": 0.0,
             }
 
         day = self._data["daily"][today]
         day["analyses"] += 1
 
         if claude_called:
-            # Estimate cache savings: cached_tokens × price × discount_rate
-            cache_saved = round(cache_hit_tokens / 1000 * 0.015 * _CACHE_DISCOUNT, 5) if cache_hit_tokens else 0.0
+            # Cache-Ersparnis in EUR: cached_tokens × $-Preis × Discount × Kurs
+            cache_saved = round(cache_hit_tokens / 1000 * 0.015 * _CACHE_DISCOUNT * _EUR_PER_USD, 5) if cache_hit_tokens else 0.0
             actual_cost = round(_COST_PER_CLAUDE_CALL - cache_saved, 4)
 
             self._data["claude_calls"]  += 1
-            self._data["total_cost_usd"] = round(self._data["total_cost_usd"] + actual_cost, 4)
-            self._data["total_saved_usd"] = round(
-                self._data["total_saved_usd"] + cache_saved, 4
+            self._data["total_cost_eur"] = round(self._data.get("total_cost_eur", 0.0) + actual_cost, 4)
+            self._data["total_saved_eur"] = round(
+                self._data.get("total_saved_eur", 0.0) + cache_saved, 4
             )
             self._data["cache_hits"] = self._data.get("cache_hits", 0) + (1 if cache_hit_tokens else 0)
 
-            day["claude"]          += 1
-            day["cost_usd"]         = round(day["cost_usd"] + actual_cost, 4)
-            day["cache_saved_usd"]  = round(day.get("cache_saved_usd", 0.0) + cache_saved, 4)
+            day["claude"]      += 1
+            day["cost"]         = round(day.get("cost", 0.0) + actual_cost, 4)
+            day["cache_saved"]  = round(day.get("cache_saved", 0.0) + cache_saved, 4)
         else:
             saved = _COST_PER_CLAUDE_CALL
             self._data["ollama_skips"]    += 1
-            self._data["total_saved_usd"]  = round(self._data["total_saved_usd"] + saved, 4)
+            self._data["total_saved_eur"]  = round(self._data.get("total_saved_eur", 0.0) + saved, 4)
             day["ollama_skips"] += 1
-            day["saved_usd"]     = round(day["saved_usd"] + saved, 4)
+            day["saved"]         = round(day.get("saved", 0.0) + saved, 4)
 
         self._save()
 
@@ -106,18 +125,18 @@ class APICostTracker:
         Gibt (False, Grund) zurück wenn Limit überschritten.
         """
         today = date.today().isoformat()
-        today_cost = self._data["daily"].get(today, {}).get("cost_usd", 0.0)
-        if today_cost >= _MAX_DAILY_COST_USD:
+        today_cost = self._data["daily"].get(today, {}).get("cost", 0.0)
+        if today_cost >= _MAX_DAILY_COST_EUR:
             return False, (
-                f"Tages-Kostenlimit ${_MAX_DAILY_COST_USD:.2f} erreicht "
-                f"(heute: ${today_cost:.2f}) – Claude-Aufruf übersprungen. "
-                f"Erhöhe MAX_DAILY_COST_USD in .env falls nötig."
+                f"Tages-Kostenlimit {_MAX_DAILY_COST_EUR:.2f}€ erreicht "
+                f"(heute: {today_cost:.2f}€) – Claude-Aufruf übersprungen. "
+                f"Erhöhe MAX_DAILY_COST_EUR in .env falls nötig."
             )
-        remaining = _MAX_DAILY_COST_USD - today_cost
+        remaining = _MAX_DAILY_COST_EUR - today_cost
         if remaining < _COST_PER_CLAUDE_CALL:
             return False, (
-                f"Nicht genug Budget für weiteren Aufruf (verbleibend: ${remaining:.3f}, "
-                f"Kosten: ${_COST_PER_CLAUDE_CALL:.3f}) – übersprungen."
+                f"Nicht genug Budget für weiteren Aufruf (verbleibend: {remaining:.3f}€, "
+                f"Kosten: {_COST_PER_CLAUDE_CALL:.3f}€) – übersprungen."
             )
         return True, ""
 
@@ -130,26 +149,28 @@ class APICostTracker:
         total    = self._data["total_analyses"]
         claude   = self._data["claude_calls"]
         skips    = self._data["ollama_skips"]
-        saved    = self._data["total_saved_usd"]
-        cost     = self._data["total_cost_usd"]
+        saved    = self._data.get("total_saved_eur", 0.0)
+        cost     = self._data.get("total_cost_eur", 0.0)
         skip_pct = round(skips / total * 100, 1) if total > 0 else 0.0
 
         today     = date.today().isoformat()
         today_day = self._data["daily"].get(today, {})
 
         return {
+            "currency":             "EUR",
             "total_analyses":       total,
             "claude_calls":         claude,
             "ollama_skips":         skips,
             "skip_rate_pct":        skip_pct,
-            "total_cost_usd":       round(cost, 2),
-            "total_saved_usd":      round(saved, 2),
+            "total_cost_eur":       round(cost, 2),
+            "total_saved_eur":      round(saved, 2),
             "cache_hits":           self._data.get("cache_hits", 0),
-            "today_cost_usd":       round(today_day.get("cost_usd", 0.0), 2),
-            "today_saved_usd":      round(today_day.get("saved_usd", 0.0), 2),
-            "today_cache_saved":    round(today_day.get("cache_saved_usd", 0.0), 4),
+            "today_cost_eur":       round(today_day.get("cost", 0.0), 2),
+            "today_saved_eur":      round(today_day.get("saved", 0.0), 2),
+            "today_cache_saved":    round(today_day.get("cache_saved", 0.0), 4),
             "today_claude":         today_day.get("claude", 0),
             "today_skips":          today_day.get("ollama_skips", 0),
-            "cost_per_call":        _COST_PER_CLAUDE_CALL,
+            "cost_per_call_eur":    _COST_PER_CLAUDE_CALL,
+            "daily_limit_eur":      _MAX_DAILY_COST_EUR,
             "fallbacks":            self._data.get("ollama_fallbacks", 0),
         }

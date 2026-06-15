@@ -37,12 +37,13 @@ def _collect_data() -> dict:
     api = {
         "claude_calls_today": today_daily.get("claude_calls", 0),
         "ollama_skips_today": today_daily.get("ollama_skips", 0),
-        "cost_today": today_daily.get("cost_usd", 0.0),
-        "saved_today": today_daily.get("saved_usd", 0.0),
+        "cost_today": today_daily.get("cost", today_daily.get("cost_usd", 0.0)),
+        "saved_today": today_daily.get("saved", today_daily.get("saved_usd", 0.0)),
         "total_analyses": api_raw.get("total_analyses", 0),
         "total_claude_calls": api_raw.get("claude_calls", 0),
-        "total_cost": api_raw.get("total_cost_usd", 0.0),
-        "total_saved": api_raw.get("total_saved_usd", 0.0),
+        "total_cost": api_raw.get("total_cost_eur", api_raw.get("total_cost_usd", 0.0)),
+        "total_saved": api_raw.get("total_saved_eur", api_raw.get("total_saved_usd", 0.0)),
+        "currency": "EUR",
     }
 
     # --- Makro-Termine (next 14 days) ---
