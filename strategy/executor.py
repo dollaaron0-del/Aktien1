@@ -22,7 +22,9 @@ Wichtige Ausführungs-Feinheiten der Engine-Ergebnisse:
 """
 from __future__ import annotations
 
-from datetime import datetime
+import json
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from logger import get_logger
@@ -30,6 +32,53 @@ from portfolio.portfolio import Position
 from strategy.swing_strategy import StrategyResult
 
 log = get_logger(__name__)
+
+# Persistenter Throttle gegen wiederholte, wortgleiche Fehlschlag-Alerts.
+# Ohne ihn feuert z.B. eine dauerhaft nicht ausführbare SELL-Order jede ~30 Min
+# dieselbe Telegram-Nachricht (Spam über Nacht). Der TradeExecutor wird pro
+# Zyklus neu erzeugt → State muss auf Platte liegen, nicht in-memory.
+_THROTTLE_FILE = Path("data/notify_throttle.json")
+_THROTTLE_COOLDOWN_H = 12  # gleiche Meldung höchstens alle 12h erneut senden
+
+
+def _throttle_load() -> dict:
+    try:
+        return json.loads(_THROTTLE_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def _throttle_should_send(key: str, signature: str) -> bool:
+    """True, wenn diese Meldung gesendet werden soll: noch nie gesehen, Inhalt
+    geändert, oder Cooldown abgelaufen. Aktualisiert bei True den Eintrag."""
+    data = _throttle_load()
+    rec = data.get(key)
+    now = datetime.now(timezone.utc)
+    if rec and rec.get("sig") == signature:
+        try:
+            last = datetime.fromisoformat(rec["ts"])
+            if (now - last).total_seconds() < _THROTTLE_COOLDOWN_H * 3600:
+                return False  # identische Meldung innerhalb Cooldown → unterdrücken
+        except Exception:
+            pass
+    data[key] = {"sig": signature, "ts": now.isoformat()}
+    try:
+        _THROTTLE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _THROTTLE_FILE.write_text(json.dumps(data))
+    except Exception as e:
+        log.debug("Throttle-State schreiben fehlgeschlagen: %s", e)
+    return True
+
+
+def _throttle_clear(key: str) -> None:
+    """Eintrag löschen (z.B. nach erfolgreichem Exit), damit ein künftiger
+    neuer Fehlschlag sofort wieder alarmiert statt erst nach Cooldown."""
+    data = _throttle_load()
+    if data.pop(key, None) is not None:
+        try:
+            _THROTTLE_FILE.write_text(json.dumps(data))
+        except Exception as e:
+            log.debug("Throttle-State schreiben fehlgeschlagen: %s", e)
 
 
 def _is_filled(fill) -> bool:
@@ -181,14 +230,18 @@ class TradeExecutor:
         fill = self.broker.sell(ticker, sell_shares, result.price)
         if not _is_filled(fill):
             warn = _fail_reason(fill)
-            self.notifier.send(
-                f"🚨 <b>{ticker} SELL-Order FEHLGESCHLAGEN</b> ({result.reason})\n"
-                f"Position bleibt offen – bitte manuell im Broker prüfen!\nFehler: {warn}"
-            )
+            # Throttle: dieselbe Fehlschlag-Meldung höchstens 1×/Cooldown senden,
+            # sonst Spam jede ~30 Min bei dauerhaft nicht ausführbarer Order.
+            if _throttle_should_send(f"SELL_FAIL:{ticker}", warn):
+                self.notifier.send(
+                    f"🚨 <b>{ticker} SELL-Order FEHLGESCHLAGEN</b> ({result.reason})\n"
+                    f"Position bleibt offen – bitte manuell im Broker prüfen!\nFehler: {warn}"
+                )
             log.error("[%s] SELL fehlgeschlagen (%s) – Position bleibt offen", ticker, warn)
             return f"[{ticker}] ⛔ SELL-Order fehlgeschlagen: {warn}"
         actual_price = _fill_price(fill, result.price)
 
+        _throttle_clear(f"SELL_FAIL:{ticker}")  # Exit geglückt → Alarm zurücksetzen
         pnl = self.portfolio.close_position(ticker, actual_price, result.reason)
         self._notify_sell(ticker, sell_shares, actual_price, pos, pnl, result.reason, days_held)
         self._journal_exit(ticker, actual_price, pos.entry_price, pnl, result.reason, days_held)

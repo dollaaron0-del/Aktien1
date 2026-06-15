@@ -32,6 +32,22 @@ from logger import get_logger
 
 log = get_logger(__name__)
 
+
+def _whole_shares(ticker: str, shares: float, action: str) -> int:
+    """IBKR-API kann keine Teilaktien handeln (Error 10243 –
+    'Fractional-sized order cannot be placed via API'). Aktien-Mengen werden
+    daher auf ganze Stück abgerundet. Ein etwaiger Bruchteil-Rest ('Dust',
+    z.B. 0,91 St.) bleibt am Konto und kann manuell im Desktop geschlossen
+    werden. Crypto läuft bewusst NICHT über diesen Pfad."""
+    whole = int(shares)  # immer abrunden – nie mehr handeln als gedeckt/gehalten
+    if whole != shares:
+        log.info(
+            "IBKR: %s %s auf ganze Stück gerundet %.4f → %d (Teilaktien nicht API-fähig)",
+            action, ticker, shares, whole,
+        )
+    return whole
+
+
 # ── Verbindungsparameter ──────────────────────────────────────────────────────
 _HOST      = os.getenv("IBKR_HOST",      "127.0.0.1")
 _PORT      = int(os.getenv("IBKR_PORT",  "7497"))
@@ -264,6 +280,9 @@ class IBKRBroker:
 
     def _place_order(self, contract, action: str, shares: float) -> Dict:
         from ib_insync import MarketOrder
+        # Hinweis: _place_order wird auch von buy_crypto/sell_crypto genutzt –
+        # die brauchen Bruchteile. Aktien werden VORHER über _whole_shares()
+        # auf ganze Stück gerundet (siehe buy()/sell()).
         order = MarketOrder(action, shares)
         # Account immer explizit setzen – bei mehreren Konten (paper + live) sonst falsches Konto
         account = getattr(self, "_active_account", _ACCOUNT) or _ACCOUNT
@@ -327,7 +346,11 @@ class IBKRBroker:
             if not qualified:
                 log.error("IBKR: Contract-Qualifizierung fehlgeschlagen für %s – BUY abgebrochen", ticker)
                 return {"status": "error", "reason": f"Contract {ticker} nicht qualifizierbar"}
-            return self._place_order(contract, "BUY", shares)
+            whole = _whole_shares(ticker, shares, "BUY")
+            if whole <= 0:
+                return {"status": "error",
+                        "reason": f"Positionsgröße {shares:.4f} < 1 Stück – IBKR-API kann keine Teilaktien handeln"}
+            return self._place_order(contract, "BUY", whole)
         except Exception as e:
             log.exception("IBKR buy %s: %s", ticker, e)
             return {"status": "error", "reason": str(e)}
@@ -342,7 +365,12 @@ class IBKRBroker:
             if not qualified:
                 log.error("IBKR: Contract-Qualifizierung fehlgeschlagen für %s – SELL abgebrochen", ticker)
                 return {"status": "error", "reason": f"Contract {ticker} nicht qualifizierbar"}
-            return self._place_order(contract, "SELL", shares)
+            whole = _whole_shares(ticker, shares, "SELL")
+            if whole <= 0:
+                return {"status": "error",
+                        "reason": f"Restbestand {shares:.4f} < 1 Stück – IBKR-API kann keine Teilaktien verkaufen "
+                                  f"(Dust ggf. manuell im Desktop schließen)"}
+            return self._place_order(contract, "SELL", whole)
         except Exception as e:
             log.exception("IBKR sell %s: %s", ticker, e)
             return {"status": "error", "reason": str(e)}
