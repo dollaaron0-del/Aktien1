@@ -322,16 +322,48 @@ class IBKRBroker:
                 log.warning("IBKR Order %s %s: %s", action, contract.symbol, status)
                 return {"status": status.lower(), "ticker": contract.symbol, "mode": "ibkr"}
 
+        # Timeout: Order ist nicht (voll) gefüllt. Um ein "umgekehrtes Phantom"
+        # zu vermeiden (Broker füllt später, das Buch weiß nichts davon), die
+        # Order aktiv canceln und den finalen Stand auswerten. So ist nach der
+        # Rückgabe garantiert nichts mehr offen, das später unbemerkt füllt.
+        try:
+            self._ib.cancelOrder(trade.order)
+            self._ib.sleep(2)
+        except Exception as e:
+            log.warning("IBKR cancelOrder nach Timeout %s %s: %s", action, contract.symbol, e)
+
+        status     = trade.orderStatus.status
+        filled_qty = float(getattr(trade.orderStatus, "filled", 0) or 0)
+        fill_price = trade.orderStatus.avgFillPrice or 0.0
+
+        # Race: zwischen Timeout und Cancel doch noch voll gefüllt.
+        if status == "Filled" or filled_qty >= shares:
+            log.info("IBKR %s %s FILLED (kurz vor Cancel) @ %.4f", action, contract.symbol, fill_price)
+            return {
+                "status": "filled", "ticker": contract.symbol, "shares": shares,
+                "fill_price": fill_price, "order_id": trade.order.orderId, "mode": "ibkr",
+            }
+
+        # Teilausführung: den gefüllten Teil buchen, Rest wurde gecancelt.
+        if filled_qty > 0:
+            log.warning(
+                "IBKR %s %s TEILFILL %.4f/%.4f nach Timeout – Rest gecancelt",
+                action, contract.symbol, filled_qty, shares,
+            )
+            return {
+                "status": "filled", "ticker": contract.symbol, "shares": filled_qty,
+                "fill_price": fill_price, "order_id": trade.order.orderId,
+                "mode": "ibkr", "partial": True,
+            }
+
+        # Nichts gefüllt – Order gecancelt, kein offener Rest.
         log.warning(
-            "IBKR Fill-Timeout %s %s (>%ds) – Order läuft weiter",
+            "IBKR Fill-Timeout %s %s (>%ds) – nicht gefüllt, Order gecancelt",
             action, contract.symbol, _ORDER_TIMEOUT,
         )
         return {
-            "status":   "pending",
-            "ticker":   contract.symbol,
-            "shares":   shares,
-            "order_id": trade.order.orderId,
-            "mode":     "ibkr",
+            "status": "cancelled", "ticker": contract.symbol, "mode": "ibkr",
+            "reason": f"Fill-Timeout nach {_ORDER_TIMEOUT}s – Order gecancelt",
         }
 
     def buy(self, ticker: str, shares: float, price: float,
@@ -441,6 +473,46 @@ class IBKRBroker:
         except Exception as e:
             log.warning("IBKR positions(): %s", e)
             return None
+
+    def get_filled_limit_orders(self, order_ids: List[int]) -> List[Dict]:
+        """Prüft, welche der übergebenen IBKR-Order-IDs (Conditional-Entry-Limit-
+        Orders) inzwischen ausgeführt wurden. Gibt eine Liste
+        {order_id, fill_price, shares} der GEFÜLLTEN zurück.
+
+        Diese Methode fehlte – der Fill-Check-Job im Scheduler rief sie auf und
+        scheiterte still (AttributeError), d.h. Limit-Order-Fills wurden nie ins
+        Buch übernommen. None-sicher: bei fehlender Verbindung leere Liste."""
+        if not order_ids or not self._ensure_connected():
+            return []
+        wanted = {int(o) for o in order_ids}
+        result: List[Dict] = []
+        try:
+            # reqCompletedOrders holt auch Fills aus früheren Sessions (best effort).
+            try:
+                self._ib.reqCompletedOrders(apiOnly=True)
+                self._ib.sleep(1)
+            except Exception:
+                pass
+            seen: set = set()
+            for trade in list(self._ib.trades()):
+                try:
+                    oid = int(trade.order.orderId)
+                except Exception:
+                    continue
+                if oid not in wanted or oid in seen:
+                    continue
+                st = trade.orderStatus.status
+                filled = float(getattr(trade.orderStatus, "filled", 0) or 0)
+                if st == "Filled" or filled > 0:
+                    seen.add(oid)
+                    result.append({
+                        "order_id":   oid,
+                        "fill_price": float(trade.orderStatus.avgFillPrice or 0.0),
+                        "shares":     filled or float(getattr(trade.order, "totalQuantity", 0) or 0),
+                    })
+        except Exception as e:
+            log.warning("IBKR get_filled_limit_orders: %s", e)
+        return result
 
     def disconnect(self):
         if self._ib and self._ib.isConnected():
