@@ -36,6 +36,8 @@ _BLACKLIST = {
     "BUY", "SELL", "HOLD", "HIV", "CEOS", "EV", "Q1", "Q2", "Q3", "Q4",
     "ADOBE", "TSMC", "WANT", "GAIN", "LOSS", "RISK", "CASH", "DEBT", "BULL",
     "BEAR", "CALL", "PUT", "LONG", "SHORT", "OPEN", "HIGH", "LOW", "RED",
+    "NASA", "NO", "MASK", "QUANT", "WWR", "FLD", "AIS", "MUU", "SPU",
+    "TE", "CL", "PG",  # (Crude-/Futures-Kürzel bzw. Large-Cap, kein Small-Cap)
     # Phantom-/Privatfirmen-Ticker: Social-Cashtags meinen die private Firma,
     # Yahoo liefert dafür aber ein delistetes/Phantom-Listing → kein handelbares
     # Signal. SPCX = "$SpaceX"-Erwähnungen (SpaceX ist privat, kein echter Ticker).
@@ -47,8 +49,32 @@ _INDEX_ETFS = {
     "SPY", "SPX", "QQQ", "DIA", "IWM", "VOO", "VTI", "VXX", "UVXY", "SQQQ",
     "TQQQ", "SOXL", "SOXS", "ARKK", "XLK", "XLF", "XLE", "XLV", "XLI", "XLY",
     "XLP", "XLU", "XLB", "XLRE", "SMH", "ICLN", "GDX", "TLT", "HYG", "GLD",
-    "SLV", "USO", "AGQ", "SIVR", "BTC", "ETH", "DXY",
+    "SLV", "USO", "AGQ", "SIVR", "DXY",
+    # zusätzlich beobachtete Indizes/ETFs/Futures-Kürzel:
+    "SOXX", "SOX", "IGV", "NDX", "VIX", "DJIA", "NQ", "CHIP", "QQQI",
+    "IBIT", "GBTC", "NUGT", "DUST", "XRPI", "XRPR", "XRPC", "QQQM", "RSP",
 }
+
+# Krypto-Tickers (keine handelbaren Aktien im Small-Cap-Sinn).
+_CRYPTO = {
+    "BTC", "ETH", "SOL", "XRP", "DOT", "XLM", "ZEC", "JASMY", "ADA", "DOGE",
+    "SHIB", "AVAX", "MATIC", "LTC", "BCH", "LINK", "UNI", "ATOM", "ETC",
+    "ALGO", "NEAR", "FTM", "SAND", "MANA", "AAVE", "TRX", "XMR", "PEPE", "BNB",
+}
+
+# Bekannte Large-/Mega-Caps außerhalb des Haupt-Universums – keine Small-Cap-
+# Entdeckung. Der echte Marktkap-Check beim Eskalieren ist die harte Grenze;
+# diese Liste hält nur die offensichtlichen Großen schon aus der Sammlung raus.
+_KNOWN_LARGE_CAPS = {
+    "IBM", "PYPL", "DELL", "KO", "PEP", "TGT", "SBUX", "AMGN", "REGN", "ROKU",
+    "GME", "AMC", "SNAP", "RIVN", "NVO", "SHEL", "HPE", "NOK", "MDT", "HUM",
+    "UPS", "AAL", "WBD", "VEEV", "MNDY", "TEAM", "NDAQ", "FOX", "GRAB", "GLW",
+    "NLY", "CELH", "BYND", "PSX", "GOOG", "BRK", "BN", "NEM", "DJT", "IBM",
+}
+
+# Marktkap-Fenster für den Marktkap-Check beim Eskalieren (USD).
+_SC_MIN_MCAP = int(os.getenv("SIGNAL_SC_MIN_MCAP", str(50_000_000)))       # 50 Mio
+_SC_MAX_MCAP = int(os.getenv("SIGNAL_SC_MAX_MCAP", str(10_000_000_000)))   # 10 Mrd
 
 # Mindest-Kaufvolumen für Insider-Signal (USD)
 _MIN_INSIDER_BUY_USD = 200_000
@@ -382,7 +408,18 @@ class SignalDrivenExpander:
                     eligible.append(ticker)
 
             eligible.sort(key=lambda t: self._weight_of(data[t]), reverse=True)
-            for ticker in eligible[:slots]:
+            # Marktkap-Check beim Eskalieren: nur echte Small-/Mid-Caps dürfen in
+            # die Analyse. Large-Caps werden verworfen, unklare (Abruf-Fehler)
+            # übersprungen und im Folgezyklus erneut geprüft.
+            for ticker in eligible:
+                if len(promoted) >= slots:
+                    break
+                verdict = self._passes_mcap_gate(ticker)
+                if verdict is False:
+                    data.pop(ticker, None)          # kein Small-Cap → raus
+                    continue
+                if verdict is None:
+                    continue                        # unklar → später erneut
                 data[ticker]["ready"] = True
                 data[ticker]["promoted_at"] = now.isoformat()
                 promoted.append(ticker)
@@ -424,19 +461,36 @@ class SignalDrivenExpander:
 
     @classmethod
     def _is_valid_ticker(cls, ticker: str) -> bool:
-        """Validierung für den Small-Cap-Radar: 1–5 Großbuchstaben, nicht in
-        Blacklist, kein Index/breiter ETF und nicht bereits im Haupt-
-        Scan-Universum (Mega-/Large-Caps werden ohnehin jeden Zyklus
-        analysiert – sie sind keine Small-Cap-Entdeckung)."""
+        """Validierung für den Small-Cap-Radar: 2–5 Großbuchstaben, nicht in
+        Blacklist/Krypto/Index/ETF, kein bekannter Large-Cap und nicht bereits
+        im Haupt-Scan-Universum (Mega-/Large-Caps werden ohnehin jeden Zyklus
+        analysiert – sie sind keine Small-Cap-Entdeckung). Die harte 'wirklich
+        ein Small-Cap'-Grenze ist der Marktkap-Check beim Eskalieren."""
         if not ticker:
             return False
-        if ticker in _BLACKLIST or ticker in _INDEX_ETFS:
+        if ticker in _BLACKLIST or ticker in _INDEX_ETFS or ticker in _CRYPTO:
+            return False
+        if ticker in _KNOWN_LARGE_CAPS:
             return False
         if ticker in cls._main_universe():
             return False
-        if not re.match(r'^[A-Z]{1,5}$', ticker):
+        if not re.match(r'^[A-Z]{2,5}$', ticker):   # min. 2 Buchstaben
             return False
         return True
+
+    @classmethod
+    def _passes_mcap_gate(cls, ticker: str) -> Optional[bool]:
+        """Echter Marktkap-Check beim Eskalieren. True = im Small-/Mid-Cap-
+        Fenster, False = außerhalb (z.B. Large-Cap → raus), None = unbekannt/
+        Abruf fehlgeschlagen (→ diesen Zyklus nicht promoten, später erneut)."""
+        try:
+            import yfinance as yf
+            mcap = (yf.Ticker(ticker).info or {}).get("marketCap") or 0
+        except Exception:
+            return None
+        if not mcap:
+            return None
+        return _SC_MIN_MCAP <= mcap <= _SC_MAX_MCAP
 
     @staticmethod
     def _main_universe() -> set:

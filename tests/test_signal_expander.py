@@ -19,6 +19,14 @@ def _expander(tmp_path):
     return SignalDrivenExpander()
 
 
+def _mock_mcap(monkeypatch, verdict=True):
+    """Marktkap-Check (yfinance) deterministisch machen."""
+    monkeypatch.setattr(
+        se.SignalDrivenExpander, "_passes_mcap_gate",
+        classmethod(lambda cls, t: verdict),
+    )
+
+
 def _insider(ticker):
     return {"source": "SEC Form 4", "ticker": ticker, "action": "buy", "value": 500_000}
 
@@ -37,14 +45,39 @@ def test_single_social_mention_collects_but_not_ready(tmp_path):
     assert entry["weight"] < se._READY_WEIGHT
 
 
-def test_multi_source_escalates(tmp_path):
+def test_multi_source_escalates(tmp_path, monkeypatch):
     """Gewicht-Schwelle UND zwei verschiedene Quellen → eskaliert."""
+    _mock_mcap(monkeypatch)
     e = _expander(tmp_path)
     e.process_news_items([_insider("ABCD")])                 # 1 Quelle
     assert e.get_ready_tickers() == []                       # reicht allein nicht
     promoted = e.process_news_items([_contract("ABCD")])     # 2. Quelle → Gewicht 2.0
     assert "ABCD" in e.get_ready_tickers()
     assert promoted == ["ABCD"]
+
+
+def test_mcap_gate_drops_large_cap(tmp_path, monkeypatch):
+    """Eskalations-Kandidat, der den Marktkap-Check nicht besteht (Large-Cap),
+    wird verworfen statt analysiert."""
+    _mock_mcap(monkeypatch, verdict=False)
+    e = _expander(tmp_path)
+    e.process_news_items([_insider("ABCD")])
+    promoted = e.process_news_items([_contract("ABCD")])     # eligible, aber Gate=False
+    assert promoted == []
+    assert e.get_ready_tickers() == []
+    assert e.get_all_entries() == []                         # komplett raus
+
+
+def test_mcap_gate_unknown_retries(tmp_path, monkeypatch):
+    """Bei unklarem Marktkap-Abruf (None) bleibt der Kandidat erhalten und wird
+    im nächsten Zyklus erneut geprüft."""
+    _mock_mcap(monkeypatch, verdict=None)
+    e = _expander(tmp_path)
+    e.process_news_items([_insider("ABCD")])
+    assert e.process_news_items([_contract("ABCD")]) == []   # noch nicht (unklar)
+    assert "ABCD" in [x["ticker"] for x in e.get_all_entries()]  # bleibt im Radar
+    _mock_mcap(monkeypatch, verdict=True)
+    assert e.process_news_items([]) == ["ABCD"]              # Folgezyklus → promotet
 
 
 def test_single_source_never_escalates(tmp_path):
@@ -68,10 +101,11 @@ def test_small_insider_buy_below_threshold_ignored(tmp_path):
 def test_ready_total_is_capped(tmp_path, monkeypatch):
     """Gesamt-Deckel: nie mehr als _MAX_READY_TOTAL Small-Caps gleichzeitig in
     Analyse, egal wie viele eskalieren."""
+    _mock_mcap(monkeypatch)
     monkeypatch.setattr(se, "_MAX_READY_TOTAL", 3)
     monkeypatch.setattr(se, "_MAX_PROMOTE_PER_CYCLE", 10)
     e = _expander(tmp_path)
-    for t in ("AAA", "BBB", "CCC", "DDD", "EEE"):
+    for t in ("AAAB", "BBBA", "CCCA", "DDDA", "EEEA"):
         e.process_news_items([_insider(t)])
         e.process_news_items([_contract(t)])                 # macht t eligible
     assert len(e.get_ready_tickers()) == 3                   # 5 eligible, Deckel 3
@@ -127,8 +161,9 @@ def test_phantom_ticker_blocked(tmp_path):
     assert e.get_all_entries() == []                         # geblockt, nicht gesammelt
 
 
-def test_promotion_is_idempotent(tmp_path):
+def test_promotion_is_idempotent(tmp_path, monkeypatch):
     """Einmal promotet → weitere Signale promoten nicht erneut (kein Spam)."""
+    _mock_mcap(monkeypatch)
     e = _expander(tmp_path)
     e.process_news_items([_insider("WXYZ")])
     e.process_news_items([_contract("WXYZ")])                # eskaliert hier
