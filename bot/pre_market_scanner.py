@@ -50,6 +50,10 @@ _FUTURES: Dict[str, str] = {
 # Mindest-Bewegung (%) für einen Pre-Market Mover
 _MOVER_THRESHOLD = 2.0
 
+# Index-Futures die in die Ton-Wertung einfließen (Gewicht ×2).
+# Gold/Öl/EUR-USD sind nur Anzeige, nicht direktional für den Aktien-Ton.
+_TONE_FUTURES = ("S&P 500 Fut", "Nasdaq Fut", "DAX Fut")
+
 
 @dataclass
 class PreMarketMover:
@@ -153,10 +157,16 @@ class PreMarketBriefing:
                 for m in self.movers[:5]
             ]
             lines.append(f"  🚀 Pre-Market Movers: {', '.join(mover_strs)}")
-        bull = sum(1 for i in self.indices if i.trend == "UP")
-        bear = sum(1 for i in self.indices if i.trend == "DOWN")
-        if self.indices:
-            lines.append(f"  🌍 Indizes: {bull} bullisch / {bear} bärisch | Ton: {self.overall_tone}")
+        # VIX ist ein Angst-Index, nicht direktional bullisch/bärisch – aus der Zählung raus
+        bull = sum(1 for i in self.indices if i.trend == "UP" and i.name != "VIX")
+        bear = sum(1 for i in self.indices if i.trend == "DOWN" and i.name != "VIX")
+        fut_bull = sum(1 for f in self.futures if f.name in _TONE_FUTURES and f.trend == "UP")
+        fut_bear = sum(1 for f in self.futures if f.name in _TONE_FUTURES and f.trend == "DOWN")
+        if self.indices or self.futures:
+            lines.append(
+                f"  🌍 Indizes: {bull}↑/{bear}↓ | Futures: {fut_bull}↑/{fut_bear}↓ "
+                f"| Ton: {self.overall_tone}"
+            )
         return lines
 
 
@@ -328,8 +338,11 @@ class PreMarketScanner:
         bull_pts = 0
         bear_pts = 0
 
-        # Indizes
+        # Indizes – VIX ausgenommen (steigender Angst-Index ist bärisch, nicht bullisch;
+        # die Makro-Engine führt den VIX ohnehin korrekt)
         for idx in briefing.indices:
+            if idx.name == "VIX":
+                continue
             if idx.trend == "UP":
                 bull_pts += 1
             elif idx.trend == "DOWN":
@@ -337,7 +350,7 @@ class PreMarketScanner:
 
         # Futures
         for fut in briefing.futures:
-            if fut.name in ("S&P 500 Fut", "Nasdaq Fut", "DAX Fut"):
+            if fut.name in _TONE_FUTURES:
                 if fut.trend == "UP":
                     bull_pts += 2
                 elif fut.trend == "DOWN":
