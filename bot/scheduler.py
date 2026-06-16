@@ -809,6 +809,17 @@ def run_bot_loop(
         if now < slot_dt + __import__("datetime").timedelta(minutes=30):
             return  # noch zu früh
 
+        # Obergrenze: nach dem letzten Slot + 90 Min ist der Handelstag vorbei.
+        # Keine Nachhol-Analyse am Abend/in der Nacht (verhindert Telegram-Spam).
+        _last_h, _last_m = 0, 0
+        for _s in slots:
+            _hh, _mm = map(int, _s["hhmm"].split(":"))
+            if (_hh, _mm) > (_last_h, _last_m):
+                _last_h, _last_m = _hh, _mm
+        last_slot_dt = now.replace(hour=_last_h, minute=_last_m, second=0, microsecond=0)
+        if now > last_slot_dt + __import__("datetime").timedelta(minutes=90):
+            return  # Handelstag vorbei – nachts nicht nachholen
+
         # Prüfe ob IRGENDEIN heutiger Slot in den letzten 45 Min war → Analyse läuft noch
         _td = __import__("datetime").timedelta
         for _slot in slots:

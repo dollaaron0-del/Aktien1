@@ -267,7 +267,7 @@ class ClaudeAnalyzer:
             )
 
         if self._cost_tracker is not None:
-            self._cost_tracker.record(claude_called=True)
+            self._cost_tracker.record(claude_called=True, ollama_used=False)
         return result
 
     def _local_fallback(
