@@ -18,9 +18,11 @@ Regime-Schwellen:
 
 import sqlite3
 import json
+import math
 import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
+import numpy as np
 import yfinance as yf
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "recession_detector.db")
@@ -270,6 +272,8 @@ class RecessionDetector:
             hist = yf.Ticker("^VIX").history(period="2d")
             if not hist.empty:
                 vix = float(hist["Close"].iloc[-1])
+                if not math.isfinite(vix):
+                    return None, 0.3
                 # 0 at VIX=12, 1 at VIX=45
                 score = max(0.0, min(1.0, (vix - 12) / (45 - 12)))
                 return vix, score
@@ -285,6 +289,8 @@ class RecessionDetector:
             if not t2.empty and not t10.empty:
                 r2  = float(t2["Close"].iloc[-1])
                 r10 = float(t10["Close"].iloc[-1])
+                if not (math.isfinite(r2) and math.isfinite(r10)):
+                    return None, 0.2
                 spread = r10 - r2  # positive = normal, negative = inverted
                 # Score: 0 at spread=+2, 1 at spread=-1
                 score = max(0.0, min(1.0, (-spread + 0.5) / 1.5))
@@ -297,9 +303,13 @@ class RecessionDetector:
         """How far S&P 500 is from its 200-day moving average."""
         try:
             hist = yf.Ticker("^GSPC").history(period="1y")
-            if len(hist) >= 200:
-                current = float(hist["Close"].iloc[-1])
-                ma200   = float(hist["Close"].tail(200).mean())
+            closes = hist["Close"].dropna()  # yfinance hängt manchmal eine NaN-Zeile an
+            if len(closes) >= 200:
+                current = float(closes.iloc[-1])
+                ma200   = float(closes.tail(200).mean())
+                # Kaputte Daten (NaN/0) dürfen NICHT zu Score 1.0 werden
+                if not math.isfinite(current) or not math.isfinite(ma200) or ma200 == 0:
+                    return None, 0.2
                 gap_pct = (current - ma200) / ma200 * 100
                 # 0 at gap=+10%, 1 at gap=-15%
                 score = max(0.0, min(1.0, (-gap_pct + 5) / 20))
@@ -341,10 +351,14 @@ class RecessionDetector:
                 return None, 0.2
             n = min(len(hyg), len(iei))
             ratios = hyg["Close"].values[-n:] / iei["Close"].values[-n:]
+            ratios = ratios[~np.isnan(ratios)]  # NaN-Zeilen raus, sonst Score-Verfälschung
+            if len(ratios) < 20:
+                return None, 0.2
             ratio_now = float(ratios[-1])
             lo, hi = float(ratios.min()), float(ratios.max())
-            if hi <= lo:
-                return ratio_now, 0.2
+            # Kaputte Daten (NaN) dürfen NICHT zu Score 1.0 werden
+            if not (math.isfinite(ratio_now) and math.isfinite(lo) and math.isfinite(hi)) or hi <= lo:
+                return (ratio_now if math.isfinite(ratio_now) else None), 0.2
             # Invertiert: ratio am 2J-Tief = Score 1.0 (Stress), Hoch = Score 0.0
             score = max(0.0, min(1.0, 1.0 - (ratio_now - lo) / (hi - lo)))
             return ratio_now, round(score, 3)
