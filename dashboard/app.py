@@ -829,8 +829,10 @@ with tab_queue:
             }
             for ce in _ce_active:
                 _cur = _ce_prices.get(ce.ticker, ce.price_at_creation)
-                _pct_away = (_cur - ce.trigger_price) / _cur * 100 if _cur else 0
-                _triggered = _cur <= ce.trigger_price if _cur else False
+                # Watcher löst auf Ausbruch nach oben aus (Kurs >= Trigger).
+                # _pct_away = noch fehlende Distanz nach oben bis zum Trigger.
+                _pct_away = (ce.trigger_price - _cur) / _cur * 100 if _cur else 0
+                _triggered = _cur >= ce.trigger_price if _cur else False
                 _icon = "🟢" if _triggered else ("🟡" if _pct_away < 3 else "⚪")
                 with st.expander(
                     f"{_icon} **{ce.ticker}** – Trigger ${ce.trigger_price:.2f} "
@@ -841,7 +843,7 @@ with tab_queue:
                 ):
                     _cc1, _cc2, _cc3 = st.columns(3)
                     _cc1.metric("Trigger-Kurs",    f"${ce.trigger_price:.2f}",
-                                f"{ce.pct_to_trigger:.1f}% unter Analyse-Kurs")
+                                f"{ce.pct_to_trigger:+.1f}% vs. Analyse-Kurs")
                     _cc2.metric("Aktueller Kurs",  f"${_cur:.2f}",
                                 f"{'🔥 Trigger erreicht!' if _triggered else f'noch {_pct_away:.1f}% bis Trigger'}")
                     _cc3.metric("Kursziel (Claude)", f"${ce.target_price:.2f}" if ce.target_price else "–")

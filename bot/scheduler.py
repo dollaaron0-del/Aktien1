@@ -828,34 +828,47 @@ def run_bot_loop(
             if _td(0) <= now - _slot_dt <= _td(minutes=45):
                 return  # Analyse läuft wahrscheinlich noch
 
-        # Analyse-Log: wann lief die letzte Analyse heute?
+        # Jüngsten "fälligen" Slot bestimmen: dessen Zeit liegt >45 Min zurück.
+        # Eine feste 3h-Freshness war falsch – zwischen zwei Börsen-Slots (z.B.
+        # XETRA 07:30 → NYSE 15:00) liegen legitime ~7,5h, in denen der Watchdog
+        # sonst grundlos feuert (+ überflüssige Nachhol-Analyse + Tages-Summary).
+        _due_slot_dt = None
+        for _slot in slots:
+            _sh, _sm = map(int, _slot["hhmm"].split(":"))
+            _sd = now.replace(hour=_sh, minute=_sm, second=0, microsecond=0)
+            if now - _sd > _td(minutes=45) and (_due_slot_dt is None or _sd > _due_slot_dt):
+                _due_slot_dt = _sd
+        if _due_slot_dt is None:
+            return  # heute noch kein Slot fällig
+
+        # Lief seit (fälligem Slot − 30 Min) eine Analyse? Dann wurde der Slot
+        # bedient → kein Ausfall, nicht feuern. Nur ein echter Slot-Miss alarmiert.
         try:
             from analyzers.analysis_log import AnalysisLog as _AL
             recent = _AL().get_recent(limit=1)
             if recent:
                 _last_ts = recent[0].get("analyzed_at") or ""
-                if _last_ts.startswith(today_str):
-                    # Analyse existiert für heute – aber wie lange ist das her?
-                    try:
-                        from datetime import datetime as _dt
-                        _last_dt = _dt.fromisoformat(_last_ts)
-                        _age_h = (now - _last_dt).total_seconds() / 3600
-                        if _age_h < 3.0:
-                            # Letzte Analyse < 3h → wirklich frisch, überspringen
-                            _watchdog_last_triggered[today_str] = _last_dt
-                            return
-                    except Exception:
-                        pass
+                try:
+                    from datetime import datetime as _dt
+                    _last_dt = _dt.fromisoformat(_last_ts)
+                    if _last_dt >= _due_slot_dt - _td(minutes=30):
+                        _watchdog_last_triggered[today_str] = _last_dt
+                        return
+                except Exception:
+                    pass
         except Exception:
             pass
 
-        log.warning("Tages-Watchdog: Keine aktuelle Analyse heute – starte Nachhol-Analyse.")
+        log.warning(
+            "Tages-Watchdog: Geplanter Slot %s ohne Analyse – starte Nachhol-Analyse.",
+            _due_slot_dt.strftime("%H:%M"),
+        )
         console.print(
-            f"\n[bold yellow]🔔 Tages-Watchdog: Keine aktuelle Analyse (< 3h) – hole nach...[/bold yellow]"
+            f"\n[bold yellow]🔔 Tages-Watchdog: Slot {_due_slot_dt.strftime('%H:%M')} verpasst – hole nach...[/bold yellow]"
         )
         TelegramNotifier().send(
             "⏰ <b>Tages-Watchdog</b>\n\n"
-            "Letzte Analyse älter als 3h oder fehlend – starte Nachhol-Analyse jetzt."
+            f"Geplante Analyse um {_due_slot_dt.strftime('%H:%M')} fehlt – starte Nachhol-Analyse jetzt."
         )
         safe_run_analysis_cycle(
             portfolio, broker, strategy, tracker, phase_ctrl,
@@ -921,7 +934,10 @@ def run_bot_loop(
                     target_price_rationale=entry.target_price_rationale,
                     thesis_valid=None,
                     thesis_break_reason="",
-                    sources_used={},
+                    # Quellenzahl der Ursprungs-Analyse replayen (Floor 1), sonst
+                    # blockt die min_sources-Schranke den bereits vollständig
+                    # analysierten Entry fälschlich mit 0 Quellen.
+                    sources_used={"conditional_entry": max(1, entry.sources_count)},
                     bull_case=entry.bull_case,
                     bear_case=entry.bear_case,
                     debate_winner="BULL",

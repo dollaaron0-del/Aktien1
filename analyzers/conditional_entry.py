@@ -40,6 +40,10 @@ class ConditionalEntry:
     suggested_hold_days: int = 0
     target_price: Optional[float] = None
     target_price_rationale: str = ""
+    # Quellenzahl der Ursprungs-Analyse – wird beim Trigger replayed, damit die
+    # min_sources-Schranke nicht mit 0 Quellen fälschlich blockt (der Entry wurde
+    # bei Erstellung bereits voll analysiert).
+    sources_count: int = 0
 
     @property
     def is_expired(self) -> bool:
@@ -105,6 +109,16 @@ class ConditionalEntryWatcher:
         Trade beim Auslösen ohne erneute Claude-Analyse ausgeführt werden kann."""
         from datetime import timedelta
         now = datetime.utcnow()
+        # Quellenzahl der Analyse erfassen (sources_used ist je nach Pfad
+        # int ODER Dict[str,int]), damit sie beim Trigger replayed werden kann.
+        _su = getattr(analysis, "sources_used", 0)
+        if isinstance(_su, dict):
+            _src_count = sum(int(v or 0) for v in _su.values())
+        else:
+            try:
+                _src_count = int(_su or 0)
+            except (TypeError, ValueError):
+                _src_count = 0
         return ConditionalEntry(
             ticker=ticker,
             trigger_price=float(trigger_price),
@@ -123,6 +137,7 @@ class ConditionalEntryWatcher:
             suggested_hold_days=max(3, int(getattr(analysis, "suggested_hold_days", 0) or 0)),
             target_price=getattr(analysis, "target_price", None),
             target_price_rationale=getattr(analysis, "target_price_rationale", "") or "",
+            sources_count=_src_count,
         )
 
     def check_triggered(self, prices: Dict[str, float]) -> List[ConditionalEntry]:
