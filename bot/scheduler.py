@@ -1657,46 +1657,29 @@ def run_bot_loop(
     schedule.every(2).hours.do(_geopolitical_radar_job)
     _thr_stagger.Timer(120, _geopolitical_radar_job).start()   # 120s nach Start
 
-    # ── Marktbreite-Check: Vorsichts-Modus wenn >60% Watchlist fällt ─────────
-    # WICHTIG: Ein breiter Rückgang ist NICHT automatisch ein Crash. Wenn die
-    # Decliner durch bekannte binäre Events (Earnings in Kürze, FDA-/Studien-
-    # Readouts) erklärt sind ODER der Gesamtmarkt (SPY) gar nicht nennenswert
-    # fällt, ist es kein Markteinbruch, sondern erwartete Event-Volatilität →
-    # dann nur „beobachten" (leichte Vorsicht), kein 24h-Stopp.
-    _BREADTH_CRASH_PCT  = 0.60   # Anteil Decliner für Crash-Verdacht
-    _EVENT_EARN_DAYS    = 3      # Earnings ≤ Nd = imminentes binäres Event
-    _SPY_CONFIRM_PCT    = -1.0   # SPY muss ≥1% fallen, damit es ein „echter" Breitmarkt-Einbruch ist
-
-    def _has_imminent_event(ticker: str, earn_filter, fda_collector) -> Optional[str]:
-        """Gibt einen Grund-String zurück, wenn der Ticker ein bekanntes binäres
-        Event vor der Tür hat (Earnings in Kürze / FDA-Readout), sonst None.
-        Solche Rückgänge sind erwartet und kein Crash-Signal."""
-        try:
-            chk = earn_filter.check(ticker)
-            du = chk.get("days_until")
-            if du is not None and 0 <= du <= _EVENT_EARN_DAYS:
-                return f"{ticker}: Earnings in {du}d"
-        except Exception:
-            pass
-        try:
-            if fda_collector.collect(ticker):
-                return f"{ticker}: FDA/Studien-Readout"
-        except Exception:
-            pass
-        return None
+    # ── Marktbreite-Check: Vorsichts-Modus bei breitem Sektor-Einbruch ───────
+    # Gemessen über die 11 Sektor-ETFs (XLK/XLF/XLE/…) statt der 8-Titel-
+    # Watchlist: die Watchlist ist fast nur Mega-Cap-Tech und hochkorreliert –
+    # „62% gefallen" hieß dort oft nur „Tech-Rottag", keine echte Marktbreite.
+    # Sektor-ETFs sind das saubere Breadth-Maß (ein Index je Sektor). Damit
+    # können einzelne event-getriebene Aktien (FDA/Earnings) den Breadth-Wert
+    # nicht mehr verzerren – das ursprüngliche „nicht wegen FDA-Dip sperren"
+    # ist hier strukturell gelöst. SPY bestätigt zusätzlich die Magnitude.
+    from analyzers.recession_detector import SECTOR_ETFS as _SECTOR_ETFS
+    _BREADTH_CRASH_PCT  = 0.60   # ≥60% der Sektoren rot = ≥7 von 11 → Crash-Verdacht
+    _BREADTH_MIN_SAMPLE = 6      # mind. so viele ETFs müssen Daten liefern
+    _SPY_CONFIRM_PCT    = -1.0   # SPY muss ≥1% fallen für „echten" Breitmarkt-Einbruch
 
     def _market_breadth_job():
-        """Aktiviert Vorsichts-Modus bei breitem Rückgang – aber nur als echten
-        Crash-Schutz, wenn der Rückgang NICHT durch bekannte Events erklärt ist
-        und der Gesamtmarkt mitfällt. Sonst: beobachten ohne harten Stopp."""
+        """Aktiviert Vorsichts-Modus bei breitem Sektor-Einbruch. Fallen ≥60% der
+        Sektoren UND bestätigt SPY (≤ -1%) → 24h-Vorsicht (echter Einbruch).
+        Sektoren breit rot, aber SPY flach → 12h-Beobachtung, kein harter Stopp."""
         try:
             if datetime.utcnow().weekday() >= 5:
                 return
-            tickers = [t for t in config.watchlist if not t.endswith("-USD")]
-            if len(tickers) < 3:
-                return
+            sectors = list(_SECTOR_ETFS)
             import yfinance as _yf
-            dl_tickers = tickers + (["SPY"] if "SPY" not in tickers else [])
+            dl_tickers = sectors + ["SPY"]
             hist = _yf.download(dl_tickers, period="2d", auto_adjust=True, progress=False, threads=False)
             closes = hist.get("Close") if hasattr(hist, "get") else hist["Close"]
             if closes is None or closes.shape[0] < 2:
@@ -1715,48 +1698,34 @@ def run_bot_loop(
                 return None
 
             spy_change = _chg("SPY")
-            checked, down_tickers = 0, []
-            for t in tickers:
+            checked, down_sectors = 0, []
+            for t in sectors:
                 c = _chg(t)
                 if c is None:
                     continue
                 checked += 1
                 if c < 0:
-                    down_tickers.append(t)
-            if checked < 3:
+                    down_sectors.append(t)
+            if checked < _BREADTH_MIN_SAMPLE:
                 return
 
-            pct_down = len(down_tickers) / checked
+            pct_down = len(down_sectors) / checked
 
             if pct_down < _BREADTH_CRASH_PCT:
                 # Markt hat sich erholt → aktiven Vorsichts-Modus aufheben
                 if get_market_caution() and clear_market_caution():
-                    log.info("Marktbreite erholt (%d%% Decliner) – Vorsichts-Modus aufgehoben.", int(pct_down*100))
+                    log.info("Marktbreite erholt (%d%% Sektoren rot) – Vorsichts-Modus aufgehoben.", int(pct_down*100))
                 return
-
-            # Crash-Verdacht: Event-getriebene Decliner herausrechnen.
-            from analyzers.earnings_filter import EarningsFilter
-            from collectors.fda_calendar_collector import FDACalendarCollector
-            earn_filter   = EarningsFilter()
-            fda_collector = FDACalendarCollector(lookahead_days=10, lookback_days=5)
-            event_reasons = []
-            for t in down_tickers:
-                r = _has_imminent_event(t, earn_filter, fda_collector)
-                if r:
-                    event_reasons.append(r)
-            non_event_down = len(down_tickers) - len(event_reasons)
-            non_event_pct  = non_event_down / checked
 
             spy_str = f"SPY {spy_change:+.1f}%" if spy_change is not None else "SPY n/v"
             spy_confirms = (spy_change is None) or (spy_change <= _SPY_CONFIRM_PCT)
-            broad_crash  = non_event_pct >= _BREADTH_CRASH_PCT and spy_confirms
 
-            if broad_crash:
+            if spy_confirms:
                 reason = (
-                    f"Breiter Markteinbruch: {int(non_event_pct*100)}% der Watchlist "
-                    f"gefallen ({non_event_down}/{checked}, {spy_str})"
+                    f"Breiter Markteinbruch: {int(pct_down*100)}% der Sektoren gefallen "
+                    f"({len(down_sectors)}/{checked}, {spy_str})"
                 )
-                newly = set_market_caution(reason, non_event_pct, hours=24)
+                newly = set_market_caution(reason, pct_down, hours=24)
                 log.warning("Marktbreite-Vorsicht (Crash) aktiviert: %s", reason)
                 if newly:
                     TelegramNotifier().send(
@@ -1766,21 +1735,18 @@ def run_bot_loop(
                         f"nur noch hohe Konviktion. Kein harter Stopp."
                     )
             else:
-                # Rückgang durch bekannte Events / kein Breitmarkt-Einbruch → beobachten
-                ev = "; ".join(event_reasons[:4]) if event_reasons else "keine Event-Treiber gefunden"
+                # Sektoren breit rot, aber SPY flach → kein echter Einbruch, beobachten
                 reason = (
-                    f"{int(pct_down*100)}% der Watchlist gefallen, aber {spy_str} und "
-                    f"Rückgang großteils durch anstehende Events erklärt ({ev}) – "
-                    f"kein Crash, nur Beobachtung."
+                    f"{int(pct_down*100)}% der Sektoren gefallen ({len(down_sectors)}/{checked}), "
+                    f"aber {spy_str} – kein Breitmarkt-Einbruch, nur Beobachtung."
                 )
                 newly = set_market_caution(reason, pct_down, hours=12)
-                log.info("Marktbreite: Event-getrieben, beobachten statt Stopp: %s", reason)
+                log.info("Marktbreite: Sektoren rot, SPY flach – beobachten statt Stopp: %s", reason)
                 if newly:
                     TelegramNotifier().send(
                         f"👀 <b>Beobachtungs-Modus (12h)</b>\n\n"
                         f"{reason}\n\n"
-                        f"Leicht vorsichtiger (kleinere Positionen), aber kein Handelsstopp – "
-                        f"Event-Ausgang abwarten."
+                        f"Leicht vorsichtiger (kleinere Positionen), aber kein Handelsstopp."
                     )
         except Exception as _e:
             log.warning("Marktbreite-Job fehlgeschlagen: %s", _e)
