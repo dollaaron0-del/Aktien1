@@ -427,7 +427,7 @@ class ClaudeAnalyzer:
     @staticmethod
     def _ollama_full_to_result(ticker: str, d: Dict) -> AnalysisResult:
         """Mappt das full_analysis()-Dict der lokalen Engine auf AnalysisResult."""
-        return AnalysisResult(
+        return ClaudeAnalyzer._enforce_buy_floor(AnalysisResult(
             ticker=ticker,
             sentiment_score=float(d.get("sentiment_score", 0.5)),
             direction=d.get("direction", "NEUTRAL"),
@@ -438,7 +438,7 @@ class ClaudeAnalyzer:
             key_catalysts=list(d.get("key_catalysts", []) or []),
             suggested_hold_days=int(d.get("suggested_hold_days", 14)),
             bull_case=d.get("summary", ""),
-        )
+        ))
 
     @staticmethod
     def _build_context_block(macro_brief: str = "", geo_context=None) -> str:
@@ -580,7 +580,7 @@ class ClaudeAnalyzer:
         if not data:
             return self._empty_result(ticker)
         try:
-            return AnalysisResult(
+            return self._enforce_buy_floor(AnalysisResult(
                 ticker=ticker,
                 sentiment_score=float(data.get("sentiment_score", 0.5)),
                 direction=data.get("direction", "NEUTRAL"),
@@ -597,7 +597,7 @@ class ClaudeAnalyzer:
                 debate_winner=data.get("debate_winner", "DRAW"),
                 related_tickers=data.get("related_tickers", []),
                 entry_trigger_price=data.get("entry_trigger_price"),
-            )
+            ))
         except Exception as e:
             log.warning("Parse-Fehler für %s: %s", ticker, e)
             return self._empty_result(ticker)
@@ -624,6 +624,40 @@ class ClaudeAnalyzer:
             if summary:
                 lines.append(f"   {summary}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _enforce_buy_floor(r: AnalysisResult) -> AnalysisResult:
+        """Deterministischer BUY-Boden für Neueinstiege.
+
+        Ein überzeugendes bullishes Signal (Richtung BULLISH, Score >= Kaufschwelle,
+        Konfidenz MEDIUM/HIGH) darf nicht still auf HOLD/SKIP hängenbleiben. Das
+        Modell stuft vor FOMC/CPI-Terminen gern pauschal herab (Doppelzählung der
+        Makro-Vorsicht) – darauf darf sich der Funnel nicht verlassen. Das eigentliche
+        Risiko-Overlay (Kaufschwelle inkl. Makro-Aufschlag, Quellen-Boden, Korrelation,
+        Liquidität, Sizing) wendet die Strategie-Schicht separat an, daher ist ein
+        erzwungenes BUY hier risikolos – es passiert weiterhin alle Downstream-Gates.
+        """
+        try:
+            from config import config as _cfg
+            thr = float(getattr(_cfg, "buy_threshold", 0.65))
+        except Exception:
+            thr = 0.65
+        try:
+            score = float(r.sentiment_score)
+        except (TypeError, ValueError):
+            return r
+        if (
+            str(r.direction).upper() == "BULLISH"
+            and str(r.recommendation).upper() in ("HOLD", "SKIP")
+            and str(r.confidence).upper() in ("MEDIUM", "HIGH")
+            and score >= thr
+        ):
+            log.info(
+                "[%s] BUY-Boden: %s/%s @ %.2f → BUY erzwungen (Makro-Overlay in Strategie)",
+                r.ticker, r.recommendation, r.confidence, score,
+            )
+            r.recommendation = "BUY"
+        return r
 
     @staticmethod
     def _empty_result(ticker: str) -> AnalysisResult:
