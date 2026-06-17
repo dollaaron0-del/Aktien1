@@ -1245,7 +1245,7 @@ def run_analysis_cycle(
             # Persistenz-Fehler eines einzelnen Tickers darf den gesamten
             # Analyse-Zyklus nicht abreißen (vgl. sources_used-dict-Crash).
             try:
-                _analysis_log.store(analysis)
+                _analysis_log.store(analysis, sources_breakdown=sources_breakdown)
             except Exception as _store_err:
                 log.warning("Analysis-Log store(%s) fehlgeschlagen: %s", ticker, _store_err)
 

@@ -57,7 +57,8 @@ class AnalysisLog:
         """)
         self._conn.commit()
 
-    def store(self, analysis, exchange: str = "") -> None:
+    def store(self, analysis, exchange: str = "",
+              sources_breakdown: Optional[dict] = None) -> None:
         from analyzers.claude_analyzer import AnalysisResult
         if not isinstance(analysis, AnalysisResult):
             return
@@ -79,6 +80,13 @@ class AnalysisLog:
                 _sources = int(_sources)
             except (TypeError, ValueError):
                 _sources = 0
+        # Mehrere Analyzer-Pfade (z.B. multi_agent) setzen sources_used als int und
+        # verlieren so den Quellen-Breakdown. Der Runner kennt das echte Dict und
+        # reicht es hier explizit durch → Vorrang vor dem aus sources_used abgeleiteten.
+        if sources_breakdown:
+            _breakdown = json.dumps(sources_breakdown)
+            if not _sources:
+                _sources = sum(sources_breakdown.values())
         self._conn.execute(
             """INSERT INTO analyses
                (analyzed_at, ticker, recommendation, direction, sentiment_score,

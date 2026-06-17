@@ -6,6 +6,7 @@ from datetime import datetime
 
 import analyzers.analysis_log as al_mod
 from analyzers.analysis_log import AnalysisLog
+from analyzers.claude_analyzer import AnalysisResult
 
 
 def make_log(tmp_path, monkeypatch):
@@ -50,6 +51,26 @@ def test_aggregates_contributions(tmp_path, monkeypatch):
     assert contrib["twitter"]["analyses_with_hits"] == 0
     assert contrib["newsapi"]["total_hits"] == 3
     assert contrib["newsapi"]["analyses_with_hits"] == 1
+
+
+def test_store_persists_explicit_breakdown(tmp_path, monkeypatch):
+    """Setzt ein Analyzer sources_used als int (z.B. multi_agent), muss der vom
+    Runner durchgereichte Breakdown trotzdem in der Spalte landen – sonst bleibt
+    sources_breakdown NULL und die Collector-Auswertung läuft leer."""
+    log = make_log(tmp_path, monkeypatch)
+    a = AnalysisResult(
+        ticker="AAPL", sentiment_score=0.6, direction="BULLISH",
+        confidence="HIGH", recommendation="BUY", sources_used=42,
+    )
+    log.store(a, sources_breakdown={"yahoo": 4, "newsapi": 8, "reddit": 0})
+    row = log._conn.execute(
+        "SELECT sources_used, sources_breakdown FROM analyses"
+    ).fetchone()
+    assert row[0] == 42
+    assert json.loads(row[1]) == {"yahoo": 4, "newsapi": 8, "reddit": 0}
+    contrib = {c["source"]: c for c in log.get_source_contributions(days=1)}
+    assert contrib["newsapi"]["total_hits"] == 8
+    assert contrib["reddit"]["total_hits"] == 0
 
 
 def test_ignores_rows_without_breakdown(tmp_path, monkeypatch):
