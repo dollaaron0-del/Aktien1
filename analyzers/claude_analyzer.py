@@ -42,6 +42,14 @@ Wichtig: Gewichte die aktuelle Makro-Lage (Marktregime, VIX, Risk-On/Off, Rezess
 anstehende FOMC/CPI-Termine) in deiner Einschätzung – ein bullishes Einzelsignal bei
 Risk-Off-Marktumfeld oder kurz vor einem FOMC-Termin verdient mehr Vorsicht (niedrigere
 Konfidenz / konservativeres Kursziel).
+WICHTIG zur recommendation: Makro-Vorsicht (z.B. ein FOMC/CPI-Termin in einigen Tagen)
+senkt confidence und target_price, ist aber für sich genommen KEIN Grund, ein ansonsten
+überzeugendes Kaufsignal von BUY auf HOLD herabzustufen. Ein anstehender Kalendertermin
+allein rechtfertigt kein HOLD. Das Risiko-Overlay (Positionsgröße, Kaufschwelle) wird vom
+Handelssystem separat angewandt – deine recommendation soll die fundamentale/technische
+Stärke des Titels widerspiegeln: starkes bullishes Signal (hoher Score, klare Katalysatoren)
+→ BUY; gib HOLD nur bei echtem Risk-Off-Regime, gemischtem Signal oder titelspezifischem
+Gegenwind (z.B. Earnings des Titels selbst innerhalb der Haltedauer).
 Antworte IMMER mit validem JSON. Kein Text vor oder nach dem JSON."""
 
 _USER_TEMPLATE_STANDARD = """
@@ -541,7 +549,15 @@ class ClaudeAnalyzer:
             )
             resp = requests.post(
                 f"{self.ollama_url}/api/generate",
-                json={"model": self.ollama_model, "prompt": prompt, "stream": False},
+                json={
+                    "model": self.ollama_model,
+                    "prompt": prompt,
+                    # Analyst-Leitlinien (u.a. „Kalendertermin allein → kein HOLD")
+                    # gelten auch im Frugal-/Ollama-Pfad – sonst kippt das lokale
+                    # Modell vor jedem FOMC alle Signale auf HOLD (Funnel zu).
+                    "system": _SYSTEM_PROMPT,
+                    "stream": False,
+                },
                 timeout=self.ollama_timeout,
             )
             if resp.status_code == 200:
