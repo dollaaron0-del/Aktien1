@@ -21,7 +21,10 @@ from portfolio.phase_controller import PhaseController
 from portfolio.goal_risk_assessor import GoalRiskAssessor
 from portfolio.circuit_breaker import CircuitBreaker
 from analyzers.reflection_engine import ReflectionEngine
-from analyzers.regime_adaptive import invalidate_cache_if_crash, get_last_cached_regime
+from analyzers.regime_adaptive import (
+    invalidate_cache_if_crash, get_last_cached_regime,
+    set_market_caution, clear_market_caution, get_market_caution,
+)
 from collectors.news_archive import NewsArchive
 from analyzers.market_schedule import MarketSchedule
 from analyzers.weekend_prep import WeekendPrep
@@ -365,7 +368,17 @@ def run_bot_loop(
                 console.print("[dim]Heute kein Handelstag.[/dim]")
             return
         for slot in slots:
-            # Volle Analyse 30 Min vor Open (bisherig)
+            # Pre-Market Briefing 30 Min vor Open (gleiche Zeit wie Vollanalyse).
+            # MUSS ZUERST registriert werden: schedule arbeitet gleichzeitig fällige
+            # Jobs in Registrierungsreihenfolge sequenziell im selben Thread ab.
+            # Wird die Vollanalyse vorher registriert, blockiert sie (Claude, ~15-40 min)
+            # das schnelle Briefing-Telegram bis nach Analyse-Ende.
+            pre_hhmm = slot["hhmm"]
+            exch = slot["exchange"]
+            pre_job = schedule.every().day.at(pre_hhmm).do(_pre_market_job, exch)
+            pre_job._is_analysis_job = True
+
+            # Volle Analyse 30 Min vor Open – läuft direkt nach dem Briefing
             job = schedule.every().day.at(slot["hhmm"]).do(
                 safe_run_analysis_cycle,
                 portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
@@ -375,13 +388,6 @@ def run_bot_loop(
             job._is_analysis_job = True
             review_job = schedule.every().day.at(slot["hhmm"]).do(_monthly_review_check)
             review_job._is_analysis_job = True
-
-            # Pre-Market Briefing 30 Min vor Open (gleiche Zeit wie Vollanalyse)
-            # Läuft zuerst durch (kein Claude → schnell), danach startet Vollanalyse
-            pre_hhmm = slot["hhmm"]
-            exch = slot["exchange"]
-            pre_job = schedule.every().day.at(pre_hhmm).do(_pre_market_job, exch)
-            pre_job._is_analysis_job = True
 
         times_str = ", ".join(f"{s['hhmm']} ({s['exchange']})" for s in slots)
         console.print(f"[dim]Analyse-Jobs registriert: {times_str}[/dim]")
@@ -1514,6 +1520,9 @@ def run_bot_loop(
                 return
             notifier = TelegramNotifier()
             from analyzers.user_request_queue import add_ticker as _add_req
+            # Alle ausgelösten Ticker in EINER Sammelnachricht bündeln (statt einer
+            # Einzelnachricht pro Aktie – das war die Telegram-Flut). Queuing bleibt pro Ticker.
+            _alert_lines = []
             for ticker, price, last_p, move, icon in triggered:
                 console.print(
                     f"  [bold {'green' if move > 0 else 'red'}]"
@@ -1528,17 +1537,14 @@ def run_bot_loop(
                     bullish = [f for f in flow if f.get("signal") == "BULLISCH"]
                     bearish = [f for f in flow if f.get("signal") == "BÄRISCH"]
                     if bullish:
-                        options_note = f"\n📊 Options-Flow bestätigt: {bullish[0]['title']}"
+                        options_note = "  📊 Flow bestätigt"
                     elif bearish:
-                        options_note = f"\n📊 Options-Flow warnt: {bearish[0]['title']}"
+                        options_note = "  📊 Flow warnt"
                 except Exception:
                     pass
-                notifier.send(
-                    f"{icon} <b>Kursalarm: {ticker}</b>\n\n"
-                    f"Bewegung: <b>{move:+.1%}</b> in den letzten 5 Min\n"
-                    f"Kurs: ${last_p:.2f} → <b>${price:.2f}</b>"
-                    f"{options_note}\n\n"
-                    f"🔍 Vollanalyse läuft – Ergebnis folgt in wenigen Minuten."
+                _alert_lines.append(
+                    f"{icon} <b>{ticker}</b>  <b>{move:+.1%}</b>  "
+                    f"${last_p:.2f} → ${price:.2f}{options_note}"
                 )
                 _add_req(ticker, meta={
                     "signal_type":   "PRICE_MOVE",
@@ -1548,6 +1554,12 @@ def run_bot_loop(
                     "move_pct":      round(move * 100, 2),
                 })
                 log.info("Kursalarm %s: %+.1f%% → Sofort-Analyse ausgelöst", ticker, move * 100)
+            notifier.send(
+                f"⚡ <b>Kursalarm</b> ({len(triggered)} Titel · 5 Min)\n"
+                f"━━━━━━━━━━━━━━\n"
+                + "\n".join(_alert_lines)
+                + "\n\n🔍 Vollanalyse läuft – Ergebnis folgt in wenigen Minuten."
+            )
         except Exception as e:
             log.debug("Kursbewegungs-Job fehlgeschlagen: %s", e)
 
@@ -1568,6 +1580,8 @@ def run_bot_loop(
             from analyzers.user_request_queue import add_ticker as _add_req
             collector = OptionsFlowCollector(min_volume_ratio=_OPT_RATIO)
             notifier = TelegramNotifier()
+            # Treffer sammeln und in EINER Nachricht bündeln (kein Spam pro Ticker).
+            _flow_hits = []
             for ticker in config.watchlist:
                 try:
                     signals = collector.collect(ticker)
@@ -1576,19 +1590,22 @@ def run_bot_loop(
                         continue
                     headline = bullish[0]["title"]
                     console.print(f"  [cyan]📊 Options-Flow: {headline}[/cyan]")
-                    notifier.send(
-                        f"📊 <b>Options-Flow Signal: {ticker}</b>\n\n"
-                        f"{headline}\n\n"
-                        f"🔍 Analyse läuft – Ergebnis folgt in wenigen Minuten."
-                    )
                     _add_req(ticker, meta={
                         "signal_type":   "OPTIONS_FLOW",
                         "score":         0.80,
                         "headline":      headline,
                         "from_headline": True,
                     })
+                    _flow_hits.append((ticker, headline))
                 except Exception:
                     continue
+            if _flow_hits:
+                notifier.send(
+                    f"📊 <b>Options-Flow Signale</b> ({len(_flow_hits)} Titel)\n"
+                    f"━━━━━━━━━━━━━━\n"
+                    + "\n".join(f"• <b>{t}</b> – {h}" for t, h in _flow_hits)
+                    + "\n\n🔍 Analyse läuft – Ergebnis folgt in wenigen Minuten."
+                )
         except Exception as e:
             log.debug("Options-Flow-Job fehlgeschlagen: %s", e)
 
@@ -1640,68 +1657,131 @@ def run_bot_loop(
     schedule.every(2).hours.do(_geopolitical_radar_job)
     _thr_stagger.Timer(120, _geopolitical_radar_job).start()   # 120s nach Start
 
-    # ── Marktbreite-Check: Kauf-Pause wenn >60% Watchlist fällt ─────────────
-    _BREADTH_PAUSE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "market_breadth_pause.json")
+    # ── Marktbreite-Check: Vorsichts-Modus wenn >60% Watchlist fällt ─────────
+    # WICHTIG: Ein breiter Rückgang ist NICHT automatisch ein Crash. Wenn die
+    # Decliner durch bekannte binäre Events (Earnings in Kürze, FDA-/Studien-
+    # Readouts) erklärt sind ODER der Gesamtmarkt (SPY) gar nicht nennenswert
+    # fällt, ist es kein Markteinbruch, sondern erwartete Event-Volatilität →
+    # dann nur „beobachten" (leichte Vorsicht), kein 24h-Stopp.
+    _BREADTH_CRASH_PCT  = 0.60   # Anteil Decliner für Crash-Verdacht
+    _EVENT_EARN_DAYS    = 3      # Earnings ≤ Nd = imminentes binäres Event
+    _SPY_CONFIRM_PCT    = -1.0   # SPY muss ≥1% fallen, damit es ein „echter" Breitmarkt-Einbruch ist
+
+    def _has_imminent_event(ticker: str, earn_filter, fda_collector) -> Optional[str]:
+        """Gibt einen Grund-String zurück, wenn der Ticker ein bekanntes binäres
+        Event vor der Tür hat (Earnings in Kürze / FDA-Readout), sonst None.
+        Solche Rückgänge sind erwartet und kein Crash-Signal."""
+        try:
+            chk = earn_filter.check(ticker)
+            du = chk.get("days_until")
+            if du is not None and 0 <= du <= _EVENT_EARN_DAYS:
+                return f"{ticker}: Earnings in {du}d"
+        except Exception:
+            pass
+        try:
+            if fda_collector.collect(ticker):
+                return f"{ticker}: FDA/Studien-Readout"
+        except Exception:
+            pass
+        return None
 
     def _market_breadth_job():
-        """Pausiert alle Käufe für 24h wenn >60% der Watchlist-Aktien an einem Tag fallen."""
+        """Aktiviert Vorsichts-Modus bei breitem Rückgang – aber nur als echten
+        Crash-Schutz, wenn der Rückgang NICHT durch bekannte Events erklärt ist
+        und der Gesamtmarkt mitfällt. Sonst: beobachten ohne harten Stopp."""
         try:
-            import json as _json
             if datetime.utcnow().weekday() >= 5:
                 return
             tickers = [t for t in config.watchlist if not t.endswith("-USD")]
             if len(tickers) < 3:
                 return
             import yfinance as _yf
-            hist = _yf.download(tickers, period="2d", auto_adjust=True, progress=False, threads=False)
+            dl_tickers = tickers + (["SPY"] if "SPY" not in tickers else [])
+            hist = _yf.download(dl_tickers, period="2d", auto_adjust=True, progress=False, threads=False)
             closes = hist.get("Close") if hasattr(hist, "get") else hist["Close"]
             if closes is None or closes.shape[0] < 2:
                 return
             prev_row  = closes.iloc[-2]
             curr_row  = closes.iloc[-1]
-            checked   = 0
-            down_count = 0
-            for t in tickers:
+
+            def _chg(t):
                 try:
                     prev = float(prev_row[t]) if t in prev_row else None
                     curr = float(curr_row[t]) if t in curr_row else None
                     if prev and curr:
-                        checked += 1
-                        if curr < prev:
-                            down_count += 1
+                        return (curr - prev) / prev * 100.0
                 except Exception:
                     pass
+                return None
+
+            spy_change = _chg("SPY")
+            checked, down_tickers = 0, []
+            for t in tickers:
+                c = _chg(t)
+                if c is None:
+                    continue
+                checked += 1
+                if c < 0:
+                    down_tickers.append(t)
             if checked < 3:
                 return
-            pct_down = down_count / checked
-            if pct_down >= 0.60:
-                from datetime import timedelta as _td
-                pause_until = (datetime.utcnow() + _td(hours=24)).isoformat()
-                reason = f"{int(pct_down*100)}% der Watchlist gefallen ({down_count}/{checked} Aktien)"
-                try:
-                    with open(_BREADTH_PAUSE_FILE, "w", encoding="utf-8") as _f:
-                        _json.dump({"until": pause_until, "reason": reason}, _f)
-                except Exception:
-                    pass
-                TelegramNotifier().send(
-                    f"⛔ <b>Kauf-Pause aktiviert (24h)</b>\n\n"
-                    f"{reason}\n\n"
-                    f"Breiter Markteinbruch erkannt – keine neuen Positionen "
-                    f"bis ca. {pause_until[:16]} UTC"
+
+            pct_down = len(down_tickers) / checked
+
+            if pct_down < _BREADTH_CRASH_PCT:
+                # Markt hat sich erholt → aktiven Vorsichts-Modus aufheben
+                if get_market_caution() and clear_market_caution():
+                    log.info("Marktbreite erholt (%d%% Decliner) – Vorsichts-Modus aufgehoben.", int(pct_down*100))
+                return
+
+            # Crash-Verdacht: Event-getriebene Decliner herausrechnen.
+            from analyzers.earnings_filter import EarningsFilter
+            from collectors.fda_calendar_collector import FDACalendarCollector
+            earn_filter   = EarningsFilter()
+            fda_collector = FDACalendarCollector(lookahead_days=10, lookback_days=5)
+            event_reasons = []
+            for t in down_tickers:
+                r = _has_imminent_event(t, earn_filter, fda_collector)
+                if r:
+                    event_reasons.append(r)
+            non_event_down = len(down_tickers) - len(event_reasons)
+            non_event_pct  = non_event_down / checked
+
+            spy_str = f"SPY {spy_change:+.1f}%" if spy_change is not None else "SPY n/v"
+            spy_confirms = (spy_change is None) or (spy_change <= _SPY_CONFIRM_PCT)
+            broad_crash  = non_event_pct >= _BREADTH_CRASH_PCT and spy_confirms
+
+            if broad_crash:
+                reason = (
+                    f"Breiter Markteinbruch: {int(non_event_pct*100)}% der Watchlist "
+                    f"gefallen ({non_event_down}/{checked}, {spy_str})"
                 )
-                log.warning("Marktbreite-Kaufpause aktiviert: %s", reason)
+                newly = set_market_caution(reason, non_event_pct, hours=24)
+                log.warning("Marktbreite-Vorsicht (Crash) aktiviert: %s", reason)
+                if newly:
+                    TelegramNotifier().send(
+                        f"⚠️ <b>Vorsichts-Modus aktiviert (24h)</b>\n\n"
+                        f"{reason}\n\n"
+                        f"Positionsgröße reduziert, Kaufhürde angehoben – "
+                        f"nur noch hohe Konviktion. Kein harter Stopp."
+                    )
             else:
-                # Abgelaufene Pause aufheben
-                try:
-                    with open(_BREADTH_PAUSE_FILE, encoding="utf-8") as _f:
-                        _state = _json.load(_f)
-                    if datetime.fromisoformat(_state["until"]) < datetime.utcnow():
-                        os.remove(_BREADTH_PAUSE_FILE)
-                        log.info("Marktbreite-Kaufpause abgelaufen – aufgehoben.")
-                except FileNotFoundError:
-                    pass
-                except Exception:
-                    pass
+                # Rückgang durch bekannte Events / kein Breitmarkt-Einbruch → beobachten
+                ev = "; ".join(event_reasons[:4]) if event_reasons else "keine Event-Treiber gefunden"
+                reason = (
+                    f"{int(pct_down*100)}% der Watchlist gefallen, aber {spy_str} und "
+                    f"Rückgang großteils durch anstehende Events erklärt ({ev}) – "
+                    f"kein Crash, nur Beobachtung."
+                )
+                newly = set_market_caution(reason, pct_down, hours=12)
+                log.info("Marktbreite: Event-getrieben, beobachten statt Stopp: %s", reason)
+                if newly:
+                    TelegramNotifier().send(
+                        f"👀 <b>Beobachtungs-Modus (12h)</b>\n\n"
+                        f"{reason}\n\n"
+                        f"Leicht vorsichtiger (kleinere Positionen), aber kein Handelsstopp – "
+                        f"Event-Ausgang abwarten."
+                    )
         except Exception as _e:
             log.warning("Marktbreite-Job fehlgeschlagen: %s", _e)
 
