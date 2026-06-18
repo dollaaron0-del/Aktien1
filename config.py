@@ -33,6 +33,13 @@ class Config:
     intraday_scan_time: str = field(
         default_factory=lambda: os.getenv("INTRADAY_SCAN_TIME", "17:30")
     )
+    # ── Quiet-Mode (Telegram-Ruhe) ───────────────────────────────────────────
+    # true = Hintergrund-Scanner senden KEINE Routine-Nachrichten mehr (nur Log).
+    # Hörbar bleiben: die geplanten Analysen, der Abend-Digest, Trades/SL und
+    # Fehler. Drastisch weniger Telegram-Lärm. Abschalten: QUIET_MODE=false.
+    quiet_mode: bool = field(
+        default_factory=lambda: os.getenv("QUIET_MODE", "true").lower() in ("1", "true", "yes")
+    )
     # Interactive Brokers (TWS / IB Gateway)
     ibkr_host:      str = field(default_factory=lambda: os.getenv("IBKR_HOST",      "127.0.0.1"))
     ibkr_port:      int = field(default_factory=lambda: int(os.getenv("IBKR_PORT",  "7497")))

@@ -46,6 +46,21 @@ def _subtract_minutes(hhmm: str, minutes: int) -> str:
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
+def _scanner_notify(notifier, msg: str) -> None:
+    """Routine-Scanner-Meldung. Im Quiet-Mode (config.quiet_mode, Default an) wird
+    sie NICHT per Telegram gesendet, sondern nur geloggt – das dämpft den
+    Dauer-Lärm der Hintergrund-Scanner. Essentielle Meldungen (geplante Analysen,
+    Abend-Digest, Trades/SL, Fehler) laufen weiter direkt über notifier.send()."""
+    if config.quiet_mode:
+        log.info("[quiet] Scanner-Meldung unterdrückt: %s",
+                 " ".join(msg.split())[:160])
+        return
+    try:
+        notifier.send(msg)
+    except Exception:
+        pass
+
+
 def _regime_config_pct(regime: str) -> str:
     m = {"BULL": "100%", "NEUTRAL": "80%", "BEAR": "50%", "CRISIS": "25%"}
     return m.get(regime, "?")
@@ -512,21 +527,20 @@ def run_bot_loop(
             console.print(f"\n  [bold magenta]{emoji} Regime-Wechsel: {prev_regime} → {regime}[/bold magenta]")
             log.info("Regime-Wechsel: %s → %s (Score: %s)", prev_regime, regime, score)
 
-        # 4. Hedge-Aktionen senden
+        # 4. Hedge-Aktionen senden – als eigene, knappe Nachricht (früher als
+        #    volle "Tages-Zusammenfassung" verschickt → trug zur Summary-Flut bei).
+        #    Aktionen fließen zusätzlich in die abendliche Tages-Summary ein.
         if actions:
             for a in actions:
                 console.print(f"\n  [magenta]{a}[/magenta]")
-            notifier.notify_daily_summary(
-                total_value=portfolio.total_value(broker.get_prices(list(portfolio.all_positions().keys()))),
-                cash=portfolio.cash,
-                open_positions=len(portfolio.all_positions()),
-                phase=phase_ctrl.current_phase(portfolio.total_value(
-                    broker.get_prices(list(portfolio.all_positions().keys()))
-                )),
-                progress_pct=phase_ctrl.progress_pct(portfolio.total_value(
-                    broker.get_prices(list(portfolio.all_positions().keys()))
-                )),
-                actions_today=actions,
+            try:
+                from bot.runner import record_daily_actions
+                record_daily_actions(list(actions))
+            except Exception as _rda_err:
+                log.debug("record_daily_actions (Hedge) fehlgeschlagen: %s", _rda_err)
+            notifier.send(
+                "🛡️ <b>Hedge-Aktionen</b>\n"
+                + "\n".join(f"  • {a}" for a in actions)
             )
 
     def _daily_maintenance_job():
@@ -856,7 +870,13 @@ def run_bot_loop(
                 _last_ts = recent[0].get("analyzed_at") or ""
                 try:
                     from datetime import datetime as _dt
-                    _last_dt = _dt.fromisoformat(_last_ts)
+                    # analysis_log speichert analyzed_at als naive UTC (utcnow()).
+                    # Der Watchdog rechnet in lokaler Zeit (now/_due_slot_dt). Ohne
+                    # Umrechnung erscheint eine 07:30-Analyse als 05:30 (UTC+2) und
+                    # der Watchdog hält den planmäßig bedienten Slot fälschlich für
+                    # verpasst → unnötige Nachhol-Analyse + Telegram-Spam.
+                    _utc_offset = datetime.now() - datetime.utcnow()
+                    _last_dt = _dt.fromisoformat(_last_ts) + _utc_offset
                     if _last_dt >= _due_slot_dt - _td(minutes=30):
                         _watchdog_last_triggered[today_str] = _last_dt
                         return
@@ -894,6 +914,35 @@ def run_bot_loop(
 
     schedule.every().hour.do(_daily_analysis_watchdog)
     _daily_analysis_watchdog()  # sofort beim Start prüfen
+
+    # ── Tages-Zusammenfassung: EINMAL täglich am Abend ──────────────────────
+    # Früher hat jeder Analyse-Zyklus eine "Tages-Zusammenfassung" gesendet
+    # (mehrere pro Tag). Jetzt gebündelt einmal nach US-Börsenschluss.
+    _DAILY_SUMMARY_AT = os.getenv("DAILY_SUMMARY_AT", "22:15")
+
+    def _daily_summary_job():
+        """Sendet einmal täglich (abends, Werktag) die Tages-Zusammenfassung:
+        Portfolio-Stand + gebündelte Aktionen des Tages."""
+        if datetime.now().date().weekday() >= 5:
+            return
+        try:
+            from bot.runner import pop_daily_actions
+            prices = broker.get_prices(list(portfolio.all_positions().keys()))
+            total_value = portfolio.total_value(prices)
+            phase = phase_ctrl.current_phase(total_value)
+            TelegramNotifier().notify_daily_summary(
+                total_value=total_value,
+                cash=portfolio.cash,
+                open_positions=len(portfolio.all_positions()),
+                phase=phase,
+                progress_pct=phase_ctrl.progress_pct(total_value),
+                actions_today=pop_daily_actions(),
+            )
+        except Exception as _ds_err:
+            log.warning("Tages-Zusammenfassung (Abend) fehlgeschlagen: %s", _ds_err)
+
+    schedule.every().day.at(_DAILY_SUMMARY_AT).do(_daily_summary_job)
+    console.print(f"[dim]Tages-Zusammenfassung geplant: {_DAILY_SUMMARY_AT} (Werktags)[/dim]")
 
     # ── Conditional Entry Preis-Check: alle 15 Minuten ──────────────────────
     def _conditional_entry_job():
@@ -1091,6 +1140,29 @@ def run_bot_loop(
 
     schedule.every(4).hours.do(_position_aging_job)
 
+    # ── Einzel-Aktien-Eskalation ────────────────────────────────────────────
+    # Statt bei jedem Signal den GANZEN Watchlist-Zyklus zu fahren (teuer + laut),
+    # analysiert ein getriggertes Signal nur die betroffene(n) Aktie(n) als
+    # Fokus-Lauf. Das Frugal-Routing im Zyklus übernimmt die „Ollama prüft das
+    # Potenzial vor, Claude entscheidet final"-Logik automatisch: bei lebender
+    # lokaler Engine bewertet Ollama vor und nur echte Katalysatoren erreichen
+    # Claude; auf langsamer Hardware (Circuit Breaker offen) fällt es direkt auf
+    # das günstige Hauptmodell (Haiku). Nur handelbare Ergebnisse melden sich über
+    # den normalen Trade-/Digest-Pfad – kein „Analyse läuft"-Spam.
+    def _escalate_ticker(tickers, reason: str = "Signal"):
+        _tk = list(dict.fromkeys(t for t in (tickers or []) if t))
+        if not _tk:
+            return
+        log.info("Eskalation (%s): Fokus-Analyse %s", reason, ", ".join(_tk))
+        console.print(
+            f"  [bold yellow]⚡ {reason}: Fokus-Analyse {', '.join(_tk)}[/bold yellow]"
+        )
+        safe_run_analysis_cycle(
+            portfolio, broker, strategy, tracker, phase_ctrl,
+            archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+            earnings_strategy, only_tickers=_tk,
+        )
+
     # ── Headline-Signal-Scanner: stündlich ──────────────────────────────────
     _SIGNAL_TRIGGER_SCORE = 0.90   # Ab hier sofortige Analyse auslösen
     _HEADLINE_COOLDOWN_HOURS = int(os.getenv("HEADLINE_COOLDOWN_HOURS", "4"))
@@ -1146,7 +1218,7 @@ def run_bot_loop(
                 # Headline-Scanner-Meldung: urgent-Ticker ausschließen
                 added = detector.process_signals(
                     signals,
-                    notify_fn=notifier.send,
+                    notify_fn=lambda _m: _scanner_notify(notifier, _m),
                     exclude_tickers=_urgent_tickers,
                 )
                 if added:
@@ -1156,52 +1228,46 @@ def run_bot_loop(
                         f"{', '.join(added[:6])}[/magenta]"
                     )
                 if urgent:
-                    from analyzers.user_request_queue import add_ticker as _req_ticker_inline
                     for sig in urgent:
-                        _req_ticker_inline(sig.ticker, meta={
-                            "signal_type":  sig.signal_type,
-                            "score":        sig.score,
-                            "headline":     getattr(sig, "headline", ""),
-                            "from_headline": True,
-                        })
                         _headline_last_queued[sig.ticker] = datetime.now()
                     _save_headline_cooldown(_headline_last_queued)
                     tickers_str = ", ".join(sig.ticker for sig in urgent)
                     console.print(
                         f"  [bold yellow]⚡ Signal-Trigger ({_SIGNAL_TRIGGER_SCORE:.0%}): "
-                        f"Sofort-Analyse gestartet: {tickers_str}[/bold yellow]"
+                        f"Fokus-Analyse: {tickers_str}[/bold yellow]"
                     )
                     _in_trading_hours = (
                         datetime.now().weekday() < 5
                         and 6 <= datetime.now().hour < 23
                     )
                     if _in_trading_hours:
-                        from analyzers.headline_signal_detector import _signal_emoji as _se
-                        _sig_lines = "\n\n".join(
-                            f"{_se(sig.signal_type)} <b>{sig.ticker}</b> – {sig.signal_type} (Score {sig.score:.2f})\n"
-                            f"<i>{getattr(sig, 'headline', '')[:120]}</i>"
-                            for sig in urgent
-                        )
-                        notifier.send(
-                            f"⚡ <b>Signal-Trigger</b>\n\n"
-                            + _sig_lines
-                            + "\n\n🔍 Analyse wird jetzt ausgeführt …"
-                        )
-                        # silent=True unterdrückt die separate "Analyse-Zyklus gestartet"-Meldung
-                        safe_run_analysis_cycle(
-                            portfolio, broker, strategy, tracker, phase_ctrl,
-                            archive, reflection, weekend_prep_inst, hedge_strategy_inst,
-                            earnings_strategy, silent=True,
+                        # Nur die getriggerten Aktien analysieren (Fokus-Lauf),
+                        # NICHT mehr den ganzen Watchlist-Zyklus. Frugal-Routing
+                        # entscheidet Ollama-vs-Claude; nur handelbare Ergebnisse
+                        # melden sich über den Trade-/Digest-Pfad.
+                        _escalate_ticker(
+                            [sig.ticker for sig in urgent], reason="Headline-Trigger"
                         )
                     else:
-                        notifier.send(
+                        # Außerhalb der Handelszeiten: für das nächste geplante
+                        # Fenster vormerken statt nachts zu analysieren.
+                        from analyzers.user_request_queue import add_ticker as _req_ticker_inline
+                        for sig in urgent:
+                            _req_ticker_inline(sig.ticker, meta={
+                                "signal_type":  sig.signal_type,
+                                "score":        sig.score,
+                                "headline":     getattr(sig, "headline", ""),
+                                "from_headline": True,
+                            })
+                        _scanner_notify(
+                            notifier,
                             f"⚡ <b>Signal-Trigger</b> (außerhalb Handelszeiten)\n\n"
                             + "\n".join(
                                 f"  • <b>{sig.ticker}</b> – {sig.signal_type} "
                                 f"(Score {sig.score:.2f})"
                                 for sig in urgent
                             )
-                            + "\n\n📋 In Queue gespeichert – Analyse startet mit dem nächsten Vorbörslichen Fenster."
+                            + "\n\n📋 In Queue gespeichert – Analyse startet mit dem nächsten Vorbörslichen Fenster.",
                         )
                         log.info(
                             "Signal-Trigger außerhalb Handelszeiten – %d Ticker in Queue für Vorbörsliche Analyse.",
@@ -1315,7 +1381,8 @@ def run_bot_loop(
                 f"Vol ×{h['volume_ratio']:.1f} | {h['streak_days']}d↑"
                 for h in new_hits
             )
-            notifier.send(
+            _scanner_notify(
+                notifier,
                 f"📈 <b>Momentum-Scanner</b>\n\n{msg}\n\n"
                 f"🔍 Sofort-Analyse gestartet."
             )
@@ -1396,7 +1463,8 @@ def run_bot_loop(
                 dist = f" | {h['dist_52w_pct']:.1f}% u. 52W-Hoch" if h.get("dist_52w_pct") is not None else ""
                 msg_lines.append(f"  • <b>{h['ticker']}</b> ${h['price']:.2f} | {sig_label}{dist}")
 
-            notifier.send(
+            _scanner_notify(
+                notifier,
                 f"🎯 <b>Breakout-Watch</b> – Setup erkannt (kein Kursanstieg nötig)\n\n"
                 + "\n".join(msg_lines)
                 + "\n\n🔍 Analyse vorgemerkt."
@@ -1466,7 +1534,8 @@ def run_bot_loop(
                 f"{h.sample_titles[0][:60] if h.sample_titles else ''}"
                 for h in queued
             )
-            notifier.send(
+            _scanner_notify(
+                notifier,
                 f"🔥 <b>Reddit-Hype-Scanner</b>\n\n{lines}\n\n"
                 f"🔍 Analyse wird gestartet …"
             )
@@ -1554,7 +1623,8 @@ def run_bot_loop(
                     "move_pct":      round(move * 100, 2),
                 })
                 log.info("Kursalarm %s: %+.1f%% → Sofort-Analyse ausgelöst", ticker, move * 100)
-            notifier.send(
+            _scanner_notify(
+                notifier,
                 f"⚡ <b>Kursalarm</b> ({len(triggered)} Titel · 5 Min)\n"
                 f"━━━━━━━━━━━━━━\n"
                 + "\n".join(_alert_lines)
@@ -1600,7 +1670,8 @@ def run_bot_loop(
                 except Exception:
                     continue
             if _flow_hits:
-                notifier.send(
+                _scanner_notify(
+                    notifier,
                     f"📊 <b>Options-Flow Signale</b> ({len(_flow_hits)} Titel)\n"
                     f"━━━━━━━━━━━━━━\n"
                     + "\n".join(f"• <b>{t}</b> – {h}" for t, h in _flow_hits)
@@ -1627,7 +1698,7 @@ def run_bot_loop(
                 notifier = TelegramNotifier()
                 added = radar.process_events(
                     events,
-                    notify_fn=notifier.send,
+                    notify_fn=lambda _m: _scanner_notify(notifier, _m),
                 )
                 if added:
                     console.print(
@@ -1822,7 +1893,8 @@ def run_bot_loop(
             tracker_pead.cleanup_expired()
             if queued_tickers:
                 msg = "\n".join(f"  • <b>{t}</b>" for t in queued_tickers)
-                notifier.send(
+                _scanner_notify(
+                    notifier,
                     f"📈 <b>PEAD-Scanner</b>\n\n{msg}\n\n"
                     f"Earnings-Beat erkannt → Post-Drift-Analyse gestartet."
                 )
@@ -1868,7 +1940,8 @@ def run_bot_loop(
                     "squeeze_setup": True,
                 })
             tickers_str = ", ".join(h["ticker"] for h in hits)
-            notifier.send(
+            _scanner_notify(
+                notifier,
                 f"🎯 <b>Short-Squeeze-Scanner</b>\n\n"
                 + "\n".join(
                     f"  • <b>{h['ticker']}</b> – SI {h.get('si_pct',0):.1f}% | "
@@ -1943,7 +2016,8 @@ def run_bot_loop(
                 f"  • <b>{t}</b> – {s.bullish_count} Insider-Käufe (Score {s.score:.1f})"
                 for t, s in hits
             )
-            notifier.send(
+            _scanner_notify(
+                notifier,
                 f"🏦 <b>Insider-Scanner</b> – Frische Form-4-Käufe\n\n{msg}\n\n"
                 f"🔍 Sofort-Analyse gestartet."
             )
@@ -2045,7 +2119,8 @@ def run_bot_loop(
                     all_queued.append(t)
 
                 icon = "📈" if move > 0 else "📉"
-                notifier.send(
+                _scanner_notify(
+                    notifier,
                     f"{icon} <b>Sektor-Kaskade: {sector_name} {move:+.1f}%</b>\n\n"
                     f"Verwandte Aktien analysiert: {', '.join(siblings)}"
                 )

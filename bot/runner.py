@@ -77,6 +77,50 @@ except Exception:
 
 _collect_log = get_logger("collectors")
 
+# ── Tages-Aktionen-Speicher ────────────────────────────────────────────────
+# Die Tages-Zusammenfassung wird NICHT mehr pro Zyklus gesendet (das war die
+# Telegram-Flut: 1× je Markt-Slot/Trigger/Watchdog). Stattdessen sammeln alle
+# Zyklen ihre Käufe/Verkäufe hier; die Abend-Summary (_daily_summary_job im
+# Scheduler) liest sie einmal täglich gebündelt aus.
+_DAILY_ACTIONS_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "daily_actions.json")
+
+
+def record_daily_actions(actions: List[str]) -> None:
+    """Hängt die Aktionen eines Zyklus an den heutigen Tagesspeicher an."""
+    if not actions:
+        return
+    import json as _json
+    today = datetime.now().date().isoformat()
+    try:
+        data: Dict = {}
+        if os.path.exists(_DAILY_ACTIONS_PATH):
+            with open(_DAILY_ACTIONS_PATH, "r", encoding="utf-8") as f:
+                data = _json.load(f) or {}
+        if data.get("date") != today:
+            data = {"date": today, "actions": []}
+        data["actions"].extend(actions)
+        with open(_DAILY_ACTIONS_PATH, "w", encoding="utf-8") as f:
+            _json.dump(data, f, ensure_ascii=False)
+    except Exception as _e:
+        log.debug("record_daily_actions fehlgeschlagen: %s", _e)
+
+
+def pop_daily_actions() -> List[str]:
+    """Liest die heutigen Aktionen und leert den Speicher (für die Abend-Summary)."""
+    import json as _json
+    today = datetime.now().date().isoformat()
+    try:
+        if not os.path.exists(_DAILY_ACTIONS_PATH):
+            return []
+        with open(_DAILY_ACTIONS_PATH, "r", encoding="utf-8") as f:
+            data = _json.load(f) or {}
+        actions = data.get("actions", []) if data.get("date") == today else []
+        os.remove(_DAILY_ACTIONS_PATH)
+        return actions
+    except Exception as _e:
+        log.debug("pop_daily_actions fehlgeschlagen: %s", _e)
+        return []
+
 
 def _is_crypto(ticker: str) -> bool:
     """True wenn der Ticker ein Krypto-Asset ist (z.B. 'BTC', 'ETH/USD')."""
@@ -634,6 +678,7 @@ def run_analysis_cycle(
     hedge_strategy=None,
     earnings_strategy=None,
     announce_start: bool = False,
+    only_tickers: Optional[List[str]] = None,
 ):
     rule_suffix = "  [bold yellow][EXPLORATION][/bold yellow]" if config.exploration_mode else ""
     _cycle_ts = datetime.now().strftime('%Y-%m-%d %H:%M')
@@ -810,7 +855,9 @@ def run_analysis_cycle(
     _eu_market_ctx = None
     # Vom Dashboard / Headline-Signal angeforderte Ticker einsammeln, BEVOR die
     # Watchlist eingefroren wird – force_claude und headline_meta gelten pro Zyklus.
-    _requested = _urq.consume_all()  # returns List[(ticker, meta)]
+    # Bei Fokus-/Einzel-Läufen die Queue NICHT leeren (gehört dem nächsten
+    # geplanten Zyklus) und nichts erzwingen – das Potenzial-Gate hat schon entschieden.
+    _requested = [] if only_tickers else _urq.consume_all()  # List[(ticker, meta)]
     _force_claude_tickers: set = set()
     _headline_meta: Dict[str, dict] = {}
     # Ergebnisse der Headline-Signal-Ticker werden gesammelt und am Zyklus-Ende
@@ -819,11 +866,25 @@ def run_analysis_cycle(
     _headline_results: List[str] = []
     active_watchlist, _bench_geo_contexts = _get_watchlist(portfolio)
 
+    # Einzel-Aktien-/Fokus-Lauf: getriggerte Eskalation analysiert NUR die
+    # übergebenen Ticker (plus deren ggf. offene Position), nicht die ganze
+    # Watchlist. Spart Claude-Calls und hält den Bot „vor der Welle" agil.
+    if only_tickers:
+        _focus = [_normalize_ticker(t) for t in only_tickers]
+        active_watchlist = list(dict.fromkeys(_focus))
+        _bench_geo_contexts = {
+            k: v for k, v in (_bench_geo_contexts or {}).items() if k in active_watchlist
+        }
+
     for _t, _meta in _requested:
         if _t not in active_watchlist:
             log.info("Nutzeranfrage: %s wird in diesem Zyklus analysiert", _t)
             active_watchlist.append(_t)
-        _force_claude_tickers.add(_t)
+        # Claude nur bei EXPLIZITER Anfrage erzwingen (Dashboard = leere Meta).
+        # Auto-Signale der Hintergrund-Scanner (Meta gesetzt) laufen durchs
+        # Frugal-Gate: Ollama prüft vor, nur echte Katalysatoren erreichen Claude.
+        if not _meta:
+            _force_claude_tickers.add(_t)
         if _meta.get("from_headline"):
             _headline_meta[_t] = _meta
 
@@ -1434,11 +1495,9 @@ def run_analysis_cycle(
     except Exception as _sh_err:
         log.debug("Quellen-Health-Auswertung übersprungen: %s", _sh_err)
 
-    notifier.notify_daily_summary(
-        total_value=total_value,
-        cash=portfolio.cash,
-        open_positions=len(portfolio.all_positions()),
-        phase=phase,
-        progress_pct=phase_ctrl.progress_pct(total_value),
-        actions_today=cycle_actions,
-    )
+    # Tages-Zusammenfassung NICHT pro Zyklus senden – das war die Telegram-Flut
+    # (1× je Markt-Slot/Trigger/Watchdog → mehrere "Tages-Zusammenfassungen" am
+    # Tag). Aktionen werden gesammelt; die Abend-Summary (_daily_summary_job im
+    # Scheduler) sendet sie einmal täglich gebündelt. Einzeltrades werden ohnehin
+    # bereits sofort per notify_buy/notify_sell gemeldet.
+    record_daily_actions(cycle_actions)
