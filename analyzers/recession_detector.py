@@ -20,10 +20,15 @@ import sqlite3
 import json
 import math
 import os
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 import yfinance as yf
+
+from logger import get_logger
+
+log = get_logger(__name__)
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "recession_detector.db")
 
@@ -130,6 +135,18 @@ class RecessionDetector:
         self._conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._init_db()
+        # Budget-Gate + echtes Kosten-Tracking (lief vorher hartcodiert auf Opus,
+        # einmal PRO ZYKLUS, komplett am Tagesbudget vorbei → Guthaben-Fresser).
+        try:
+            from analyzers.api_cost_tracker import APICostTracker
+            self._cost_tracker = APICostTracker()
+        except Exception:
+            self._cost_tracker = None
+        # Das Makro-Regime ändert sich nicht im 20-Minuten-Takt – Claude-Ergebnis
+        # für _MACRO_CACHE_SEC wiederverwenden statt jeden Zyklus neu zu bezahlen.
+        self._macro_cache: Optional[Tuple[float, float, str]] = None  # (ts, score, summary)
+
+    _MACRO_CACHE_SEC = 4 * 3600
 
     def __del__(self):
         try:
@@ -408,6 +425,17 @@ class RecessionDetector:
     def _claude_macro_signal(
         self, macro_news: List[Dict], quant_score: float
     ) -> Tuple[float, str]:
+        # Cache: nicht jeden Zyklus neu bezahlen.
+        if self._macro_cache is not None:
+            ts, score, summary = self._macro_cache
+            if time.time() - ts < self._MACRO_CACHE_SEC:
+                return score, summary
+        # Budget-Gate: respektiert dasselbe Tageslimit wie der Hauptpfad.
+        if self._cost_tracker is not None:
+            allowed, reason = self._cost_tracker.check_daily_limit()
+            if not allowed:
+                log.info("Regime-Claude übersprungen (Budget): %s", reason)
+                return 0.3, ""
         news_text = "\n".join(
             f"- {n.get('title', '')} ({n.get('source', '')})"
             for n in macro_news[:10]
@@ -428,17 +456,25 @@ Antworte NUR mit diesem JSON (kein Text davor/dahinter):
 }}"""
         try:
             import anthropic
+            from config import config as _cfg
             client = anthropic.Anthropic(api_key=self.api_key)
+            model = _cfg.claude_model  # vorher hartcodiert claude-opus-4-7 (≈30× teurer)
             resp = client.messages.create(
-                model="claude-opus-4-7",
+                model=model,
                 max_tokens=400,
                 messages=[{"role": "user", "content": prompt}],
             )
+            if self._cost_tracker is not None:
+                it, ot, cr = self._cost_tracker.usage_from_response(resp)
+                self._cost_tracker.record_claude_usage(model, it, ot, cr)
             raw = resp.content[0].text.strip()
             start = raw.find("{")
             end   = raw.rfind("}") + 1
             data  = json.loads(raw[start:end])
-            return float(data.get("macro_recession_score", 0.3)), data.get("summary", "")
+            score = float(data.get("macro_recession_score", 0.3))
+            summary = data.get("summary", "")
+            self._macro_cache = (time.time(), score, summary)
+            return score, summary
         except Exception:
             return 0.3, ""
 

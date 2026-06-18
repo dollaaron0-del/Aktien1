@@ -143,6 +143,7 @@ class ClaudeAnalyzer:
         self._trust_filter = NewsTrustFilter()
         self._call_count = 0
         self._total_tokens = 0
+        self._last_usage = None         # (in, out, cache_read) des letzten Claude-Calls
         self._local_count = 0          # via Ollama/MLX abgehandelt (kein Claude)
         self._compress_count = 0       # News lokal komprimiert vor Claude
         self._prescreener = None       # lazy: OllamaPrescreener oder MLXPrescreener
@@ -275,7 +276,16 @@ class ClaudeAnalyzer:
             )
 
         if self._cost_tracker is not None:
-            self._cost_tracker.record(claude_called=True, ollama_used=False)
+            usage = getattr(self, "_last_usage", None)
+            if usage is not None:
+                from analyzers.api_cost_tracker import cost_eur_from_usage
+                self._cost_tracker.record(
+                    claude_called=True, ollama_used=False,
+                    actual_cost_eur=cost_eur_from_usage(self.model, *usage),
+                )
+                self._last_usage = None
+            else:
+                self._cost_tracker.record(claude_called=True, ollama_used=False)
         return result
 
     def _local_fallback(
@@ -479,6 +489,10 @@ class ClaudeAnalyzer:
             )
             self._call_count += 1
             self._total_tokens += resp.usage.input_tokens + resp.usage.output_tokens
+            self._last_usage = (
+                resp.usage.input_tokens, resp.usage.output_tokens,
+                int(getattr(resp.usage, "cache_read_input_tokens", 0) or 0),
+            )
             return self._parse_response(ticker, resp.content[0].text)
         except Exception as e:
             log.warning("Claude-Analyse fehlgeschlagen für %s: %s", ticker, e)
@@ -511,6 +525,10 @@ class ClaudeAnalyzer:
                 messages=[{"role": "user", "content": prompt}],
             )
             self._call_count += 1
+            self._last_usage = (
+                resp.usage.input_tokens, resp.usage.output_tokens,
+                int(getattr(resp.usage, "cache_read_input_tokens", 0) or 0),
+            )
             data = self._safe_json(resp.content[0].text)
             result = self._empty_result(ticker)
             result.thesis_valid = data.get("thesis_valid", True)

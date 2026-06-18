@@ -177,6 +177,12 @@ class OllamaPrescreener:
         self.bearish_skip     = bearish_skip_threshold
         self.neutral_skip     = neutral_skip_threshold
         self._available: Optional[bool] = None
+        # Circuit Breaker: auf langsamer Hardware (CPU-only) timed jede Analyse aus.
+        # Nach _MAX_CONSEC_TIMEOUTS Timeouts in Folge wird die lokale Engine für den
+        # Rest des Prozesses als tot markiert → kein 60s-Warten mehr pro Ticker,
+        # sofortiger Claude-Fallback. Ein erfolgreicher Call setzt den Zähler zurück.
+        self._consecutive_timeouts = 0
+        self._circuit_open = False
 
     @property
     def capability(self) -> str:
@@ -185,8 +191,12 @@ class OllamaPrescreener:
 
     # ── Verfügbarkeit ─────────────────────────────────────────────────────────
 
+    _MAX_CONSEC_TIMEOUTS = 2
+
     def is_available(self) -> bool:
         """Prüft ob Ollama läuft. Ergebnis wird gecacht."""
+        if self._circuit_open:
+            return False
         if self._available is not None:
             return self._available
         try:
@@ -401,11 +411,24 @@ class OllamaPrescreener:
                 timeout=self.timeout,
             )
             if resp.status_code == 200:
+                self._consecutive_timeouts = 0
                 return resp.json().get("response", "").strip()
             log.warning("Ollama HTTP %d für Analyse", resp.status_code)
             return None
         except requests.Timeout:
-            log.warning("Ollama Timeout nach %ds", self.timeout)
+            self._consecutive_timeouts += 1
+            log.warning(
+                "Ollama Timeout nach %ds (%d/%d)",
+                self.timeout, self._consecutive_timeouts, self._MAX_CONSEC_TIMEOUTS,
+            )
+            if self._consecutive_timeouts >= self._MAX_CONSEC_TIMEOUTS:
+                self._circuit_open = True
+                self._available = False
+                log.warning(
+                    "Lokale Engine (%s) zu langsam für diese Hardware – Circuit Breaker "
+                    "ausgelöst, Claude übernimmt ab jetzt alle Analysen dieses Laufs.",
+                    self.model,
+                )
             return None
         except Exception as e:
             log.warning("Ollama Fehler: %s", e)
@@ -469,25 +492,33 @@ class OllamaPrescreener:
         if not self.is_available() or not news_items:
             return None
 
-        max_items = 30 if self.capability == "HIGH" else 20
+        # Token-/Headline-Budget nach Modell-Stärke. LOW (≤8b, inkl. 1b/3b) läuft
+        # auf reiner CPU – knappes Budget hält die Analyse zuverlässig unter dem
+        # Timeout (sonst Circuit Breaker → alles an Claude). HIGH/MEDIUM dürfen mehr.
+        if self.capability == "HIGH":
+            max_items, max_tokens = 30, 500
+        elif self.capability == "MEDIUM":
+            max_items, max_tokens = 20, 350
+        else:  # LOW – schwache CPU-Modelle: kompakt halten
+            max_items, max_tokens = 10, 240
         headlines   = self._extract_headlines(news_items, max_items=max_items)
         price_block = self._format_price_block(price_data or {})
 
         if self.capability == "HIGH":
-            prompt     = _FULL_ANALYSIS_PROMPT_32B.format(
+            prompt = _FULL_ANALYSIS_PROMPT_32B.format(
                 ticker=ticker, price_block=price_block, headlines=headlines)
-            max_tokens = 500
         else:
-            prompt     = _FULL_ANALYSIS_PROMPT.format(
+            prompt = _FULL_ANALYSIS_PROMPT.format(
                 ticker=ticker, price_block=price_block, headlines=headlines)
-            max_tokens = 350
 
         t0  = time.monotonic()
         raw = self._call_ollama(prompt, max_tokens=max_tokens)
         latency_ms = int((time.monotonic() - t0) * 1000)
 
         if raw is None:
-            self.reset_availability_cache()
+            # KEIN reset_availability_cache() hier: ein Timeout würde sonst die
+            # Engine sofort wiederbeleben → nächster Ticker läuft erneut 60s in den
+            # Timeout. Der Circuit Breaker in _call_ollama regelt das Abschalten.
             return None
 
         data = self._parse_full_response(raw, buy_min_score)

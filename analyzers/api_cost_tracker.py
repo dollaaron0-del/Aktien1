@@ -10,7 +10,7 @@ import json
 import os
 import tempfile
 from datetime import datetime, date
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 from logger import get_logger
 
@@ -31,6 +31,36 @@ _CACHE_DISCOUNT = 0.90
 # Backward-compat: altes MAX_DAILY_COST_USD wird als Fallback gelesen.
 _MAX_DAILY_COST_EUR = float(os.getenv("MAX_DAILY_COST_EUR",
                                       os.getenv("MAX_DAILY_COST_USD", "1.00")))
+
+# Anthropic-Listenpreise in USD pro 1M Token (Input, Output). Grobe Richtwerte –
+# dienen nur der Kosten-/Budget-Schätzung, nicht der Abrechnung.
+_MODEL_PRICING_USD = {
+    "opus":   (15.0, 75.0),
+    "sonnet": (3.0, 15.0),
+    "haiku":  (1.0, 5.0),
+}
+
+
+def _price_for_model(model: str) -> Tuple[float, float]:
+    """Liefert (input_usd_per_mtok, output_usd_per_mtok) für ein Modell."""
+    m = (model or "").lower()
+    for key, prices in _MODEL_PRICING_USD.items():
+        if key in m:
+            return prices
+    return _MODEL_PRICING_USD["sonnet"]  # konservativer Default
+
+
+def cost_eur_from_usage(model: str, input_tokens: int, output_tokens: int,
+                        cache_read_tokens: int = 0) -> float:
+    """Echte EUR-Kosten aus tatsächlicher Token-Nutzung (model-spezifisch)."""
+    in_usd, out_usd = _price_for_model(model)
+    billed_in = max(0, input_tokens - cache_read_tokens)
+    usd = (
+        billed_in / 1_000_000 * in_usd
+        + cache_read_tokens / 1_000_000 * in_usd * 0.10  # gecachte Token ~10%
+        + output_tokens / 1_000_000 * out_usd
+    )
+    return round(usd * _EUR_PER_USD, 5)
 
 
 class APICostTracker:
@@ -79,8 +109,10 @@ class APICostTracker:
         except Exception as e:
             log.warning("APICostTracker: Speicherfehler – %s", e)
 
-    def record(self, claude_called: bool, ollama_used: bool, cache_hit_tokens: int = 0) -> None:
-        """Einen Analyse-Vorgang erfassen."""
+    def record(self, claude_called: bool, ollama_used: bool, cache_hit_tokens: int = 0,
+               actual_cost_eur: Optional[float] = None) -> None:
+        """Einen Analyse-Vorgang erfassen. Wird actual_cost_eur übergeben (echte
+        Token-Kosten), ersetzt es die pauschale Schätzung."""
         today = date.today().isoformat()
 
         self._data["total_analyses"] += 1
@@ -95,9 +127,14 @@ class APICostTracker:
         day["analyses"] += 1
 
         if claude_called:
-            # Cache-Ersparnis in EUR: cached_tokens × $-Preis × Discount × Kurs
-            cache_saved = round(cache_hit_tokens / 1000 * 0.015 * _CACHE_DISCOUNT * _EUR_PER_USD, 5) if cache_hit_tokens else 0.0
-            actual_cost = round(_COST_PER_CLAUDE_CALL - cache_saved, 4)
+            if actual_cost_eur is not None:
+                # Echte, modell-spezifische Kosten aus der API-Antwort.
+                cache_saved = 0.0
+                actual_cost = round(actual_cost_eur, 5)
+            else:
+                # Fallback: pauschale Schätzung (Legacy-Aufrufer ohne Token-Daten).
+                cache_saved = round(cache_hit_tokens / 1000 * 0.015 * _CACHE_DISCOUNT * _EUR_PER_USD, 5) if cache_hit_tokens else 0.0
+                actual_cost = round(_COST_PER_CLAUDE_CALL - cache_saved, 4)
 
             self._data["claude_calls"]  += 1
             self._data["total_cost_eur"] = round(self._data.get("total_cost_eur", 0.0) + actual_cost, 4)
@@ -117,6 +154,28 @@ class APICostTracker:
             day["saved"]         = round(day.get("saved", 0.0) + saved, 4)
 
         self._save()
+
+    def record_claude_usage(self, model: str, input_tokens: int, output_tokens: int,
+                            cache_read_tokens: int = 0) -> float:
+        """Echten Claude-Aufruf mit modell-spezifischen Token-Kosten erfassen.
+        Für ALLE Claude-Aufrufer (auch außerhalb des Haupt-Analysepfads), damit
+        das Tagesbudget die tatsächlichen Kosten sieht. Gibt die EUR-Kosten zurück."""
+        cost = cost_eur_from_usage(model, input_tokens, output_tokens, cache_read_tokens)
+        self.record(claude_called=True, ollama_used=False, actual_cost_eur=cost)
+        return cost
+
+    @staticmethod
+    def usage_from_response(resp) -> Tuple[int, int, int]:
+        """(input_tokens, output_tokens, cache_read_tokens) aus einer
+        anthropic-Message-Antwort ziehen – tolerant gegenüber fehlenden Feldern."""
+        u = getattr(resp, "usage", None)
+        if u is None:
+            return 0, 0, 0
+        return (
+            int(getattr(u, "input_tokens", 0) or 0),
+            int(getattr(u, "output_tokens", 0) or 0),
+            int(getattr(u, "cache_read_input_tokens", 0) or 0),
+        )
 
     def check_daily_limit(self) -> Tuple[bool, str]:
         """

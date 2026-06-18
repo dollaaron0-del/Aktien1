@@ -367,12 +367,21 @@ Sei direkt, konkret und aktionsorientiert. Kein Marketing-Sprech."""
 
         try:
             import anthropic
+            from config import config as _cfg
             client = anthropic.Anthropic(api_key=self.api_key)
+            model = _cfg.claude_model  # vorher hartcodiert claude-opus-4-7
             resp = client.messages.create(
-                model="claude-opus-4-7",
+                model=model,
                 max_tokens=1500,
                 messages=[{"role": "user", "content": prompt}],
             )
+            try:
+                from analyzers.api_cost_tracker import APICostTracker
+                _ct = APICostTracker()
+                it, ot, cr = _ct.usage_from_response(resp)
+                _ct.record_claude_usage(model, it, ot, cr)
+            except Exception:
+                pass
             return resp.content[0].text.strip()
         except Exception as e:
             log.warning("WeekendPrep: Claude-Briefing fehlgeschlagen: %s", e)
