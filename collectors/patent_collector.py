@@ -11,7 +11,6 @@ from typing import List, Dict
 import requests
 from system.http import http_get
 
-_USPTO_RSS = "https://developer.uspto.gov/api-catalog"
 _GOOGLE_PATENTS_RSS = "https://patents.google.com/rss?assignee={company}&after={date}"
 
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; StockBot/1.0)"}
@@ -30,7 +29,6 @@ class PatentCollector:
     def collect(self, ticker: str, lookback_days: int = 30) -> List[Dict]:
         results = []
         results += self._collect_google_patents(ticker, lookback_days)
-        results += self._collect_uspto_fulltext(ticker, lookback_days)
         return results
 
     def _collect_google_patents(self, ticker: str, lookback_days: int) -> List[Dict]:
@@ -74,47 +72,6 @@ class PatentCollector:
                     ),
                     "url":          link,
                     "published_at": pub_dt.isoformat(),
-                    "priority":     "LOW",
-                })
-        except Exception:
-            pass
-        return results
-
-    def _collect_uspto_fulltext(self, ticker: str, lookback_days: int) -> List[Dict]:
-        results = []
-        company = _TICKER_TO_COMPANY.get(ticker.upper(), ticker)
-        cutoff  = datetime.utcnow() - timedelta(days=lookback_days)
-
-        try:
-            # USPTO Open Data API – Patent Full-Text Search
-            url = (
-                f"https://efts.uspto.gov/LATEST/search-index?q=%22{company}%22"
-                f"&dateRangeField=datePublished&startdt={cutoff.strftime('%Y-%m-%d')}"
-                f"&enddt={datetime.utcnow().strftime('%Y-%m-%d')}&hits.hits.total.value=true"
-            )
-            resp = http_get(url, headers=_HEADERS, timeout=12)
-            if resp.status_code != 200:
-                return []
-
-            data = resp.json()
-            hits = data.get("hits", {}).get("hits", [])
-
-            for hit in hits[:5]:
-                src   = hit.get("_source", {})
-                title = src.get("inventionTitle", "Patent ohne Titel")
-                date  = src.get("datePublished", "")
-                doc_id = src.get("patentNumber", "")
-
-                results.append({
-                    "source":       "USPTO Patent Filing",
-                    "ticker":       ticker,
-                    "title":        f"USPTO Patent: {title[:80]} ({doc_id})",
-                    "text":         (
-                        f"{company} hat ein Patent beim USPTO eingereicht: {title}. "
-                        f"Patentnummer: {doc_id}. Datum: {date}."
-                    ),
-                    "url":          f"https://patents.google.com/patent/{doc_id}",
-                    "published_at": date or datetime.utcnow().isoformat(),
                     "priority":     "LOW",
                 })
         except Exception:
