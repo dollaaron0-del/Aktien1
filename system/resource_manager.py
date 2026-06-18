@@ -59,15 +59,55 @@ _IDLE_BALANCED_SEC     = 1 * 60    # 1 Minute idle → BALANCED
 _RAM_PERFORMANCE_PCT   = 0.60      # ≥60% frei → PERFORMANCE
 _RAM_MINIMAL_PCT       = 0.30      # <30% frei → MINIMAL
 
-# Ollama-Modell je Tier (via .env überschreibbar)
-# Defaults sind auf 32 GB Unified Memory ausgelegt (Mac Mini M4):
-#   PERFORMANCE → qwen2.5:32b  (~20 GB VRAM, beste Qualität)
-#   BALANCED    → qwen2.5:14b  (~9 GB VRAM, gut für Parallelanalysen)
-#   MINIMAL     → llama3.1:8b  (~5 GB VRAM, Mac aktiv genutzt)
-# Bei 24 GB RAM empfohlen: OLLAMA_MODEL_PERFORMANCE=qwen2.5:14b
-_MODEL_PERFORMANCE = os.getenv("OLLAMA_MODEL_PERFORMANCE", "qwen2.5:32b")
-_MODEL_BALANCED    = os.getenv("OLLAMA_MODEL_BALANCED",    "qwen2.5:14b")
-_MODEL_MINIMAL     = os.getenv("OLLAMA_MODEL_MINIMAL",     "llama3.1:8b")
+def _has_inference_gpu() -> bool:
+    """True, wenn eine für Ollama nutzbare GPU vorhanden ist.
+
+    Apple Silicon (Metal) und NVIDIA zählen; ein headless Linux-/CPU-Server
+    nicht. Ohne GPU sind 8b/14b/32b-Modelle zu langsam für das Analyse-Timeout
+    (OLLAMA_TIMEOUT ~60s) → der Circuit Breaker schaltet Ollama ab und alles
+    fällt auf das budgetgedeckelte Claude zurück → leere SKIP-Analysen ohne
+    Kaufsignale (vgl. 17./18.6.). Mit OLLAMA_FORCE_GPU=1 erzwingbar."""
+    import platform
+    if platform.system() == "Darwin":
+        return True  # Apple Silicon: Ollama läuft auf der Metal-GPU
+    if os.getenv("OLLAMA_FORCE_GPU", "").lower() in ("1", "true", "yes"):
+        return True
+    try:
+        subprocess.check_output(["nvidia-smi", "-L"], stderr=subprocess.DEVNULL, timeout=3)
+        return True
+    except Exception:
+        return False
+
+
+_CPU_ONLY = not _has_inference_gpu()
+
+# Schnelles Modell für reine CPU-Hosts. Große Modelle erzeugen die ~240 Output-
+# Tokens der Vollanalyse bei ~1–2 tok/s nicht innerhalb des Timeouts; ein
+# kleines 1b/3b-Modell bleibt zuverlässig darunter und liefert überhaupt Signale.
+_MODEL_CPU = os.getenv("OLLAMA_MODEL_CPU", "llama3.2:3b")
+
+# Ollama-Modell je Tier (via .env überschreibbar).
+# GPU-Defaults (Mac Mini M4, 32 GB Unified Memory):
+#   PERFORMANCE → qwen2.5:32b · BALANCED → qwen2.5:14b · MINIMAL → llama3.1:8b
+# Auf reiner CPU greift stattdessen das schnelle _MODEL_CPU als Default – eine
+# explizite OLLAMA_MODEL_*-Env hat weiterhin Vorrang (Achtung Tier-Override:
+# ein dort gepinntes 8b/14b macht den CPU-Schutz wirkungslos).
+_DEF_PERFORMANCE = _MODEL_CPU if _CPU_ONLY else "qwen2.5:32b"
+_DEF_BALANCED    = _MODEL_CPU if _CPU_ONLY else "qwen2.5:14b"
+_DEF_MINIMAL     = _MODEL_CPU if _CPU_ONLY else "llama3.1:8b"
+
+_MODEL_PERFORMANCE = os.getenv("OLLAMA_MODEL_PERFORMANCE", _DEF_PERFORMANCE)
+_MODEL_BALANCED    = os.getenv("OLLAMA_MODEL_BALANCED",    _DEF_BALANCED)
+_MODEL_MINIMAL     = os.getenv("OLLAMA_MODEL_MINIMAL",     _DEF_MINIMAL)
+
+if _CPU_ONLY:
+    log.info(
+        "Resource-Manager: kein GPU erkannt → CPU-Modus. Ollama-Modelle: "
+        "PERFORMANCE=%s BALANCED=%s MINIMAL=%s (schnelles Default=%s). "
+        "Falls hier 8b/14b steht, ist es per OLLAMA_MODEL_* gepinnt – auf CPU "
+        "zu langsam, bitte auf %s setzen.",
+        _MODEL_PERFORMANCE, _MODEL_BALANCED, _MODEL_MINIMAL, _MODEL_CPU, _MODEL_CPU,
+    )
 
 TIER_MODELS = {
     ResourceTier.PERFORMANCE: _MODEL_PERFORMANCE,

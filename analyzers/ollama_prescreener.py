@@ -191,7 +191,13 @@ class OllamaPrescreener:
 
     # ── Verfügbarkeit ─────────────────────────────────────────────────────────
 
-    _MAX_CONSEC_TIMEOUTS = 2
+    # Auf einer überlasteten CPU-Box (Load > Kerne) schwankt die Analyse-Latenz
+    # stark um das Timeout – ein einzelner langsamer Ticker darf NICHT die ganze
+    # lokale Engine für den restlichen Lauf abschalten (sonst kippt alles auf das
+    # budgetgedeckelte Claude → leere SKIP-Analysen, keine Kaufsignale, 18.6.).
+    # Mehr Toleranz; parallele Worker lassen den Zähler ohnehin überschießen.
+    # Per Env feinjustierbar.
+    _MAX_CONSEC_TIMEOUTS = int(os.getenv("OLLAMA_MAX_CONSEC_TIMEOUTS", "5"))
 
     def is_available(self) -> bool:
         """Prüft ob Ollama läuft. Ergebnis wird gecacht."""
@@ -500,7 +506,13 @@ class OllamaPrescreener:
         elif self.capability == "MEDIUM":
             max_items, max_tokens = 20, 350
         else:  # LOW – schwache CPU-Modelle: kompakt halten
-            max_items, max_tokens = 10, 240
+            # 240 Tokens brauchten auf der überlasteten 6-Kern-Box ~52–58s und
+            # rissen damit reihenweise das 60s-Timeout (18.6.). Knapperes Budget
+            # (≈40s bei ~4 tok/s) hält die Analyse zuverlässig drunter; das
+            # kompakte JSON-Schema (_FULL_ANALYSIS_PROMPT) passt in ~170 Tokens.
+            # Per Env feinjustierbar.
+            max_items   = int(os.getenv("OLLAMA_LOW_MAX_ITEMS",  "8"))
+            max_tokens  = int(os.getenv("OLLAMA_LOW_MAX_TOKENS", "170"))
         headlines   = self._extract_headlines(news_items, max_items=max_items)
         price_block = self._format_price_block(price_data or {})
 

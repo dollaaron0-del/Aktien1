@@ -1022,6 +1022,20 @@ def run_analysis_cycle(
 
     _parallel_analysis = os.getenv("PARALLEL_ANALYSIS", "true").lower() in ("1", "true", "yes")
     _an_workers = min(len(_normalized_watchlist), int(os.getenv("ANALYSIS_WORKERS", "4")))
+    # Auf reiner CPU zieht EINE lokale Ollama-Analyse bereits ~4–5 Kerne. Mehrere
+    # parallele Analysen übersubskribieren die Kerne → jede Generierung kriecht in
+    # ihr Timeout → Circuit Breaker schaltet Ollama ab → alles fällt auf das
+    # budgetgedeckelte Claude → leere SKIP-Analysen ohne Kaufsignale (Befund 18.6.,
+    # 0 Trades seit 15.6.). Daher die Analyse-Worker an den Ressourcen-Tier koppeln
+    # (MINIMAL/CPU = 1 Worker), sofern ANALYSIS_WORKERS nicht explizit gesetzt ist.
+    if "ANALYSIS_WORKERS" not in os.environ:
+        try:
+            from system.resource_manager import get_resource_manager
+            _rm_for_workers = get_resource_manager()
+            _rm_for_workers.update()
+            _an_workers = max(1, min(_an_workers, _rm_for_workers.max_workers()))
+        except Exception as _rmw_err:
+            log.debug("Worker-Cap via Resource-Manager übersprungen: %s", _rmw_err)
     if _parallel_analysis and _an_workers > 1 and not _multi_agent_enabled:
         log.info("Analyse-Prefetch: %d Titel mit %d Workern", len(_normalized_watchlist), _an_workers)
         with ThreadPoolExecutor(max_workers=_an_workers) as _an_pool:
