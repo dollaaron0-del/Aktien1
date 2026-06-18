@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import tempfile
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from logger import get_logger
@@ -144,6 +147,7 @@ class ClaudeAnalyzer:
         self._call_count = 0
         self._total_tokens = 0
         self._last_usage = None         # (in, out, cache_read) des letzten Claude-Calls
+        self._last_model = model         # Modell des letzten Calls (für Kostenabrechnung)
         self._local_count = 0          # via Ollama/MLX abgehandelt (kein Claude)
         self._compress_count = 0       # News lokal komprimiert vor Claude
         self._prescreener = None       # lazy: OllamaPrescreener oder MLXPrescreener
@@ -255,6 +259,18 @@ class ClaudeAnalyzer:
                 is_crypto, existing_position, context_block,
             )
 
+        # Dedup: bei Neueinstiegen identische News (gleicher Fingerprint) für
+        # denselben Ticker innerhalb der Cache-TTL nicht erneut an Claude geben –
+        # das letzte Vollergebnis wird wiederverwendet (Thesis-Checks hängen am
+        # Live-Preis und werden bewusst nicht gecacht).
+        if existing_position is None:
+            cached = self._result_cache_get(ticker, news)
+            if cached is not None:
+                log.info("[%s] Dedup-Treffer: identische News < Cache-TTL → Claude übersprungen", ticker)
+                if self._cost_tracker is not None:
+                    self._cost_tracker.record(claude_called=False, ollama_used=False)
+                return cached
+
         # Claude übernimmt jetzt die finale Analyse. Im Frugal-Modus lässt Ollama
         # die News vorher lokal zu einem kompakten Briefing eindampfen → weniger
         # Claude-Input-Tokens (günstiger), fokussierterer Prompt.
@@ -281,11 +297,16 @@ class ClaudeAnalyzer:
                 from analyzers.api_cost_tracker import cost_eur_from_usage
                 self._cost_tracker.record(
                     claude_called=True, ollama_used=False,
-                    actual_cost_eur=cost_eur_from_usage(self.model, *usage),
+                    actual_cost_eur=cost_eur_from_usage(
+                        getattr(self, "_last_model", self.model), *usage),
                 )
                 self._last_usage = None
             else:
                 self._cost_tracker.record(claude_called=True, ollama_used=False)
+
+        # Neueinstiegs-Ergebnis für identische News cachen (Dedup-Skip oben).
+        if existing_position is None:
+            self._result_cache_store(ticker, news, result)
         return result
 
     def _local_fallback(
@@ -465,35 +486,75 @@ class ClaudeAnalyzer:
             return ""
         return "\n" + "\n\n".join(parts) + "\n"
 
+    # ── Zentraler Claude-Aufruf (Caching + Modell-Tiering + Usage-Tracking) ──
+
+    def _light_model(self) -> str:
+        """Leichtes Modell für Nebenaufrufe (Thesis-Check). Leere Config → das
+        Hauptmodell (kein Tiering)."""
+        from config import config as _cfg
+        return getattr(_cfg, "claude_model_light", "") or self.model
+
+    def _cache_control(self) -> Dict:
+        """cache_control für gecachte System-Blöcke. ttl="1h" hält den Cache über
+        den ganzen (langsamen) Zyklus warm statt nur 5 min."""
+        from config import config as _cfg
+        cc: Dict = {"type": "ephemeral"}
+        ttl = (getattr(_cfg, "claude_cache_ttl", "5m") or "5m").lower()
+        if ttl in ("1h", "60m"):
+            cc["ttl"] = "1h"
+        return cc
+
+    def _system_blocks(self, context_block: str = "") -> List[Dict]:
+        """System-Prompt + (pro Zyklus konstanter) Makro/Geo-Kontext als gecachte
+        Blöcke. Der Kontext ist für ALLE Ticker eines Zyklus identisch → einmal
+        statt pro Ticker als Input bezahlt."""
+        cc = self._cache_control()
+        blocks = [{"type": "text", "text": _SYSTEM_PROMPT, "cache_control": cc}]
+        ctx = (context_block or "").strip()
+        if ctx:
+            blocks.append({"type": "text", "text": "AKTUELLER MARKTKONTEXT:\n" + ctx,
+                           "cache_control": cc})
+        return blocks
+
+    def _call_claude(self, user_prompt: str, context_block: str, model: str,
+                     max_tokens: int) -> str:
+        """Einziger Pfad zu client.messages.create – setzt Caching/TTL, das
+        gewählte Modell und erfasst Usage+Modell für die Kostenabrechnung.
+        Gibt den Antworttext zurück; wirft bei Fehler (Aufrufer behandelt)."""
+        import anthropic
+        client = anthropic.Anthropic(api_key=self.api_key)
+        extra_headers = {}
+        if self._cache_control().get("ttl") == "1h":
+            extra_headers["anthropic-beta"] = "extended-cache-ttl-2025-04-11"
+        resp = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=self._system_blocks(context_block),
+            messages=[{"role": "user", "content": user_prompt}],
+            extra_headers=extra_headers or None,
+        )
+        self._call_count += 1
+        self._total_tokens += resp.usage.input_tokens + resp.usage.output_tokens
+        self._last_usage = (
+            resp.usage.input_tokens, resp.usage.output_tokens,
+            int(getattr(resp.usage, "cache_read_input_tokens", 0) or 0),
+        )
+        self._last_model = model
+        return resp.content[0].text
+
     def _claude_analysis(
         self, ticker: str, news_text: str, price: float, is_crypto: bool,
         context_block: str = "",
     ) -> AnalysisResult:
+        # Kontext steckt im gecachten System-Block (s. _system_blocks) → nicht
+        # zusätzlich in den User-Prompt (sonst doppelt bezahlt).
         template = _USER_TEMPLATE_CRYPTO if is_crypto else _USER_TEMPLATE_STANDARD
         prompt = template.format(
-            ticker=ticker, price=price, news_text=news_text, context_block=context_block
+            ticker=ticker, price=price, news_text=news_text, context_block=""
         )
-
         try:
-            import anthropic
-            client = anthropic.Anthropic(api_key=self.api_key)
-            resp = client.messages.create(
-                model=self.model,
-                max_tokens=1000,
-                system=[{
-                    "type": "text",
-                    "text": _SYSTEM_PROMPT,
-                    "cache_control": {"type": "ephemeral"},
-                }],
-                messages=[{"role": "user", "content": prompt}],
-            )
-            self._call_count += 1
-            self._total_tokens += resp.usage.input_tokens + resp.usage.output_tokens
-            self._last_usage = (
-                resp.usage.input_tokens, resp.usage.output_tokens,
-                int(getattr(resp.usage, "cache_read_input_tokens", 0) or 0),
-            )
-            return self._parse_response(ticker, resp.content[0].text)
+            text = self._call_claude(prompt, context_block, self.model, max_tokens=1000)
+            return self._parse_response(ticker, text)
         except Exception as e:
             log.warning("Claude-Analyse fehlgeschlagen für %s: %s", ticker, e)
             # Guthaben-/Auth-Fehler → None signalisieren (Aufrufer sperrt Claude
@@ -514,22 +575,14 @@ class ClaudeAnalyzer:
             gain_pct=gain_pct,
             original_rationale=position.rationale[:300],
             news_text=news_text,
-            context_block=context_block,
+            context_block="",
         )
         try:
-            import anthropic
-            client = anthropic.Anthropic(api_key=self.api_key)
-            resp = client.messages.create(
-                model=self.model,
-                max_tokens=400,
-                messages=[{"role": "user", "content": prompt}],
+            # Nebenaufruf → leichtes Modell (Haiku): ~1/3 der Sonnet-Kosten.
+            text = self._call_claude(
+                prompt, context_block, self._light_model(), max_tokens=400
             )
-            self._call_count += 1
-            self._last_usage = (
-                resp.usage.input_tokens, resp.usage.output_tokens,
-                int(getattr(resp.usage, "cache_read_input_tokens", 0) or 0),
-            )
-            data = self._safe_json(resp.content[0].text)
+            data = self._safe_json(text)
             result = self._empty_result(ticker)
             result.thesis_valid = data.get("thesis_valid", True)
             result.thesis_break_reason = data.get("thesis_break_reason", "")
@@ -686,6 +739,93 @@ class ClaudeAnalyzer:
             confidence="LOW",
             recommendation="SKIP",
         )
+
+    # ── Dedup-Ergebnis-Cache (identische News → Claude überspringen) ──────────
+
+    _RESULT_CACHE_FILE = os.path.join(
+        os.path.dirname(__file__), "..", "data", "claude_result_cache.json"
+    )
+
+    @staticmethod
+    def _news_fingerprint(ticker: str, news: List[Dict]) -> str:
+        """Stabiler Fingerprint der News-Lage (Titel+Quelle, reihenfolgeunabhängig).
+        Gleiche News → gleicher Key → derselbe Cache-Eintrag."""
+        parts = sorted(
+            f"{(a.get('title') or '')[:200]}|{a.get('source') or ''}"
+            for a in (news or [])
+        )
+        raw = ticker.upper() + "\n" + "\n".join(parts)
+        return hashlib.sha1(raw.encode("utf-8", "ignore")).hexdigest()
+
+    def _result_cache_ttl_hours(self) -> float:
+        try:
+            from config import config as _cfg
+            return float(getattr(_cfg, "claude_result_cache_hours", 0) or 0)
+        except Exception:
+            return 0.0
+
+    def _result_cache_get(self, ticker: str, news: List[Dict]) -> Optional[AnalysisResult]:
+        ttl = self._result_cache_ttl_hours()
+        if ttl <= 0 or not news:
+            return None
+        key = self._news_fingerprint(ticker, news)
+        try:
+            with open(self._RESULT_CACHE_FILE) as f:
+                store = json.load(f)
+        except Exception:
+            return None
+        entry = store.get(key)
+        if not entry:
+            return None
+        try:
+            age = datetime.utcnow() - datetime.fromisoformat(entry["stored_at"])
+            if age > timedelta(hours=ttl):
+                return None
+            return AnalysisResult(**entry["result"])
+        except Exception:
+            return None
+
+    def _result_cache_store(self, ticker: str, news: List[Dict], result: AnalysisResult) -> None:
+        ttl = self._result_cache_ttl_hours()
+        if ttl <= 0 or not news or result is None:
+            return
+        # Leeres Platzhalter-Ergebnis (Parse-/Engine-Fehler) nicht cachen – sonst
+        # würde es eine spätere echte Analyse derselben News unterdrücken.
+        if (str(result.recommendation).upper() == "SKIP"
+                and str(result.confidence).upper() == "LOW"
+                and str(result.direction).upper() == "NEUTRAL"
+                and 0.43 <= float(result.sentiment_score or 0.5) <= 0.57):
+            return
+        key = self._news_fingerprint(ticker, news)
+        try:
+            with open(self._RESULT_CACHE_FILE) as f:
+                store = json.load(f)
+        except Exception:
+            store = {}
+        store[key] = {"stored_at": datetime.utcnow().isoformat(), "result": asdict(result)}
+        # Abgelaufene Einträge beim Schreiben aufräumen (Datei klein halten).
+        cutoff = datetime.utcnow() - timedelta(hours=max(ttl, 1.0))
+        for k in [k for k, v in store.items()
+                  if self._stored_before(v, cutoff)]:
+            store.pop(k, None)
+        try:
+            os.makedirs(os.path.dirname(self._RESULT_CACHE_FILE), exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="w", dir=os.path.dirname(self._RESULT_CACHE_FILE),
+                suffix=".tmp", delete=False,
+            ) as tmp:
+                json.dump(store, tmp, indent=2)
+                tmp_path = tmp.name
+            os.replace(tmp_path, self._RESULT_CACHE_FILE)
+        except Exception as e:
+            log.debug("Result-Cache Speicherfehler: %s", e)
+
+    @staticmethod
+    def _stored_before(entry: Dict, cutoff: datetime) -> bool:
+        try:
+            return datetime.fromisoformat(entry["stored_at"]) < cutoff
+        except Exception:
+            return True
 
     def get_stats(self) -> Dict:
         return {

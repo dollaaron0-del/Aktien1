@@ -90,6 +90,25 @@ class Config:
     claude_model: str = field(
         default_factory=lambda: os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
     )
+    # Leichtes Modell für Nebenaufrufe (Thesis-/Exit-Check offener Positionen).
+    # Haiku kostet ~1/3 von Sonnet bei In+Out – die finale Katalysator-Analyse
+    # bleibt auf claude_model. Leer/"" → nutzt claude_model (kein Tiering).
+    claude_model_light: str = field(
+        default_factory=lambda: os.getenv("CLAUDE_MODEL_LIGHT", "claude-haiku-4-5-20251001")
+    )
+    # Prompt-Cache-Lebensdauer für das System-Prompt + den (pro Zyklus konstanten)
+    # Makro/Geo-Kontext. "1h" hält den Cache über den ganzen Zyklus warm (sonst
+    # läuft der 5-min-Default zwischen langsamen CPU-Tickern ab → Vollpreis).
+    # Erlaubte Werte: "5m" | "1h".
+    claude_cache_ttl: str = field(
+        default_factory=lambda: os.getenv("CLAUDE_CACHE_TTL", "1h")
+    )
+    # Dedup: identische News (gleicher Fingerprint) für denselben Ticker werden
+    # innerhalb dieser Spanne nicht erneut an Claude geschickt – das letzte
+    # Vollergebnis wird wiederverwendet. 0 = aus.
+    claude_result_cache_hours: float = field(
+        default_factory=lambda: float(os.getenv("CLAUDE_RESULT_CACHE_HOURS", "6"))
+    )
 
     # Telegram notifications (optional)
     telegram_bot_token: str = field(default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", ""))
