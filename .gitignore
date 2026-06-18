@@ -2,6 +2,7 @@ data/
 __pycache__/
 *.pyc
 .env
+.env.bak*
 
 # Laufzeit & Cruft (nicht committen)
 venv/
