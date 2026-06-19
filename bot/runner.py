@@ -70,6 +70,33 @@ def _valid_price(p) -> bool:
     except (TypeError, ValueError):
         return False
 
+
+def _ensure_current_price(ticker: str, price_data: Optional[dict], broker) -> dict:
+    """Sorgt für einen gültigen current_price in price_data. Liefert die primäre
+    Quelle (Yahoo) keinen (NaN/None/0 – z.B. neue/illiquide IPOs wie SPCX), wird
+    der Broker als Fallback befragt: IBKRBroker.get_price liefert dank Delayed-
+    Marktdaten (IBKR_MARKET_DATA_TYPE=3) einen Kurs und fällt seinerseits auf
+    yfinance zurück. Erst danach greift die NaN-Schranke.
+
+    NUR aus dem seriellen Pfad aufrufen – ib_insync ist nicht thread-safe und der
+    Broker hat keinen Lock; im parallelen Prefetch-Pool wäre das unsicher."""
+    if price_data is None:
+        price_data = {"ticker": ticker}
+    if _valid_price(price_data.get("current_price")):
+        return price_data
+    getter = getattr(broker, "get_price", None)
+    if not callable(getter):
+        return price_data
+    try:
+        bp = getter(ticker)
+    except Exception as e:
+        log.debug("[%s] Broker-Preis-Fallback fehlgeschlagen: %s", ticker, e)
+        return price_data
+    if _valid_price(bp):
+        price_data["current_price"] = round(float(bp), 4)
+        log.info("[%s] Kurs via Broker-Fallback (Primärquelle leer): $%.4f", ticker, float(bp))
+    return price_data
+
 import threading as _threading
 _cycle_lock = _threading.Lock()
 _last_cycle_start: Optional[datetime] = None
@@ -1115,6 +1142,12 @@ def run_analysis_cycle(
                 {"current_price": broker.get_crypto_price(ticker), "volume": 0}
                 if _is_crypto(ticker) else collectors["yahoo"].get_price_data(ticker)
             )
+
+        # Yahoo leer? → IBKR-Delayed (+yfinance) als Fallback, BEVOR die Schranke
+        # greift. Macht Titel handelbar, die die Primärquelle nicht quotet.
+        # Serieller Pfad → broker-Aufruf ist hier thread-safe (s. _ensure_current_price).
+        if not _is_crypto(ticker):
+            price_data = _ensure_current_price(ticker, price_data, broker)
 
         # Kurs-Check vor Claude: kein (gültiger) Kurs → Claude-Aufruf sparen.
         # _valid_price fängt auch NaN ab – sonst rutscht ein Titel mit
