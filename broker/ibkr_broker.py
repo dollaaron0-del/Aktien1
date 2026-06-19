@@ -24,6 +24,7 @@ Unterstützte Ticker-Formate:
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import time
 from typing import Dict, List, Optional
@@ -59,6 +60,11 @@ _PRICE_TIMEOUT   = 8    # Sekunden Wartezeit auf Marktdaten
 _ORDER_TIMEOUT   = 60   # Sekunden Wartezeit auf Fill (Paper braucht länger als Live)
 _RECONNECT_DELAY = 5    # Sekunden vor Reconnect-Versuch
 _PAPER_ONLY      = os.getenv("IBKR_PAPER_ONLY", "false").lower() == "true"
+# Marktdaten-Typ: 1=Echtzeit (braucht Abo), 2=Frozen, 3=Delayed (~15min, abo-frei),
+# 4=Delayed-Frozen. Paper-Konten haben i.d.R. KEIN Echtzeit-Abo → reqMktData liefert
+# dann NaN (Error 354 "not subscribed") und jeder Trade scheitert mangels Kurs.
+# Default 3 (Delayed) macht den Bot abo-frei lauffähig; per ENV überschreibbar.
+_MKT_DATA_TYPE   = int(os.getenv("IBKR_MARKET_DATA_TYPE", "3"))
 
 # ── Ticker-Suffix → (Exchange, Currency) ─────────────────────────────────────
 _SUFFIX_MAP: Dict[str, tuple] = {
@@ -93,6 +99,35 @@ def _parse_ticker(ticker: str):
             symbol = ticker[:len(ticker) - len(suffix)]
             return symbol, exch, cur
     return ticker, "SMART", "USD"
+
+
+def _valid_price(p) -> bool:
+    """True nur für eine echte, positive Zahl. marketPrice() liefert bei
+    fehlendem Abo/Tick NaN – und NaN ist truthy, NaN>0 jedoch False, weshalb
+    ein naives `if p and p > 0` NaN durchrutschen lassen kann. Hier zentral
+    abgesichert (vgl. yfinance-NaN-Score-Falle)."""
+    try:
+        return p is not None and not math.isnan(float(p)) and float(p) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _ticker_price(td) -> Optional[float]:
+    """Bester verfügbarer Preis aus einem ib_insync-Ticker: marketPrice
+    (Midpoint), dann last, dann close. Wichtig bei Delayed-Daten, wo der
+    Midpoint anfangs NaN sein kann, last/close aber schon stehen."""
+    for getter in (
+        lambda: td.marketPrice(),
+        lambda: getattr(td, "last", None),
+        lambda: getattr(td, "close", None),
+    ):
+        try:
+            p = getter()
+        except Exception:
+            continue
+        if _valid_price(p):
+            return round(float(p), 4)
+    return None
 
 
 class IBKRBroker:
@@ -141,6 +176,15 @@ class IBKRBroker:
         try:
             self._ib = ib
             self._connected = True
+
+            # Marktdaten-Typ setzen, BEVOR Kurse abgefragt werden. Ohne Echtzeit-Abo
+            # (typisch bei Paper-Konten) liefert reqMktData sonst NaN (Error 354) und
+            # jeder Trade scheitert mangels gültigem Kurs. Delayed (Typ 3) ist abo-frei.
+            try:
+                ib.reqMarketDataType(_MKT_DATA_TYPE)
+                log.info("IBKR: Marktdaten-Typ = %d (1=Echtzeit,3=Delayed)", _MKT_DATA_TYPE)
+            except Exception as e:
+                log.warning("IBKR: reqMarketDataType(%d) fehlgeschlagen: %s", _MKT_DATA_TYPE, e)
 
             accounts = ib.managedAccounts()
             log.info("IBKR: managedAccounts = %s", accounts)
@@ -208,11 +252,11 @@ class IBKRBroker:
             self._ib.qualifyContracts(contract)
             ticker_data = self._ib.reqMktData(contract, "", False, False)
             self._ib.sleep(_PRICE_TIMEOUT)
-            price = ticker_data.marketPrice()
+            price = _ticker_price(ticker_data)
             self._ib.cancelMktData(contract)
-            if price and price > 0:
+            if price is not None:
                 log.debug("IBKR price %s: %.4f", ticker, price)
-                return round(float(price), 4)
+                return price
         except Exception as e:
             log.debug("IBKR get_price %s: %s", ticker, e)
         return self._yf_price(ticker)
@@ -240,9 +284,9 @@ class IBKRBroker:
             self._ib.sleep(_PRICE_TIMEOUT)
 
             for t, td in ticker_map.items():
-                p = td.marketPrice()
-                if p and p > 0:
-                    result[t] = round(float(p), 4)
+                p = _ticker_price(td)
+                if p is not None:
+                    result[t] = p
 
             # Cancel all subscriptions
             for _, c in contracts:
@@ -271,7 +315,7 @@ class IBKRBroker:
             self._ib.sleep(_PRICE_TIMEOUT)
             price = td.marketPrice()
             self._ib.cancelMktData(contract)
-            if price and price > 0:
+            if _valid_price(price):
                 return round(float(price), 6)
         except Exception as e:
             log.debug("IBKR get_crypto_price %s: %s – Fallback yfinance", symbol, e)
@@ -526,7 +570,9 @@ class IBKRBroker:
             import yfinance as yf
             hist = yf.Ticker(ticker).history(period="1d")
             if not hist.empty:
-                return round(float(hist["Close"].iloc[-1]), 4)
+                close = hist["Close"].iloc[-1]
+                if _valid_price(close):
+                    return round(float(close), 4)
         except Exception as e:
             log.debug("yfinance fallback %s: %s", ticker, e)
         return None

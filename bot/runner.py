@@ -2,6 +2,7 @@
 bot/runner.py – Analysis cycle, news collection, and related helpers.
 """
 
+import math
 import os
 import traceback
 from collections import defaultdict
@@ -55,6 +56,19 @@ from collectors.tradingview_webhook import get_pending_sells, get_pending_macro_
 
 console = Console()
 log = get_logger(__name__)
+
+
+def _valid_price(p) -> bool:
+    """True nur für eine echte, positive Zahl. Yahoo/yfinance liefern bei
+    neuen/illiquiden Titeln (z.B. frische IPOs wie SPCX) NaN als current_price –
+    und NaN ist truthy, sodass `if price` / `not price` es durchrutschen lassen.
+    Ein solcher NaN-BUY läuft dann bis zur Kauf-Empfehlung (inkl. Telegram-
+    Nachricht), scheitert aber zwangsläufig an der Kurs-Schranke vor der Order.
+    Zentral abgesichert (vgl. yfinance-NaN-Score-Falle)."""
+    try:
+        return p is not None and math.isfinite(float(p)) and float(p) > 0
+    except (TypeError, ValueError):
+        return False
 
 import threading as _threading
 _cycle_lock = _threading.Lock()
@@ -971,8 +985,8 @@ def run_analysis_cycle(
             {"current_price": broker.get_crypto_price(t), "volume": 0}
             if _is_crypto(t) else collectors["yahoo"].get_price_data(t)
         )
-        if not _is_crypto(t) and not _price.get("current_price"):
-            return None  # kein Kurs → Schleife überspringt ohnehin (inline)
+        if not _is_crypto(t) and not _valid_price(_price.get("current_price")):
+            return None  # kein (gültiger, NaN-freier) Kurs → Schleife überspringt ohnehin
         # FinBERT-Signal voranstellen (read-only)
         try:
             from analyzers.finbert_analyzer import FinBERTAnalyzer
@@ -1102,8 +1116,12 @@ def run_analysis_cycle(
                 if _is_crypto(ticker) else collectors["yahoo"].get_price_data(ticker)
             )
 
-        # Kurs-Check vor Claude: kein Kurs → Claude-Aufruf sparen
-        if not _is_crypto(ticker) and not price_data.get("current_price"):
+        # Kurs-Check vor Claude: kein (gültiger) Kurs → Claude-Aufruf sparen.
+        # _valid_price fängt auch NaN ab – sonst rutscht ein Titel mit
+        # current_price=NaN (z.B. neue/illiquide IPOs) hier durch, Claude
+        # erzwingt einen BUY und es feuert eine "Kauf nicht ausgeführt"-Nachricht,
+        # obwohl die Order mangels Kurs nie platziert werden kann.
+        if not _is_crypto(ticker) and not _valid_price(price_data.get("current_price")):
             console.print(f"  [dim]Kein Kurs für {ticker} verfügbar – übersprungen[/dim]")
             continue
 
@@ -1385,7 +1403,8 @@ def run_analysis_cycle(
             except Exception as e:
                 log.debug("Stock-Relations Fehler: %s", e)
 
-        _cur_px = float((price_data or {}).get("current_price") or 0)
+        _raw_px = (price_data or {}).get("current_price")
+        _cur_px = float(_raw_px) if _valid_price(_raw_px) else 0.0
         if _cur_px > 0:
             # Fehler bei EINEM Ticker darf den restlichen Zyklus nicht abreißen
             # und muss sichtbar sein (nicht still verschluckt – vgl. Execution-Bug).
