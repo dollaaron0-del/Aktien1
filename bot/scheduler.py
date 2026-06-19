@@ -1418,10 +1418,10 @@ def run_bot_loop(
             local_now = datetime.now()
             if local_now.weekday() >= 5 or not (7 <= local_now.hour < 21):
                 return
-            from analyzers.watchlist_scanner import BreakoutWatchScanner
+            from analyzers.watchlist_scanner import WatchlistScanner
             from analyzers.user_request_queue import add_ticker as _req_ticker
 
-            scanner = BreakoutWatchScanner(max_picks=6)
+            scanner = WatchlistScanner(max_picks=6)
             exclude = list(portfolio.all_positions().keys())
             hits = scanner.scan(exclude=exclude)
             if not hits:

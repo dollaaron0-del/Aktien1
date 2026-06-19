@@ -24,13 +24,28 @@ Unterstützte Ticker-Formate:
 from __future__ import annotations
 
 import asyncio
+import functools
 import math
 import os
+import threading
 import time
 from typing import Dict, List, Optional
 
 from logger import get_logger
 from broker.order_result import OrderResult
+
+
+def _synchronized(method):
+    """Serialisiert ib_insync-Zugriffe über self._lock. ib_insync ist NICHT
+    thread-safe (eine Event-Loop) – ohne diesen Lock kann ein paralleler
+    Preis-Abruf (z.B. get_crypto_price aus dem Prefetch-Pool des Runners) die
+    Verbindung eines gleichzeitigen Order-/Preis-Calls zerschießen. RLock, damit
+    verschachtelte Aufrufe (buy → _ensure_connected) nicht selbst blockieren."""
+    @functools.wraps(method)
+    def _wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return _wrapper
 
 log = get_logger(__name__)
 
@@ -140,6 +155,7 @@ class IBKRBroker:
         self._ib = None
         self._connected = False
         self._active_account: str = _ACCOUNT
+        self._lock = threading.RLock()
         self._connect()
 
     # ── Verbindungsmanagement ─────────────────────────────────────────────────
@@ -244,6 +260,7 @@ class IBKRBroker:
 
     # ── Preisabfragen ─────────────────────────────────────────────────────────
 
+    @_synchronized
     def get_price(self, ticker: str) -> Optional[float]:
         if not self._ensure_connected():
             return self._yf_price(ticker)
@@ -261,6 +278,7 @@ class IBKRBroker:
             log.debug("IBKR get_price %s: %s", ticker, e)
         return self._yf_price(ticker)
 
+    @_synchronized
     def get_prices(self, tickers: List[str]) -> Dict[str, float]:
         if not tickers:
             return {}
@@ -304,6 +322,7 @@ class IBKRBroker:
             result.update(_cached(missing))
         return result
 
+    @_synchronized
     def get_crypto_price(self, symbol: str) -> Optional[float]:
         base = symbol.split("/")[0].upper().removesuffix("-USD")
         if not self._ensure_connected():
@@ -406,6 +425,7 @@ class IBKRBroker:
             reason=f"Fill-Timeout nach {_ORDER_TIMEOUT}s – Order gecancelt",
         )
 
+    @_synchronized
     def buy(self, ticker: str, shares: float, price: float,
             limit: bool = False, stop_loss: Optional[float] = None,
             take_profit: Optional[float] = None) -> Dict:
@@ -428,6 +448,7 @@ class IBKRBroker:
             log.exception("IBKR buy %s: %s", ticker, e)
             return OrderResult.error(reason=str(e), mode="ibkr")
 
+    @_synchronized
     def sell(self, ticker: str, shares: float, price: float) -> Dict:
         if not self._ensure_connected():
             log.error("IBKR: keine Verbindung – SELL %s nicht ausgeführt", ticker)
@@ -449,6 +470,7 @@ class IBKRBroker:
             log.exception("IBKR sell %s: %s", ticker, e)
             return OrderResult.error(reason=str(e), mode="ibkr")
 
+    @_synchronized
     def buy_crypto(self, symbol: str, usd_amount: float) -> Dict:
         if not self._ensure_connected():
             return OrderResult.error(reason="IBKR nicht verbunden", mode="ibkr")
@@ -468,6 +490,7 @@ class IBKRBroker:
             log.exception("IBKR buy_crypto %s: %s", symbol, e)
             return OrderResult.error(reason=str(e), mode="ibkr")
 
+    @_synchronized
     def sell_crypto(self, symbol: str, qty: float) -> Dict:
         if not self._ensure_connected():
             return OrderResult.error(reason="IBKR nicht verbunden", mode="ibkr")
@@ -494,6 +517,7 @@ class IBKRBroker:
             log.warning("IBKR get_account: %s", e)
             return None
 
+    @_synchronized
     def positions(self) -> Optional[Dict[str, float]]:
         """Tatsächlich bei IBKR gehaltene Positionen als {symbol: shares}.
 
