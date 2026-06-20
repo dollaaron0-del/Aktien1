@@ -2207,6 +2207,43 @@ with st.sidebar:
     st.markdown(f"**Signal-Queue:** {pending_cnt} ausstehend")
     st.divider()
 
+    # ── Pause-Schalter ──────────────────────────────────────────────────────────
+    # Hält den Bot vorübergehend KOMPLETT an (alle Jobs inkl. SL/TP-Überwachung).
+    # Der systemd-Service läuft weiter; nach dem Deaktivieren nimmt der Bot die
+    # Arbeit beim nächsten Schleifendurchlauf (max. 60 Sek.) automatisch wieder auf.
+    from system import bot_control as _bot_control
+    _pause_status = _bot_control.get_status()
+    _is_paused = _pause_status["paused"]
+
+    if _is_paused:
+        _since_txt = ""
+        if _pause_status.get("since"):
+            try:
+                _since_dt = datetime.fromisoformat(_pause_status["since"])
+                _since_txt = f" seit {_since_dt.strftime('%d.%m. %H:%M')}"
+            except Exception:
+                pass
+        st.error(f"⏸ **Bot ist pausiert**{_since_txt} – es laufen keine Jobs (auch keine SL/TP-Überwachung).")
+    else:
+        st.success("▶️ Bot läuft – alle Jobs aktiv.")
+
+    _new_paused = st.toggle(
+        "⏸ Bot pausieren (kompletter Stopp)",
+        value=_is_paused,
+        key="bot_pause_toggle",
+        help="Hält ALLE Bot-Aktivitäten an, inkl. Stop-Loss/Take-Profit. "
+             "Offene Positionen werden während der Pause NICHT automatisch abgesichert. "
+             "Greift innerhalb von max. 60 Sekunden.",
+    )
+    if _new_paused != _is_paused:
+        _bot_control.set_paused(_new_paused, by="dashboard")
+        if _new_paused:
+            st.warning("Bot wird angehalten … (wirkt in max. 60 Sek.)")
+        else:
+            st.info("Bot wird fortgesetzt … (wirkt in max. 60 Sek.)")
+        st.rerun()
+    st.divider()
+
     # Focus mode
     st.markdown("### 🎯 Fokus-Modus")
     fm_info   = focus_ctrl.get_info(total_value)

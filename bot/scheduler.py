@@ -2330,9 +2330,41 @@ def run_bot_loop(
 
     _CRASH_LOG = os.path.join(os.path.dirname(__file__), "..", "data", "crash_log.txt")
 
+    # Pause-Schalter (Dashboard): solange gesetzt, werden KEINE Jobs ausgeführt –
+    # kompletter Stopp inkl. SL/TP-Überwachung. _paused_state merkt sich den letzten
+    # Zustand, damit Telegram/Konsole nur beim Übergang (nicht jede Minute) meldet.
+    from system import bot_control
+    _paused_state = False
+
     try:
         while True:
             try:
+                _now_paused = bot_control.is_paused()
+                if _now_paused:
+                    if not _paused_state:
+                        _paused_state = True
+                        log.warning("Bot pausiert (Dashboard) – alle Jobs angehalten.")
+                        console.print("[bold yellow]⏸ Bot pausiert – alle Jobs angehalten (Dashboard).[/bold yellow]")
+                        try:
+                            TelegramNotifier().send(
+                                "⏸ <b>Bot pausiert</b>\n\n"
+                                "Alle Jobs sind angehalten (inkl. SL/TP-Überwachung).\n"
+                                "Im Dashboard wieder aktivieren, um fortzufahren."
+                            )
+                        except Exception:
+                            pass
+                    time.sleep(60)
+                    continue
+                if _paused_state:
+                    _paused_state = False
+                    log.info("Bot fortgesetzt (Dashboard) – Jobs laufen wieder.")
+                    console.print("[bold green]▶️ Bot fortgesetzt – Jobs laufen wieder.[/bold green]")
+                    try:
+                        TelegramNotifier().send(
+                            "▶️ <b>Bot fortgesetzt</b>\n\nAlle Jobs sind wieder aktiv."
+                        )
+                    except Exception:
+                        pass
                 schedule.run_pending()
             except KeyboardInterrupt:
                 raise
