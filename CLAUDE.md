@@ -1,5 +1,34 @@
 # Ruflo — Claude Code Configuration
 
+> ## 🛑 STATUS: BOT BEWUSST PAUSIERT (seit 2026-06-21)
+>
+> Der komplette Trading-Bot ist **absichtlich und vollständig abgeschaltet** — auf
+> ausdrücklichen Wunsch des Users, "bis ich es wieder ändere". **Das ist KEIN Defekt.**
+> Wenn etwas "tot" wirkt (keine Zyklen, keine Trades, keine Telegram-Nachrichten,
+> kein Dashboard, Services `disabled`), ist genau das gewollt.
+>
+> **NICHT eigenmächtig reaktivieren.** Services nicht enablen/starten, Crontab-Zeile
+> nicht einkommentieren — nur auf ausdrückliche Anweisung des Users.
+>
+> Was abgeschaltet wurde:
+> - `aktien_bot`, `aktien_dashboard`, `aktien_monday_check`, `aktien_premarket_ibkr`,
+>   `aktien_source_health` → alle gestoppt **und** `disabled` (reboot-fest)
+> - Crontab-Zeile `0 6 * * * … systemctl restart aktien_bot` → auskommentiert
+>   (Backup: `/root/crontab.backup-20260621`). Die stündliche `autologin.sh`-Zeile
+>   (hält IB Gateway / Port 4002) ist weiter aktiv, startet den Bot aber NICHT.
+>
+> **Reaktivieren (nur auf Anweisung):**
+> ```bash
+> sudo systemctl enable --now aktien_bot.service aktien_dashboard.service \
+>   aktien_monday_check.timer aktien_premarket_ibkr.timer aktien_source_health.timer
+> # und die 06:00-Zeile in `crontab -e` wieder einkommentieren
+> ```
+>
+> ### Separates Projekt — nicht verwechseln
+> `/opt/Aktien` = **dieser** Trading-Bot (Python, Remote `Aktien1.git`).
+> `/root/KI-Nachhilfe` = **anderes** Projekt (Node/Express-Lernapp, Remote `KI-Nachhilfe`,
+> läuft unter PM2 als `nachhilfe`, via nginx:8080 → :3000). Bewusst getrennt — nicht anfassen.
+
 ## Rules
 
 - Do what has been asked; nothing more, nothing less
