@@ -99,6 +99,48 @@ class MacroContext:
         except Exception as e:
             log.warning("MacroContext: Sektor-Rotation fehlgeschlagen: %s", e)
 
+        # ── FRED-Risikoreihen (HY-Spread, Erstanträge) ──────────────────────
+        try:
+            from collectors.fred_collector import FREDCollector
+            fred = FREDCollector().read()
+            if fred:
+                s["hy_oas"]       = fred.get("hy_oas")
+                s["hy_oas_trend"] = fred.get("hy_oas_trend")
+                s["claims_trend"] = fred.get("claims_trend")
+                s["macro_stress"] = fred.get("stress_label")
+        except Exception as e:
+            log.warning("MacroContext: FRED fehlgeschlagen: %s", e)
+
+        # ── EIA-Rohöl-Lagerbestände (Build/Draw → Öl-Bias) ──────────────────
+        try:
+            from collectors.eia_collector import EIACollector
+            eia = EIACollector().read()
+            if eia:
+                s["oil_stocks_label"] = eia.get("label")
+                s["oil_bias"]         = eia.get("oil_bias")
+                s["oil_wow_mbbl"]     = eia.get("wow_change_mbbl")
+        except Exception as e:
+            log.warning("MacroContext: EIA fehlgeschlagen: %s", e)
+
+        # ── ENTSO-E EU-Stromlast (Industrieaktivitäts-Proxy) ────────────────
+        try:
+            from collectors.entsoe_collector import ENTSOECollector
+            eu = ENTSOECollector().read()
+            if eu:
+                s["eu_activity"]   = eu.get("activity_label")
+                s["eu_load_ratio"] = eu.get("ratio")
+        except Exception as e:
+            log.warning("MacroContext: ENTSO-E fehlgeschlagen: %s", e)
+
+        # ── Tanker-Verkehr (experimentell, nur falls Daten vorliegen) ───────
+        try:
+            from collectors.tanker_flow_collector import get_latest as _tanker_latest
+            tk = _tanker_latest()
+            if tk and tk.get("signal"):
+                s["tanker_signal"] = tk["signal"].get("label")
+        except Exception as e:
+            log.warning("MacroContext: Tanker-Read fehlgeschlagen: %s", e)
+
         _CACHE = s
         _CACHED_AT = datetime.utcnow()
         return s
@@ -160,6 +202,32 @@ class MacroContext:
                 ev.append(f"{e['name']} ({when}){tag}")
             lines.append("- Anstehende Makro-Termine: " + "; ".join(ev))
 
+        stress = s.get("macro_stress")
+        if stress and stress != "CALM":
+            bits = []
+            if s.get("hy_oas") is not None:
+                bits.append(f"HY-Spread {s['hy_oas']:.2f}% ({s.get('hy_oas_trend', '?')})")
+            if s.get("claims_trend"):
+                bits.append(f"Erstanträge {s['claims_trend']}")
+            line = f"- Makro-Stress (FRED): {stress}"
+            if bits:
+                line += " | " + ", ".join(bits)
+            lines.append(line)
+
+        oil = s.get("oil_stocks_label")
+        if oil:
+            wow = s.get("oil_wow_mbbl")
+            wow_txt = f" {wow:+.1f} Mbbl" if isinstance(wow, (int, float)) else ""
+            lines.append(f"- Öl-Lager (EIA): {oil}{wow_txt} → Öl-Bias {s.get('oil_bias', '?')}")
+
+        eu = s.get("eu_activity")
+        if eu and eu != "NORMAL":
+            lines.append(f"- EU-Stromlast (ENTSO-E): {eu} (Industrieaktivitäts-Proxy)")
+
+        tk = s.get("tanker_signal")
+        if tk and tk not in ("INSUFFICIENT_DATA", "NORMAL"):
+            lines.append(f"- Tanker-Verkehr an Öl-Chokepoints: {tk} (experimentell)")
+
         if not lines:
             return ""
 
@@ -200,6 +268,13 @@ class MacroContext:
 
         if s.get("buy_blocked"):
             score -= 0.2
+
+        # FRED-Makro-Stress als breiter Risk-Off-Beitrag (HY-Spread + Erstanträge)
+        stress = s.get("macro_stress")
+        if stress == "ELEVATED":
+            score -= 0.2
+        elif stress == "WATCH":
+            score -= 0.1
 
         return max(-1.0, min(1.0, round(score, 3)))
 

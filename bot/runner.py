@@ -26,6 +26,8 @@ from collectors import (
     InternationalMediaCollector, QuiverCollector,
     EconomicCalendarCollector, AAIISentimentCollector, AdhocCollector,
     FDACalendarCollector, EstimateRevisionsCollector, ShortVolumeCollector,
+    GoogleTrendsCollector, WikipediaViewsCollector, OpenFDACollector,
+    NHTSARecallsCollector, SECActivistCollector,
 )
 from collectors.news_archive import NewsArchive
 from collectors.crypto_news_collector import CryptoNewsCollector
@@ -463,6 +465,11 @@ def _make_collectors() -> Dict:
         "fda_calendar":      _safe("fda_calendar",    lambda: FDACalendarCollector(lookahead_days=120, lookback_days=21)),
         "estimate_revisions":_safe("est_revisions",   EstimateRevisionsCollector),
         "short_volume":      _safe("short_volume",    ShortVolumeCollector),
+        "google_trends":     _safe("google_trends",   GoogleTrendsCollector),
+        "wikipedia_views":   _safe("wikipedia_views", WikipediaViewsCollector),
+        "openfda":           _safe("openfda",         lambda: OpenFDACollector(lookback_days=30)),
+        "nhtsa_recalls":     _safe("nhtsa_recalls",   lambda: NHTSARecallsCollector(lookback_days=30)),
+        "sec_activist":      _safe("sec_activist",    lambda: SECActivistCollector(lookback_days=21)),
     }
 
 

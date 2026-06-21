@@ -31,6 +31,11 @@ from .fda_calendar_collector import FDACalendarCollector
 from .estimate_revisions_collector import EstimateRevisionsCollector
 from .short_volume_collector import ShortVolumeCollector
 from .reddit_hype_scanner import RedditHypeScanner
+from .google_trends_collector import GoogleTrendsCollector
+from .wikipedia_views_collector import WikipediaViewsCollector
+from .openfda_collector import OpenFDACollector
+from .nhtsa_recalls_collector import NHTSARecallsCollector
+from .sec_activist_collector import SECActivistCollector
 
 __all__ = [
     "RedditCollector", "YahooCollector", "NewsAPICollector",
@@ -45,4 +50,6 @@ __all__ = [
     "EconomicCalendarCollector", "AAIISentimentCollector", "AdhocCollector",
     "FDACalendarCollector", "EstimateRevisionsCollector",
     "ShortVolumeCollector", "RedditHypeScanner",
+    "GoogleTrendsCollector", "WikipediaViewsCollector", "OpenFDACollector",
+    "NHTSARecallsCollector", "SECActivistCollector",
 ]
