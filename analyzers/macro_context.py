@@ -142,6 +142,18 @@ class MacroContext:
         except Exception as e:
             log.warning("MacroContext: Wetter fehlgeschlagen: %s", e)
 
+        # ── Globales BIP-Momentum (DBnomics/OECD-G20, keylos) ───────────────
+        try:
+            from collectors.dbnomics_collector import DBnomicsCollector
+            gl = DBnomicsCollector().read()
+            if gl:
+                s["global_momentum"]    = gl.get("momentum_label")
+                s["global_contracting"] = gl.get("contracting")
+                s["global_n"]           = gl.get("n")
+                s["g20_gdp"]            = gl.get("g20_latest")
+        except Exception as e:
+            log.warning("MacroContext: DBnomics fehlgeschlagen: %s", e)
+
         # ── Tanker-Verkehr (experimentell, nur falls Daten vorliegen) ───────
         try:
             from collectors.tanker_flow_collector import get_latest as _tanker_latest
@@ -223,6 +235,15 @@ class MacroContext:
             if bits:
                 line += " | " + ", ".join(bits)
             lines.append(line)
+
+        gm = s.get("global_momentum")
+        if gm and gm != "GLOBAL_NEUTRAL":
+            arrow = "↑" if gm == "GLOBAL_ACCELERATING" else "↓"
+            extra = ""
+            contr, gn = s.get("global_contracting"), s.get("global_n")
+            if isinstance(contr, int) and isinstance(gn, int) and contr:
+                extra = f", {contr}/{gn} Blöcke schrumpfen"
+            lines.append(f"- Globales BIP-Momentum (OECD-G20): {gm} {arrow}{extra}")
 
         oil = s.get("oil_stocks_label")
         if oil:
