@@ -132,6 +132,16 @@ class MacroContext:
         except Exception as e:
             log.warning("MacroContext: ENTSO-E fehlgeschlagen: %s", e)
 
+        # ── Wetter-Energie-Nachfrage (Open-Meteo, HDD/CDD-Forecast-Proxy) ───
+        try:
+            from collectors.weather_collector import WeatherCollector
+            wx = WeatherCollector().read()
+            if wx:
+                s["weather_demand"] = wx.get("demand_label")
+                s["weather_ratio"]  = wx.get("ratio")
+        except Exception as e:
+            log.warning("MacroContext: Wetter fehlgeschlagen: %s", e)
+
         # ── Tanker-Verkehr (experimentell, nur falls Daten vorliegen) ───────
         try:
             from collectors.tanker_flow_collector import get_latest as _tanker_latest
@@ -223,6 +233,12 @@ class MacroContext:
         eu = s.get("eu_activity")
         if eu and eu != "NORMAL":
             lines.append(f"- EU-Stromlast (ENTSO-E): {eu} (Industrieaktivitäts-Proxy)")
+
+        wx = s.get("weather_demand")
+        if wx and wx != "NORMAL":
+            arrow = "↑" if wx == "ELEVATED" else "↓"
+            lines.append(f"- Energie-Wetter (Open-Meteo): Nachfrage {wx} {arrow} "
+                         f"(Heiz-/Kühl-Gradtage-Vorlauf)")
 
         tk = s.get("tanker_signal")
         if tk and tk not in ("INSUFFICIENT_DATA", "NORMAL"):

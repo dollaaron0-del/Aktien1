@@ -93,10 +93,18 @@ def test_size_modifier_clamped_at_floor(risk_off_patches):
 
 @pytest.fixture()
 def all_failing_patches():
+    # Kern-Analyzer UND die (teils keylosen, cache-lesenden) Collectors neutralisieren,
+    # damit der "alles leer"-Test hermetisch ist und nicht von Cache-Dateien auf der
+    # Platte abhängt (z. B. data/weather_macro.json beim keylosen Wetter-Collector).
     with patch("analyzers.market_overview.MarketOverview", side_effect=Exception("x")), \
          patch("analyzers.macro_calendar.MacroCalendar", side_effect=Exception("x")), \
          patch("analyzers.recession_detector.RecessionDetector", side_effect=Exception("x")), \
-         patch("analyzers.sector_rotation.SectorRotation", side_effect=Exception("x")):
+         patch("analyzers.sector_rotation.SectorRotation", side_effect=Exception("x")), \
+         patch("collectors.fred_collector.FREDCollector", side_effect=Exception("x")), \
+         patch("collectors.eia_collector.EIACollector", side_effect=Exception("x")), \
+         patch("collectors.entsoe_collector.ENTSOECollector", side_effect=Exception("x")), \
+         patch("collectors.weather_collector.WeatherCollector", side_effect=Exception("x")), \
+         patch("collectors.tanker_flow_collector.get_latest", side_effect=Exception("x")):
         yield
 
 
