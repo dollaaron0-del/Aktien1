@@ -262,9 +262,33 @@ def update_positions(
     return stats
 
 
+def _equity_drawdown(closed: List[PaperPosition]) -> float:
+    """Max Drawdown der nach Exit chronologisch verketteten Trade-Equity (≤0)."""
+    if not closed:
+        return 0.0
+    ordered = sorted(closed, key=lambda p: (p.exit_date or "", p.entry_date or ""))
+    equity = 1.0
+    peak = 1.0
+    max_dd = 0.0
+    for p in ordered:
+        equity *= (1 + p.return_pct)
+        peak = max(peak, equity)
+        max_dd = min(max_dd, equity / peak - 1)
+    return round(max_dd, 6)
+
+
+def _avg_holding_days(closed: List[PaperPosition]) -> Optional[float]:
+    spans = [(pd.Timestamp(p.exit_date) - pd.Timestamp(p.entry_date)).days
+             for p in closed if p.entry_date and p.exit_date]
+    return round(sum(spans) / len(spans), 1) if spans else None
+
+
 def summary(ledger: Dict) -> Dict:
     """Aggregierte Kennzahlen über den Paper-Forward-Track. `closed` ist der harte,
-    realisierte Teil; `open`/`pending` sind mark-to-market bzw. noch ohne Entry."""
+    realisierte Teil; `open`/`pending` sind mark-to-market bzw. noch ohne Entry.
+
+    Risiko-Kennzahlen (max_drawdown, sharpe_trade) sind TRADE-LEVEL (nicht
+    annualisiert) – wie im übrigen Lab: als Sanity-Gerüst lesen, nicht überbewerten."""
     positions = _positions(ledger)
     closed = [p for p in positions if p.status == CLOSED]
     open_ = [p for p in positions if p.status == OPEN]
@@ -272,6 +296,12 @@ def summary(ledger: Dict) -> Dict:
 
     wins = [p for p in closed if p.return_pct > 0]
     closed_rets = [p.return_pct for p in closed]
+
+    sharpe_trade = 0.0
+    if len(closed_rets) >= 2:
+        s = pd.Series(closed_rets)
+        sd = float(s.std(ddof=1))
+        sharpe_trade = round(float(s.mean()) / sd, 4) if sd > 0 else 0.0
 
     def _w(ps):  # gewichteter Ø-Return (Allokator-Gewicht)
         tw = sum(p.weight for p in ps)
@@ -299,7 +329,44 @@ def summary(ledger: Dict) -> Dict:
         "avg_return_closed": round(sum(closed_rets) / len(closed), 6) if closed else 0.0,
         "weighted_return_closed": _w(closed),
         "open_mtm_weighted": _w(open_),
+        "sharpe_trade": sharpe_trade,
+        "max_drawdown": _equity_drawdown(closed),
+        "avg_holding_days": _avg_holding_days(closed),
         "by_strategy": by_strat,
+    }
+
+
+def benchmark_buy_hold(
+    ledger: Dict,
+    loader: Callable[[str, int], object],
+    years: int = 3,
+) -> Optional[Dict]:
+    """Naiver Vergleichsmaßstab: gleichgewichtetes Buy&Hold der im Ledger gehandelten
+    Ticker über die Spanne [erster Entry, letzter geprüfter Balken]. Macht den Paper-
+    Forward-Return einordbar (schlägt er stumpfes Halten?). Loader injizierbar."""
+    positions = [p for p in _positions(ledger) if p.entry_date]
+    if not positions:
+        return None
+    start = min(pd.Timestamp(p.entry_date) for p in positions)
+    end = max(pd.Timestamp(p.last_checked or p.entry_date) for p in positions)
+    tickers = sorted({p.ticker for p in positions})
+
+    rets = []
+    for t in tickers:
+        df = loader(t, years)
+        if df is None or len(df) < 2:
+            continue
+        win = df[(df.index >= start) & (df.index <= end)]
+        if len(win) < 2:
+            continue
+        rets.append(float(win["Close"].iloc[-1]) / float(win["Close"].iloc[0]) - 1)
+    if not rets:
+        return None
+    return {
+        "start": _to_day(start),
+        "end": _to_day(end),
+        "n_tickers": len(rets),
+        "buy_hold_return": round(sum(rets) / len(rets), 6),
     }
 
 

@@ -136,6 +136,40 @@ def test_summary_metrics():
     assert s["by_strategy"]["a"]["win_rate"] == 0.5
 
 
+def _closed(ticker, ret, entry="2022-01-02", exit_="2022-02-01", weight=0.5):
+    return {"strategy": "a", "ticker": ticker, "signal_date": "2022-01-01", "weight": weight,
+            "cfg": {}, "status": pf.CLOSED, "entry_date": entry, "entry_price": 100.0,
+            "tp1_hit": False, "tp2_hit": False, "exit_date": exit_, "exit_price": 100.0,
+            "return_pct": ret, "exit_reason": "time_stop", "last_checked": exit_}
+
+
+def test_summary_risk_metrics():
+    ledger = {"positions": [_closed("X", 0.1), _closed("Y", -0.05)]}
+    s = pf.summary(ledger)
+    assert abs(s["max_drawdown"] - (-0.05)) < 1e-9        # Equity 1.1→1.045
+    assert s["sharpe_trade"] == 0.2357                    # mean/std (ddof=1), trade-level
+    assert s["avg_holding_days"] == 30.0                  # 02.01 → 01.02
+
+
+def test_benchmark_buy_hold():
+    df = _ramp_df(n=60, daily=0.01)
+    ledger = {"positions": [
+        _closed("X", 0.05, entry=pf._to_day(df.index[10]), exit_=pf._to_day(df.index[40]))]}
+    bench = pf.benchmark_buy_hold(ledger, lambda t, y: df)
+    assert bench["n_tickers"] == 1
+    # Buy&Hold über 30 Balken zu +1%/Balken
+    assert abs(bench["buy_hold_return"] - (1.01 ** 30 - 1)) < 1e-3
+
+
+def test_benchmark_none_when_no_entries():
+    ledger = {"positions": [{"strategy": "a", "ticker": "X", "signal_date": "2022-01-01",
+                             "weight": 1.0, "cfg": {}, "status": pf.PENDING, "entry_date": None,
+                             "entry_price": None, "tp1_hit": False, "tp2_hit": False,
+                             "exit_date": None, "exit_price": None, "return_pct": 0.0,
+                             "exit_reason": "", "last_checked": None}]}
+    assert pf.benchmark_buy_hold(ledger, lambda t, y: _ramp_df()) is None
+
+
 # ── Ledger-IO ────────────────────────────────────────────────────────────────────
 def test_ledger_roundtrip(tmp_path, monkeypatch):
     f = tmp_path / "pf.json"

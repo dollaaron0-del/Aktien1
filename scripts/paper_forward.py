@@ -69,8 +69,22 @@ def _print_summary(ledger):
             f"[bold]Geschlossen:[/bold] Trefferquote {s['win_rate']*100:.1f}% · "
             f"Ø-Return {s['avg_return_closed']*100:+.2f}% · "
             f"gewichtet {s['weighted_return_closed']*100:+.2f}%")
+        hold = f"{s['avg_holding_days']:.0f}d" if s["avg_holding_days"] is not None else "—"
+        console.print(
+            f"[dim]Risiko (Trade-Level): MaxDD {s['max_drawdown']*100:.1f}% · "
+            f"Sharpe {s['sharpe_trade']:.2f} · Ø-Haltedauer {hold}[/dim]")
     if s["n_open"]:
         console.print(f"[dim]Offen (MtM, gewichtet): {s['open_mtm_weighted']*100:+.2f}%[/dim]")
+
+    if s["n_closed"]:
+        bench = pf.benchmark_buy_hold(ledger, data_loader.load)
+        if bench:
+            edge = s["avg_return_closed"] - bench["buy_hold_return"]
+            color = "green" if edge >= 0 else "red"
+            console.print(
+                f"[dim]Benchmark Buy&Hold ({bench['n_tickers']} Ticker, "
+                f"{bench['start']}→{bench['end']}): {bench['buy_hold_return']*100:+.2f}% · "
+                f"[{color}]Edge {edge*100:+.2f}%[/{color}][/dim]")
 
     if s["by_strategy"]:
         t = Table(title="Je Strategie", box=box.ROUNDED, border_style="dim")
