@@ -43,10 +43,16 @@ def make_strategy(portfolio, kelly_sizer=None, goal_risk_assessor=None):
 
 @pytest.fixture(autouse=True)
 def neutral_macro(monkeypatch):
-    """Makro-Modifier neutralisieren, damit das Sizing deterministisch ist."""
+    """Makro- UND ATR-Modifier neutralisieren, damit das Sizing deterministisch ist."""
     import analyzers.macro_context as mc
     fake = types.SimpleNamespace(size_modifier=lambda ticker: 1.0)
     monkeypatch.setattr(mc, "get_macro_context", lambda: fake)
+    # ATR-Vol-Sizing über fail-open neutralisieren (calculate→None ⇒ Faktor 1.0).
+    import analyzers.technical_indicators as ti
+    monkeypatch.setattr(
+        ti, "TechnicalIndicators",
+        lambda: types.SimpleNamespace(calculate=lambda t: None),
+    )
 
 
 _PARAMS = types.SimpleNamespace(position_size_mult=1.0)
@@ -76,6 +82,73 @@ def test_empty_portfolio_unchanged(tmp_path, monkeypatch):
     strat = make_strategy(p)
     size = strat._calc_position_size(_ANALYSIS, 100.0, _PARAMS, _CONFIG)
     assert size == pytest.approx(20_000.0)
+
+
+def test_confluence_bumps_size(tmp_path, monkeypatch):
+    """Congress×CEO-Confluence hebt die Positionsgröße um den Multiplikator an."""
+    import strategy.swing_strategy as sw
+    p = make_portfolio(tmp_path, monkeypatch, capital=100_000.0)
+    strat = make_strategy(p)
+
+    base = strat._calc_position_size(_ANALYSIS, 100.0, _PARAMS, _CONFIG, confluence=False)
+    boosted = strat._calc_position_size(_ANALYSIS, 100.0, _PARAMS, _CONFIG, confluence=True)
+
+    assert base == pytest.approx(20_000.0)
+    assert boosted == pytest.approx(20_000.0 * sw._CONFLUENCE_SIZE_MULT)
+
+
+def test_confluence_default_is_off(tmp_path, monkeypatch):
+    """Ohne explizites Flag bleibt das Sizing unverändert (rückwärtskompatibel)."""
+    p = make_portfolio(tmp_path, monkeypatch, capital=100_000.0)
+    strat = make_strategy(p)
+    assert strat._calc_position_size(_ANALYSIS, 100.0, _PARAMS, _CONFIG) == pytest.approx(20_000.0)
+
+
+def _fake_ti(atr, price):
+    """Liefert ein TechnicalIndicators-Stub, dessen calculate() ATR/Preis setzt."""
+    return lambda: types.SimpleNamespace(
+        calculate=lambda t: types.SimpleNamespace(atr_14=atr, price=price)
+    )
+
+
+def test_atr_multiplier_clamps(monkeypatch):
+    """Ruhige Aktie → CAP, wilde → FLOOR, normale → 1.0."""
+    import analyzers.technical_indicators as ti
+    import strategy.swing_strategy as sw
+
+    # ruhig: ATR 1% → 2.5/1.0 = 2.5 → auf CAP gedeckelt
+    monkeypatch.setattr(ti, "TechnicalIndicators", _fake_ti(1.0, 100.0))
+    assert sw.SwingStrategy._atr_vol_multiplier("KO", 100.0) == pytest.approx(sw._ATR_SIZE_CAP)
+
+    # wild: ATR 5% → 2.5/5.0 = 0.5 → genau FLOOR
+    monkeypatch.setattr(ti, "TechnicalIndicators", _fake_ti(5.0, 100.0))
+    assert sw.SwingStrategy._atr_vol_multiplier("NVDA", 100.0) == pytest.approx(sw._ATR_SIZE_FLOOR)
+
+    # normal: ATR 2.5% → 1.0
+    monkeypatch.setattr(ti, "TechnicalIndicators", _fake_ti(2.5, 100.0))
+    assert sw.SwingStrategy._atr_vol_multiplier("SPY", 100.0) == pytest.approx(1.0)
+
+
+def test_atr_missing_is_failopen(monkeypatch):
+    """Kein ATR-Snapshot ⇒ Faktor 1.0, nie ein Block."""
+    import analyzers.technical_indicators as ti
+    import strategy.swing_strategy as sw
+    monkeypatch.setattr(ti, "TechnicalIndicators",
+                        lambda: types.SimpleNamespace(calculate=lambda t: None))
+    assert sw.SwingStrategy._atr_vol_multiplier("XYZ", 100.0) == pytest.approx(1.0)
+
+
+def test_atr_scales_position_size(tmp_path, monkeypatch):
+    """Im Sizing-Pfad skaliert der ATR-Faktor die Dollar-Größe (hier ruhige Aktie → CAP)."""
+    import analyzers.technical_indicators as ti
+    import strategy.swing_strategy as sw
+    monkeypatch.setattr(ti, "TechnicalIndicators", _fake_ti(1.0, 100.0))  # überschreibt autouse-Stub
+
+    p = make_portfolio(tmp_path, monkeypatch, capital=100_000.0)
+    strat = make_strategy(p)
+    size = strat._calc_position_size(_ANALYSIS, 100.0, _PARAMS, _CONFIG)
+    # 20_000 Basis × CAP, gedeckelt durch cash*0.40 = 40_000 (greift hier nicht)
+    assert size == pytest.approx(20_000.0 * sw._ATR_SIZE_CAP)
 
 
 def test_liquidity_guardrail_still_caps_on_cash(tmp_path, monkeypatch):

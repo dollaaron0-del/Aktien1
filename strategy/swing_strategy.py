@@ -15,6 +15,26 @@ from analyzers.conditional_entry import ConditionalEntry, ConditionalEntryWatche
 
 log = get_logger(__name__)
 
+# ── Selbstlern-Filter (lazy Singleton, fail-open) ─────────────────────
+_entry_filter = None
+_entry_filter_tried = False
+
+
+def _get_entry_filter():
+    """Lädt den EntryFilter einmalig. Gibt None zurück, wenn er nicht verfügbar
+    ist (z.B. kein Kalibrierungsmodell) – der Aufrufer behandelt das fail-open."""
+    global _entry_filter, _entry_filter_tried
+    if _entry_filter_tried:
+        return _entry_filter
+    _entry_filter_tried = True
+    try:
+        from analyzers.entry_filter import EntryFilter
+        _entry_filter = EntryFilter()
+    except Exception as _e:  # pragma: no cover - defensiv
+        log.debug("EntryFilter nicht verfügbar: %s", _e)
+        _entry_filter = None
+    return _entry_filter
+
 # ── Trailing-Stop-Stufen ──────────────────────────────────────────────
 # Jede Stufe: (Gewinn-Schwelle %, neuer SL als % vom Einstieg)
 _TRAILING_STEPS = [
@@ -35,6 +55,24 @@ _TRAILING_STEPS_CRISIS = [
 
 # Konfidenz-basierte Positionsgrößen
 _CONFIDENCE_SIZING = {"HIGH": 1.0, "MEDIUM": 0.70, "LOW": 0.45}
+
+# Congress×CEO-Confluence-Overlay: kaufen Exec UND Politiker unabhängig denselben
+# Ticker (analyzers/insider_signal.InsiderScore.confluence), gilt das als seltene,
+# wirklich unabhängige Bestätigung → Kaufschwelle leicht runter + Sizing leicht hoch.
+# Bewusst klein gehalten; per ENV abschaltbar/justierbar. Fail-open (kein Confluence).
+_CONFLUENCE_OVERLAY     = os.getenv("INSIDER_CONFLUENCE_OVERLAY", "1") not in ("0", "false", "False")
+_CONFLUENCE_THR_RELIEF  = float(os.getenv("CONFLUENCE_THR_RELIEF", "0.03"))   # Schwelle −0.03
+_CONFLUENCE_SIZE_MULT   = float(os.getenv("CONFLUENCE_SIZE_MULT", "1.15"))    # Größe ×1.15
+_CONFLUENCE_THR_FLOOR   = float(os.getenv("CONFLUENCE_THR_FLOOR", "0.50"))    # nie unter 0.50
+
+# ATR-Volatilitäts-Sizing: Positionsgröße auf gleiches Tages-Risiko normieren.
+# Ruhige Aktie (kleines ATR%) → größere Position, wilde Aktie → kleinere, sodass
+# der Dollar-Einsatz pro Trade ähnlich riskant ist. Multiplikator = Ziel-ATR% /
+# aktuelles ATR%, hart gedeckelt. Per ENV abschaltbar; fail-open (Faktor 1.0).
+_ATR_VOL_SIZING  = os.getenv("ATR_VOL_SIZING", "1") not in ("0", "false", "False")
+_ATR_TARGET_PCT  = float(os.getenv("ATR_TARGET_PCT", "0.025"))   # "normale" Tages-ATR = 2.5%
+_ATR_SIZE_FLOOR  = float(os.getenv("ATR_SIZE_FLOOR", "0.50"))    # wilde Aktie: nie unter ×0.5
+_ATR_SIZE_CAP    = float(os.getenv("ATR_SIZE_CAP",  "1.50"))     # ruhige Aktie: nie über ×1.5
 
 # Mindest-Haltedauer in Tagen – verhindert Sofort-Exit von Positionen, deren
 # target_hold_days fälschlich 0 ist (gleicher Floor wie der Entry-Pfad, max(3,…)).
@@ -265,6 +303,15 @@ class SwingStrategy:
                 )
             return StrategyResult("SKIP", ticker, f"Kein Kaufsignal: {recommendation}/{direction}")
 
+        # Congress×CEO-Confluence: einmal ziehen (erst hier, nachdem Bullish-Signal
+        # feststeht – kein Netzaufruf für SKIP-Kandidaten). Senkt die Kaufschwelle
+        # leicht ab (asymmetrisch wie der Makro-Aufschlag, nur in Gegenrichtung) und
+        # wird unten ans Sizing weitergereicht. Floor verhindert Über-Absenkung.
+        confluence = self._has_insider_confluence(ticker)
+        if confluence and _CONFLUENCE_THR_RELIEF > 0:
+            threshold = max(_CONFLUENCE_THR_FLOOR, threshold - _CONFLUENCE_THR_RELIEF)
+            log.info("[%s] Insider-Confluence (Exec×Congress) → Schwelle %.2f", ticker, threshold)
+
         if sentiment < threshold:
             return StrategyResult("SKIP", ticker, f"Sentiment {sentiment:.2f} < Schwelle {threshold:.2f}")
 
@@ -329,9 +376,33 @@ class SwingStrategy:
             log.debug("Liquiditäts-Gate übersprungen [%s]: %s", ticker, _e)
 
         # Position sizing
-        position_value = self._calc_position_size(analysis, current_price, params, config)
+        position_value = self._calc_position_size(analysis, current_price, params, config, confluence)
         if position_value <= 0:
             return StrategyResult("SKIP", ticker, "Positionsgröße = 0")
+
+        # Selbstlern-Filter: konsultiert das gelernte Kalibrierungsmodell.
+        # AVOID → SKIP (wenn block aktiv), CAUTION → kleinere Position. Fail-open.
+        if getattr(config, "learning_filter_enabled", False):
+            ef = _get_entry_filter()
+            if ef is not None:
+                try:
+                    verdict = ef.evaluate({
+                        "ticker": ticker,
+                        "sentiment_score": sentiment,
+                        "confidence": confidence,
+                        "debate_winner": getattr(analysis, "debate_winner", "") or "",
+                    })
+                    if verdict.verdict == "AVOID" and getattr(config, "learning_filter_block", True):
+                        return StrategyResult(
+                            "SKIP", ticker,
+                            f"Lern-Filter AVOID (Edge {verdict.expected_edge:+.2f}%, "
+                            f"P(Win) {verdict.p_win:.0%})")
+                    if verdict.verdict == "CAUTION":
+                        mult = float(getattr(config, "learning_filter_caution_size_mult", 0.5))
+                        position_value *= max(0.0, min(1.0, mult))
+                        log.info("[%s] Lern-Filter CAUTION → Position ×%.2f", ticker, mult)
+                except Exception as _ef_err:
+                    log.debug("Lern-Filter übersprungen [%s]: %s", ticker, _ef_err)
 
         shares = position_value / current_price
 
@@ -461,10 +532,56 @@ class SwingStrategy:
                     self.portfolio.update_position_state(ticker, stop_loss=round(new_sl, 4))
                 break
 
+    # ── Insider-Confluence ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _has_insider_confluence(ticker: str) -> bool:
+        """True, wenn Exec UND Congress denselben Ticker gekauft haben.
+
+        Ein einziger Netzaufruf pro BUY-Kandidat (nicht pro Zyklus-Ticker), da
+        nur für bereits bullishe Kaufkandidaten aufgerufen. Fail-open: jeder
+        Fehler/Datenausfall ⇒ False (kein Bonus, nie ein Block).
+        """
+        if not _CONFLUENCE_OVERLAY:
+            return False
+        try:
+            from analyzers.insider_signal import get_insider_score
+            return bool(get_insider_score(ticker, lookback_days=30).confluence)
+        except Exception as _e:
+            log.debug("Insider-Confluence übersprungen [%s]: %s", ticker, _e)
+            return False
+
+    @staticmethod
+    def _atr_vol_multiplier(ticker: str, current_price: float) -> float:
+        """Volatilitäts-Normierung der Positionsgröße über ATR(14).
+
+        Gleicher Dollar-Einsatz pro Trade unabhängig von der Tagesvolatilität:
+        Multiplikator = Ziel-ATR% / aktuelles ATR%, hart gedeckelt auf
+        [_ATR_SIZE_FLOOR, _ATR_SIZE_CAP]. Ein einziger yfinance-Aufruf pro
+        BUY-Kandidat. Fail-open: fehlendes/ungültiges ATR ⇒ 1.0 (kein Eingriff).
+        """
+        if not _ATR_VOL_SIZING:
+            return 1.0
+        try:
+            from analyzers.technical_indicators import TechnicalIndicators
+            snap = TechnicalIndicators().calculate(ticker)
+            atr   = getattr(snap, "atr_14", None) if snap else None
+            price = (getattr(snap, "price", None) if snap else None) or current_price
+            if not atr or not price or price <= 0:
+                return 1.0
+            atr_pct = atr / price
+            if atr_pct <= 0:
+                return 1.0
+            mult = _ATR_TARGET_PCT / atr_pct
+            return max(_ATR_SIZE_FLOOR, min(_ATR_SIZE_CAP, mult))
+        except Exception as _e:
+            log.debug("ATR-Vol-Sizing übersprungen [%s]: %s", ticker, _e)
+            return 1.0
+
     # ── Position sizing ─────────────────────────────────────────────────────
 
     def _calc_position_size(
-        self, analysis, current_price: float, params, config
+        self, analysis, current_price: float, params, config, confluence: bool = False
     ) -> float:
         """Calculate dollar position size."""
         # Basis ist ein Anteil der GESAMT-EQUITY (Cash + Positionswert), nicht
@@ -508,6 +625,18 @@ class SwingStrategy:
             base *= get_macro_context().size_modifier(ticker)
         except Exception as _e:
             log.debug("Makro-Size-Modifier übersprungen: %s", _e)
+
+        # ATR-Volatilitäts-Normierung: gleiches Tages-Risiko pro Trade, egal ob
+        # ruhige oder wilde Aktie. Helper ist fail-open (Faktor 1.0 bei fehlendem
+        # ATR), daher ohne zusätzlichen Guard direkt multipliziert.
+        ticker = getattr(analysis, "ticker", "") or ""
+        base *= self._atr_vol_multiplier(ticker, current_price)
+
+        # Congress×CEO-Confluence-Bonus (Flag aus _evaluate_new durchgereicht –
+        # kein zweiter Netzaufruf). Leichter Größen-Aufschlag; durch die 40%-
+        # Cash-Guardrail unten weiterhin gedeckelt.
+        if confluence and _CONFLUENCE_SIZE_MULT != 1.0:
+            base *= _CONFLUENCE_SIZE_MULT
 
         # Min/max guardrails
         base = max(base, 10.0)
