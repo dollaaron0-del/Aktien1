@@ -14,7 +14,15 @@ Phasen:
   5. Meta-Allokator → speist Gewinner additiv in den Bot.
 """
 from strategy_lab.strategies import Strategy, REGISTRY, register, get, all_names
+from strategy_lab.universe import (
+    GRAVEYARD, graveyard_tickers, extended_universe, build as build_universe,
+    UniverseInfo,
+)
 # Side-effect-Import: registriert die Strategie-Familien (Phase 2).
 import strategy_lab.families  # noqa: F401,E402
 
-__all__ = ["Strategy", "REGISTRY", "register", "get", "all_names"]
+__all__ = [
+    "Strategy", "REGISTRY", "register", "get", "all_names",
+    "GRAVEYARD", "graveyard_tickers", "extended_universe", "build_universe",
+    "UniverseInfo",
+]

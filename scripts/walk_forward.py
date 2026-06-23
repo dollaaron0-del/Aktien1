@@ -23,7 +23,7 @@ from rich.console import Console  # noqa: E402
 from rich.table import Table  # noqa: E402
 from rich import box  # noqa: E402
 
-from strategy_lab import all_names  # noqa: E402
+from strategy_lab import all_names, build_universe  # noqa: E402
 from strategy_lab.walkforward import run_walk_forward  # noqa: E402
 from strategy_lab.promotion import build_registry, save_registry  # noqa: E402
 
@@ -32,7 +32,7 @@ _VERDICT_COLOR = {"ROBUST": "green", "FRAGILE": "yellow", "OVERFIT": "red"}
 _STATUS_COLOR = {"ACTIVE": "green", "WATCH": "yellow", "REJECTED": "red"}
 
 
-def _universe(args):
+def _base_universe(args):
     if args.tickers:
         return [t.upper() for t in args.tickers]
     try:
@@ -46,6 +46,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Walk-Forward-Selektion über Strategie-Familien")
     ap.add_argument("--strategy", default=None, help="nur diese Strategie (sonst alle)")
     ap.add_argument("--tickers", nargs="*", default=None)
+    ap.add_argument("--include-delisted", action="store_true",
+                    help="Graveyard delisteter/pleitegegangener Titel mitnehmen "
+                         "(Survivorship-Bias mildern)")
     ap.add_argument("--total", type=int, default=20)
     ap.add_argument("--train", type=int, default=4)
     ap.add_argument("--test", type=int, default=2)
@@ -55,12 +58,18 @@ def main() -> None:
                     help="Promotion-Registry NICHT auf data/strategy_registry.json schreiben")
     args = ap.parse_args()
 
-    universe = _universe(args)
+    from backtesting import data_loader
+    base = _base_universe(args)
+    info = build_universe(base, args.include_delisted,
+                          loader=data_loader.load if args.include_delisted else None,
+                          years=args.total)
+    universe = info.tickers
     strategies = [args.strategy] if args.strategy else all_names()
     console.print(f"[bold]Walk-Forward[/bold] über {len(universe)} Ticker | "
                   f"Train {args.train}J / Test {args.test}J / Schritt {args.step}J / "
                   f"Historie {args.total}J")
     console.print("[dim]Out-of-Sample-Validierung – technisch, kein News-Sentiment.[/dim]")
+    console.print(f"[dim]{info.survivorship_note}[/dim]")
 
     table = Table(title="Walk-Forward-Robustheit (OOS)", box=box.ROUNDED, border_style="dim")
     for col in ["Strategie", "Fenster", "Ø Test", "Median", "Worst", "%pos", "WF-Eff", "Stabil", "robuste Regime", "Verdikt"]:
