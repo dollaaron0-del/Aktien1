@@ -992,6 +992,24 @@ def run_analysis_cycle(
     _prefetch_news:  Dict[str, tuple] = {}
     _prefetch_price: Dict[str, dict]  = {}
 
+    # ── strategy_lab Live-Bridge (Roadmap d) – STANDARD AUS, flaggengeschützt ──
+    # Liefert nur bei gesetztem STRATEGY_LAB_LIVE eine mechanische Konviktion je
+    # Ticker (additiver Analyse-Kontext, kein Auto-Trade). Komplett defensiv:
+    # ein Fehler hier darf den Zyklus nie reißen.
+    _mech_conv: Dict[str, dict] = {}
+    _mech_brief_fn = lambda _t, _m: ""   # immer definiert; "" = kein Zusatzkontext
+    try:
+        from strategy_lab import live_bridge as _live_bridge
+        if _live_bridge.is_enabled():
+            _mech_conv = _live_bridge.conviction_map(_normalized_watchlist)
+            _mech_brief_fn = _live_bridge.brief_for
+            if _mech_conv:
+                log.info("strategy_lab Live-Bridge aktiv: mechanische Konviktion für %d Ticker",
+                         len(_mech_conv))
+    except Exception as _lbe:
+        log.debug("Live-Bridge übersprungen: %s", _lbe)
+        _mech_conv = {}
+
     def _prefetch_ticker(t: str):
         news_result  = collect_news(t, archive, collectors)
         if _is_crypto(t):
@@ -1079,6 +1097,7 @@ def run_analysis_cycle(
                 pattern_result=_pat, onchain_snapshot=_oc,
                 eu_market_snapshot=_eu_market_ctx if _is_eu_stock(t) else None,
                 geo_context=_bench_geo_contexts.get(t), macro_brief=_macro_brief,
+                mechanical_brief=_mech_brief_fn(t, _mech_conv),
                 force_claude=t in _force_claude_tickers,
             )
         except Exception as _ae:
@@ -1373,6 +1392,7 @@ def run_analysis_cycle(
                 eu_market_snapshot=_eu_market_ctx if _is_eu_stock(ticker) else None,
                 geo_context=_geo_ctx,
                 macro_brief=_macro_brief,
+                mechanical_brief=_mech_brief_fn(ticker, _mech_conv),
                 force_claude=ticker in _force_claude_tickers,
             )
 

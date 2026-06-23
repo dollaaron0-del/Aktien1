@@ -183,7 +183,8 @@ class ClaudeAnalyzer:
         """
         if news is None:
             news = news_items or []
-        context_block = self._build_context_block(macro_brief, geo_context)
+        context_block = self._build_context_block(
+            macro_brief, geo_context, kwargs.get("mechanical_brief", ""))
         if current_price is None and price_data is not None:
             current_price = price_data if isinstance(price_data, (int, float)) else (price_data or {}).get("price") or (price_data or {}).get("close") or 0.0
         if not news:
@@ -472,8 +473,10 @@ class ClaudeAnalyzer:
         ))
 
     @staticmethod
-    def _build_context_block(macro_brief: str = "", geo_context=None) -> str:
-        """Baut den optionalen Kontext-Block (Makro + Geopolitik) für den Prompt."""
+    def _build_context_block(macro_brief: str = "", geo_context=None,
+                             mechanical_brief: str = "") -> str:
+        """Baut den optionalen Kontext-Block (Makro + Geopolitik + mechanische
+        Konviktion aus strategy_lab) für den Prompt."""
         parts = []
         if macro_brief:
             parts.append(macro_brief.strip())
@@ -482,6 +485,8 @@ class ClaudeAnalyzer:
             geo_txt = geo_txt.strip()
             if geo_txt:
                 parts.append("GEOPOLITIK: " + geo_txt)
+        if mechanical_brief and str(mechanical_brief).strip():
+            parts.append(str(mechanical_brief).strip())
         if not parts:
             return ""
         return "\n" + "\n\n".join(parts) + "\n"
