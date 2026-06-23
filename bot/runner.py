@@ -59,6 +59,25 @@ from collectors.tradingview_webhook import get_pending_sells, get_pending_macro_
 console = Console()
 log = get_logger(__name__)
 
+# ── Experience-Store (Selbstlern-Datensatz, lazy Singleton, fail-open) ──
+_experience_store = None
+_experience_store_tried = False
+
+
+def _get_experience_store():
+    """Lädt den ExperienceStore einmalig; None wenn nicht verfügbar (fail-open)."""
+    global _experience_store, _experience_store_tried
+    if _experience_store_tried:
+        return _experience_store
+    _experience_store_tried = True
+    try:
+        from analyzers.experience_store import ExperienceStore
+        _experience_store = ExperienceStore()
+    except Exception as _e:  # pragma: no cover - defensiv
+        log.debug("ExperienceStore nicht verfügbar: %s", _e)
+        _experience_store = None
+    return _experience_store
+
 
 def _valid_price(p) -> bool:
     """True nur für eine echte, positive Zahl. Yahoo/yfinance liefern bei
@@ -1488,6 +1507,33 @@ def run_analysis_cycle(
                                 tracker.record_outcome(_pid, _px, exit_reason=action)
                     except Exception as _pt_err:
                         log.debug("Prediction-Tracking Fehler [%s]: %s", ticker, _pt_err)
+                    # Experience-Store (Selbstlern-Datensatz): spiegelt Entry/Exit
+                    # als gelabelte Erfahrung mit label_source='live'. Fail-open.
+                    try:
+                        _es = _get_experience_store()
+                        if _es is not None:
+                            if "GEKAUFT" in action:
+                                if _es.open_decision_id(ticker) is None:
+                                    _es.record_live_entry({
+                                        "decided_at": datetime.utcnow().isoformat(),
+                                        "ticker": ticker,
+                                        "recommendation": analysis.recommendation,
+                                        "direction": analysis.direction,
+                                        "sentiment_score": analysis.sentiment_score,
+                                        "confidence": analysis.confidence,
+                                        "debate_winner": analysis.debate_winner,
+                                        "target_price": getattr(analysis, "target_price", None),
+                                        "suggested_hold": getattr(analysis, "suggested_hold_days", None),
+                                        "sources_used": int(getattr(analysis, "sources_used", 0) or 0)
+                                        if not isinstance(getattr(analysis, "sources_used", 0), dict)
+                                        else sum((analysis.sources_used or {}).values()),
+                                        "key_catalysts": list(getattr(analysis, "key_catalysts", []) or []),
+                                        "risk_factors": list(getattr(analysis, "risk_factors", []) or []),
+                                    }, _px)
+                            else:  # VERKAUFT
+                                _es.record_live_exit(ticker, _px, exit_reason=action)
+                    except Exception as _es_err:
+                        log.debug("Experience-Store Fehler [%s]: %s", ticker, _es_err)
                 # Lessons-Memo nach jedem Verkauf aktualisieren
                 if reflection and "VERKAUFT" in action:
                     new_memo = reflection.generate_memo()

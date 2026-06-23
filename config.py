@@ -70,6 +70,22 @@ class Config:
     )
     min_sources: int = field(default_factory=lambda: int(os.getenv("MIN_SOURCES", "1")))
 
+    # ── Selbstlern-Filter (analyzers/entry_filter.py) ───────────────────────
+    # Konsultiert das gelernte Kalibrierungsmodell (data/calibration.json) beim
+    # Kauf. AVOID → SKIP, CAUTION → kleinere Position. Fail-open: fehlt das Modell
+    # oder ist der Bucket zu dünn (NEUTRAL), passiert nichts.
+    learning_filter_enabled: bool = field(
+        default_factory=lambda: os.getenv("LEARNING_FILTER_ENABLED", "true").lower() == "true"
+    )
+    # AVOID blockt den Kauf? (False = nur CAUTION-Sizing, kein Veto)
+    learning_filter_block: bool = field(
+        default_factory=lambda: os.getenv("LEARNING_FILTER_BLOCK", "true").lower() == "true"
+    )
+    # Positionsgrößen-Faktor bei CAUTION (0.5 = halbe Größe).
+    learning_filter_caution_size_mult: float = field(
+        default_factory=lambda: float(os.getenv("LEARNING_FILTER_CAUTION_SIZE_MULT", "0.5"))
+    )
+
     # ── Marktbasierter Analyse-Zeitplan ─────────────────────────────────────
     # Welche Börsen beobachten? Analyse läuft je 30 Min vor Börseneröffnung.
     # Verfügbare Codes: XETRA NYSE NASDAQ TSE HKEX SSE LSE ASX
