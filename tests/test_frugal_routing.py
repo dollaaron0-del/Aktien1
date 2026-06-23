@@ -39,6 +39,12 @@ class _FakePrescreener:
 
 def _analyzer(monkeypatch, frugal=True):
     monkeypatch.setattr(_config_mod.config, "frugal_mode", frugal)
+    # Dedup-Result-Cache deaktivieren: er ist plattenpersistent
+    # (data/claude_result_cache.json) und würde sonst zwischen Tests lecken –
+    # mehrere Tests nutzen denselben Ticker+News (z.B. CAT/SEC 8-K), was sonst
+    # je nach Reihenfolge/Vorlauf einen Dedup-Treffer erzeugt und Claude
+    # (inkl. News-Komprimierung) überspringt. Kein Test hier prüft Dedup.
+    monkeypatch.setattr(_config_mod.config, "claude_result_cache_hours", 0)
     a = ClaudeAnalyzer(api_key="test-key")
     fake = _FakePrescreener()
     monkeypatch.setattr(a, "_get_prescreener", lambda: fake)
