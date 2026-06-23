@@ -163,6 +163,17 @@ class MacroContext:
         except Exception as e:
             log.warning("MacroContext: Tanker-Read fehlgeschlagen: %s", e)
 
+        # ── Naturgefahren-Backdrop (NASA EONET, keylos, nur Kontext) ────────
+        try:
+            from collectors.eonet_collector import EONETCollector, hazard_summary
+            ez = EONETCollector().read()
+            if ez:
+                s["hazard_label"]   = ez.get("hazard_label")
+                s["hazard_storms"]  = ez.get("us_atlantic_storms")
+                s["hazard_summary"] = hazard_summary(ez)
+        except Exception as e:
+            log.warning("MacroContext: EONET fehlgeschlagen: %s", e)
+
         _CACHE = s
         _CACHED_AT = datetime.utcnow()
         return s
@@ -264,6 +275,15 @@ class MacroContext:
         tk = s.get("tanker_signal")
         if tk and tk not in ("INSUFFICIENT_DATA", "NORMAL"):
             lines.append(f"- Tanker-Verkehr an Öl-Chokepoints: {tk} (experimentell)")
+
+        hz = s.get("hazard_label")
+        if hz == "ELEVATED":
+            detail = s.get("hazard_summary") or ""
+            storms = s.get("hazard_storms")
+            if isinstance(storms, int) and storms:
+                detail = (detail + f"; {storms} US/Atlantik") if detail else f"{storms} US/Atlantik-Stürme"
+            lines.append(f"- Naturgefahren-Backdrop (NASA EONET): {hz}"
+                         f"{f' — {detail}' if detail else ''} (Insurance/Energie-Kontext)")
 
         if not lines:
             return ""
