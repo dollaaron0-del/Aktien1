@@ -87,9 +87,17 @@ def test_fires_today_returns_bool_for_family():
     assert isinstance(res, bool)
 
 
+def _register_nosignal(name="_nosignal_test"):
+    """Throwaway-Strategie ohne Heute-Naht (signal=None) – ersetzt baseline_swing
+    als Beispiel, seit baseline_swing jetzt eine fires_today-Naht hat."""
+    from strategy_lab.strategies import Strategy, register
+    register(Strategy(name=name, description="test", runner=lambda *a: [], signal=None))
+    return name
+
+
 def test_fires_today_none_for_unsupported():
     df = _uptrend_df()
-    assert allocator.fires_today("baseline_swing", df) is None
+    assert allocator.fires_today(_register_nosignal(), df) is None
 
 
 def test_current_signals_with_injected_loader(monkeypatch):
@@ -102,10 +110,10 @@ def test_current_signals_with_injected_loader(monkeypatch):
 
 
 def test_current_signals_skips_unsupported(monkeypatch):
-    plan = [{"strategy": "baseline_swing", "weight": 1.0, "params": {}}]
+    plan = [{"strategy": _register_nosignal("_nosignal_skip"), "weight": 1.0, "params": {}}]
     loader = lambda t, y: _uptrend_df()
     fired = allocator.current_signals(["AAA"], loader, plan=plan)
-    assert fired == {}  # baseline_swing hat keine Heute-Naht
+    assert fired == {}  # Strategie ohne Heute-Naht wird übersprungen
 
 
 # ── (a) Regime-bedingte Allokation ──────────────────────────────────────────

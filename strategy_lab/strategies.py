@@ -16,7 +16,10 @@ from typing import Callable, Dict, List, Optional
 
 import pandas as pd
 
-from backtesting.engine import BacktestConfig, Trade, run as _engine_run
+from backtesting.engine import (
+    BacktestConfig, Trade, run as _engine_run,
+    _prepare as _engine_prepare, _is_signal as _engine_is_signal,
+)
 
 
 @dataclass
@@ -51,17 +54,32 @@ def all_names() -> List[str]:
 
 
 # ── Baseline: die bestehende Swing-Mechanik (EMA21-Pullback + RSI + Volumen) ────
-def _baseline_swing_runner(df: pd.DataFrame, ticker: str, params: dict) -> List[Trade]:
+def _baseline_cfg(params: dict) -> BacktestConfig:
     # Nur bekannte BacktestConfig-Felder durchreichen (robust gegen Extra-Keys).
     valid = {f for f in BacktestConfig.__dataclass_fields__}
-    cfg = BacktestConfig(**{k: v for k, v in (params or {}).items() if k in valid})
-    return _engine_run(df, ticker, cfg)
+    return BacktestConfig(**{k: v for k, v in (params or {}).items() if k in valid})
+
+
+def _baseline_swing_runner(df: pd.DataFrame, ticker: str, params: dict) -> List[Trade]:
+    return _engine_run(df, ticker, _baseline_cfg(params))
+
+
+def _baseline_fires_today(df: pd.DataFrame, params: dict) -> bool:
+    """Feuert die Engine-Entry-Flanke HEUTE (letzter Balken)? Gleiche prepare/_is_signal
+    wie der Backtest (kausale Indikatoren), Entry erfolgt sowieso erst am nächsten Open –
+    kein Look-Ahead. Macht den robusten Baseline-Swing für den Meta-Allokator handelbar."""
+    cfg = _baseline_cfg(params)
+    d = _engine_prepare(df.copy(), cfg)
+    if len(d) < 2:
+        return False
+    return bool(_engine_is_signal(d, len(d) - 1, cfg))
 
 
 register(Strategy(
     name="baseline_swing",
     description="EMA21-Pullback/Crossover + RSI-Fenster + Volumen (backtesting.engine)",
     runner=_baseline_swing_runner,
+    signal=_baseline_fires_today,
     default_params={},
     # Sinnvoll begrenzter Raum – wird erst in Phase 3 (Walk-Forward) durchsucht.
     param_space={
