@@ -13,6 +13,10 @@ nohup.out
 *.bak.*
 dashboard.bak/
 
+# Backtest-Kurs-Cache (Parquet) & Tool-Output – Artefakte, nicht committen
+backtesting/.cache/
+graphify-out/
+
 # RuFlo runtime state (nicht committen)
 .claude-flow/daemon-state.json
 .claude-flow/daemon.pid
