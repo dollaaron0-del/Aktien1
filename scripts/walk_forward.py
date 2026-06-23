@@ -63,8 +63,8 @@ def main() -> None:
     console.print("[dim]Out-of-Sample-Validierung – technisch, kein News-Sentiment.[/dim]")
 
     table = Table(title="Walk-Forward-Robustheit (OOS)", box=box.ROUNDED, border_style="dim")
-    for col in ["Strategie", "Fenster", "Ø Test", "Median", "Worst", "%pos", "WF-Eff", "Stabil", "Verdikt"]:
-        table.add_column(col, justify="right" if col != "Strategie" else "left")
+    for col in ["Strategie", "Fenster", "Ø Test", "Median", "Worst", "%pos", "WF-Eff", "Stabil", "robuste Regime", "Verdikt"]:
+        table.add_column(col, justify="right" if col not in ("Strategie", "robuste Regime") else "left")
 
     reports = []
     for name in strategies:
@@ -78,6 +78,7 @@ def main() -> None:
             f"{rep.avg_test_return:+.2f}", f"{rep.median_test_return:+.2f}",
             f"{rep.worst_test_return:+.2f}", f"{rep.pct_positive_windows*100:.0f}%",
             f"{rep.wf_efficiency:.2f}", f"{rep.param_stability*100:.0f}%",
+            ", ".join(rep.robust_regimes) or "—",
             f"[{vc}]{rep.verdict}[/{vc}]",
         )
     console.print(table)

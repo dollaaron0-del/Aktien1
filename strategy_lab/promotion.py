@@ -62,6 +62,8 @@ def build_registry(reports: List[WalkForwardReport]) -> Dict:
             "pct_positive_windows": r.pct_positive_windows,
             "wf_efficiency": r.wf_efficiency,
             "param_stability": r.param_stability,
+            "robust_regimes": r.robust_regimes,
+            "regime_breakdown": r.regime_breakdown,
         })
     # Gewichte der AKTIVEN normalisieren (Summe = 1), Rest 0.
     active = [e for e in entries if e["status"] == "ACTIVE"]

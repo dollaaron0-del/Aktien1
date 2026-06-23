@@ -23,6 +23,7 @@ import pandas as pd
 
 from backtesting import data_loader
 from backtesting.metrics import TickerMetrics, compute, aggregate
+from strategy_lab.regime import classify_window, regime_breakdown, robust_regimes
 from strategy_lab.strategies import Strategy, get
 
 # Mindest-Trades, damit ein Fenster-Ergebnis überhaupt zählt (sonst Rauschen).
@@ -42,6 +43,7 @@ class WindowEval:
     test_sharpe: float
     test_trades: int
     test_win_rate: float
+    regime: str = ""           # Markt-Regime des Testfensters (Phase 4-Rest)
 
 
 @dataclass
@@ -57,6 +59,8 @@ class WalkForwardReport:
     param_stability: float      # Anteil Fenster mit dem häufigsten Parametersatz
     verdict: str                # ROBUST | FRAGILE | OVERFIT
     windows: List[WindowEval] = field(default_factory=list)
+    regime_breakdown: Dict = field(default_factory=dict)   # je Regime: n/Median/%pos
+    robust_regimes: List[str] = field(default_factory=list)
 
 
 # ── Hilfen ──────────────────────────────────────────────────────────────────
@@ -153,6 +157,7 @@ def run_walk_forward(
             best_params=best, train_return=round(best_train_ret, 4),
             test_return=round(tm.total_return, 4), test_sharpe=round(tm.sharpe, 3),
             test_trades=tm.n_trades, test_win_rate=round(tm.win_rate, 4),
+            regime=classify_window(test_dfs),
         ))
 
     return _aggregate_report(strategy.name, windows)
@@ -181,6 +186,7 @@ def _aggregate_report(name: str, windows: List[WindowEval]) -> WalkForwardReport
     else:
         verdict = "FRAGILE"
 
+    breakdown = regime_breakdown(windows)
     return WalkForwardReport(
         strategy=name, n_windows=len(windows),
         median_test_return=round(st.median(test_rets), 4),
@@ -191,4 +197,6 @@ def _aggregate_report(name: str, windows: List[WindowEval]) -> WalkForwardReport
         wf_efficiency=round(wf_eff, 3),
         param_stability=round(stability, 3),
         verdict=verdict, windows=windows,
+        regime_breakdown=breakdown,
+        robust_regimes=robust_regimes(breakdown),
     )
