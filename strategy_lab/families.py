@@ -131,6 +131,19 @@ def _tsmom_run(df, ticker, params):
     return _generic_run(df, ticker, params, _tsmom_prepare, _tsmom_signal, min_bars=need)
 
 
+# ── Heute-Signal (Phase-5-Naht) ────────────────────────────────────────────────
+def _fires_today(prepare, signal, min_bars):
+    """Baut eine Heute-Abfrage: feuert die Entry-Flanke auf dem LETZTEN Balken?
+    Gleiche prepare/signal wie der Backtest – kein Look-Ahead (roll_high etc.
+    sind bereits geshiftet). Ignoriert Position/Cooldown (reine Signal-Sicht)."""
+    def _fn(df: pd.DataFrame, params: dict) -> bool:
+        d = prepare(df.copy(), params or {}).dropna()
+        if len(d) < min_bars:
+            return False
+        return bool(signal(d, len(d) - 1, params or {}))
+    return _fn
+
+
 # ── Registrierung ──────────────────────────────────────────────────────────────
 register(Strategy(
     name="donchian_breakout",
@@ -139,6 +152,7 @@ register(Strategy(
     default_params={"breakout_window": 20},
     param_space={"breakout_window": [20, 40, 55], "sl_pct": [0.07, 0.10],
                  "tp1_pct": [0.15, 0.20], "max_hold_days": [45, 60, 90]},
+    signal=_fires_today(_donchian_prepare, _donchian_signal, min_bars=25),
 ))
 
 register(Strategy(
@@ -148,6 +162,7 @@ register(Strategy(
     default_params={"rsi_buy": 30.0, "trend_ma": 200},
     param_space={"rsi_buy": [25.0, 30.0, 35.0], "trend_ma": [100, 200],
                  "sl_pct": [0.05, 0.07], "tp1_pct": [0.08, 0.12], "max_hold_days": [15, 30]},
+    signal=_fires_today(_rsimr_prepare, _rsimr_signal, min_bars=205),
 ))
 
 register(Strategy(
@@ -157,4 +172,5 @@ register(Strategy(
     default_params={"lookback": 126, "trend_ma": 200},
     param_space={"lookback": [63, 126, 252], "trend_ma": [100, 200],
                  "sl_pct": [0.07, 0.10], "tp1_pct": [0.15, 0.20], "max_hold_days": [60, 90]},
+    signal=_fires_today(_tsmom_prepare, _tsmom_signal, min_bars=205),
 ))

@@ -12,7 +12,7 @@ KEIN unbegrenztes Regel-Generieren (das wäre Data-Dredging).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Optional
 
 import pandas as pd
 
@@ -27,6 +27,9 @@ class Strategy:
     default_params: Dict = field(default_factory=dict)
     # Parameter-Raum für Phase 2/3 (Name → Liste von Kandidatenwerten).
     param_space: Dict[str, List] = field(default_factory=dict)
+    # Phase 5: feuert das Entry-Signal HEUTE (letzter Balken)? Naht für den
+    # Meta-Allokator. None = unterstützt keine Heute-Abfrage (z.B. baseline_swing).
+    signal: Optional[Callable[[pd.DataFrame, dict], bool]] = None
 
 
 REGISTRY: Dict[str, Strategy] = {}
