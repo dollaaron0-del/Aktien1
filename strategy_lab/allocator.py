@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Callable, Dict, List, Optional
 
 from strategy_lab import promotion
+from strategy_lab.regime import classify_window
 from strategy_lab.strategies import get
 
 
@@ -52,25 +53,72 @@ def _cap_and_renormalize(weights: Dict[str, float], max_weight: float) -> Dict[s
     return {k: round(v / total, 4) for k, v in w.items()} if total > 0 else w
 
 
-def weight_plan(max_weight: float = 0.6, risk_budget: float = 1.0) -> List[Dict]:
+def _regime_factor(entry: Dict, regime: Optional[str]) -> float:
+    """Regime-Eignung einer Strategie ∈ [0,1] für das aktuelle Marktregime:
+      * keine Regime-Info / UNKNOWN          → 1.0 (regime-agnostisch, kein Eingriff)
+      * in diesem Regime nie getestet         → 0.5 (halbes Vertrauen)
+      * in diesem Regime historisch ≤0 Median → 0.0 (raus – verlor hier)
+      * sonst                                  → ~%-positive Fenster, Floor 0.25
+    Rückwärtskompatibel: alte Registry ohne regime_breakdown ⇒ 1.0."""
+    bd = entry.get("regime_breakdown") or {}
+    if not regime or regime == "UNKNOWN" or not bd:
+        return 1.0
+    s = bd.get(regime)
+    if s is None:
+        return 0.5
+    if float(s.get("median_test_return", 0.0)) <= 0:
+        return 0.0
+    return max(0.25, min(1.0, float(s.get("pct_positive", 0.0))))
+
+
+def weight_plan(
+    max_weight: float = 0.6,
+    risk_budget: float = 1.0,
+    regime: Optional[str] = None,
+) -> List[Dict]:
     """Allokations-Plan aus der Registry: aktive Strategien mit gekappten,
-    renormierten Gewichten und Risiko-Anteil (weight * risk_budget)."""
+    renormierten Gewichten und Risiko-Anteil (weight * risk_budget).
+
+    Mit `regime` wird regime-bedingt gewichtet: jedes Basisgewicht mit der
+    Regime-Eignung (_regime_factor) skaliert, dann renormiert. Verliert eine
+    Strategie in diesem Regime historisch, fällt sie raus. Passt KEINE Strategie
+    zum Regime (alle Faktoren 0), ist [] das ehrliche Ergebnis = risk-off/flat."""
     active = promotion.active_strategies()
     if not active:
         return []
+    by_name = {e["strategy"]: e for e in active}
     raw = {e["strategy"]: float(e.get("weight", 0.0)) for e in active}
     if sum(raw.values()) <= 0:  # Registry ohne Gewichte → gleichgewichten
         raw = {k: 1.0 / len(raw) for k in raw}
+    if regime:
+        raw = {k: v * _regime_factor(by_name[k], regime) for k, v in raw.items()}
+        if sum(raw.values()) <= 0:  # keine Strategie passt zum Regime → flat
+            return []
     capped = _cap_and_renormalize(raw, max_weight)
-    by_name = {e["strategy"]: e for e in active}
     plan = [{
         "strategy": name,
         "params": by_name[name].get("params", {}),
         "weight": w,
         "risk_fraction": round(w * risk_budget, 4),
-    } for name, w in capped.items()]
+        "regime_fit": round(_regime_factor(by_name[name], regime), 3) if regime else None,
+    } for name, w in capped.items() if w > 1e-9]   # 0%-Strategien fallen raus
     plan.sort(key=lambda e: -e["weight"])
     return plan
+
+
+def current_regime(
+    universe: List[str],
+    loader: Callable[[str, int], object],
+    lookback_years: int = 2,
+) -> str:
+    """Aktuelles Marktregime aus dem jüngsten Fenster des Universums
+    (gleiche Klassifikation wie im Walk-Forward). Loader injizierbar, netzfrei."""
+    dfs = {}
+    for t in universe:
+        df = loader(t, lookback_years)
+        if df is not None and len(df) >= 60:
+            dfs[t] = df
+    return classify_window(dfs)
 
 
 def fires_today(strategy_name: str, df, params: Optional[Dict] = None) -> Optional[bool]:

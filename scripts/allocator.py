@@ -50,21 +50,44 @@ def main() -> None:
     ap.add_argument("--tickers", nargs="*", default=None,
                     help="bei Angabe: Heute-Signale + kombinierte Konviktion zeigen")
     ap.add_argument("--years", type=int, default=2)
+    ap.add_argument("--regime", default="AUTO",
+                    help="AUTO (aus Universum bestimmen), off (regime-agnostisch) "
+                         "oder festes Label wie BULL_CALM")
     args = ap.parse_args()
 
-    plan = allocator.weight_plan(max_weight=args.max_weight, risk_budget=args.risk_budget)
+    universe = _universe(args)
+
+    # Aktuelles Regime bestimmen (AUTO) bzw. fixes Label / abschalten.
+    regime = None
+    if args.regime.lower() != "off":
+        if args.regime.upper() == "AUTO":
+            regime = allocator.current_regime(universe, data_loader.load, lookback_years=args.years)
+        else:
+            regime = args.regime.upper()
+
+    plan = allocator.weight_plan(
+        max_weight=args.max_weight, risk_budget=args.risk_budget, regime=regime)
+    if regime:
+        console.print(f"[bold]Aktuelles Regime:[/bold] {regime} "
+                      f"[dim](regime-bedingte Gewichtung; 'off' für agnostisch)[/dim]")
     if not plan:
-        console.print("[yellow]Keine aktiven Strategien in der Registry. "
-                      "Erst `python -m scripts.walk_forward` laufen lassen.[/yellow]")
+        if regime:
+            console.print(f"[yellow]Keine aktive Strategie passt zum Regime {regime} "
+                          f"→ risk-off/flat (keine Allokation).[/yellow]")
+        else:
+            console.print("[yellow]Keine aktiven Strategien in der Registry. "
+                          "Erst `python -m scripts.walk_forward` laufen lassen.[/yellow]")
         return
 
-    table = Table(title="Allokations-Plan (aktive Strategien)", box=box.ROUNDED, border_style="dim")
-    for col in ["Strategie", "Gewicht", "Risiko-Anteil", "Parameter"]:
+    title = f"Allokations-Plan ({'Regime ' + regime if regime else 'regime-agnostisch'})"
+    table = Table(title=title, box=box.ROUNDED, border_style="dim")
+    for col in ["Strategie", "Gewicht", "Risiko-Anteil", "Regime-Fit", "Parameter"]:
         table.add_column(col, justify="left" if col in ("Strategie", "Parameter") else "right")
     for e in plan:
         params = ", ".join(f"{k}={v}" for k, v in e["params"].items()) or "—"
+        fit = f"{e['regime_fit']*100:.0f}%" if e.get("regime_fit") is not None else "—"
         table.add_row(e["strategy"], f"{e['weight']*100:.0f}%",
-                      f"{e['risk_fraction']*100:.0f}%", params)
+                      f"{e['risk_fraction']*100:.0f}%", fit, params)
     console.print(table)
     console.print(f"[dim]Cap {args.max_weight*100:.0f}%/Strategie · Risiko-Budget "
                   f"{args.risk_budget:.2f} · Phase-5-Naht, kein Live-Eingriff.[/dim]")
@@ -72,7 +95,6 @@ def main() -> None:
     if not args.tickers:
         return
 
-    universe = _universe(args)
     fired = allocator.current_signals(universe, data_loader.load, plan=plan, years=args.years)
     conviction = allocator.combine_signals(fired, plan=plan)
 

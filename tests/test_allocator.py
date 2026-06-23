@@ -106,3 +106,60 @@ def test_current_signals_skips_unsupported(monkeypatch):
     loader = lambda t, y: _uptrend_df()
     fired = allocator.current_signals(["AAA"], loader, plan=plan)
     assert fired == {}  # baseline_swing hat keine Heute-Naht
+
+
+# ── (a) Regime-bedingte Allokation ──────────────────────────────────────────
+def _entry(name, weight, breakdown):
+    return {"strategy": name, "weight": weight, "params": {},
+            "regime_breakdown": breakdown}
+
+
+def test_regime_factor_buckets():
+    e = _entry("s", 0.5, {"BULL_CALM": {"n": 3, "median_test_return": 0.3, "pct_positive": 0.8},
+                          "BEAR_VOLATILE": {"n": 2, "median_test_return": -0.2, "pct_positive": 0.3}})
+    assert allocator._regime_factor(e, "BULL_CALM") == pytest.approx(0.8)   # ~%pos
+    assert allocator._regime_factor(e, "BEAR_VOLATILE") == 0.0              # verlor hier
+    assert allocator._regime_factor(e, "SIDE_CALM") == 0.5                  # nie getestet
+    assert allocator._regime_factor(e, "UNKNOWN") == 1.0                    # agnostisch
+    assert allocator._regime_factor({"weight": 1.0}, "BULL_CALM") == 1.0    # alte Registry
+
+
+def test_regime_drops_loser_and_renormalizes(monkeypatch):
+    _patch_active(monkeypatch, [
+        _entry("bull_str", 0.5, {"BULL_CALM": {"n": 3, "median_test_return": 0.4, "pct_positive": 1.0}}),
+        _entry("bear_str", 0.5, {"BULL_CALM": {"n": 3, "median_test_return": -0.3, "pct_positive": 0.2}}),
+    ])
+    plan = allocator.weight_plan(max_weight=1.0, regime="BULL_CALM")
+    names = {e["strategy"]: e for e in plan}
+    assert "bear_str" not in names                       # Verlierer im Regime raus
+    assert names["bull_str"]["weight"] == pytest.approx(1.0)
+    assert names["bull_str"]["regime_fit"] == pytest.approx(1.0)
+
+
+def test_regime_no_match_is_flat(monkeypatch):
+    _patch_active(monkeypatch, [
+        _entry("a", 0.5, {"BULL_CALM": {"n": 2, "median_test_return": -0.1, "pct_positive": 0.2}}),
+        _entry("b", 0.5, {"BULL_CALM": {"n": 2, "median_test_return": -0.2, "pct_positive": 0.1}}),
+    ])
+    assert allocator.weight_plan(regime="BULL_CALM") == []   # risk-off
+
+
+def test_regime_none_is_agnostic(monkeypatch):
+    _patch_active(monkeypatch, [
+        _entry("a", 0.7, {"BULL_CALM": {"n": 2, "median_test_return": -0.5, "pct_positive": 0.0}}),
+        _entry("b", 0.3, {}),
+    ])
+    plan = allocator.weight_plan(regime=None)            # ohne Regime: keiner fliegt raus
+    assert {e["strategy"] for e in plan} == {"a", "b"}
+    assert all(e["regime_fit"] is None for e in plan)
+
+
+def test_current_regime_from_universe():
+    # kräftiger Aufwärtstrend, niedrige Vola → BULL_CALM
+    def _bull(t, y):
+        rng = np.random.default_rng(hash(t) % 100)
+        close = 100 * np.cumprod(1 + rng.normal(0.0015, 0.006, 400))
+        idx = pd.date_range("2022-01-01", periods=400, freq="B")
+        return pd.DataFrame({"Open": close, "High": close * 1.01, "Low": close * 0.99,
+                             "Close": close, "Volume": np.full(400, 1e6)}, index=idx)
+    assert allocator.current_regime(["AAA", "BBB"], _bull) == "BULL_CALM"
