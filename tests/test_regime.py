@@ -42,6 +42,33 @@ def test_classify_sideways():
     assert classify_window(dfs).startswith("SIDE_")
 
 
+def _df_from_rets(rets, start="2010-01-01"):
+    close = 100 * np.cumprod(1 + np.asarray(rets))
+    idx = pd.date_range(start, periods=len(rets), freq="B")
+    return pd.DataFrame({"Close": close}, index=idx)
+
+
+def test_crash_recovery_window_not_bull_calm():
+    # Die 2020–22-Falle: rauf, tiefer Crash, Erholung zu netto-POSITIV.
+    # Start-zu-Ende ist positiv, aber zeitlich crashdurchzogen → darf kein
+    # sauberer BULL_CALM sein (geschärfte Klassifikation). Deterministischer
+    # Pfad mit leichtem Rauschen, damit der Net-Gewinn garantiert ist.
+    rng = np.random.default_rng(7)
+    path = np.concatenate([
+        np.linspace(100, 135, 200),   # ruhiger Aufschwung
+        np.linspace(135, 85, 50),     # harter Crash (~-37% vom Hoch)
+        np.linspace(85, 150, 300),    # Erholung über das alte Hoch → netto +50%
+    ])
+    close = path * (1 + rng.normal(0, 0.003, len(path)))  # leichtes Rauschen
+    df = pd.DataFrame({"Close": close},
+                      index=pd.date_range("2010-01-01", periods=len(close), freq="B"))
+    net = df["Close"].iloc[-1] / df["Close"].iloc[0] - 1
+    label = classify_window({"A": df})
+    assert net > 0                              # netto positiv …
+    assert label != "BULL_CALM"                 # … aber NICHT als ruhiger Bulle gelabelt
+    assert "VOLATILE" in label or label.startswith("SIDE") or label.startswith("BEAR")
+
+
 def test_classify_unknown_on_thin_data():
     assert classify_window({}) == "UNKNOWN"
     assert classify_window({"A": _df(n=5)}) == "UNKNOWN"
