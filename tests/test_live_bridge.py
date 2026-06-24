@@ -13,6 +13,8 @@ from strategy_lab import allocator, live_bridge
 def _clean(monkeypatch):
     monkeypatch.delenv("STRATEGY_LAB_LIVE", raising=False)
     monkeypatch.delenv("STRATEGY_LAB_REGIME", raising=False)
+    # Paper-Forward-Bilanz entkoppeln: Tests lesen NICHT die echte Ledger-Datei.
+    monkeypatch.setattr(live_bridge, "_paper_forward_edge", lambda: {})
     live_bridge.reset_cache()
     yield
     live_bridge.reset_cache()
@@ -109,6 +111,52 @@ def test_brief_for_formats():
     s = live_bridge.brief_for("AAPL", m)
     assert "MECHANIK" in s and "baseline_swing" in s and "100%" in s and "BULL_CALM" in s
     assert "KEIN Auto-Trade" in s
+    # Ohne Evidenz: ehrlich kennzeichnen, NIE Robustheit behaupten.
+    assert "robuste" not in s.lower()
+    assert "Kaufempfehlung" in s and "Paper-Forward" in s
+
+
+def test_brief_for_evidence_no_edge():
+    # Paper-Forward zeigt KEINE Kante → Brief warnt ausdrücklich.
+    ev = {"verdict": "none", "n_closed": 12, "avg_return": -0.021, "win_rate": 0.39}
+    m = {"AAPL": {"conviction": 1.0, "strategies": ["baseline_swing"],
+                  "regime": None, "evidence": ev}}
+    s = live_bridge.brief_for("AAPL", m)
+    assert "KEINE nachgewiesene Kante" in s
+    assert "NICHT als Bestätigung" in s
+    assert "39%" in s
+
+
+def test_brief_for_evidence_thin():
+    ev = {"verdict": "thin", "n_closed": 2, "avg_return": 0.05, "win_rate": 0.5}
+    m = {"AAPL": {"conviction": 1.0, "strategies": ["s"], "regime": None, "evidence": ev}}
+    s = live_bridge.brief_for("AAPL", m)
+    assert "zu dünn" in s
+
+
+def test_brief_for_evidence_positive():
+    ev = {"verdict": "positive", "n_closed": 10, "avg_return": 0.03, "win_rate": 0.6}
+    m = {"AAPL": {"conviction": 1.0, "strategies": ["s"], "regime": None, "evidence": ev}}
+    s = live_bridge.brief_for("AAPL", m)
+    assert "leicht positiv" in s and "kein Beweis" in s
+
+
+def test_aggregate_edge_weights_by_closed():
+    pf = {"a": {"n_closed": 8, "avg_return": -0.05, "win_rate": 0.4},
+          "b": {"n_closed": 2, "avg_return": 0.10, "win_rate": 0.5}}
+    ev = live_bridge._aggregate_edge(["a", "b"], pf)
+    assert ev["n_closed"] == 10
+    # gewichtet: (8*-0.05 + 2*0.10)/10 = -0.02 < 0 und n>=5 → keine Kante
+    assert ev["verdict"] == "none"
+
+
+def test_aggregate_edge_thin_when_few():
+    pf = {"a": {"n_closed": 3, "avg_return": 0.5, "win_rate": 1.0}}
+    assert live_bridge._aggregate_edge(["a"], pf)["verdict"] == "thin"
+
+
+def test_aggregate_edge_empty():
+    assert live_bridge._aggregate_edge(["x"], {})["verdict"] == "thin"
 
 
 def test_brief_for_zero_conviction():

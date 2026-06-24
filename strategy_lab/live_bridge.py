@@ -13,6 +13,11 @@ Jeder Pfad ist in try/except gekapselt – ein Fehler hier darf einen Handelszyk
 NIE crashen. Die zugrundeliegende Registry stammt aus dem Walk-Forward; der erste
 Paper-Forward zeigte, dass die Mechanik allein keine Kante ist (siehe Memory), daher
 bewusst nur advisorisch.
+
+EHRLICHKEITS-NAHT: Der Brief behauptet KEINE Robustheit mehr. Er trägt die reale
+Paper-Forward-Bilanz der heute feuernden Strategien mit – hat die Mechanik vorwärts
+keine Kante gezeigt (oder zu wenig Daten), sagt der Brief das ausdrücklich, statt ein
+zuversichtliches „robuste Strategien feuern" in den KI-Prompt zu falten.
 """
 from __future__ import annotations
 
@@ -27,6 +32,7 @@ log = get_logger(__name__)
 _FLAG = "STRATEGY_LAB_LIVE"
 _REGIME_ENV = "STRATEGY_LAB_REGIME"        # AUTO | off | festes Label
 _TTL_SECONDS = 3600                         # eine Zykluslänge; Signale ändern sich täglich
+_MIN_CLOSED = 5                             # unter so wenig Paper-Trades kein Urteil
 _cache: Dict = {"key": None, "ts": 0.0, "map": {}}
 
 
@@ -42,6 +48,57 @@ def reset_cache() -> None:
 def _default_loader() -> Callable:
     from backtesting import data_loader
     return data_loader.load
+
+
+def _paper_forward_edge() -> Dict[str, Dict]:
+    """Reale Paper-Forward-Bilanz je Strategie aus dem Ledger (netzfrei, nur Datei).
+    {strategy: {"n_closed": int, "avg_return": float, "win_rate": float}}.
+    Fail-safe → {} (kein Ledger / Fehler ⇒ keine Evidenz)."""
+    try:
+        from strategy_lab import paper_forward as pf
+        s = pf.summary(pf.load_ledger())
+        out: Dict[str, Dict] = {}
+        for strat, st in (s.get("by_strategy") or {}).items():
+            out[strat] = {
+                "n_closed": int(st.get("closed", 0)),
+                "avg_return": float(st.get("avg_return", 0.0)),
+                "win_rate": float(st.get("win_rate", 0.0)),
+            }
+        return out
+    except Exception as e:
+        log.debug("live_bridge._paper_forward_edge fehlgeschlagen (ignoriert): %s", e)
+        return {}
+
+
+def _aggregate_edge(strategies: List[str], pf_edge: Dict[str, Dict]) -> Dict:
+    """Verdichtet die Paper-Forward-Bilanz der heute feuernden Strategien zu EINEM
+    ehrlichen Urteil für den Ticker. Aggregiert über geschlossene Trades gewichtet.
+    verdict ∈ {"none" (keine nachgewiesene Kante), "thin" (zu dünn), "positive"}."""
+    n = 0
+    ret_weighted = 0.0
+    win_weighted = 0.0
+    for s in strategies:
+        e = pf_edge.get(s)
+        if not e:
+            continue
+        c = e["n_closed"]
+        if c <= 0:
+            continue
+        n += c
+        ret_weighted += e["avg_return"] * c
+        win_weighted += e["win_rate"] * c
+    if n == 0:
+        return {"verdict": "thin", "n_closed": 0, "avg_return": 0.0, "win_rate": 0.0}
+    avg = ret_weighted / n
+    win = win_weighted / n
+    if n < _MIN_CLOSED:
+        verdict = "thin"
+    elif avg > 0:
+        verdict = "positive"
+    else:
+        verdict = "none"
+    return {"verdict": verdict, "n_closed": n,
+            "avg_return": round(avg, 6), "win_rate": round(win, 4)}
 
 
 def conviction_map(
@@ -80,7 +137,9 @@ def conviction_map(
             fired = allocator.current_signals(universe, ld, plan=plan)
             conv = allocator.combine_signals(fired, plan=plan)
             inv = {t: [s for s, ts in fired.items() if t in ts] for t in conv}
-            out = {t: {"conviction": c, "strategies": inv.get(t, []), "regime": reg}
+            pf_edge = _paper_forward_edge()
+            out = {t: {"conviction": c, "strategies": inv.get(t, []), "regime": reg,
+                       "evidence": _aggregate_edge(inv.get(t, []), pf_edge)}
                    for t, c in conv.items()}
     except Exception as e:  # defensiv: niemals den Zyklus reißen
         log.debug("live_bridge.conviction_map fehlgeschlagen (ignoriert): %s", e)
@@ -90,9 +149,34 @@ def conviction_map(
     return out
 
 
+def _evidence_phrase(ev: Optional[Dict]) -> str:
+    """Ehrlicher Halbsatz zur realen Paper-Forward-Bilanz – behauptet nie Robustheit."""
+    if not ev:
+        return ("Paper-Forward-Bilanz: noch keine Validierung – rein mechanischer "
+                "Hinweis, NICHT als Bestätigung werten.")
+    v = ev.get("verdict")
+    n = int(ev.get("n_closed", 0))
+    avg = float(ev.get("avg_return", 0.0)) * 100
+    win = float(ev.get("win_rate", 0.0)) * 100
+    if v == "none":
+        return (f"Paper-Forward-Bilanz: bislang KEINE nachgewiesene Kante "
+                f"(Ø {avg:+.1f}% über {n} geschlossene Paper-Trades, Trefferquote {win:.0f}%) "
+                "– als Kontext werten, NICHT als Bestätigung.")
+    if v == "positive":
+        return (f"Paper-Forward-Bilanz: bislang leicht positiv "
+                f"(Ø {avg:+.1f}% über {n} Paper-Trades, Trefferquote {win:.0f}%) "
+                "– schwaches Indiz, kein Beweis.")
+    # thin / unbekannt
+    return (f"Paper-Forward-Bilanz: noch zu dünn für ein Urteil ({n} geschlossene "
+            "Paper-Trades) – rein mechanischer Hinweis ohne Validierung.")
+
+
 def brief_for(ticker: str, conv_map: Optional[Dict[str, Dict]]) -> str:
     """Advisorischer Kontext-Satz für einen Ticker (oder "" wenn nichts feuert).
-    Wird wie macro_brief in den Analyse-Prompt gefaltet – rein zusätzlich."""
+    Wird wie macro_brief in den Analyse-Prompt gefaltet – rein zusätzlich.
+
+    Behauptet KEINE Robustheit/Kaufempfehlung: nennt nur, dass die Mechanik feuert,
+    und hängt die reale Paper-Forward-Bilanz an (oder deren Fehlen)."""
     try:
         if not conv_map:
             return ""
@@ -101,8 +185,10 @@ def brief_for(ticker: str, conv_map: Optional[Dict[str, Dict]]) -> str:
             return ""
         strats = ", ".join(e.get("strategies") or []) or "—"
         reg = e.get("regime")
-        return ("MECHANIK (strategy_lab, additiver Hinweis – KEIN Auto-Trade): robuste "
-                f"Strategien feuern HEUTE ({strats}) → Konviktion {float(e['conviction'])*100:.0f}%"
+        head = ("MECHANIK (strategy_lab – additiver Hinweis, KEIN Auto-Trade, KEINE "
+                f"Kaufempfehlung): {strats} feuert HEUTE, Konviktion "
+                f"{float(e['conviction'])*100:.0f}%"
                 + (f", Marktregime {reg}" if reg else "") + ".")
+        return head + " " + _evidence_phrase(e.get("evidence"))
     except Exception:
         return ""

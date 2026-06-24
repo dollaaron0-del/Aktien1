@@ -179,6 +179,19 @@ class UniverseInfo:
         if self.graveyard_requested == 0:
             return ("NUR Überlebende — Survivorship-Bias NICHT gemildert "
                     "(Kennzahlen nach oben verzerrt).")
+        cov = (self.graveyard_with_data / self.graveyard_requested
+               if self.graveyard_requested else 0.0)
+        if self.graveyard_with_data == 0:
+            return (f"Graveyard angefordert ({self.graveyard_requested} Titel), aber 0 mit "
+                    "verwertbaren Daten → Survivorship faktisch NICHT gemildert "
+                    "(freie Quelle liefert keine Delisting-Historie). Kennzahlen weiter "
+                    "nach oben verzerrt.")
+        if cov < 0.25:
+            return (f"Survivorship NUR MARGINAL gemildert: bloß {self.graveyard_with_data}/"
+                    f"{self.graveyard_requested} Graveyard-Titel haben Daten "
+                    f"({self.survivors} Überlebende). Abdeckung zu dünn → Kennzahlen "
+                    "weiter nach oben verzerrt; echte Korrektur braucht eine Point-in-Time-"
+                    "Bezahlquelle (Norgate/Sharadar/EOD).")
         return (f"Survivorship gemildert: {self.survivors} Überlebende + "
                 f"{self.graveyard_with_data}/{self.graveyard_requested} Graveyard-Titel "
                 f"mit Daten. Rest delistet ohne yfinance-Historie (übersprungen).")
