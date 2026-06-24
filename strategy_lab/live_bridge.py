@@ -70,6 +70,54 @@ def _paper_forward_edge() -> Dict[str, Dict]:
         return {}
 
 
+def _registry_regime_lookup() -> Dict[str, Dict]:
+    """Aus der Promotion-Registry je aktiver Strategie: regime_breakdown (OOS je
+    Regime) + robust_regimes. Fail-safe → {}."""
+    try:
+        from strategy_lab import promotion
+        out: Dict[str, Dict] = {}
+        for e in promotion.active_strategies():
+            out[e["strategy"]] = {
+                "breakdown": e.get("regime_breakdown") or {},
+                "robust": set(e.get("robust_regimes") or []),
+            }
+        return out
+    except Exception as e:
+        log.debug("live_bridge._registry_regime_lookup fehlgeschlagen (ignoriert): %s", e)
+        return {}
+
+
+_STANCE_ORDER = {"adverse": 0, "untested": 1, "weak": 2, "favorable": 3}
+
+
+def _regime_stance(strategies: List[str], regime: Optional[str],
+                   lookup: Dict[str, Dict]) -> Dict:
+    """Wie hat die HEUTE feuernde Mechanik in DIESEM Marktregime OOS abgeschnitten?
+    stance ∈ favorable / weak / adverse / untested. KONSERVATIV: schon EIN adverse →
+    adverse (eine Warnung hat Vorrang vor Zuversicht). Das ist der Hebel aus dem
+    Befund ([[paper-forward-erster-befund]]): der Swing verlor SPEZIELL im Bull."""
+    if not regime or not strategies:
+        return {"stance": "untested", "regime": regime, "median": None}
+    worst, worst_median = "favorable", None
+    for s in strategies:
+        info = lookup.get(s)
+        if not info:
+            st, med = "untested", None
+        else:
+            bd = info["breakdown"].get(regime)
+            if regime in info["robust"]:
+                st, med = "favorable", (bd or {}).get("median_test_return")
+            elif bd is None:
+                st, med = "untested", None
+            elif float(bd.get("median_test_return", 0.0)) <= 0:
+                st, med = "adverse", bd.get("median_test_return")
+            else:
+                st, med = "weak", bd.get("median_test_return")
+        if _STANCE_ORDER[st] < _STANCE_ORDER[worst]:
+            worst, worst_median = st, med
+    return {"stance": worst, "regime": regime, "median": worst_median}
+
+
 def _aggregate_edge(strategies: List[str], pf_edge: Dict[str, Dict]) -> Dict:
     """Verdichtet die Paper-Forward-Bilanz der heute feuernden Strategien zu EINEM
     ehrlichen Urteil für den Ticker. Aggregiert über geschlossene Trades gewichtet.
@@ -138,8 +186,10 @@ def conviction_map(
             conv = allocator.combine_signals(fired, plan=plan)
             inv = {t: [s for s, ts in fired.items() if t in ts] for t in conv}
             pf_edge = _paper_forward_edge()
+            reg_lookup = _registry_regime_lookup()
             out = {t: {"conviction": c, "strategies": inv.get(t, []), "regime": reg,
-                       "evidence": _aggregate_edge(inv.get(t, []), pf_edge)}
+                       "evidence": _aggregate_edge(inv.get(t, []), pf_edge),
+                       "regime_stance": _regime_stance(inv.get(t, []), reg, reg_lookup)}
                    for t, c in conv.items()}
     except Exception as e:  # defensiv: niemals den Zyklus reißen
         log.debug("live_bridge.conviction_map fehlgeschlagen (ignoriert): %s", e)
@@ -147,6 +197,25 @@ def conviction_map(
 
     _cache.update(key=key, ts=now, map=out)
     return out
+
+
+def _regime_phrase(rs: Optional[Dict]) -> str:
+    """Ehrlicher Halbsatz zum Regime-Befund – warnt aktiv im ungünstigen Regime."""
+    if not rs or not rs.get("regime"):
+        return ""
+    reg = rs["regime"]
+    stance = rs.get("stance")
+    med = rs.get("median")
+    medtxt = (f" (OOS-Median {float(med)*100:+.0f}%)"
+              if isinstance(med, (int, float)) else "")
+    if stance == "adverse":
+        return (f" ACHTUNG Regime {reg}: diese Mechanik war hier historisch OOS "
+                f"NEGATIV{medtxt} → eher Buy&Hold/Sentiment folgen, Mechanik abwerten.")
+    if stance == "favorable":
+        return f" Regime {reg}: Mechanik hat hier historisch (OOS) getragen{medtxt}."
+    if stance == "weak":
+        return f" Regime {reg}: OOS nur schwach-positiv{medtxt}, nicht robust."
+    return f" Regime {reg}: für diese Mechanik OOS ungetestet."
 
 
 def _evidence_phrase(ev: Optional[Dict]) -> str:
@@ -187,8 +256,10 @@ def brief_for(ticker: str, conv_map: Optional[Dict[str, Dict]]) -> str:
         reg = e.get("regime")
         head = ("MECHANIK (strategy_lab – additiver Hinweis, KEIN Auto-Trade, KEINE "
                 f"Kaufempfehlung): {strats} feuert HEUTE, Konviktion "
-                f"{float(e['conviction'])*100:.0f}%"
-                + (f", Marktregime {reg}" if reg else "") + ".")
-        return head + " " + _evidence_phrase(e.get("evidence"))
+                f"{float(e['conviction'])*100:.0f}%.")
+        # Regime-Befund: aus dem Eintrag oder – fehlt er – wenigstens das Label.
+        rs = e.get("regime_stance") or ({"stance": "untested", "regime": reg, "median": None}
+                                        if reg else None)
+        return head + _regime_phrase(rs) + " " + _evidence_phrase(e.get("evidence"))
     except Exception:
         return ""

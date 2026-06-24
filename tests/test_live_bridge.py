@@ -13,8 +13,9 @@ from strategy_lab import allocator, live_bridge
 def _clean(monkeypatch):
     monkeypatch.delenv("STRATEGY_LAB_LIVE", raising=False)
     monkeypatch.delenv("STRATEGY_LAB_REGIME", raising=False)
-    # Paper-Forward-Bilanz entkoppeln: Tests lesen NICHT die echte Ledger-Datei.
+    # Paper-Forward-Bilanz + Registry-Regime entkoppeln: Tests lesen keine echten Dateien.
     monkeypatch.setattr(live_bridge, "_paper_forward_edge", lambda: {})
+    monkeypatch.setattr(live_bridge, "_registry_regime_lookup", lambda: {})
     live_bridge.reset_cache()
     yield
     live_bridge.reset_cache()
@@ -157,6 +158,53 @@ def test_aggregate_edge_thin_when_few():
 
 def test_aggregate_edge_empty():
     assert live_bridge._aggregate_edge(["x"], {})["verdict"] == "thin"
+
+
+# ── Regime-Stance (#2: warnt aktiv im ungünstigen Regime) ─────────────────────
+def test_regime_stance_adverse_when_oos_negative():
+    lookup = {"s": {"breakdown": {"BULL_CALM": {"median_test_return": -0.08}},
+                    "robust": set()}}
+    rs = live_bridge._regime_stance(["s"], "BULL_CALM", lookup)
+    assert rs["stance"] == "adverse"
+
+
+def test_regime_stance_favorable_when_robust():
+    lookup = {"s": {"breakdown": {"BEAR_VOLATILE": {"median_test_return": 0.12}},
+                    "robust": {"BEAR_VOLATILE"}}}
+    rs = live_bridge._regime_stance(["s"], "BEAR_VOLATILE", lookup)
+    assert rs["stance"] == "favorable"
+
+
+def test_regime_stance_untested_when_regime_absent():
+    lookup = {"s": {"breakdown": {"BULL_CALM": {"median_test_return": 0.1}}, "robust": set()}}
+    assert live_bridge._regime_stance(["s"], "SIDE_CALM", lookup)["stance"] == "untested"
+
+
+def test_regime_stance_conservative_adverse_wins():
+    lookup = {"good": {"breakdown": {"R": {"median_test_return": 0.1}}, "robust": {"R"}},
+              "bad": {"breakdown": {"R": {"median_test_return": -0.05}}, "robust": set()}}
+    assert live_bridge._regime_stance(["good", "bad"], "R", lookup)["stance"] == "adverse"
+
+
+def test_brief_for_warns_in_adverse_regime():
+    m = {"AAPL": {"conviction": 1.0, "strategies": ["baseline_swing"], "regime": "BULL_CALM",
+                  "evidence": {"verdict": "none", "n_closed": 10, "avg_return": -0.02,
+                               "win_rate": 0.39},
+                  "regime_stance": {"stance": "adverse", "regime": "BULL_CALM",
+                                    "median": -0.08}}}
+    s = live_bridge.brief_for("AAPL", m)
+    assert "ACHTUNG" in s and "Buy&Hold" in s and "BULL_CALM" in s
+    assert "KEINE nachgewiesene Kante" in s   # beide Signale stehen nebeneinander
+
+
+def test_brief_for_supportive_in_favorable_regime():
+    m = {"AAPL": {"conviction": 1.0, "strategies": ["s"], "regime": "BEAR_VOLATILE",
+                  "evidence": {"verdict": "positive", "n_closed": 8, "avg_return": 0.03,
+                               "win_rate": 0.6},
+                  "regime_stance": {"stance": "favorable", "regime": "BEAR_VOLATILE",
+                                    "median": 0.12}}}
+    s = live_bridge.brief_for("AAPL", m)
+    assert "getragen" in s and "ACHTUNG" not in s
 
 
 def test_brief_for_zero_conviction():
