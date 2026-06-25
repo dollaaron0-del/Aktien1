@@ -576,17 +576,35 @@ def main():
         except Exception:
             pass
 
-    # RL-Trainer: trainiert alle 24h auf Trade-History
+    # RL-Trainer: trainiert alle 24h auf Trade-History – aber NUR, wenn der RLAgent
+    # auch konsultiert wird (config.rl_veto_enabled). Sonst trainierte er ins Leere:
+    # ohne Veto beeinflusst sein Ergebnis keine Entscheidung (CPU-Verschwendung).
+    if getattr(config, "rl_veto_enabled", False):
+        try:
+            import os as _os
+            journal_db = _os.path.join("data", "trade_journal.db")
+            start_rl_trainer(_rl_agent, journal_db, interval_hours=24)
+            console.print("  [bold cyan]🤖 RL-Agent aktiv[/bold cyan] (Veto + Training alle 24h)")
+            rl_stats = _rl_agent.get_stats()
+            if rl_stats.get("total_trades", 0) > 0:
+                console.print(f"  [dim]   RL: {rl_stats['total_trades']} Trades gelernt, avg_reward={rl_stats.get('avg_reward', 0):.3f}[/dim]")
+        except Exception as e:
+            log.warning("RL-Trainer Start fehlgeschlagen: %s", e)
+    else:
+        console.print("  [dim]🤖 RL-Agent inaktiv (RL_VETO_ENABLED=false) – kein Veto, kein Training[/dim]")
+
+    # Kalibrierungs-Modell aus dem ExperienceStore frisch ziehen, wenn veraltet.
+    # Schließt den Lern-Kreis: gesammelte (Live-)Outcomes fließen automatisch (≤24h)
+    # zurück in data/calibration.json, ohne manuellen scripts/calibrate.py-Lauf.
     try:
-        import os as _os
-        journal_db = _os.path.join("data", "trade_journal.db")
-        start_rl_trainer(_rl_agent, journal_db, interval_hours=24)
-        console.print("  [bold cyan]🤖 RL-Agent aktiv[/bold cyan] (trainiert alle 24h auf Trade-History)")
-        rl_stats = _rl_agent.get_stats()
-        if rl_stats.get("total_trades", 0) > 0:
-            console.print(f"  [dim]   RL: {rl_stats['total_trades']} Trades gelernt, avg_reward={rl_stats.get('avg_reward', 0):.3f}[/dim]")
+        from analyzers.calibration import auto_refit
+        refit = auto_refit(max_age_hours=24)
+        if refit is not None:
+            s = refit.summary()
+            console.print(f"  [dim]📐 Kalibrierung neu gefittet (n={s.get('n_total', 0)}, "
+                          f"Win={s.get('global_win_rate', 0):.0%})[/dim]")
     except Exception as e:
-        log.warning("RL-Trainer Start fehlgeschlagen: %s", e)
+        log.debug("Auto-Re-Fit Kalibrierung übersprungen: %s", e)
 
     # Regime + Cross-Asset Status
     try:

@@ -45,6 +45,9 @@ except Exception:  # pragma: no cover - defensiv
     _SL_PCT, _TP_PCT = 0.07, 0.20
 
 _DEFAULT_HOLD = 20  # Trading-Bars, wenn suggested_hold fehlt
+# Round-Trip-Reibung (Spread+Slippage+Gebühren) je Trade. Default 5 bps; via env
+# überschreibbar. Macht Papier-Outcomes ehrlicher (vorher: 0 → zu optimistisch).
+_SLIPPAGE_PCT = float(os.getenv("BACKFILL_SLIPPAGE_PCT", "0.0005"))
 
 
 # ── Reine Simulation (netzfrei, testbar) ──────────────────────────────────────
@@ -67,6 +70,7 @@ def simulate_outcome(
     tp_pct: float = _TP_PCT,
     max_hold: int = _DEFAULT_HOLD,
     entry_price: Optional[float] = None,
+    slippage_pct: float = _SLIPPAGE_PCT,
 ) -> Optional[Dict]:
     """Simuliert ein Trade-Ergebnis aus OHLC-Bars.
 
@@ -75,6 +79,11 @@ def simulate_outcome(
     Liefert ein Outcome-Dict oder None, wenn zu wenig/unbrauchbare Daten.
 
     Konvention bei Doppel-Trigger in einer Bar: konservativ → Stop-Loss zuerst.
+
+    slippage_pct: Round-Trip-Reibung (Spread/Slippage/Gebühren) als Anteil – wird
+    als Abschlag vom Brutto-P&L abgezogen (Ein- UND Ausstieg je slippage_pct
+    schlechter). Macht die Papier-Outcomes ehrlicher; Default via env
+    BACKFILL_SLIPPAGE_PCT. Ein knapper Brutto-Gewinn kann dadurch zur LOSS kippen.
     """
     if not bars:
         return None
@@ -134,6 +143,8 @@ def simulate_outcome(
             return None
 
     pnl_pct = ((exit_price - entry) / entry * 100) if long else ((entry - exit_price) / entry * 100)
+    # Round-Trip-Reibung abziehen (Ein- + Ausstieg je slippage_pct schlechter).
+    pnl_pct -= max(0.0, float(slippage_pct)) * 100.0 * 2.0
     # Exit-Bar (gleiche Logik für SL/TP/TIME): future[hold_days-1]. Datum optional.
     exit_bar = future[hold_days - 1] if 0 < hold_days <= len(future) else None
     return {

@@ -110,12 +110,21 @@ class CalibrationModel:
         self.tables: Dict[str, Dict[str, BucketStat]] = {}
 
     # ── Lernen ──────────────────────────────────────────────────────────────────
-    def fit(self, store) -> "CalibrationModel":
+    def fit(self, store, prefer_live: bool = True, min_live: int = 30) -> "CalibrationModel":
         """Lernt die Kalibrierungstabellen aus einem ExperienceStore.
 
-        Nutzt nur 'backfill'+'live' gemeinsam (alle gelabelten Zeilen). Wer Papier
-        vs. echt trennen will, ruft fit auf gefilterten iter_labeled-Daten.
+        prefer_live (Default): sobald genügend ECHTE Outcomes vorliegen
+        (>= min_live), wird NUR auf 'live' gefittet – der mechanische Papier-Backfill
+        (7%SL/20%TP, Exit-Regime ohne nachgewiesene Kante) wird dann ignoriert, weil
+        er das reale Verhalten des Bots nicht abbildet. Solange zu wenig Live-Daten da
+        sind, fällt es auf den gemischten Backfill zurück (besser als nichts).
         """
+        if prefer_live:
+            live = list(store.iter_labeled(label_source="live"))
+            if len(live) >= min_live:
+                log.info("CalibrationModel: fitte auf %d Live-Outcomes (Backfill ignoriert)",
+                         len(live))
+                return self.fit_rows(live)
         rows = list(store.iter_labeled())
         return self.fit_rows(rows)
 
@@ -230,3 +239,43 @@ class CalibrationModel:
             for dim, t in d.get("tables", {}).items()
         }
         return True
+
+
+# ── Auto-Re-Fit (schließt den Lern-Kreis) ────────────────────────────────────────
+def _age_hours(iso_ts: Optional[str]) -> Optional[float]:
+    if not iso_ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso_ts)
+    except ValueError:
+        return None
+    return (datetime.utcnow() - dt).total_seconds() / 3600.0
+
+
+def auto_refit(max_age_hours: float = 24.0, store=None) -> Optional["CalibrationModel"]:
+    """Re-fittet data/calibration.json aus dem ExperienceStore, wenn veraltet.
+
+    Gibt das neu gefittete Modell zurück (oder None, wenn nichts zu tun / kein Store).
+    Fail-safe: jeder Fehler → None, niemals Exception in den Aufrufer. Gedacht für den
+    Bot-Start (main.py), damit gesammelte Live-Outcomes ohne Handarbeit (≤ max_age_hours)
+    in das vom EntryFilter genutzte Modell zurückfließen.
+    """
+    try:
+        existing = CalibrationModel()
+        if existing.load():
+            age = _age_hours(existing.fitted_at)
+            if age is not None and age < max_age_hours:
+                return None  # noch frisch genug
+        if store is None:
+            from analyzers.experience_store import ExperienceStore
+            store = ExperienceStore()
+        model = CalibrationModel().fit(store)
+        if model.n_total <= 0:
+            return None  # keine gelabelten Daten → altes Modell behalten
+        model.save()
+        log.info("CalibrationModel: Auto-Re-Fit (n=%d, fitted_at=%s)",
+                 model.n_total, model.fitted_at)
+        return model
+    except Exception as exc:  # pragma: no cover - defensiv
+        log.debug("auto_refit übersprungen: %s", exc)
+        return None

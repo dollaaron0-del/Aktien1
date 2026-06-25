@@ -401,8 +401,40 @@ class SwingStrategy:
                         mult = float(getattr(config, "learning_filter_caution_size_mult", 0.5))
                         position_value *= max(0.0, min(1.0, mult))
                         log.info("[%s] Lern-Filter CAUTION → Position ×%.2f", ticker, mult)
+                    elif verdict.verdict == "PROCEED":
+                        # Zweiseitig: klar positive gelernte Kante darf die Position auch
+                        # vergrößern (Default 1.0 = aus). Gedeckelt, damit der Filter nie
+                        # exzessiv hebelt.
+                        pmult = float(getattr(config, "learning_filter_proceed_size_mult", 1.0))
+                        if pmult != 1.0:
+                            position_value *= max(1.0, min(2.0, pmult))
+                            log.info("[%s] Lern-Filter PROCEED → Position ×%.2f", ticker, pmult)
                 except Exception as _ef_err:
                     log.debug("Lern-Filter übersprungen [%s]: %s", ticker, _ef_err)
+
+        # RLAgent-Veto: separat trainierter linearer Policy-Agent (eigenes Paradigma,
+        # parallel zum EntryFilter). Nur aktiv, wenn der Runner einen rl_agent durchreicht
+        # (config.rl_veto_enabled). should_buy → (kaufen?, modifier 0.5–1.25): negativer
+        # Policy-Score ⇒ SKIP, sonst zweiseitige Size-Anpassung. Fail-open.
+        if rl_agent is not None:
+            try:
+                from analyzers.rl_agent import RLState
+                state = RLState(
+                    sentiment_score=max(0.0, min(1.0, float(sentiment or 0.0))),
+                    vix_level=0.3,        # neutraler Default (konsistent mit Trainings-State)
+                    momentum_5d=0.0,
+                    news_velocity=0.5,
+                    confidence_encoded=RLState.encode_confidence(str(confidence or "MEDIUM")),
+                    regime_encoded=RLState.encode_regime(str(regime or "NEUTRAL")),
+                )
+                rl_buy, rl_mod = rl_agent.should_buy(state)
+                if not rl_buy:
+                    return StrategyResult(
+                        "SKIP", ticker, "RL-Agent-Veto (negativer Policy-Score)")
+                position_value *= max(0.25, min(1.5, float(rl_mod)))
+                log.info("[%s] RL-Agent OK → Position ×%.2f", ticker, rl_mod)
+            except Exception as _rl_err:
+                log.debug("RL-Veto übersprungen [%s]: %s", ticker, _rl_err)
 
         shares = position_value / current_price
 

@@ -85,6 +85,22 @@ class Config:
     learning_filter_caution_size_mult: float = field(
         default_factory=lambda: float(os.getenv("LEARNING_FILTER_CAUTION_SIZE_MULT", "0.5"))
     )
+    # Positionsgrößen-Faktor bei PROCEED (>1.0 = größere Position bei klar positiver
+    # gelernter Kante). Default 1.0 = aus → der Filter gated nur nach unten. Auf z.B.
+    # 1.25 setzen, um die gelernte Kante auch zweiseitig (nach oben) zu nutzen.
+    learning_filter_proceed_size_mult: float = field(
+        default_factory=lambda: float(os.getenv("LEARNING_FILTER_PROCEED_SIZE_MULT", "1.0"))
+    )
+
+    # ── RLAgent-Veto (analyzers/rl_agent.py) ────────────────────────────────
+    # Separat trainierter linearer Policy-Agent (eigenes Lern-Paradigma, parallel
+    # zum statistischen EntryFilter). should_buy(state) → (kaufen?, size_mod 0.5–1.25).
+    # Default AUS: der Agent ist sonst zwar trainiert, beeinflusst aber keine
+    # Entscheidung. Bei True wird er beim Kauf konsultiert (Veto + zweiseitiges Sizing)
+    # UND der 24h-Trainer in main.py gestartet. Aus = kein Veto, kein Training.
+    rl_veto_enabled: bool = field(
+        default_factory=lambda: os.getenv("RL_VETO_ENABLED", "false").lower() == "true"
+    )
 
     # ── Marktbasierter Analyse-Zeitplan ─────────────────────────────────────
     # Welche Börsen beobachten? Analyse läuft je 30 Min vor Börseneröffnung.

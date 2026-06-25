@@ -1488,7 +1488,8 @@ def run_analysis_cycle(
             # Fehler bei EINEM Ticker darf den restlichen Zyklus nicht abreißen
             # und muss sichtbar sein (nicht still verschluckt – vgl. Execution-Bug).
             try:
-                _result = strategy.evaluate(ticker, analysis, _cur_px, regime)
+                _rl = _rl_agent if getattr(config, "rl_veto_enabled", False) else None
+                _result = strategy.evaluate(ticker, analysis, _cur_px, regime, rl_agent=_rl)
                 action = executor.execute(_result, analysis=analysis, sources_breakdown=sources_breakdown)
             except Exception as _exec_err:
                 log.error("Evaluate/Execute [%s] fehlgeschlagen: %s", ticker, _exec_err, exc_info=True)

@@ -115,11 +115,27 @@ def test_time_exit():
 def test_short_take_profit():
     # SHORT Entry 100, TP 20% -> 80 (Kurs fällt). Bar 1 Low 78.
     bars = _bars([100, 82], highs=[100, 85], lows=[100, 78])
-    out = simulate_outcome(bars, "SHORT", sl_pct=0.07, tp_pct=0.20, max_hold=10)
+    # slippage_pct=0.0 isoliert die reine Short-Mechanik (sonst -0.1pp Reibung).
+    out = simulate_outcome(bars, "SHORT", sl_pct=0.07, tp_pct=0.20, max_hold=10,
+                           slippage_pct=0.0)
     assert out["exit_reason"] == "TP"
     assert out["exit_price"] == pytest.approx(80.0)
     assert out["pnl_pct"] == pytest.approx(20.0)   # Short-Gewinn bei fallendem Kurs
     assert out["outcome"] == "WIN"
+
+
+def test_slippage_haircut_reduces_pnl_and_can_flip_outcome():
+    # Round-Trip-Reibung zieht vom Brutto-P&L ab. 50 bps → -1.0pp pro Trade.
+    bars = _bars([100, 110, 125], highs=[100, 112, 125], lows=[100, 108, 118])
+    gross = simulate_outcome(bars, "LONG", tp_pct=0.20, max_hold=10, slippage_pct=0.0)
+    net = simulate_outcome(bars, "LONG", tp_pct=0.20, max_hold=10, slippage_pct=0.005)
+    assert net["pnl_pct"] == pytest.approx(gross["pnl_pct"] - 1.0)
+    # Knapper Brutto-Gewinn kippt durch Reibung zur LOSS.
+    flat = _bars([100, 100], highs=[100, 100.3], lows=[100, 99.8])
+    flip = simulate_outcome(flat, "LONG", sl_pct=0.07, tp_pct=0.20, max_hold=1,
+                            slippage_pct=0.005)
+    assert flip["exit_reason"] == "TIME"
+    assert flip["outcome"] == "LOSS"  # Brutto ~0% → nach Reibung negativ
 
 
 def test_double_trigger_is_conservative():
