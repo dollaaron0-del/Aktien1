@@ -165,7 +165,8 @@ class TradeExecutor:
             self.notifier.send(
                 f"⚠️ <b>{ticker} SELL übersprungen – Buch/IBKR-Desync</b>\n"
                 f"{warn} → Order würde shorten, daher blockiert.\n"
-                f"Buch gegen IBKR abgleichen (Startup-Reconcile prüft das beim Neustart)."
+                f"Buch gegen IBKR abgleichen (Startup-Reconcile prüft das beim Neustart).",
+                level="critical",
             )
         log.error("[%s] SELL übersprungen (Anti-Short): %s", ticker, warn)
         return warn
@@ -234,7 +235,7 @@ class TradeExecutor:
             ticker=ticker,
             shares=shares,
             entry_price=actual_price,
-            entry_date=datetime.utcnow().isoformat(),
+            entry_date=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             stop_loss=stop_loss,
             take_profit=take_profit,
             target_hold_days=result.hold_days,
@@ -281,12 +282,14 @@ class TradeExecutor:
                 warn = _fail_reason(fill)
                 self.notifier.send(
                     f"🚨 <b>{ticker} Partial-TP Broker-Order FEHLGESCHLAGEN</b>\n"
-                    f"Buch wurde bereits reduziert – bitte Broker manuell prüfen! ({warn})"
+                    f"Buch wurde bereits reduziert – bitte Broker manuell prüfen! ({warn})",
+                    level="critical",
                 )
                 log.error("[%s] Partial-TP Broker-Sell fehlgeschlagen: %s", ticker, warn)
             actual_price = _fill_price(fill, result.price)
             self.notifier.send(
-                f"📊 <b>{ticker} Partial-TP</b>: {sell_shares:.4f} Stück @ ${actual_price:.2f}\n{result.reason}"
+                f"📊 <b>{ticker} Partial-TP</b>: {sell_shares:.4f} Stück @ ${actual_price:.2f}\n{result.reason}",
+                level="trade",
             )
             # Bewusst KEIN "VERKAUFT" → runner schließt die Vorhersage nicht.
             return f"[{ticker}] 📊 Partial-TP: {sell_shares:.4f} @ ${actual_price:.2f} | {result.reason}"
@@ -304,7 +307,8 @@ class TradeExecutor:
             if _throttle_should_send(f"SELL_FAIL:{ticker}", warn):
                 self.notifier.send(
                     f"🚨 <b>{ticker} SELL-Order FEHLGESCHLAGEN</b> ({result.reason})\n"
-                    f"Position bleibt offen – bitte manuell im Broker prüfen!\nFehler: {warn}"
+                    f"Position bleibt offen – bitte manuell im Broker prüfen!\nFehler: {warn}",
+                    level="critical",
                 )
             log.error("[%s] SELL fehlgeschlagen (%s) – Position bleibt offen", ticker, warn)
             return f"[{ticker}] ⛔ SELL-Order fehlgeschlagen: {warn}"
@@ -422,6 +426,25 @@ def process_signal_queue(strategy, executor: "TradeExecutor", broker, regime: st
             result = strategy.evaluate(ticker, analysis, float(price), regime)
             out = executor.execute(result, analysis=analysis,
                                    sources_breakdown=sig.get("sources_breakdown"))
+            # Entscheidungs-Transparenz (Dashboard): auch Queue-Drains loggen.
+            try:
+                from analyzers.decision_log import get_decision_log
+                _dl = get_decision_log()
+                if _dl is not None:
+                    _dl.log({
+                        "ticker": ticker,
+                        "action": result.action,
+                        "reason": result.reason,
+                        "executed": out,
+                        "source": "queue",
+                        "recommendation": "BUY",
+                        "direction": sig.get("direction"),
+                        "sentiment_score": float(sig.get("sentiment_score") or 0),
+                        "confidence": sig.get("confidence"),
+                        "regime": regime,
+                    })
+            except Exception:
+                pass
             if out and "GEKAUFT" in out:
                 sq.mark_executed(sig["id"])
                 msgs.append(out)

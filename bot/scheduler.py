@@ -5,7 +5,7 @@ bot/scheduler.py – Main bot loop, schedule setup, and all _*_job functions.
 import os
 import schedule
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from rich.console import Console
@@ -318,7 +318,7 @@ def run_bot_loop(
 
     # Startup-Benachrichtigung
     try:
-        _wday = datetime.utcnow().weekday()
+        _wday = datetime.now(timezone.utc).replace(tzinfo=None).weekday()
         _is_weekend = _wday >= 5
         _next_info = f"Nächste Analyse: {next_str}" if next_str != "–" else "Wochenende – keine Analyse heute"
         TelegramNotifier().send(
@@ -331,7 +331,7 @@ def run_bot_loop(
         log.debug("Startup-Notification fehlgeschlagen: %s", _sn_err)
 
     def _monthly_review_check():
-        if datetime.utcnow().day == 1:
+        if datetime.now(timezone.utc).replace(tzinfo=None).day == 1:
             console.print("[bold magenta]📋 Erstelle monatliche Selbsteinschätzung...[/bold magenta]")
             content = reflection.generate_monthly_review()
             if content:
@@ -677,7 +677,7 @@ def run_bot_loop(
     schedule.every().sunday.at("14:00").do(_weekend_prep_job)
 
     # If today is already weekend, run prep now if no briefing exists for next week
-    if datetime.utcnow().weekday() >= 5 and not weekend_prep_inst.get_current_briefing():
+    if datetime.now(timezone.utc).replace(tzinfo=None).weekday() >= 5 and not weekend_prep_inst.get_current_briefing():
         console.print("[bold cyan]📅 Wochenende erkannt – starte Wochenvorbereitung...[/bold cyan]")
         import threading as _thr_wp
         _thr_wp.Thread(target=_weekend_prep_job, daemon=True, name="weekend-prep-startup").start()
@@ -732,7 +732,7 @@ def run_bot_loop(
             _stale = True
             if _last:
                 from datetime import timezone as _tz
-                _age = (datetime.utcnow() - datetime.fromisoformat(_last)).total_seconds()
+                _age = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(_last)).total_seconds()
                 _stale = _age > 20 * 3600
         else:
             _stale = True
@@ -875,7 +875,7 @@ def run_bot_loop(
                     # Umrechnung erscheint eine 07:30-Analyse als 05:30 (UTC+2) und
                     # der Watchdog hält den planmäßig bedienten Slot fälschlich für
                     # verpasst → unnötige Nachhol-Analyse + Telegram-Spam.
-                    _utc_offset = datetime.now() - datetime.utcnow()
+                    _utc_offset = datetime.now() - datetime.now(timezone.utc).replace(tzinfo=None)
                     _last_dt = _dt.fromisoformat(_last_ts) + _utc_offset
                     if _last_dt >= _due_slot_dt - _td(minutes=30):
                         _watchdog_last_triggered[today_str] = _last_dt
@@ -1080,23 +1080,46 @@ def run_bot_loop(
         schedule.every(5).minutes.do(_ibkr_fill_check_job)
 
     # ── SL/TP-Check alle 30 Minuten ─────────────────────────────────────────
+    # ── Signal-Queue-Drain ──────────────────────────────────────────────────
+    # N3-Befund: process_signal_queue() war nie verdrahtet — vorgemerkte
+    # Signale ("Max Positionen erreicht") liefen deshalb immer nur ab
+    # (historisch 0 von 144 ausgeführt). Jeder Eintrag wird beim Drain über
+    # strategy.evaluate() komplett neu geprüft (Slots, Schwelle, Korrelation,
+    # Liquidität, Sizing) — es kauft nur, was aktuell noch gültig ist.
+    def _signal_queue_job():
+        try:
+            if signal_queue.count_pending() == 0:
+                return
+            from strategy.executor import process_signal_queue
+            for _msg in process_signal_queue(strategy, _executor, broker, regime="NEUTRAL"):
+                console.print(f"  [bold green]{_msg}[/bold green]")
+        except Exception as _e:
+            log.warning("Signal-Queue-Drain fehlgeschlagen: %s", _e)
+    schedule.every(60).minutes.do(_signal_queue_job)
+
     def _sl_tp_check_job():
         try:
             positions = portfolio.all_positions()
             if not positions:
                 return
             prices = broker.get_prices(list(positions.keys()))
+            _closed = False
             for _res in strategy.check_exits(prices):
                 _p = portfolio.get_position(_res.ticker)
                 _dh = 0
                 if _p:
                     try:
-                        _dh = (datetime.utcnow() - datetime.fromisoformat(_p.entry_date)).days
+                        _dh = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(_p.entry_date)).days
                     except Exception:
                         _dh = 0
                 _act = _executor.execute(_res, days_held=_dh)
                 if _act:
                     console.print(f"  [yellow]{_act}[/yellow]")
+                    if "VERKAUFT" in _act:
+                        _closed = True
+            if _closed:
+                # Slot/Kapital frei geworden → vorgemerkte Signale sofort prüfen
+                _signal_queue_job()
         except Exception as _e:
             log.warning("SL/TP-Check fehlgeschlagen: %s", _e)
     schedule.every(30).minutes.do(_sl_tp_check_job)
@@ -1113,7 +1136,7 @@ def run_bot_loop(
             runners = []
             for ticker, pos in positions.items():
                 price = prices.get(ticker, pos.entry_price)
-                days_held = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
+                days_held = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(pos.entry_date)).days
                 pnl_pct = (price - pos.entry_price) / pos.entry_price * 100
                 ratio = days_held / max(pos.target_hold_days, 1)
                 if ratio >= 0.8 and pnl_pct < 0:
@@ -1746,7 +1769,7 @@ def run_bot_loop(
         Sektoren UND bestätigt SPY (≤ -1%) → 24h-Vorsicht (echter Einbruch).
         Sektoren breit rot, aber SPY flach → 12h-Beobachtung, kein harter Stopp."""
         try:
-            if datetime.utcnow().weekday() >= 5:
+            if datetime.now(timezone.utc).replace(tzinfo=None).weekday() >= 5:
                 return
             sectors = list(_SECTOR_ETFS)
             import yfinance as _yf
@@ -1838,7 +1861,7 @@ def run_bot_loop(
 
     def _morning_lagebericht_job():
         """Sendet täglich um 08:30 UTC einen strukturierten Markt-Lagebericht via Telegram."""
-        _today = datetime.utcnow().date().isoformat()
+        _today = datetime.now(timezone.utc).replace(tzinfo=None).date().isoformat()
         if _lagebericht_sent_date[0] == _today:
             log.debug("Morgen-Lagebericht heute bereits gesendet – übersprungen.")
             return
@@ -2212,7 +2235,7 @@ def run_bot_loop(
                 broker=broker,
                 initial_capital=config.initial_capital,
             )
-            TelegramNotifier().send(msg)
+            TelegramNotifier().send(msg, level="digest")
             _dashboard.mark_sent()
             log.info("Tägliches Dashboard gesendet.")
         except Exception as e:
@@ -2382,7 +2405,8 @@ def run_bot_loop(
                 try:
                     TelegramNotifier().send(
                         f"⚠️ <b>Job-Fehler</b> (Bot läuft weiter)\n\n"
-                        f"<code>{_tb_text[-800:]}</code>"
+                        f"<code>{_tb_text[-800:]}</code>",
+                        level="critical",
                     )
                 except Exception:
                     pass

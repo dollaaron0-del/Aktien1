@@ -122,6 +122,27 @@ def test_stop_loss_exit_chain(tmp_path, monkeypatch):
     assert p.get_position("NVDA") is None
 
 
+def test_full_queue_enqueues_with_dict_sources(tmp_path, monkeypatch):
+    """sources_used als Dict (Quelle→Anzahl) crashte den Enqueue-Pfad früher
+    mit int(dict) — jetzt wird die normalisierte Summe eingereiht."""
+    import portfolio.signal_queue as sq_mod
+    monkeypatch.setattr(sq_mod, "DB_PATH", str(tmp_path / "data" / "sq.db"))
+    from portfolio.signal_queue import SignalQueue
+
+    p = make_portfolio(tmp_path, monkeypatch)
+    strat = make_strategy(p)
+    strat.signal_queue = SignalQueue()
+    strat.focus_ctrl = types.SimpleNamespace(get_max_positions=lambda pv: 0)  # alle Slots voll
+
+    a = _bullish_analysis()
+    a.sources_used = {"yahoo": 3, "wire": 2}
+    result = strat.evaluate("NVDA", a, current_price=120.0, regime="NEUTRAL")
+    assert result.action == "SKIP" and "Queue" in result.reason
+    pending = strat.signal_queue.get_pending()
+    assert len(pending) == 1
+    assert pending[0]["sources_used"] == 5
+
+
 def test_signal_queue_drains_into_buy(tmp_path, monkeypatch):
     """Vorgemerktes Queue-Signal wird ausgeführt, sobald ein Slot frei ist."""
     import portfolio.signal_queue as sq_mod

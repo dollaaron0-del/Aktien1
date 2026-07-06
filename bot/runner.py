@@ -7,7 +7,7 @@ import os
 import traceback
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import List, Dict, Optional
 
 from rich.console import Console
@@ -451,7 +451,7 @@ def _make_collectors() -> Dict:
             return None
 
     _twitter = _safe("twitter", TwitterCollector)
-    return {
+    out = {
         "yahoo":             _safe("yahoo",           YahooCollector),
         "reddit":            _safe("reddit",          RedditCollector),
         "newsapi":           _safe("newsapi",         NewsAPICollector),
@@ -490,6 +490,15 @@ def _make_collectors() -> Dict:
         "nhtsa_recalls":     _safe("nhtsa_recalls",   lambda: NHTSARecallsCollector(lookback_days=30)),
         "sec_activist":      _safe("sec_activist",    lambda: SECActivistCollector(lookback_days=21)),
     }
+    # Abgeschaltete Quellen (config.collectors_disabled, N3-Befund): auf None
+    # setzen statt entfernen — sie erscheinen weiter mit 0 im sources_breakdown
+    # und bleiben so im Source-Health-Report als "deaktiviert" sichtbar.
+    _disabled = {c.strip().lower() for c in getattr(config, "collectors_disabled", [])}
+    for _name in out:
+        if _name.lower() in _disabled and out[_name] is not None:
+            _log.info("Collector '%s' per Konfiguration deaktiviert", _name)
+            out[_name] = None
+    return out
 
 
 def collect_news(ticker: str, archive: NewsArchive, collectors: Dict) -> tuple:
@@ -621,7 +630,7 @@ def _print_portfolio_summary(portfolio: Portfolio, broker, phase_ctrl: PhaseCont
     for ticker, pos in positions.items():
         price = prices.get(ticker, pos.entry_price)
         pnl = (price - pos.entry_price) * pos.shares
-        days = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
+        days = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(pos.entry_date)).days
         pnl_str = f"[green]+${pnl:.2f}[/green]" if pnl >= 0 else f"[red]-${abs(pnl):.2f}[/red]"
         table.add_row(
             ticker, f"{pos.shares:.2f}", f"${pos.entry_price:.2f}",
@@ -784,7 +793,7 @@ def run_analysis_cycle(
         analyzer = MultiAgentAnalyzer() if _multi_agent_enabled else ClaudeAnalyzer()
     except Exception as _az_err:
         log.error("Analyzer-Initialisierung fehlgeschlagen: %s", _az_err, exc_info=True)
-        TelegramNotifier().send(f"❌ <b>Analyse-Fehler</b>\nAnalyzer-Init fehlgeschlagen: <code>{_az_err}</code>")
+        TelegramNotifier().send(f"❌ <b>Analyse-Fehler</b>\nAnalyzer-Init fehlgeschlagen: <code>{_az_err}</code>", level="critical")
         return
     if _multi_agent_enabled:
         console.print("  [bold magenta]🤝 Multi-Agent Konsens aktiv[/bold magenta] (3 Claude-Analysten)")
@@ -792,7 +801,7 @@ def run_analysis_cycle(
         collectors = _make_collectors()
     except Exception as _col_err:
         log.error("Collector-Initialisierung fehlgeschlagen: %s", _col_err, exc_info=True)
-        TelegramNotifier().send(f"❌ <b>Analyse-Fehler</b>\nCollector-Init fehlgeschlagen: <code>{_col_err}</code>")
+        TelegramNotifier().send(f"❌ <b>Analyse-Fehler</b>\nCollector-Init fehlgeschlagen: <code>{_col_err}</code>", level="critical")
         return
 
     # Live-Quellen-Health: Zyklus-Erfassung zurücksetzen (Counts/Fehler je Quelle).
@@ -878,7 +887,7 @@ def run_analysis_cycle(
             _dh = 0
             if _p:
                 try:
-                    _dh = (datetime.utcnow() - datetime.fromisoformat(_p.entry_date)).days
+                    _dh = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(_p.entry_date)).days
                 except Exception:
                     _dh = 0
             action = executor.execute(_res, days_held=_dh)
@@ -899,7 +908,7 @@ def run_analysis_cycle(
                 price = broker.get_price(tv_ticker) or pos.entry_price
                 _dh = 0
                 try:
-                    _dh = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
+                    _dh = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(pos.entry_date)).days
                 except Exception:
                     _dh = 0
                 action = executor.execute(
@@ -997,7 +1006,7 @@ def run_analysis_cycle(
     # Ticker (additiver Analyse-Kontext, kein Auto-Trade). Komplett defensiv:
     # ein Fehler hier darf den Zyklus nie reißen.
     _mech_conv: Dict[str, dict] = {}
-    _mech_brief_fn = lambda _t, _m: ""   # immer definiert; "" = kein Zusatzkontext
+    _mech_brief_fn = lambda _t, _m, _r=None: ""   # immer definiert; "" = kein Zusatzkontext
     try:
         from strategy_lab import live_bridge as _live_bridge
         if _live_bridge.is_enabled():
@@ -1097,7 +1106,7 @@ def run_analysis_cycle(
                 pattern_result=_pat, onchain_snapshot=_oc,
                 eu_market_snapshot=_eu_market_ctx if _is_eu_stock(t) else None,
                 geo_context=_bench_geo_contexts.get(t), macro_brief=_macro_brief,
-                mechanical_brief=_mech_brief_fn(t, _mech_conv),
+                mechanical_brief=_mech_brief_fn(t, _mech_conv, regime),
                 force_claude=t in _force_claude_tickers,
             )
         except Exception as _ae:
@@ -1163,7 +1172,7 @@ def run_analysis_cycle(
                 _cached_at = cached.get("updated_at", "")
                 if _cached_at:
                     try:
-                        _age_h = (datetime.utcnow() - datetime.fromisoformat(_cached_at.replace("Z", ""))).total_seconds() / 3600
+                        _age_h = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(_cached_at.replace("Z", ""))).total_seconds() / 3600
                         if _age_h < _frugal_cache_hours:
                             log.debug("[%s] Frugal: Cache %dh alt – übersprungen", ticker, int(_age_h))
                             continue
@@ -1392,7 +1401,7 @@ def run_analysis_cycle(
                 eu_market_snapshot=_eu_market_ctx if _is_eu_stock(ticker) else None,
                 geo_context=_geo_ctx,
                 macro_brief=_macro_brief,
-                mechanical_brief=_mech_brief_fn(ticker, _mech_conv),
+                mechanical_brief=_mech_brief_fn(ticker, _mech_conv, regime),
                 force_claude=ticker in _force_claude_tickers,
             )
 
@@ -1484,6 +1493,7 @@ def run_analysis_cycle(
 
         _raw_px = (price_data or {}).get("current_price")
         _cur_px = float(_raw_px) if _valid_price(_raw_px) else 0.0
+        _result = None
         if _cur_px > 0:
             # Fehler bei EINEM Ticker darf den restlichen Zyklus nicht abreißen
             # und muss sichtbar sein (nicht still verschluckt – vgl. Execution-Bug).
@@ -1497,6 +1507,39 @@ def run_analysis_cycle(
                 action = None
         else:
             action = f"[{ticker}] Kein Kurs verfügbar – übersprungen"
+        # Entscheidungs-Transparenz: jede Strategie-Entscheidung samt Grund und
+        # Kontext persistieren — das Dashboard (Tab "Entscheidungen") zeigt
+        # daraus, WARUM gekauft/übersprungen wurde. Fail-open.
+        try:
+            from analyzers.decision_log import get_decision_log
+            _dlog = get_decision_log()
+            if _dlog is not None:
+                _dl_mb = None
+                try:
+                    from analyzers.macro_context import get_macro_context
+                    _dl_mb = round(float(get_macro_context().bias_score()), 4)
+                except Exception:
+                    pass
+                _dl_su = getattr(analysis, "sources_used", 0)
+                _dl_nsrc = (sum(int(v or 0) for v in _dl_su.values())
+                            if isinstance(_dl_su, dict) else int(_dl_su or 0))
+                _dlog.log({
+                    "ticker": ticker,
+                    "action": _result.action if _result is not None else "SKIP",
+                    "reason": (_result.reason if _result is not None
+                               else "Kein Kurs verfügbar"),
+                    "executed": action,
+                    "source": "cycle",
+                    "recommendation": getattr(analysis, "recommendation", None),
+                    "direction": getattr(analysis, "direction", None),
+                    "sentiment_score": getattr(analysis, "sentiment_score", None),
+                    "confidence": getattr(analysis, "confidence", None),
+                    "sources_used": _dl_nsrc,
+                    "regime": str(regime) if regime else None,
+                    "macro_bias": _dl_mb,
+                })
+        except Exception as _dl_err:
+            log.debug("Decision-Log Fehler [%s]: %s", ticker, _dl_err)
         if action:
             if "GEKAUFT" in action:
                 color = "bold green"
@@ -1535,8 +1578,18 @@ def run_analysis_cycle(
                         if _es is not None:
                             if "GEKAUFT" in action:
                                 if _es.open_decision_id(ticker) is None:
+                                    # Kontext-Features zum Entscheidungszeitpunkt:
+                                    # Marktregime (Scope-Var) + Makro-Bias. Beide fail-open
+                                    # (None), damit ein fehlender Makro-Snapshot nie den
+                                    # Entry-Log reißt.
+                                    _macro_bias = None
+                                    try:
+                                        from analyzers.macro_context import get_macro_context
+                                        _macro_bias = round(float(get_macro_context().bias_score()), 4)
+                                    except Exception:
+                                        _macro_bias = None
                                     _es.record_live_entry({
-                                        "decided_at": datetime.utcnow().isoformat(),
+                                        "decided_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                                         "ticker": ticker,
                                         "recommendation": analysis.recommendation,
                                         "direction": analysis.direction,
@@ -1550,6 +1603,8 @@ def run_analysis_cycle(
                                         else sum((analysis.sources_used or {}).values()),
                                         "key_catalysts": list(getattr(analysis, "key_catalysts", []) or []),
                                         "risk_factors": list(getattr(analysis, "risk_factors", []) or []),
+                                        "regime": str(regime) if regime else None,
+                                        "macro_bias": _macro_bias,
                                     }, _px)
                             else:  # VERKAUFT
                                 _es.record_live_exit(ticker, _px, exit_reason=action)

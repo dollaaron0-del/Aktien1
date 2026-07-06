@@ -23,6 +23,27 @@ class Config:
     twitter_bearer_token: str = field(default_factory=lambda: os.getenv("TWITTER_BEARER_TOKEN", ""))
     quiver_api_key: str = field(default_factory=lambda: os.getenv("QUIVER_API_KEY", ""))
 
+    # ── Abgeschaltete Collector-Quellen ──────────────────────────────────────
+    # N3-Befund (5.7.2026, gegen echte analysis_log-Daten verifiziert): diese
+    # keylosen Quellen lieferten 0 Beiträge über alle Analysen, weil ihre
+    # Endpoints nicht mehr existieren oder Server-IPs dauerhaft blocken:
+    #   patents          → patents.google.com/rss: 404 (RSS-Dienst eingestellt)
+    #   earn_transcripts → seekingalpha-/fool-RSS: beide 404
+    #   reddit           → reddit.com/*.json: 403 für Datacenter-IPs
+    #   aaii_sentiment   → aaii.com sent_results: 403
+    # Sie kosten sonst pro Ticker und Zyklus nur Timeout-Wartezeit. Übersteuern
+    # via COLLECTORS_DISABLED (Komma-Liste; leer = alle Quellen aktiv lassen).
+    collectors_disabled: List[str] = field(
+        default_factory=lambda: [
+            s.strip().lower()
+            for s in os.getenv(
+                "COLLECTORS_DISABLED",
+                "reddit,patents,earn_transcripts,aaii_sentiment",
+            ).split(",")
+            if s.strip()
+        ]
+    )
+
     # ── Intraday-Scan (drittes optionales Analysefenster) ────────────────────
     # Aktivieren: INTRADAY_SCAN_ENABLED=true in .env
     # Empfehlung: 17:30 UTC = 19:30 MESZ (während der US-Session)
@@ -145,6 +166,12 @@ class Config:
     # Telegram notifications (optional)
     telegram_bot_token: str = field(default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", ""))
     telegram_chat_id: str = field(default_factory=lambda: os.getenv("TELEGRAM_CHAT_ID", ""))
+    # "important" (Default): nur Trades, kritische Fehler und Tages-Digest
+    # erreichen Telegram — alles andere landet im Log/Dashboard.
+    # "all": altes Verhalten, jede Nachricht wird gesendet.
+    telegram_mode: str = field(
+        default_factory=lambda: os.getenv("TELEGRAM_MODE", "important").lower()
+    )
 
     # Focus mode: WEALTH_BUILDING | INCOME | TARGET_GOAL
     focus_mode: str = field(default_factory=lambda: os.getenv("FOCUS_MODE", "WEALTH_BUILDING"))
