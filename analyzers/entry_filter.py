@@ -42,7 +42,7 @@ class EntryVerdict:
 
 class EntryFilter:
     def __init__(self, model: Optional[CalibrationModel] = None,
-                 dimensions=("sentiment", "theme")):
+                 dimensions=("sentiment", "theme", "regime")):
         if model is None:
             model = CalibrationModel()
             model.load()  # no-op, wenn keine Datei → Globalquote 0.5
@@ -70,10 +70,13 @@ class EntryFilter:
     def evaluate(self, features: Dict) -> EntryVerdict:
         """Kombiniert alle konfigurierten Dimensionen zu einer Netto-Kante.
 
-        Die belastbaren Dimensionen werden nach Stichprobengröße (n_support)
-        gewichtet gemittelt – so kippt ein leicht negatives Sentimentband ein klar
-        positives Sektor-Signal nicht komplett (und umgekehrt). Sind alle zu dünn
-        → NEUTRAL. Auf die Netto-Kante werden dieselben Schwellen angewandt.
+        Die belastbaren Dimensionen werden nach **√n_support** gewichtet gemittelt.
+        √n statt n, weil grobe Dimensionen (z.B. 'regime' trifft JEDE Zeile,
+        n≈Gesamtdatensatz) sonst die feinen, ticker-spezifischen Dimensionen
+        (sentiment-Band, theme) systematisch erdrücken würden – mehr Beobachtungen
+        heißt hier nicht proportional mehr Information, weil der Bucket breiter
+        ist. √n dämpft das, ohne die Stichprobengröße zu ignorieren. Sind alle zu
+        dünn → NEUTRAL. Auf die Netto-Kante werden dieselben Schwellen angewandt.
         """
         cals = {d: self.model.calibrate(features, dimension=d) for d in self.dimensions}
         reasons: List[str] = [
@@ -86,9 +89,9 @@ class EntryFilter:
             base = next(iter(cals.values()))
             return EntryVerdict("NEUTRAL", base.p_win, base.expected_edge, False, reasons)
 
-        wsum = sum(c.n_support for c in reliable) or 1
-        net_edge = sum(c.expected_edge * c.n_support for c in reliable) / wsum
-        net_pwin = sum(c.p_win * c.n_support for c in reliable) / wsum
+        wsum = sum(c.n_support ** 0.5 for c in reliable) or 1
+        net_edge = sum(c.expected_edge * c.n_support ** 0.5 for c in reliable) / wsum
+        net_pwin = sum(c.p_win * c.n_support ** 0.5 for c in reliable) / wsum
 
         if net_edge <= _EDGE_AVOID:
             verdict = "AVOID"
@@ -96,5 +99,5 @@ class EntryFilter:
             verdict = "PROCEED"
         else:
             verdict = "CAUTION"
-        reasons.append(f"→ Netto-Kante {net_edge:+.2f}% (n-gewichtet) ⇒ {verdict}")
+        reasons.append(f"→ Netto-Kante {net_edge:+.2f}% (√n-gewichtet) ⇒ {verdict}")
         return EntryVerdict(verdict, round(net_pwin, 4), round(net_edge, 4), True, reasons)

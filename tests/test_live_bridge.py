@@ -215,3 +215,45 @@ def test_brief_for_zero_conviction():
 def test_brief_for_unknown_ticker():
     m = {"AAPL": {"conviction": 1.0, "strategies": ["s"], "regime": None}}
     assert live_bridge.brief_for("MSFT", m) == ""
+
+
+# ── E3: gelernte Kalibrierungs-Kante ins Advisory falten ─────────────────────────
+class _FakeCal:
+    """Kalibrierungsmodell-Stub: liefert ein fixes calibrate()-Ergebnis."""
+    def __init__(self, p_win, edge, n, reliable):
+        self._r = type("R", (), {"p_win": p_win, "expected_edge": edge,
+                                 "n_support": n, "reliable": reliable})()
+
+    def calibrate(self, features, dimension="regime"):
+        return self._r
+
+
+def test_learned_phrase_none_without_regime_or_model(monkeypatch):
+    # Kein bot_regime → "" ; kein Modell → "".
+    assert live_bridge._learned_regime_phrase(None) == ""
+    monkeypatch.setattr(live_bridge, "_calibration_model", lambda: None)
+    assert live_bridge._learned_regime_phrase("BULL") == ""
+
+
+def test_learned_phrase_silent_when_thin(monkeypatch):
+    monkeypatch.setattr(live_bridge, "_calibration_model",
+                        lambda: _FakeCal(0.6, 1.2, 3, reliable=False))
+    assert live_bridge._learned_regime_phrase("BULL") == ""   # ehrlich schweigen
+
+
+def test_learned_phrase_formats_when_reliable(monkeypatch):
+    monkeypatch.setattr(live_bridge, "_calibration_model",
+                        lambda: _FakeCal(0.58, 1.4, 22, reliable=True))
+    s = live_bridge._learned_regime_phrase("BEAR")
+    assert "GELERNT" in s and "BEAR" in s and "58%" in s and "22" in s
+
+
+def test_brief_for_merges_learned_edge(monkeypatch):
+    # E3: Mechanik + gelernte Kante stehen in EINEM Advisory.
+    monkeypatch.setattr(live_bridge, "_calibration_model",
+                        lambda: _FakeCal(0.55, 0.9, 40, reliable=True))
+    m = {"AAPL": {"conviction": 1.0, "strategies": ["baseline_swing"], "regime": "BULL_CALM"}}
+    s = live_bridge.brief_for("AAPL", m, bot_regime="NEUTRAL")
+    assert "MECHANIK" in s and "GELERNT" in s and "NEUTRAL" in s
+    # Ohne bot_regime bleibt das Advisory unverändert (Rückwärtskompatibilität).
+    assert "GELERNT" not in live_bridge.brief_for("AAPL", m)

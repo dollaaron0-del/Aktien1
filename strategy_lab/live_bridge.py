@@ -34,6 +34,7 @@ _REGIME_ENV = "STRATEGY_LAB_REGIME"        # AUTO | off | festes Label
 _TTL_SECONDS = 3600                         # eine Zykluslänge; Signale ändern sich täglich
 _MIN_CLOSED = 5                             # unter so wenig Paper-Trades kein Urteil
 _cache: Dict = {"key": None, "ts": 0.0, "map": {}}
+_cal_cache: Dict = {"model": None, "ts": 0.0}   # gelerntes Kalibrierungsmodell (kurz gecacht)
 
 
 def is_enabled() -> bool:
@@ -43,6 +44,49 @@ def is_enabled() -> bool:
 
 def reset_cache() -> None:
     _cache.update(key=None, ts=0.0, map={})
+    _cal_cache.update(model=None, ts=0.0)
+
+
+def _calibration_model():
+    """Gelerntes Kalibrierungsmodell (data/calibration.json), kurz gecacht.
+    None, wenn nicht vorhanden/ladbar (dann schweigt die gelernte Naht schlicht)."""
+    now = time.time()
+    if _cal_cache["model"] is not None and (now - _cal_cache["ts"]) < _TTL_SECONDS:
+        return _cal_cache["model"]
+    model = None
+    try:
+        from analyzers.calibration import CalibrationModel
+        m = CalibrationModel()
+        if m.load():
+            model = m
+    except Exception as e:
+        log.debug("live_bridge._calibration_model fehlgeschlagen (ignoriert): %s", e)
+    _cal_cache.update(model=model, ts=now)
+    return model
+
+
+def _learned_regime_phrase(bot_regime: Optional[str]) -> str:
+    """Ehrlicher Halbsatz aus der GELERNTEN Kalibrierung (Regime-Dimension) für das
+    aktuelle Marktregime des Bots (BULL/NEUTRAL/BEAR/CRISIS). '' wenn kein Modell
+    oder der Regime-Bucket zu dünn ist – behauptet nie etwas Unbelegtes.
+
+    Das ist die E3-Naht: sie verzahnt die reale, gelernte Trefferquote/Kante je
+    Regime ([[selbstlern-fundament]]) mit der mechanischen Konviktion aus dem
+    strategy_lab zu EINEM Advisory, statt beide getrennt sprechen zu lassen."""
+    if not bot_regime:
+        return ""
+    m = _calibration_model()
+    if m is None:
+        return ""
+    try:
+        res = m.calibrate({"regime": str(bot_regime).upper()}, dimension="regime")
+    except Exception:
+        return ""
+    if not res.reliable:
+        return ""   # zu dünn → ehrlich schweigen
+    return (f" GELERNT (Kalibrierung, Regime {bot_regime}): reale Trefferquote "
+            f"{res.p_win*100:.0f}%, erwartete Kante {res.expected_edge:+.1f}% "
+            f"über {res.n_support} gelabelte Trades.")
 
 
 def _default_loader() -> Callable:
@@ -240,12 +284,15 @@ def _evidence_phrase(ev: Optional[Dict]) -> str:
             "Paper-Trades) – rein mechanischer Hinweis ohne Validierung.")
 
 
-def brief_for(ticker: str, conv_map: Optional[Dict[str, Dict]]) -> str:
+def brief_for(ticker: str, conv_map: Optional[Dict[str, Dict]],
+              bot_regime: Optional[str] = None) -> str:
     """Advisorischer Kontext-Satz für einen Ticker (oder "" wenn nichts feuert).
     Wird wie macro_brief in den Analyse-Prompt gefaltet – rein zusätzlich.
 
     Behauptet KEINE Robustheit/Kaufempfehlung: nennt nur, dass die Mechanik feuert,
-    und hängt die reale Paper-Forward-Bilanz an (oder deren Fehlen)."""
+    hängt die reale Paper-Forward-Bilanz an (oder deren Fehlen) und – wenn bekannt –
+    die GELERNTE Kalibrierungs-Kante des aktuellen Bot-Regimes (bot_regime), sodass
+    Mechanik und Gelerntes als EIN kohärentes Advisory sprechen (E3)."""
     try:
         if not conv_map:
             return ""
@@ -260,6 +307,7 @@ def brief_for(ticker: str, conv_map: Optional[Dict[str, Dict]]) -> str:
         # Regime-Befund: aus dem Eintrag oder – fehlt er – wenigstens das Label.
         rs = e.get("regime_stance") or ({"stance": "untested", "regime": reg, "median": None}
                                         if reg else None)
-        return head + _regime_phrase(rs) + " " + _evidence_phrase(e.get("evidence"))
+        return (head + _regime_phrase(rs) + " " + _evidence_phrase(e.get("evidence"))
+                + _learned_regime_phrase(bot_regime))
     except Exception:
         return ""

@@ -58,3 +58,23 @@ def test_reasons_present():
     rows = [_row(0.75, "WIN", 5.0) for _ in range(20)]
     v = EntryFilter(_model_from(rows)).evaluate({"sentiment_score": 0.75})
     assert any("Edge" in r for r in v.reasons)
+
+
+def test_broad_regime_dimension_does_not_drown_specific_bands():
+    """√n-Gewichtung: eine grobe Dimension mit riesigem n (regime trifft JEDE
+    Zeile) darf ein klar positives, spezifisches Band dämpfen, aber nicht
+    proportional-zu-n erdrücken."""
+    # 300 Zeilen NEUTRAL-Regime mit leicht negativer Kante; darin ein kleines,
+    # klar positives Sentiment-Band (n=20, +5%).
+    rows = ([({"sentiment_score": 0.40, "regime": "NEUTRAL"},
+              {"outcome": "LOSS", "pnl_pct": -1.0}) for _ in range(300)] +
+            [({"sentiment_score": 0.75, "regime": "NEUTRAL"},
+              {"outcome": "WIN", "pnl_pct": 5.0}) for _ in range(20)])
+    m = _model_from(rows)
+    f = EntryFilter(m, dimensions=("sentiment", "regime"))
+    v = f.evaluate({"sentiment_score": 0.75, "regime": "NEUTRAL"})
+    # Mit n-Gewichtung wäre regime (n=320) ~16× so schwer wie sentiment (n=20)
+    # → Netto klar negativ. Mit √n (≈17.9 vs. ≈4.5) bleibt das positive Band
+    # sichtbar: Netto deutlich besser als die reine Regime-Kante.
+    regime_edge = m.calibrate({"regime": "NEUTRAL"}, dimension="regime").expected_edge
+    assert v.expected_edge > regime_edge + 0.5

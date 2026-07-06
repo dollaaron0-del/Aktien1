@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from logger import get_logger
@@ -349,7 +349,7 @@ class SwingStrategy:
                     entry_rationale=getattr(analysis, "entry_rationale", "") or "",
                     key_catalysts=list(getattr(analysis, "key_catalysts", []) or []),
                     risk_factors=list(getattr(analysis, "risk_factors", []) or []),
-                    sources_used=int(getattr(analysis, "sources_used", 0) or 0),
+                    sources_used=n_src,
                     sources_breakdown=getattr(analysis, "sources_breakdown", {}) or {},
                     suggested_hold_days=int(getattr(analysis, "suggested_hold_days", 0) or 0),
                 )
@@ -391,6 +391,7 @@ class SwingStrategy:
                         "sentiment_score": sentiment,
                         "confidence": confidence,
                         "debate_winner": getattr(analysis, "debate_winner", "") or "",
+                        "regime": str(regime) if regime else "",
                     })
                     if verdict.verdict == "AVOID" and getattr(config, "learning_filter_block", True):
                         return StrategyResult(
@@ -503,7 +504,7 @@ class SwingStrategy:
 
         # 5. Hold-time expiry
         entry_dt = datetime.fromisoformat(pos.entry_date) if isinstance(pos.entry_date, str) else pos.entry_date
-        days_held = (datetime.utcnow() - entry_dt).days
+        days_held = (datetime.now(timezone.utc).replace(tzinfo=None) - entry_dt).days
         # Mindest-Haltedauer erzwingen: Positionen mit target_hold_days=0 (z.B. aus
         # Conditional Entries mit ungesetztem suggested_hold_days) würden sonst beim
         # nächsten Check sofort wieder verkauft – purer Slippage-Verlust (vgl. CRM/CAT).
@@ -680,7 +681,7 @@ class SwingStrategy:
 
     def _circuit_breaker_active(self, config) -> bool:
         """Returns True if daily loss limit exceeded."""
-        today = datetime.utcnow().strftime("%Y-%m-%d")
+        today = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
         if self._daily_loss_date != today:
             self._daily_loss_usd = 0.0
             self._daily_loss_date = today
@@ -690,7 +691,7 @@ class SwingStrategy:
     def record_loss(self, pnl: float):
         """Record a realized loss for circuit-breaker tracking."""
         if pnl < 0:
-            today = datetime.utcnow().strftime("%Y-%m-%d")
+            today = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
             if self._daily_loss_date != today:
                 self._daily_loss_usd = 0.0
                 self._daily_loss_date = today
