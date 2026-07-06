@@ -6,7 +6,7 @@ Apple patentiert AR-Headset → möglicher Wettbewerbsvorteil.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 import requests
 from system.http import http_get
@@ -33,7 +33,7 @@ class PatentCollector:
 
     def _collect_google_patents(self, ticker: str, lookback_days: int) -> List[Dict]:
         results = []
-        cutoff = datetime.utcnow() - timedelta(days=lookback_days)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)
         company = _TICKER_TO_COMPANY.get(ticker.upper(), ticker)
         date_str = cutoff.strftime("%Y%m%d")
 
@@ -59,7 +59,7 @@ class PatentCollector:
                     if pub_dt < cutoff:
                         continue
                 except Exception:
-                    pub_dt = datetime.utcnow()
+                    pub_dt = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 results.append({
                     "source":       f"Patent Filing (Google Patents / {company})",

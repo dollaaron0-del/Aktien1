@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
 
 import pandas as pd
@@ -158,12 +158,12 @@ def load_ledger() -> Dict:
             return json.load(open(_LEDGER_FILE))
         except Exception:
             pass
-    return {"created_at": datetime.utcnow().isoformat(), "positions": []}
+    return {"created_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), "positions": []}
 
 
 def save_ledger(ledger: Dict) -> str:
     os.makedirs(os.path.dirname(_LEDGER_FILE), exist_ok=True)
-    ledger["updated_at"] = datetime.utcnow().isoformat()
+    ledger["updated_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
     with open(_LEDGER_FILE, "w") as fh:
         json.dump(ledger, fh, indent=2)
     return _LEDGER_FILE
@@ -390,7 +390,7 @@ def replay(
     full = {t: base_loader(t, history_years) for t in universe}
     full = {t: df for t, df in full.items() if df is not None and len(df) > 0}
     if not full:
-        return {"created_at": datetime.utcnow().isoformat(), "positions": [], "mode": "replay"}
+        return {"created_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), "positions": [], "mode": "replay"}
 
     start_ts = pd.Timestamp(start)
     end_ts = pd.Timestamp(end) if end is not None else max(df.index.max() for df in full.values())
@@ -407,7 +407,7 @@ def replay(
             return None
         return df[df.index <= state["as_of"]]
 
-    ledger = {"created_at": datetime.utcnow().isoformat(), "positions": [],
+    ledger = {"created_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), "positions": [],
               "mode": "replay", "replay_window": [_to_day(start_ts), _to_day(end_ts)]}
     for day in all_days:
         state["as_of"] = day

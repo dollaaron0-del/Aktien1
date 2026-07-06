@@ -124,7 +124,7 @@ def _parse_rss(xml_text: str, ticker: str, source: str) -> List[Dict]:
             continue
 
         score, label = _score_item(title, desc)
-        pub_iso = dt.isoformat() if dt else datetime.utcnow().isoformat()
+        pub_iso = dt.isoformat() if dt else datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
         items.append({
             "source":       source,

@@ -2,7 +2,7 @@ import json
 import os
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 
@@ -106,7 +106,7 @@ class Portfolio:
                 )
                 self._conn.execute(
                     "INSERT INTO portfolio_meta (key, value) VALUES ('created_at', ?)",
-                    (datetime.utcnow().isoformat(),),
+                    (datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),),
                 )
 
     def _migrate_schema(self) -> None:
@@ -146,7 +146,7 @@ class Portfolio:
                         "UPDATE portfolio_meta SET value=? WHERE key='cash'",
                         (str(cash),),
                     )
-                    created_at = data.get("created_at", datetime.utcnow().isoformat())
+                    created_at = data.get("created_at", datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
                     self._conn.execute(
                         "UPDATE portfolio_meta SET value=? WHERE key='created_at'",
                         (created_at,),
@@ -289,7 +289,7 @@ class Portfolio:
                     action="BUY",
                     shares=position.shares,
                     price=position.entry_price,
-                    timestamp=datetime.utcnow().isoformat(),
+                    timestamp=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                     pnl=0.0,
                     reason=position.rationale,
                     currency=position.currency,
@@ -311,7 +311,7 @@ class Portfolio:
                     action="SELL",
                     shares=pos.shares,
                     price=current_price,
-                    timestamp=datetime.utcnow().isoformat(),
+                    timestamp=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                     pnl=pnl,
                     reason=reason,
                     currency=pos.currency,
@@ -344,7 +344,7 @@ class Portfolio:
                     action="SELL",
                     shares=sell_shares,
                     price=sell_price,
-                    timestamp=datetime.utcnow().isoformat(),
+                    timestamp=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                     pnl=pnl,
                     reason="Partial-TP",
                     currency=currency,

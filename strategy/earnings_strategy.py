@@ -31,7 +31,7 @@ Mode 2 – POST_EARNINGS (0–2 days after BEAT):
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, TYPE_CHECKING
 
 from portfolio.portfolio import Portfolio, Position
@@ -117,7 +117,7 @@ class EarningsStrategy:
             ed = self._ef.next_earnings(ticker)
             if ed is None:
                 continue
-            days_left = (ed.date() - datetime.utcnow().date()).days
+            days_left = (ed.date() - datetime.now(timezone.utc).replace(tzinfo=None).date()).days
             if days_left <= 1:
                 price = self.broker.get_price(ticker) or pos.entry_price
                 pnl = self.portfolio.close_position(ticker, price, reason="EARNINGS_EXIT")
@@ -166,7 +166,7 @@ class EarningsStrategy:
             ticker=ticker,
             shares=shares,
             entry_price=actual_price,
-            entry_date=datetime.utcnow().isoformat(),
+            entry_date=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             stop_loss=sl,
             take_profit=tp,
             target_hold_days=_PRE_HOLD,
@@ -224,7 +224,7 @@ class EarningsStrategy:
             ticker=ticker,
             shares=shares,
             entry_price=actual_price,
-            entry_date=datetime.utcnow().isoformat(),
+            entry_date=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             stop_loss=sl,
             take_profit=tp,
             target_hold_days=_POST_HOLD,

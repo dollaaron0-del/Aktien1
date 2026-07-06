@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Dict, List, Optional
 
 from logger import get_logger
@@ -43,7 +43,7 @@ class DailyDashboard:
 
     def should_send(self) -> bool:
         """True wenn es Zeit ist UND heute noch nicht gesendet wurde."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         if now.hour < self.SEND_HOUR_UTC:
             return False
         today = date.today().isoformat()
@@ -101,7 +101,7 @@ class DailyDashboard:
 
             lines = [
                 "📊 *Täglicher Portfolio-Bericht*",
-                f"_{datetime.utcnow().strftime('%d.%m.%Y, %H:%M UTC')}_",
+                f"_{datetime.now(timezone.utc).replace(tzinfo=None).strftime('%d.%m.%Y, %H:%M UTC')}_",
                 "",
             ]
 
@@ -124,7 +124,7 @@ class DailyDashboard:
                 for ticker, pos in positions.items():
                     price = prices.get(ticker, pos.entry_price)
                     ret = (price - pos.entry_price) / pos.entry_price * 100
-                    days = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
+                    days = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(pos.entry_date)).days
                     pos_data.append((ticker, ret, price, days))
 
                 pos_data.sort(key=lambda x: x[1], reverse=True)

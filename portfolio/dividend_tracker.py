@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Dict, List, Optional
 
 from logger import get_logger
@@ -73,7 +73,7 @@ class DividendTracker:
                 total_amount, currency, recorded_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (ticker, ex_date, pay_date, amount_per_share, shares_held,
-             total, currency, datetime.utcnow().isoformat()),
+             total, currency, datetime.now(timezone.utc).replace(tzinfo=None).isoformat()),
         )
         self._conn.commit()
         log.info("Dividende: %s %.4f/Aktie × %.0f = %.2f %s", ticker, amount_per_share, shares_held, total, currency)

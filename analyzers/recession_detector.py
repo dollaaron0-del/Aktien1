@@ -21,7 +21,7 @@ import json
 import math
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 import yfinance as yf
@@ -615,7 +615,7 @@ Antworte NUR mit diesem JSON (kein Text davor/dahinter):
                 components, macro_summary)
                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 result["recession_score"],
                 result["regime"],
                 result.get("vix"),
@@ -641,7 +641,7 @@ Antworte NUR mit diesem JSON (kein Text davor/dahinter):
         return d
 
     def get_history(self, days: int = 30) -> List[Dict]:
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         cursor = self._conn.execute(
             """SELECT recorded_at, recession_score, regime, vix, yield_spread
                FROM regime_snapshots WHERE recorded_at > ? ORDER BY recorded_at DESC""",
@@ -651,7 +651,7 @@ Antworte NUR mit diesem JSON (kein Text davor/dahinter):
 
     def cleanup_old_snapshots(self, keep_days: int = 90) -> int:
         """Löscht Regime-Snapshots die älter als keep_days sind. Gibt Anzahl gelöschter Zeilen zurück."""
-        cutoff = (datetime.utcnow() - timedelta(days=keep_days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=keep_days)).isoformat()
         cursor = self._conn.execute(
             "DELETE FROM regime_snapshots WHERE recorded_at < ?", (cutoff,)
         )

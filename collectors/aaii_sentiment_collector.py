@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional
 
 import requests
@@ -98,7 +98,7 @@ def _fetch() -> Optional[List[Dict]]:
 
         signal, explanation, score = _interpret(bullish, bearish or 0)
         neutral_str = f", {neutral:.1f}% neutral" if neutral else ""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
         return [{
             "source":       "AAII Sentiment Survey",

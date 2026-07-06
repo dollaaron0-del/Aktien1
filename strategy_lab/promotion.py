@@ -20,7 +20,7 @@ import json
 import os
 from collections import Counter
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from strategy_lab.walkforward import WalkForwardReport
@@ -72,7 +72,7 @@ def build_registry(reports: List[WalkForwardReport]) -> Dict:
         e["weight"] = round(e["weight_raw"] / total, 4) if (total > 0 and e["status"] == "ACTIVE") else 0.0
     entries.sort(key=lambda e: (e["status"] != "ACTIVE", -e["weight"]))
     return {
-        "built_at": datetime.utcnow().isoformat(),
+        "built_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         "n_active": len(active),
         "entries": entries,
     }

@@ -18,7 +18,7 @@ import json
 import math
 import os
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
 from logger import get_logger
@@ -80,14 +80,14 @@ class SharpeSizer:
     def refresh(self) -> None:
         """Erzwingt Neuberechnung aller Statistiken aus dem TradeJournal."""
         self._stats = self._compute_all_stats()
-        self._loaded_at = datetime.utcnow()
+        self._loaded_at = datetime.now(timezone.utc).replace(tzinfo=None)
         self._save_cache(self._stats)
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _ensure_loaded(self) -> None:
         """Lädt Cache falls nötig; berechnet neu wenn abgelaufen."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         if self._loaded_at is not None:
             if now - self._loaded_at < timedelta(hours=_CACHE_TTL_HOURS):
                 return
@@ -175,7 +175,7 @@ class SharpeSizer:
             with open(_STATS_FILE) as f:
                 data = json.load(f)
             ts = datetime.fromisoformat(data["_meta"]["timestamp"])
-            if datetime.utcnow() - ts < timedelta(hours=_CACHE_TTL_HOURS):
+            if datetime.now(timezone.utc).replace(tzinfo=None) - ts < timedelta(hours=_CACHE_TTL_HOURS):
                 stats = {k: v for k, v in data.items() if k != "_meta"}
                 log.debug("Sharpe-Stats aus Cache geladen (%d Ticker).", len(stats))
                 return stats
@@ -187,7 +187,7 @@ class SharpeSizer:
         """Atomic write der Sharpe-Statistiken."""
         os.makedirs(os.path.dirname(_STATS_FILE), exist_ok=True)
         payload = dict(stats)
-        payload["_meta"] = {"timestamp": datetime.utcnow().isoformat(), "n_tickers": len(stats)}
+        payload["_meta"] = {"timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), "n_tickers": len(stats)}
         tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(_STATS_FILE), suffix=".tmp")
         try:
             with os.fdopen(tmp_fd, "w") as f:

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
 import requests
@@ -39,7 +39,7 @@ _FOMC_DATES = [
 def _fetch_bls_events(lookahead_days: int = 14) -> List[Dict]:
     """Scrape upcoming CPI/PPI/NFP release dates from bls.gov."""
     events = []
-    today = datetime.utcnow().date()
+    today = datetime.now(timezone.utc).replace(tzinfo=None).date()
     cutoff = today + timedelta(days=lookahead_days)
     year = today.year
 
@@ -78,7 +78,7 @@ def _fetch_bls_events(lookahead_days: int = 14) -> List[Dict]:
                         ),
                         "score":        90,
                         "url":          url,
-                        "published_at": datetime.utcnow().isoformat(),
+                        "published_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                         "event_date":   dt.isoformat(),
                         "event_type":   label,
                         "days_until":   days_left,
@@ -89,7 +89,7 @@ def _fetch_bls_events(lookahead_days: int = 14) -> List[Dict]:
 
 
 def _fomc_events(lookahead_days: int = 14) -> List[Dict]:
-    today = datetime.utcnow().date()
+    today = datetime.now(timezone.utc).replace(tzinfo=None).date()
     cutoff = today + timedelta(days=lookahead_days)
     events = []
     for ds in _FOMC_DATES:
@@ -110,7 +110,7 @@ def _fomc_events(lookahead_days: int = 14) -> List[Dict]:
                 ),
                 "score":        95,
                 "url":          "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
-                "published_at": datetime.utcnow().isoformat(),
+                "published_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 "event_date":   dt.isoformat(),
                 "event_type":   "FOMC",
                 "days_until":   days_left,

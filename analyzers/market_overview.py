@@ -11,7 +11,7 @@ neuen Datenquellen. Jede Quelle ist einzeln fehler-isoliert.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 from logger import get_logger
@@ -71,11 +71,11 @@ class MarketOverview:
         """Sammelt alle Marktsignale und cached das Ergebnis (TTL 4h)."""
         global _CACHE, _CACHED_AT
         if not force and _CACHED_AT is not None and _CACHE:
-            age_min = (datetime.utcnow() - _CACHED_AT).total_seconds() / 60
+            age_min = (datetime.now(timezone.utc).replace(tzinfo=None) - _CACHED_AT).total_seconds() / 60
             if age_min < _CACHE_TTL_MIN:
                 return _CACHE
 
-        a: Dict = {"timestamp": datetime.utcnow().isoformat()}
+        a: Dict = {"timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat()}
 
         # ── VIX (Angst-Index) ────────────────────────────────────────────────
         try:
@@ -127,7 +127,7 @@ class MarketOverview:
         a["overall"] = _overall_bias(a)
 
         _CACHE = a
-        _CACHED_AT = datetime.utcnow()
+        _CACHED_AT = datetime.now(timezone.utc).replace(tzinfo=None)
         return a
 
     def get_cached(self) -> Dict:
@@ -141,7 +141,7 @@ class MarketOverview:
         bias_icon = {"BULLISH": "🟢", "NEUTRAL": "🟡", "VORSICHT": "🔴"}.get(bias, "⚪")
 
         lines = [
-            f"📊 <b>Markt-Lagebericht</b> – {datetime.utcnow().strftime('%d.%m.%Y')}",
+            f"📊 <b>Markt-Lagebericht</b> – {datetime.now(timezone.utc).replace(tzinfo=None).strftime('%d.%m.%Y')}",
             f"{bias_icon} Gesamttendenz: <b>{bias}</b>",
             "━━━━━━━━━━━━━━━━━━━━",
         ]

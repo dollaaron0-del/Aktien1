@@ -23,7 +23,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 import yfinance as yf
@@ -130,7 +130,7 @@ class CryptoScanner:
         )
 
         return CryptoScanResult(
-            scan_date=datetime.utcnow().isoformat(),
+            scan_date=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             btc_trend=btc_trend,
             candidates=candidates,
             scan_duration_s=duration,

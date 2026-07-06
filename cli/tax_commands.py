@@ -10,7 +10,7 @@ cli/tax_commands.py – CLI für Steuer-Report und Dividenden-Übersicht.
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from rich.console import Console
@@ -69,7 +69,7 @@ def run_tax_report(year: Optional[int] = None, export_csv: bool = False) -> None
     from portfolio.tax_calculator import TaxCalculator
     from portfolio.dividend_tracker import DividendTracker
 
-    y = year or datetime.utcnow().year
+    y = year or datetime.now(timezone.utc).replace(tzinfo=None).year
     tc = TaxCalculator()
     dt = DividendTracker()
     div_income = dt.get_total_income(year=y)
@@ -162,7 +162,7 @@ def run_dividend_overview(ticker: Optional[str] = None) -> None:
     position_shares = {t: pos.shares for t, pos in positions.items()}
 
     # Jahresübersicht aktuelles Jahr
-    current_year = datetime.utcnow().year
+    current_year = datetime.now(timezone.utc).replace(tzinfo=None).year
     yearly = dt.get_yearly_summary(current_year)
 
     console.print(Panel(

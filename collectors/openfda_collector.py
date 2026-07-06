@@ -12,7 +12,7 @@ nach dem Firmennamen, meldet Rückrufe innerhalb des Lookbacks. Fail-safe → []
 from __future__ import annotations
 
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 
 from logger import get_logger
@@ -53,7 +53,7 @@ class OpenFDACollector:
         name = company_name(ticker)
         if not name:
             return []
-        cutoff = datetime.utcnow().date() - timedelta(days=self.lookback_days)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None).date() - timedelta(days=self.lookback_days)
         firm = name.split()[0]  # erstes Wort als robuster Firm-Treffer (z.B. "Pfizer")
         out: List[Dict] = []
         for label, url in _ENDPOINTS.items():

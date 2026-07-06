@@ -19,7 +19,7 @@ import json
 import os
 import tempfile
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
 import requests
@@ -47,7 +47,7 @@ def _cached_get(cache_key: str, url: str) -> Optional[object]:
     try:
         with open(path) as f:
             obj = json.load(f)
-        age = datetime.utcnow() - datetime.fromisoformat(obj["fetched_at"])
+        age = datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(obj["fetched_at"])
         if age < _CACHE_TTL:
             return obj["data"]
     except Exception:
@@ -58,7 +58,7 @@ def _cached_get(cache_key: str, url: str) -> Optional[object]:
         data = resp.json()
     except Exception:
         return None
-    obj = {"fetched_at": datetime.utcnow().isoformat(), "data": data}
+    obj = {"fetched_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), "data": data}
     with tempfile.NamedTemporaryFile(
         mode="w", dir=_CACHE_DIR, suffix=".tmp", delete=False
     ) as tmp:
@@ -71,7 +71,7 @@ def _cached_get(cache_key: str, url: str) -> Optional[object]:
 class InsiderCollector:
     def __init__(self, lookback_days: int = 90):
         self.lookback_days = lookback_days
-        self._cutoff = (datetime.utcnow() - timedelta(days=lookback_days)).date()
+        self._cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)).date()
 
     def collect(self, ticker: str) -> List[Dict]:
         items: List[Dict] = []
@@ -262,7 +262,7 @@ class InsiderCollector:
         Form 144 = Vorankündigung eines Insider-Verkaufs (bis zu 90 Tage vorher).
         Frühwarnsignal: Insider plant Ausstieg, bevor es Form 4 sichtbar wird.
         """
-        start = (datetime.utcnow() - timedelta(days=self.lookback_days)).strftime("%Y-%m-%d")
+        start = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=self.lookback_days)).strftime("%Y-%m-%d")
         query = urllib.parse.quote(f'"{ticker}"')
         url   = (
             f"https://efts.sec.gov/LATEST/search-index"

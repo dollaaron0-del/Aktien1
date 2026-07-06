@@ -6,7 +6,7 @@ CEOs verraten oft mehr durch Wortwahl und Ton als durch Zahlen.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 import requests
 from system.http import http_get
@@ -29,7 +29,7 @@ class EarningsTranscriptCollector:
 
     def _collect_motley_fool(self, ticker: str, lookback_days: int) -> List[Dict]:
         results = []
-        cutoff = datetime.utcnow() - timedelta(days=lookback_days)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)
         try:
             resp = http_get(_MOTLEY_RSS, headers=_HEADERS, timeout=12)
             if resp.status_code != 200:
@@ -51,7 +51,7 @@ class EarningsTranscriptCollector:
                     if pub_dt < cutoff:
                         continue
                 except Exception:
-                    pub_dt = datetime.utcnow()
+                    pub_dt = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 results.append({
                     "source":       "Earnings Call Transcript (Motley Fool)",
@@ -68,7 +68,7 @@ class EarningsTranscriptCollector:
 
     def _collect_seeking_alpha(self, ticker: str, lookback_days: int) -> List[Dict]:
         results = []
-        cutoff = datetime.utcnow() - timedelta(days=lookback_days)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)
         try:
             resp = http_get(_SEEKING_RSS, headers=_HEADERS, timeout=12)
             if resp.status_code != 200:
@@ -88,7 +88,7 @@ class EarningsTranscriptCollector:
                     if pub_dt < cutoff:
                         continue
                 except Exception:
-                    pub_dt = datetime.utcnow()
+                    pub_dt = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 results.append({
                     "source":       "Earnings Transcript (Seeking Alpha)",

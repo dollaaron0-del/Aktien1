@@ -143,7 +143,7 @@ class FinBERTAnalyzer:
 
         label_de = {"POSITIVE": "POSITIV", "NEGATIVE": "NEGATIV", "NEUTRAL": "NEUTRAL"}[label]
         signal   = "BULLISCH" if label == "POSITIVE" else ("BÄRISCH" if label == "NEGATIVE" else "NEUTRAL")
-        from datetime import datetime
+        from datetime import datetime, timezone
         return {
             "source":    "FinBERT-KI-Sentiment",
             "title":     (
@@ -160,7 +160,7 @@ class FinBERTAnalyzer:
                 f"Dieses Modell versteht Finanzsprache zuverlässiger als generische Sentiment-Tools. "
                 f"Signal: {signal}."
             ),
-            "published": datetime.utcnow().isoformat(),
+            "published": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "signal":    signal,
             "finbert_score": score,
         }

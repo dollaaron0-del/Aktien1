@@ -8,7 +8,7 @@ Deckel (_MAX_READY_TOTAL), wie viele Small-Caps INSGESAMT gleichzeitig in der
 Analyse stehen. So flutet kein Social-Rauschen die teure Claude-Analyse.
 """
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import analyzers.signal_expander as se
 from analyzers.signal_expander import SignalDrivenExpander
@@ -124,7 +124,7 @@ def test_legacy_ready_flag_honored_and_capped(tmp_path, monkeypatch):
     """Alt-Eintrag mit ready=True (Live-Daten) wird respektiert, aber gedeckelt."""
     monkeypatch.setattr(se, "_MAX_READY_TOTAL", 3)
     e = _expander(tmp_path)
-    exp = (datetime.utcnow() + timedelta(days=3)).isoformat()
+    exp = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=3)).isoformat()
     data = {
         t: {"reason": "x", "added_at": exp, "expires_at": exp, "signals": 5,
             "weight": 3.0, "ready": True}
@@ -138,7 +138,7 @@ def test_prune_removes_junk_and_recaps(tmp_path, monkeypatch):
     """prune() wirft Müll/Indizes raus und normalisiert ready-Flags neu."""
     monkeypatch.setattr(se, "_MAX_READY_TOTAL", 3)
     e = _expander(tmp_path)
-    exp = (datetime.utcnow() + timedelta(days=3)).isoformat()
+    exp = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=3)).isoformat()
     data = {}
     for junk in ("BUY", "SPY", "HIV"):                       # Blacklist + Index
         data[junk] = {"reason": "x", "added_at": exp, "expires_at": exp,

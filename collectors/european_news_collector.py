@@ -6,7 +6,7 @@ deliver more relevant signals than English-only feeds.
 import urllib.parse
 import xml.etree.ElementTree as ET
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import List, Dict, Optional
 import requests
@@ -59,7 +59,7 @@ class EuropeanNewsCollector:
 
     def _parse_rss(self, xml_text: str, ticker: str, lang: str) -> List[Dict]:
         items: List[Dict] = []
-        cutoff = datetime.utcnow() - timedelta(hours=self.lookback_hours)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=self.lookback_hours)
         try:
             root = ET.fromstring(xml_text)
         except ET.ParseError:
@@ -76,7 +76,7 @@ class EuropeanNewsCollector:
             try:
                 pub_dt = parsedate_to_datetime(pub).replace(tzinfo=None)
             except Exception:
-                pub_dt = datetime.utcnow()
+                pub_dt = datetime.now(timezone.utc).replace(tzinfo=None)
             if pub_dt < cutoff:
                 continue
             items.append({

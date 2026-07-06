@@ -21,7 +21,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
@@ -32,7 +32,7 @@ DATA = os.path.join(PROJECT_ROOT, "data")
 
 def _check_predictions() -> str:
     """Neue Vorhersagen seit gestern → Tracking lebt."""
-    since = (datetime.utcnow() - timedelta(days=2)).isoformat()
+    since = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=2)).isoformat()
     try:
         con = sqlite3.connect(os.path.join(DATA, "performance.db"))
         total = con.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
@@ -100,7 +100,7 @@ def _check_sources() -> str:
 
 
 def _check_zero_day() -> str:
-    since = (datetime.utcnow() - timedelta(days=2)).isoformat()
+    since = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=2)).isoformat()
     try:
         con = sqlite3.connect(os.path.join(DATA, "portfolio.db"))
         rows = con.execute(

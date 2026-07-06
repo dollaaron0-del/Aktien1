@@ -1,13 +1,13 @@
 """
 Tests für collectors/fda_calendar_collector.py – Biotech-Katalysator-Kalender.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from collectors.fda_calendar_collector import FDACalendarCollector
 
 
 def _study(phase, days_from_now, title="Pivotal Trial", nct="NCT0001"):
-    d = (datetime.utcnow() + timedelta(days=days_from_now)).strftime("%Y-%m-%d")
+    d = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=days_from_now)).strftime("%Y-%m-%d")
     return {
         "protocolSection": {
             "identificationModule": {"briefTitle": title, "nctId": nct},

@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict
 
 _FILE = os.path.join(os.path.dirname(__file__), "..", "data", "analysis_cache.json")
@@ -40,7 +40,7 @@ class AnalysisCache:
             "sentiment_score": sentiment_score,
             "confidence":      confidence,
             "recommendation":  recommendation,
-            "updated_at":      datetime.utcnow().isoformat(),
+            "updated_at":      datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         }
         self._save(data)
 
@@ -62,7 +62,7 @@ class AnalysisCache:
 
     def _is_fresh(self, entry: Dict) -> bool:
         try:
-            age = datetime.utcnow() - datetime.fromisoformat(entry["updated_at"])
+            age = datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(entry["updated_at"])
             return age <= timedelta(hours=_MAX_AGE_HOURS)
         except Exception:
             return False
@@ -74,7 +74,7 @@ class AnalysisCache:
         if not entry:
             return None
         try:
-            age = datetime.utcnow() - datetime.fromisoformat(entry["updated_at"])
+            age = datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(entry["updated_at"])
             if age > timedelta(hours=_MAX_AGE_HOURS):
                 return None
         except Exception:

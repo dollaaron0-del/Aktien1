@@ -9,7 +9,7 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import yfinance as yf
@@ -93,7 +93,7 @@ class OptionsIntelligence:
     # ------------------------------------------------------------------
 
     def _build_snapshot(self, ticker: str) -> OptionsSnapshot:
-        now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds") + "Z"
         def _neutral(note: str) -> OptionsSnapshot:
             return OptionsSnapshot(ticker=ticker, timestamp=now, expiration=None,
                                    put_call_ratio=None, iv_skew=None,
@@ -293,7 +293,7 @@ class OptionsIntelligence:
             if not entry:
                 return None
             ts = datetime.fromisoformat(entry["timestamp"].rstrip("Z"))
-            if datetime.utcnow() - ts > timedelta(hours=_CACHE_TTL_HOURS):
+            if datetime.now(timezone.utc).replace(tzinfo=None) - ts > timedelta(hours=_CACHE_TTL_HOURS):
                 return None
             return OptionsSnapshot(**entry)
         except Exception as exc:

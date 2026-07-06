@@ -18,7 +18,7 @@ import tempfile
 import threading
 import time
 from collections import defaultdict, deque
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from logger import get_logger
@@ -65,7 +65,7 @@ class MetricsCollector:
             # Recent trades (letzte 50)
             recent = self._data.setdefault("recent_trades", [])
             recent.append({
-                "ts": datetime.utcnow().isoformat(),
+                "ts": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 "ticker": ticker,
                 "action": action,
                 "pnl": round(pnl, 2),
@@ -103,7 +103,7 @@ class MetricsCollector:
         with self._lock:
             snaps = self._data.setdefault("portfolio_snapshots", [])
             snaps.append({
-                "ts": datetime.utcnow().isoformat(),
+                "ts": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 "total": round(total_value, 2),
                 "cash": round(cash, 2),
                 "positions": open_positions,

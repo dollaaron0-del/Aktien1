@@ -27,7 +27,7 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import yfinance as yf
@@ -119,7 +119,7 @@ class CrossAssetSignals:
             except Exception as exc:
                 log.warning("cross_asset: failed to fetch %s (%s): %s", key, sym, exc)
 
-        now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds") + "Z"
 
         # 1. Yield-Curve signal
         yield_spread: Optional[float] = None
@@ -263,7 +263,7 @@ class CrossAssetSignals:
                 raw = json.load(fh)
             ts_str = raw.get("timestamp", "")
             ts = datetime.fromisoformat(ts_str.rstrip("Z"))
-            if datetime.utcnow() - ts > timedelta(hours=_CACHE_TTL_HOURS):
+            if datetime.now(timezone.utc).replace(tzinfo=None) - ts > timedelta(hours=_CACHE_TTL_HOURS):
                 return None
             return CrossAssetSnapshot(**raw)
         except Exception as exc:

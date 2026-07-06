@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Dict, List, Optional
 
 from analyzers.earnings_surprise import EarningsSurprise
@@ -74,7 +74,7 @@ class PEADTracker:
                     "surprise_pct":  surprise,
                     "label":         label,
                     "earnings_date": earn_date,
-                    "queued_at":     datetime.utcnow().isoformat(),
+                    "queued_at":     datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                     "notified":      False,
                 }
                 queue.append(entry)
@@ -122,7 +122,7 @@ class PEADTracker:
         """Update queued_at to now for the given ticker."""
         try:
             queue = self._load()
-            now   = datetime.utcnow().isoformat()
+            now   = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
             for entry in queue:
                 if entry.get("ticker") == ticker:
                     entry["queued_at"] = now

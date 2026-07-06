@@ -6,7 +6,7 @@ Goldman Sachs stuft Apple auf Buy hoch → starkes Signal.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 import requests
 from system.http import http_get
@@ -26,7 +26,7 @@ class AnalystCollector:
 
     def _collect_yfinance(self, ticker: str, lookback_days: int) -> List[Dict]:
         results = []
-        cutoff = datetime.utcnow() - timedelta(days=lookback_days)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)
         try:
             stock = yf.Ticker(ticker)
             upgrades = stock.upgrades_downgrades
@@ -92,7 +92,7 @@ class AnalystCollector:
 
     def _collect_benzinga_rss(self, ticker: str, lookback_days: int) -> List[Dict]:
         results = []
-        cutoff = datetime.utcnow() - timedelta(days=lookback_days)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)
         try:
             resp = http_get(_BENZINGA_RSS, timeout=10,
                                 headers={"User-Agent": "Mozilla/5.0"})
@@ -112,7 +112,7 @@ class AnalystCollector:
                     if pub_dt < cutoff:
                         continue
                 except Exception:
-                    pub_dt = datetime.utcnow()
+                    pub_dt = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 results.append({
                     "source":       "Benzinga Analyst Ratings",

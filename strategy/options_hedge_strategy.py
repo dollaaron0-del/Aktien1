@@ -17,7 +17,7 @@ Absicherungsgröße:
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, TYPE_CHECKING
 
 from logger import get_logger
@@ -196,7 +196,7 @@ class OptionsHedgeStrategy:
 
         contracts = hedge_size["contracts"]
         premium   = hedge_size["estimated_premium_usd"]
-        expiry_dt = (datetime.utcnow() + timedelta(days=expiry_days)).strftime("%Y-%m-%d")
+        expiry_dt = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=expiry_days)).strftime("%Y-%m-%d")
 
         if _PAPER_MODE or getattr(broker, "_mode", "paper") == "paper":
             # Paper-Mode: Simulierung
@@ -210,10 +210,10 @@ class OptionsHedgeStrategy:
                 "spy_price_at_buy":  spy_price,
                 "estimated_premium": premium,
                 "notional_coverage_pct": hedge_size["notional_coverage_pct"],
-                "timestamp":         datetime.utcnow().isoformat(),
+                "timestamp":         datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 "status":            "simulated",
             }
-            hedge_id = f"HEDGE_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+            hedge_id = f"HEDGE_{datetime.now(timezone.utc).replace(tzinfo=None).strftime('%Y%m%d_%H%M%S')}"
             self._active_hedges[hedge_id] = hedge_record
             self._total_premium_paid += premium
             self._hedge_count += 1

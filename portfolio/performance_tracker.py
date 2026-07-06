@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from logger import get_logger
@@ -170,7 +170,7 @@ class PerformanceTracker:
                  entry_price, debate_winner)
             VALUES (?,?,?,?,?,?,?)
             """,
-            (ticker, datetime.utcnow().isoformat(), direction, confidence,
+            (ticker, datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), direction, confidence,
              sentiment_score, entry_price, debate_winner),
         )
         self._conn.commit()
@@ -198,7 +198,7 @@ class PerformanceTracker:
         if not hold_days and row["predicted_at"]:
             try:
                 _pa = datetime.fromisoformat(row["predicted_at"])
-                hold_days = max(0, (datetime.utcnow() - _pa).days)
+                hold_days = max(0, (datetime.now(timezone.utc).replace(tzinfo=None) - _pa).days)
             except Exception:
                 pass
 
@@ -232,7 +232,7 @@ class PerformanceTracker:
         n_positions: int,
         daily_pnl: Optional[float] = None,
     ) -> None:
-        now_iso = datetime.utcnow().isoformat()
+        now_iso = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         # daily_pnl automatisch aus dem letzten Snapshot ableiten, wenn nicht übergeben
         if daily_pnl is None:
             prev = self._conn.execute(
@@ -265,7 +265,7 @@ class PerformanceTracker:
     # ── Reporting ─────────────────────────────────────────────────────────────
 
     def get_accuracy_report(self, days: int = 30) -> Dict:
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         rows = self._conn.execute(
             """
             SELECT outcome, confidence, pnl_pct, exit_category, debate_correct,
@@ -338,7 +338,7 @@ class PerformanceTracker:
 
     def get_value_history(self, days: int = 30) -> List[Dict]:
         """Portfolio-Wert-Verlauf aus portfolio_snapshots für die letzten N Tage."""
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         # snapshot_date statt recorded_at: recorded_at ist bei Alt-Snapshots ein
         # Platzhalter (2000-01-01) → unbrauchbar für Filter/Sortierung. snapshot_date
         # ist durchgängig befüllt und ISO-lexikografisch sortierbar (Datum wie
@@ -357,7 +357,7 @@ class PerformanceTracker:
 
     def get_risk_metrics(self, days: int = 90) -> Dict:
         """Sharpe, Sortino, Calmar, Max Drawdown."""
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         rows = self._conn.execute(
             "SELECT total_value, recorded_at FROM portfolio_snapshots WHERE recorded_at > ? ORDER BY recorded_at",
             (cutoff,),
@@ -403,7 +403,7 @@ class PerformanceTracker:
         }
 
     def closed_trades(self, days: int = 365) -> List[Dict]:
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         rows = self._conn.execute(
             """
             SELECT ticker, predicted_at, direction, confidence, sentiment_score,
@@ -444,7 +444,7 @@ class PerformanceTracker:
 
     def get_exit_reason_stats(self, days: int = 365) -> List[Dict]:
         """Aggregierte Statistik je Exit-Kategorie: Anzahl, Win-Rate, Ø-Rendite."""
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         rows = self._conn.execute(
             """
             SELECT exit_category, outcome, pnl_pct
@@ -482,7 +482,7 @@ class PerformanceTracker:
 
     def get_sentiment_score_buckets(self, days: int = 365) -> List[Dict]:
         """Win-Rate & Ø-Rendite je Sentiment-Score-Bucket (für Threshold-Kalibrierung)."""
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         rows = self._conn.execute(
             """
             SELECT sentiment_score, outcome, pnl_pct

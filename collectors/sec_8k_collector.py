@@ -6,7 +6,7 @@ SEC8KCollector – lädt aktuelle 8-K Meldungen von SEC EDGAR RSS in Echtzeit.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 import requests
 from system.http import http_get, sec_user_agent
@@ -41,8 +41,8 @@ class SEC8KCollector:
 
     def collect(self, ticker: str, lookback_days: int = 14) -> List[Dict]:
         results = []
-        start = (datetime.utcnow() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-        end   = datetime.utcnow().strftime("%Y-%m-%d")
+        start = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+        end   = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
 
         try:
             url = f"https://efts.sec.gov/LATEST/search-index?q=%22{ticker}%22&forms=8-K&dateRange=custom&startdt={start}&enddt={end}"
@@ -90,7 +90,7 @@ class SEC8KCollector:
 
             root = ET.fromstring(resp.content)
             ns = {"atom": "http://www.w3.org/2005/Atom"}
-            cutoff = datetime.utcnow() - timedelta(days=lookback_days)
+            cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)
 
             for entry in root.findall("atom:entry", ns)[:8]:
                 title   = (entry.findtext("atom:title", "", ns) or "").strip()
@@ -104,7 +104,7 @@ class SEC8KCollector:
                     if pub < cutoff:
                         continue
                 except Exception:
-                    pub = datetime.utcnow()
+                    pub = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 results.append({
                     "source":       "SEC 8-K",

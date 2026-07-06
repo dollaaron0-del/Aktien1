@@ -7,7 +7,7 @@ Quelle: EUR-Lex RSS, EU-Kommission Pressemitteilungen.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 import requests
 from system.http import http_get
@@ -62,7 +62,7 @@ class EURegulationCollector:
     def _collect_eu_press(self, ticker: str, lookback_days: int) -> List[Dict]:
         """EC Pressemitteilungen zu Wettbewerb und Regulierung."""
         results = []
-        cutoff = datetime.utcnow() - timedelta(days=lookback_days)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)
         keywords = _TICKER_EU_KEYWORDS.get(ticker.upper(), [ticker])
 
         try:
@@ -93,7 +93,7 @@ class EURegulationCollector:
                     if pub_dt < cutoff:
                         continue
                 except Exception:
-                    pub_dt = datetime.utcnow()
+                    pub_dt = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 is_high_impact = any(term.lower() in combined for term in _HIGH_IMPACT_TERMS)
                 priority = "HIGH" if is_high_impact else "MEDIUM"
@@ -117,7 +117,7 @@ class EURegulationCollector:
     def _collect_eurlex_rss(self, ticker: str, lookback_days: int) -> List[Dict]:
         """EUR-Lex Official Journal RSS."""
         results = []
-        cutoff  = datetime.utcnow() - timedelta(days=lookback_days)
+        cutoff  = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)
         keywords = _TICKER_EU_KEYWORDS.get(ticker.upper(), [ticker])
 
         # Tech/AI regulation feeds
@@ -151,7 +151,7 @@ class EURegulationCollector:
                         if pub_dt < cutoff:
                             continue
                     except Exception:
-                        pub_dt = datetime.utcnow()
+                        pub_dt = datetime.now(timezone.utc).replace(tzinfo=None)
 
                     results.append({
                         "source":       "EUR-Lex",

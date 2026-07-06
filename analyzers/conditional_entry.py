@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, asdict, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from logger import get_logger
@@ -48,7 +48,7 @@ class ConditionalEntry:
     @property
     def is_expired(self) -> bool:
         try:
-            return datetime.utcnow() > datetime.fromisoformat(self.expires_at)
+            return datetime.now(timezone.utc).replace(tzinfo=None) > datetime.fromisoformat(self.expires_at)
         except Exception:
             return False
 
@@ -108,7 +108,7 @@ class ConditionalEntryWatcher:
         Übernimmt den Analyse-Kontext (Bull/Bear-Case, Kursziel etc.), damit der
         Trade beim Auslösen ohne erneute Claude-Analyse ausgeführt werden kann."""
         from datetime import timedelta
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         # Quellenzahl der Analyse erfassen (sources_used ist je nach Pfad
         # int ODER Dict[str,int]), damit sie beim Trigger replayed werden kann.
         _su = getattr(analysis, "sources_used", 0)

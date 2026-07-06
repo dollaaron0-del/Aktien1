@@ -25,7 +25,7 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Tuple
 
 import requests
@@ -69,7 +69,7 @@ class GeoEvent:
     headline:    str
     source:      str
     impacts:     List[MarketImpact]
-    detected_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    detected_at: str = field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
 
 
 _GEO_CATEGORIES: List[Dict] = [
@@ -300,7 +300,7 @@ class GeopoliticalRadar:
 
         seen, cat_cooldowns = self._load_seen()
         events: List[GeoEvent] = []
-        now_iso = datetime.utcnow().isoformat()
+        now_iso = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
         for title, source in headlines:
             key = title.lower()[:90]
@@ -474,7 +474,7 @@ class GeopoliticalRadar:
         try:
             with open(self._state_path, encoding="utf-8") as f:
                 data = json.load(f)
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             hl_cut  = (now - timedelta(hours=48)).isoformat()
             cat_cut = (now - timedelta(days=7)).isoformat()
             if "headlines" in data:
@@ -493,7 +493,7 @@ class GeopoliticalRadar:
         try:
             fd, tmp = tempfile.mkstemp(dir=dirpath, suffix=".tmp")
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                now = datetime.utcnow().isoformat()
+                now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
                 json.dump({"headlines": {k: now for k in seen}, "categories": cat_cooldowns}, f)
             os.replace(tmp, self._state_path)
         except Exception as e:

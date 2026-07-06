@@ -13,7 +13,7 @@ articles_by_date Format:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from logger import get_logger
@@ -65,7 +65,7 @@ class MultiTimeframeSentiment:
         -------
         MultiTimeframeResult with trend classification and momentum_bonus.
         """
-        today = datetime.utcnow().date()
+        today = datetime.now(timezone.utc).replace(tzinfo=None).date()
 
         score_1d = self._score_1d(articles_by_date, today)
         score_7d = self._score_7d(articles_by_date, today)

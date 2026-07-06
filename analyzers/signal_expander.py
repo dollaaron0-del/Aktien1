@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
 # ─── Persistenz ──────────────────────────────────────────────────────────────
@@ -203,7 +203,7 @@ class SignalDrivenExpander:
     def get_active_tickers(self) -> List[str]:
         """Gibt alle noch gültigen Signal-Ticker zurück (nicht abgelaufen)."""
         data = self._load()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         active = []
         for ticker, entry in data.items():
             try:
@@ -221,7 +221,7 @@ class SignalDrivenExpander:
         Deckel hier ist das Sicherheitsnetz: selbst wenn aus Alt-Daten viele
         ready-Flags existieren, landen nie mehr als N in der Analyse."""
         data = self._load()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         ready = []
         for ticker, entry in data.items():
             try:
@@ -271,7 +271,7 @@ class SignalDrivenExpander:
     def get_all_entries(self) -> List[Dict]:
         """Alle Einträge mit Metadaten (für Dashboard)."""
         data = self._load()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         result = []
         for ticker, entry in data.items():
             try:
@@ -300,7 +300,7 @@ class SignalDrivenExpander:
     def cleanup_expired(self) -> int:
         """Entfernt abgelaufene Einträge. Gibt Anzahl entfernter zurück."""
         data = self._load()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         before = len(data)
         data = {
             t: e for t, e in data.items()
@@ -317,7 +317,7 @@ class SignalDrivenExpander:
         if ticker in data:
             entry = data[ticker]
             entry["expires_at"] = (
-                datetime.utcnow() + timedelta(days=self.ttl_days)
+                datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=self.ttl_days)
             ).isoformat()
             entry["signals"] = entry.get("signals", 1) + 1
             entry["weight"]  = round(self._weight_of(entry) + _W_MENTION, 3)
@@ -357,7 +357,7 @@ class SignalDrivenExpander:
         data = self._load()
         promoted: List[str] = []
         eligible: List[str] = []          # Schwelle erreicht, wartet auf Promote-Slot
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         expires = (now + timedelta(days=self.ttl_days)).isoformat()
 
         for ticker, payload in found.items():

@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -102,7 +102,7 @@ class FDACalendarCollector:
 
     # ── Studien → News-Items ──────────────────────────────────────────────────
     def _to_items(self, ticker: str, studies: List[Dict]) -> List[Dict]:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         lo  = now - timedelta(days=self.lookback_days)
         hi  = now + timedelta(days=self.lookahead_days)
         items: List[Dict] = []

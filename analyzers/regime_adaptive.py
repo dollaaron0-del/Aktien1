@@ -13,7 +13,7 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
 
 from logger import get_logger
@@ -97,7 +97,7 @@ def _load_cached_regime() -> Optional[str]:
         with open(_CACHE_FILE) as f:
             data = json.load(f)
         ts = datetime.fromisoformat(data["timestamp"])
-        if datetime.utcnow() - ts < timedelta(hours=_CACHE_TTL_HOURS):
+        if datetime.now(timezone.utc).replace(tzinfo=None) - ts < timedelta(hours=_CACHE_TTL_HOURS):
             return data["regime"]
     except Exception:
         pass
@@ -107,7 +107,7 @@ def _load_cached_regime() -> Optional[str]:
 def _save_cached_regime(regime: str) -> None:
     """Atomic write des Regime-Caches."""
     os.makedirs(os.path.dirname(_CACHE_FILE), exist_ok=True)
-    payload = {"regime": regime, "timestamp": datetime.utcnow().isoformat()}
+    payload = {"regime": regime, "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat()}
     tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(_CACHE_FILE), suffix=".tmp")
     try:
         with os.fdopen(tmp_fd, "w") as f:
@@ -149,7 +149,7 @@ def get_market_caution() -> Optional[Dict]:
     exp = state.get("expires")
     if exp:
         try:
-            if datetime.utcnow() > datetime.fromisoformat(exp):
+            if datetime.now(timezone.utc).replace(tzinfo=None) > datetime.fromisoformat(exp):
                 clear_market_caution()
                 return None
         except Exception:
@@ -166,8 +166,8 @@ def set_market_caution(reason: str, pct_down: float, hours: int = 24) -> bool:
     existing = get_market_caution()
     payload = {
         "active":   True,
-        "since":    (existing or {}).get("since") or datetime.utcnow().isoformat(),
-        "expires":  (datetime.utcnow() + timedelta(hours=hours)).isoformat(),
+        "since":    (existing or {}).get("since") or datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+        "expires":  (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=hours)).isoformat(),
         "pct_down": round(pct_down, 3),
         "reason":   reason,
     }

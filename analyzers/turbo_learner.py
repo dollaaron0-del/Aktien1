@@ -17,7 +17,7 @@ import json
 import os
 import re
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 _DB_PATH     = os.path.join(os.path.dirname(__file__), "..", "data", "performance.db")
@@ -248,7 +248,7 @@ class TurboLearner:
                 apply["max_position_pct"] = _clamp(new_pos_size, "MAX_POSITION_PCT")
 
         return {
-            "generated_at":        datetime.utcnow().isoformat(),
+            "generated_at":        datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "turbo_trades_total":  len(turbo_trades),
             "normal_trades_total": len(normal_trades),
             "turbo_stats":         turbo_stats,

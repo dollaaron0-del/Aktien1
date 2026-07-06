@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
 from logger import get_logger
@@ -87,7 +87,7 @@ def _get_suffix(ticker: str) -> Optional[str]:
 
 def _fetch_fx(pair: str) -> Optional[FXSignal]:
     """Lädt 30-Tage-Kurs für ein Währungspaar. Cached für _CACHE_TTL_HOURS."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     cached = _cache.get(pair)
     if cached and (now - cached[0]).total_seconds() < _CACHE_TTL_HOURS * 3600:
         return cached[1]

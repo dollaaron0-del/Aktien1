@@ -17,7 +17,7 @@ Strategie: Firmenname wird via yfinance aufgelöst, dann parallele RSS-Suche.
 import requests
 from system.http import http_get
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import List, Dict, Optional
 import yfinance as yf
@@ -46,7 +46,7 @@ class WireCollector:
 
     def __init__(self, lookback_days: int = 7):
         self.lookback_days = lookback_days
-        self._cutoff = datetime.utcnow() - timedelta(days=lookback_days)
+        self._cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)
 
     def collect(self, ticker: str) -> List[Dict]:
         company_name = self._get_company_name(ticker)

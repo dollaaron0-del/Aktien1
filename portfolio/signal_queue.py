@@ -11,7 +11,7 @@ Ablauf:
 import sqlite3
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "signal_queue.db")
@@ -79,7 +79,7 @@ class SignalQueue:
             "WHERE ticker=? AND status='pending'",
             (ticker,),
         )
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         cursor = self._conn.execute(
             """INSERT INTO pending_signals
                (ticker, sentiment_score, confidence, target_price, direction,
@@ -155,7 +155,7 @@ class SignalQueue:
         return [dict(row) for row in cursor.fetchall()]
 
     def _expire_old(self):
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         self._conn.execute(
             "UPDATE pending_signals SET status='expired' "
             "WHERE status='pending' AND expires_at < ?",
@@ -166,7 +166,7 @@ class SignalQueue:
     def cleanup_expired(self, keep_days: int = 30) -> int:
         """Löscht abgeschlossene/abgelaufene Signale die älter als keep_days sind."""
         from datetime import timedelta
-        cutoff = (datetime.utcnow() - timedelta(days=keep_days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=keep_days)).isoformat()
         cur = self._conn.execute(
             "DELETE FROM pending_signals WHERE status IN ('executed','expired') AND created_at < ?",
             (cutoff,),

@@ -19,7 +19,7 @@ Konfig (.env):
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from logger import get_logger
@@ -75,14 +75,14 @@ class ShortVolumeCollector:
             "title":        f"Hoher Short-Volumen-Anteil: {ratio*100:.0f}% (Ø {n_days}T, ~{avg_short:,.0f} Stk/Tag)",
             "text":         (f"FINRA-Tages-Short-Volumen im Schnitt {ratio*100:.0f}% des Gesamtvolumens "
                              f"über {n_days} Tage. Starker Short-Druck – bärisch ODER Squeeze-Brennstoff."),
-            "published_at": datetime.utcnow().isoformat(),
+            "published_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "priority":     prio,
         }]
 
     # ── FINRA-Tagesdateien (geteilt über alle Ticker) ─────────────────────────
     def _recent_maps(self) -> List[Dict[str, Tuple[int, int]]]:
         maps = []
-        day = datetime.utcnow().date()
+        day = datetime.now(timezone.utc).replace(tzinfo=None).date()
         checked = 0
         # bis zu lookback*2 Kalendertage rückwärts, um Wochenenden/Feiertage zu überspringen
         while len(maps) < self.lookback_days and checked < self.lookback_days * 2 + 3:

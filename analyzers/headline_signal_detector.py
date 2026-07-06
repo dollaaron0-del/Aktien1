@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from logger import get_logger
@@ -187,7 +187,7 @@ class HeadlineSignalDetector:
             score=best_score,
             headline=article.get("title", "")[:200],
             source=article.get("source", ""),
-            detected_at=datetime.utcnow().isoformat(),
+            detected_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         )
 
     def _extract_ticker(self, text: str) -> Optional[str]:
@@ -212,7 +212,7 @@ class HeadlineSignalDetector:
 
     def _is_duplicate(self, title: str) -> bool:
         seen = self._state.get("seen_titles", {})
-        cutoff = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=24)).isoformat()
         # Clean old entries
         self._state["seen_titles"] = {
             t: ts for t, ts in seen.items() if ts > cutoff
@@ -222,7 +222,7 @@ class HeadlineSignalDetector:
     def _mark_seen(self, title: str) -> None:
         if "seen_titles" not in self._state:
             self._state["seen_titles"] = {}
-        self._state["seen_titles"][title] = datetime.utcnow().isoformat()
+        self._state["seen_titles"][title] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
     def _send_alert(self, signal: HeadlineSignal) -> None:
         msg = (

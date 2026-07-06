@@ -61,7 +61,7 @@ class EstimateRevisionsCollector:
             if net < 0 and trend_pct > 0.5:
                 return []
 
-        from datetime import datetime
+        from datetime import datetime, timezone
         bullish = net > 0
         direction = "Aufwärts" if bullish else "Abwärts"
         prio = "HIGH" if abs(net) >= _MIN_NET * 2 else "MEDIUM"
@@ -73,7 +73,7 @@ class EstimateRevisionsCollector:
             "text":         (f"Netto {net:+d} EPS-Revisionen über 30 Tage "
                              f"({'mehr Anhebungen' if bullish else 'mehr Senkungen'}). "
                              f"Revisions-Momentum ist ein etablierter Alpha-Faktor."),
-            "published_at": datetime.utcnow().isoformat(),
+            "published_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "priority":     prio,
             "sentiment_hint": "bullish" if bullish else "bearish",
         }]

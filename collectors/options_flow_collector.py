@@ -11,7 +11,7 @@ Warum Volume/OI wichtig ist:
   nicht nur bestehende gerollt. Das ist der klarste Hinweis auf informierte Händler die auf
   eine bevorstehende Kursbewegung wetten.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from math import isnan
 from typing import List, Dict, Optional
 import yfinance as yf
@@ -118,7 +118,7 @@ class OptionsFlowCollector:
             return []
 
         items: List[Dict] = []
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         url = f"https://finance.yahoo.com/quote/{ticker}/options"
 
         # ── Signal 1: Put/Call-Ratio ──────────────────────────────────────────

@@ -25,7 +25,7 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional, Tuple
 
 from logger import get_logger
@@ -121,7 +121,7 @@ def _check_record(
     Vergleicht Wert mit bestehendem Rekord.
     Gibt (is_new_record, improvement_pct, updated_record) zurück.
     """
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
     if record is None or current_val > record.value:
         improvement = (
             (current_val - record.value) / max(abs(record.value), 0.001) * 100
@@ -340,7 +340,7 @@ class BotScorer:
             self._state.total_lost   = round(self._state.total_lost   - total_delta, 2)
 
         entry = ScoreEntry(
-            date=datetime.utcnow().isoformat()[:16],
+            date=datetime.now(timezone.utc).replace(tzinfo=None).isoformat()[:16],
             ticker=ticker,
             delta=total_delta,
             score_after=new_score,

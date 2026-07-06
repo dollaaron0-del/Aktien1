@@ -25,7 +25,7 @@ import json
 import math
 import os
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from analyzers.claude_analyzer import AnalysisResult
@@ -180,7 +180,7 @@ class ShortStrategy:
                 continue
 
             days_held = (
-                datetime.utcnow() - datetime.fromisoformat(short.entry_date)
+                datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(short.entry_date)
             ).days
 
             reason = None
@@ -213,7 +213,7 @@ class ShortStrategy:
         if inverse_price is None:
             return None
 
-        days_held = (datetime.utcnow() - datetime.fromisoformat(short.entry_date)).days
+        days_held = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(short.entry_date)).days
         reason = f"Signal dreht auf BUY (Sentiment: {analysis.sentiment_score:.2f})"
         pnl = self._close_short(ticker, short, inverse_price, reason, days_held)
         sign = "+" if pnl >= 0 else ""
@@ -240,7 +240,7 @@ class ShortStrategy:
                 if inverse_price else 0.0
             )
             days_held = (
-                datetime.utcnow() - datetime.fromisoformat(short.entry_date)
+                datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(short.entry_date)
             ).days
             positions.append({
                 "ticker":          ticker,
@@ -283,7 +283,7 @@ class ShortStrategy:
 
         stop_loss   = round(price * (1 - _SHORT_STOP_LOSS_PCT), 2)
         take_profit = round(price * (1 + _SHORT_TAKE_PROFIT_PCT), 2)
-        entry_date  = datetime.utcnow().isoformat()
+        entry_date  = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
         # Inverse ETF als normale Long-Position im Portfolio kaufen
         position = Position(

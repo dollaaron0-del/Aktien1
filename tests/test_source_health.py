@@ -2,7 +2,7 @@
 Test für AnalysisLog.source_health – klassifiziert Quellen als tot/schwach/gesund.
 """
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 import analyzers.analysis_log as al_mod
 from analyzers.analysis_log import AnalysisLog
@@ -19,7 +19,7 @@ def _insert(log, breakdown):
            (analyzed_at, ticker, recommendation, direction, sentiment_score,
             confidence, sources_used, sources_breakdown)
            VALUES (?,?,?,?,?,?,?,?)""",
-        (datetime.utcnow().isoformat(), "X", "SKIP", "NEUTRAL", 0.5, "LOW",
+        (datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), "X", "SKIP", "NEUTRAL", 0.5, "LOW",
          sum(breakdown.values()), json.dumps(breakdown)),
     )
     log._conn.commit()

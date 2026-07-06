@@ -18,7 +18,7 @@ Key:  QUIVER_API_KEY in .env  (kostenlos auf quiverquant.com registrieren)
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
 import requests
@@ -53,7 +53,7 @@ class QuiverCollector:
 
     def __init__(self, lookback_days: int = 90):
         self.lookback_days = lookback_days
-        self._cutoff = (datetime.utcnow() - timedelta(days=lookback_days)).date()
+        self._cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)).date()
 
     @property
     def available(self) -> bool:

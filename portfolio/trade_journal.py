@@ -16,7 +16,7 @@ Ermöglicht:
 import sqlite3
 import os
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
 
@@ -158,7 +158,7 @@ class TradeJournal:
         self._conn.commit()
 
     def _insert(self, **kwargs):
-        kwargs.setdefault("event_date", datetime.utcnow().isoformat())
+        kwargs.setdefault("event_date", datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
         # JSON-encode list/dict fields
         for k in ("catalysts", "risks", "sources"):
             if k in kwargs and isinstance(kwargs[k], (list, dict)):
@@ -219,7 +219,7 @@ class TradeJournal:
 
     def get_recent_lessons(self, days: int = 30) -> List[Dict]:
         """All closed trades from the last N days, for reflection."""
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         cursor = self._conn.execute(
             """SELECT ticker, MIN(event_date) as start, MAX(event_date) as end
                FROM trade_events

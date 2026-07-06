@@ -18,7 +18,7 @@ import io
 import os
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from logger import get_logger
@@ -183,7 +183,7 @@ class TaxCalculator:
                (ticker, sell_date, shares, buy_date, cost_basis, proceeds, gross_gain, recorded_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (ticker, sell_date, shares_sold, first_buy_date,
-             total_cost, proceeds_eur, gross_gain, datetime.utcnow().isoformat()),
+             total_cost, proceeds_eur, gross_gain, datetime.now(timezone.utc).replace(tzinfo=None).isoformat()),
         )
         self._conn.commit()
 
@@ -274,7 +274,7 @@ class TaxCalculator:
     # ── Freistellungsauftrag ───────────────────────────────────────────────────
 
     def get_freistellung_status(self, year: Optional[int] = None) -> Dict:
-        y = year or datetime.utcnow().year
+        y = year or datetime.now(timezone.utc).replace(tzinfo=None).year
         used = self._get_freistellung_used(y)
         return {
             "year": y,

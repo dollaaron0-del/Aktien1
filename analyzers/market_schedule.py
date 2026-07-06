@@ -16,7 +16,7 @@ Supported exchanges:
   ASX    – Sydney          10:00 AEST/AEDT (Australia/Sydney)
 """
 from zoneinfo import ZoneInfo
-from datetime import datetime, timedelta, time as dtime, date as date_type
+from datetime import datetime, timedelta, time as dtime, date as date_type, timezone
 from typing import List, Dict, Optional, Set
 
 
@@ -115,7 +115,7 @@ def is_exchange_open(exchange: str = "NYSE") -> bool:
 def is_market_holiday(d: Optional[date_type] = None, exchange: str = "") -> bool:
     """Returns True if the given date is a holiday for the specified exchange."""
     if d is None:
-        d = datetime.utcnow().date()
+        d = datetime.now(timezone.utc).replace(tzinfo=None).date()
     holidays = _EXCHANGE_HOLIDAYS.get(exchange.upper(), _ALL_HOLIDAYS)
     return d.isoformat() in holidays
 
@@ -196,7 +196,7 @@ class MarketSchedule:
 
     def next_window(self) -> Optional[Dict]:
         """Returns the next upcoming analysis window from now."""
-        now_utc = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC"))
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None).replace(tzinfo=ZoneInfo("UTC"))
         now_local = datetime.now()
         # Check today and tomorrow (use local date to avoid UTC-date mismatch at midnight)
         for delta in (0, 1):

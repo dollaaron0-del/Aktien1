@@ -2,7 +2,7 @@ import yfinance as yf
 import requests
 from system.http import http_get
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import List, Dict
 
@@ -17,7 +17,7 @@ class YahooCollector:
 
     def collect(self, ticker: str, days_back: int = 7) -> List[Dict]:
         results = []
-        cutoff = datetime.utcnow() - timedelta(days=days_back)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days_back)
 
         # yfinance news
         try:
@@ -52,7 +52,7 @@ class YahooCollector:
                 try:
                     published = parsedate_to_datetime(pub).replace(tzinfo=None)
                 except Exception:
-                    published = datetime.utcnow()
+                    published = datetime.now(timezone.utc).replace(tzinfo=None)
                 if published < cutoff:
                     continue
                 results.append({

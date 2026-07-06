@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Tuple
 
 from logger import get_logger
@@ -31,7 +31,7 @@ class StopLossCooldown:
         data = self._load()
         data[ticker.upper()] = {
             "price": round(price, 4),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         }
         self._save(data)
         log.info("[%s] SL-Sperre gesetzt für %d Tage (Kurs: $%.2f)", ticker, self.cooldown_days, price)
@@ -47,7 +47,7 @@ class StopLossCooldown:
         except Exception:
             return False, ""
         unblock_at = ts + timedelta(days=self.cooldown_days)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         if now < unblock_at:
             days_since = (now - ts).days
             days_left = (unblock_at - now).days + 1
@@ -69,7 +69,7 @@ class StopLossCooldown:
     def all_blocked(self) -> Dict[str, Dict]:
         """Gibt alle aktiven Sperren zurück (für Dashboard-Anzeige)."""
         data = self._load()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         active = {}
         for ticker, entry in list(data.items()):
             try:

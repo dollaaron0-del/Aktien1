@@ -12,7 +12,7 @@ gecacht (12h/Ticker), da Google Trends aggressiv rate-limitet. Fail-safe → [].
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List
 
 from logger import get_logger
@@ -68,6 +68,6 @@ class GoogleTrendsCollector:
                      f"früher Aufmerksamkeits-/Nachfrage-Hinweis – Ursache (Launch, "
                      f"viraler Moment, Krise) prüfen."),
             "url": f"https://trends.google.com/trends/explore?q={kw.replace(' ', '%20')}",
-            "published_at": datetime.utcnow().isoformat(),
+            "published_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "priority": "NORMAL",
         }]

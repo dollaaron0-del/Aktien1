@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional, Tuple
 
 from backtesting import data_loader
@@ -60,7 +60,7 @@ def save_card(strategy_name: str, portfolio: TickerMetrics, meta: Dict) -> str:
     path = os.path.join(_CARD_DIR, f"{strategy_name}.json")
     payload = {
         "strategy": strategy_name,
-        "saved_at": datetime.utcnow().isoformat(),
+        "saved_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         "meta": meta,
         "portfolio": asdict(portfolio),
     }

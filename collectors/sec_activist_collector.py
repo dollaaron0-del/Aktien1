@@ -12,7 +12,7 @@ die jüngsten Filings auf 13D/13G(/A). Fail-safe → [].
 from __future__ import annotations
 
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from logger import get_logger
@@ -73,7 +73,7 @@ class SECActivistCollector:
         forms = recent.get("form", [])
         dates = recent.get("filingDate", [])
         accs = recent.get("accessionNumber", [])
-        cutoff = (datetime.utcnow() - timedelta(days=self.lookback_days)).date()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=self.lookback_days)).date()
 
         out: List[Dict] = []
         for i, form in enumerate(forms):

@@ -15,7 +15,7 @@ API: https://api.stocktwits.com/api/2/streams/symbol/{TICKER}.json
 
 import requests
 from system.http import http_get
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
 _BASE_URL = "https://api.stocktwits.com/api/2/streams/symbol/{ticker}.json"
@@ -36,7 +36,7 @@ class StockTwitsCollector:
     def __init__(self, lookback_hours: int = 48, max_messages: int = 30):
         self.lookback_hours = lookback_hours
         self.max_messages = max_messages
-        self._cutoff = datetime.utcnow() - timedelta(hours=lookback_hours)
+        self._cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=lookback_hours)
 
     def collect(self, ticker: str) -> List[Dict]:
         raw_messages = self._fetch(ticker)
@@ -136,7 +136,7 @@ class StockTwitsCollector:
                     f"Bullish-Anteil: {bull_pct}%. Signal: {agg_signal}. "
                     f"Hoher Konsens (>70% oder <30%) gilt als zuverlässiges Frühsignal."
                 ),
-                "published_at": datetime.utcnow().strftime("%Y-%m-%d"),
+                "published_at": datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d"),
                 "url": f"https://stocktwits.com/symbol/{ticker}",
                 "sentiment": agg_signal,
             })

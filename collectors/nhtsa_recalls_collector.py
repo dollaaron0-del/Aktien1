@@ -11,7 +11,7 @@ Fail-safe → []. Cache 24h/Ticker.
 from __future__ import annotations
 
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 
 from logger import get_logger
@@ -59,8 +59,8 @@ class NHTSARecallsCollector:
         return items
 
     def _query(self, ticker: str, makes: List[str]) -> List[Dict]:
-        cutoff = datetime.utcnow().date() - timedelta(days=self.lookback_days)
-        years = [datetime.utcnow().year, datetime.utcnow().year + 1]
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None).date() - timedelta(days=self.lookback_days)
+        years = [datetime.now(timezone.utc).replace(tzinfo=None).year, datetime.now(timezone.utc).replace(tzinfo=None).year + 1]
         seen: set = set()
         out: List[Dict] = []
         budget = _MAX_MODELS

@@ -6,7 +6,7 @@ import os
 import tempfile
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from logger import get_logger
@@ -783,7 +783,7 @@ class ClaudeAnalyzer:
         if not entry:
             return None
         try:
-            age = datetime.utcnow() - datetime.fromisoformat(entry["stored_at"])
+            age = datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(entry["stored_at"])
             if age > timedelta(hours=ttl):
                 return None
             return AnalysisResult(**entry["result"])
@@ -807,9 +807,9 @@ class ClaudeAnalyzer:
                 store = json.load(f)
         except Exception:
             store = {}
-        store[key] = {"stored_at": datetime.utcnow().isoformat(), "result": asdict(result)}
+        store[key] = {"stored_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), "result": asdict(result)}
         # Abgelaufene Einträge beim Schreiben aufräumen (Datei klein halten).
-        cutoff = datetime.utcnow() - timedelta(hours=max(ttl, 1.0))
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=max(ttl, 1.0))
         for k in [k for k, v in store.items()
                   if self._stored_before(v, cutoff)]:
             store.pop(k, None)

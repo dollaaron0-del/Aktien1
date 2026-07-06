@@ -8,7 +8,7 @@ Gibt Tickers mit Squeeze-Potenzial zurück für priorisierte Analyse.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 
@@ -114,7 +114,7 @@ class ShortSqueezeDetector:
             "source": "short_squeeze",
             "signal": "BULLISCH",
             "url": f"https://finance.yahoo.com/quote/{ticker}",
-            "published": datetime.utcnow().isoformat(),
+            "published": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         }
 
     # ── Interna ───────────────────────────────────────────────────────────────

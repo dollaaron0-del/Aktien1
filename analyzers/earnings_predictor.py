@@ -21,7 +21,7 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
 import requests
@@ -100,7 +100,7 @@ class EarningsPredictor:
     # ------------------------------------------------------------------
 
     def _build_prediction(self, ticker: str) -> EarningsPrediction:
-        now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds") + "Z"
         signal_scores: list[float] = []
         signals: Dict = {}
 
@@ -236,7 +236,7 @@ class EarningsPredictor:
             if not entry:
                 return None
             ts = datetime.fromisoformat(entry["timestamp"].rstrip("Z"))
-            if datetime.utcnow() - ts > timedelta(hours=_CACHE_TTL_HOURS):
+            if datetime.now(timezone.utc).replace(tzinfo=None) - ts > timedelta(hours=_CACHE_TTL_HOURS):
                 return None
             return EarningsPrediction(**entry)
         except Exception as exc:

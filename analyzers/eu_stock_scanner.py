@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import yfinance as yf
@@ -243,7 +243,7 @@ class EUStockScanner:
         )
 
         return EUScanResult(
-            scan_date=datetime.utcnow().isoformat(),
+            scan_date=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             candidates=candidates,
             by_country=by_country,
             by_sector=by_sector,

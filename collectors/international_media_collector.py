@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 import urllib.parse
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import List, Dict, Optional
 
@@ -88,7 +88,7 @@ class InternationalMediaCollector:
     def __init__(self, lookback_hours: int = 48, max_items: int = 15):
         self.lookback_hours = lookback_hours
         self.max_items = max_items
-        self._cutoff = datetime.utcnow() - timedelta(hours=lookback_hours)
+        self._cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=lookback_hours)
 
     # ── Öffentliche API ────────────────────────────────────────────────────────
 
@@ -157,7 +157,7 @@ class InternationalMediaCollector:
             try:
                 pub_dt = parsedate_to_datetime(pub).replace(tzinfo=None)
             except Exception:
-                pub_dt = datetime.utcnow()
+                pub_dt = datetime.now(timezone.utc).replace(tzinfo=None)
 
             if pub_dt < self._cutoff:
                 continue

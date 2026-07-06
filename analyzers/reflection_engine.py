@@ -20,7 +20,7 @@ Beide werden mit Claude generiert, gestützt auf:
 import os
 import sqlite3
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
 import anthropic
@@ -262,7 +262,7 @@ class ReflectionEngine:
             return None
 
         if year_month is None:
-            today = datetime.utcnow().date()
+            today = datetime.now(timezone.utc).replace(tzinfo=None).date()
             first_this_month = today.replace(day=1)
             last_month_end = first_this_month - timedelta(days=1)
             year_month = last_month_end.strftime("%Y-%m")
@@ -391,6 +391,6 @@ class ReflectionEngine:
         self._conn.execute(
             """INSERT INTO reflections (created_at, kind, period, content, trades_used)
                VALUES (?, ?, ?, ?, ?)""",
-            (datetime.utcnow().isoformat(), kind, period, content, trades_used),
+            (datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), kind, period, content, trades_used),
         )
         self._conn.commit()

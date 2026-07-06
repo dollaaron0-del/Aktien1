@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 import requests
 import yfinance as yf
@@ -68,7 +68,7 @@ class ShortInterestCollector:
             "title":             f"Short Interest {ticker}: {si_pct:.1f}% ({level})",
             "text":              text,
             "url":               f"https://finance.yahoo.com/quote/{ticker}/",
-            "published_at":      datetime.utcnow().isoformat(),
+            "published_at":      datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "short_interest_pct": si_pct,
             "days_to_cover":     days_to_cover,
             "level":             level,
@@ -102,7 +102,7 @@ class ShortInterestCollector:
                 "shares_short":       int(shares_short),
                 "days_to_cover":      round(float(days_to_cover), 1),
                 "change_pct":         round(change_pct, 1),
-                "fetched_at":         datetime.utcnow().isoformat(),
+                "fetched_at":         datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             }
             self._save_cache(ticker, result)
             return result
@@ -117,7 +117,7 @@ class ShortInterestCollector:
             with open(self._cache_path(ticker)) as f:
                 data = json.load(f)
             fetched = datetime.fromisoformat(data["fetched_at"])
-            if (datetime.utcnow() - fetched).total_seconds() < 12 * 3600:
+            if (datetime.now(timezone.utc).replace(tzinfo=None) - fetched).total_seconds() < 12 * 3600:
                 return data
         except Exception:
             pass

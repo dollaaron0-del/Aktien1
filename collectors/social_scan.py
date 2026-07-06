@@ -8,7 +8,7 @@ import sqlite3
 import json
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "social_pulse.db")
@@ -88,7 +88,7 @@ class SocialPulseDB:
                VALUES (?,?,?,?,?,?,?,?,?)""",
             (
                 ticker,
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 source,
                 len(items),
                 bull, bear, neutral,
@@ -99,7 +99,7 @@ class SocialPulseDB:
         self._conn.commit()
 
     def get_recent(self, ticker: str, hours: int = 24) -> List[Dict]:
-        cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)).isoformat()
         cursor = self._conn.execute(
             """SELECT * FROM social_pulse
                WHERE ticker=? AND scanned_at > ?
@@ -113,7 +113,7 @@ class SocialPulseDB:
 
     def get_pulse_summary(self, hours: int = 6) -> List[Dict]:
         """Returns aggregated pulse per ticker for the last N hours, sorted by activity."""
-        cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)).isoformat()
         cursor = self._conn.execute(
             """SELECT ticker,
                       SUM(mention_count) as total_mentions,
@@ -147,6 +147,6 @@ class SocialPulseDB:
         return sorted(spikes, key=lambda x: x["spike_ratio"], reverse=True)
 
     def cleanup(self, keep_days: int = 7):
-        cutoff = (datetime.utcnow() - timedelta(days=keep_days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=keep_days)).isoformat()
         self._conn.execute("DELETE FROM social_pulse WHERE scanned_at < ?", (cutoff,))
         self._conn.commit()

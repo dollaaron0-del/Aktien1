@@ -10,7 +10,7 @@ Grundprinzip:
   - Inverse ETFs sind normale Long-Käufe – kein Margin, kein Short-Squeeze
 """
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional, Tuple
 
 from portfolio.portfolio import Portfolio, Position
@@ -97,7 +97,7 @@ class HedgeStrategy:
             if not price:
                 continue
 
-            days_held = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
+            days_held = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(pos.entry_date)).days
             reason = None
 
             if price >= pos.take_profit:
@@ -158,7 +158,7 @@ class HedgeStrategy:
                 ticker=ticker,
                 shares=shares,
                 entry_price=price,
-                entry_date=datetime.utcnow().isoformat(),
+                entry_date=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 stop_loss=stop_loss,
                 take_profit=take_profit,
                 target_hold_days=hold_days,

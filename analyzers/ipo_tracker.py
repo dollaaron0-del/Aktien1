@@ -18,7 +18,7 @@ import json
 import os
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "ipo_tracker.db")
@@ -276,7 +276,7 @@ class IPOTracker:
                VALUES (?,?,?,?,?,?,?)""",
             (
                 slug,
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 len(unique),
                 round(hype_score, 3),
                 int(is_live),
@@ -313,7 +313,7 @@ class IPOTracker:
                         # Neues IPO erkannt!
                         self._db.execute(
                             "INSERT OR IGNORE INTO ipo_live_events (slug, ticker, detected_at) VALUES (?,?,?)",
-                            (slug, result["live_ticker"], datetime.utcnow().isoformat()),
+                            (slug, result["live_ticker"], datetime.now(timezone.utc).replace(tzinfo=None).isoformat()),
                         )
                         self._db.commit()
                         if candidate.auto_watchlist_eligible:

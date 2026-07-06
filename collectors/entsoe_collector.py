@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -52,7 +52,7 @@ class ENTSOECollector:
         return data
 
     def _fetch(self, token: str) -> Dict:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         start = now - timedelta(days=8)
         params = {
             "securityToken": token,

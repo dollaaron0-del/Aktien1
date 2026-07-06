@@ -2,7 +2,7 @@
 Tests für die Collector-Beitrags-Auswertung in analyzers/analysis_log.py.
 """
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 import analyzers.analysis_log as al_mod
 from analyzers.analysis_log import AnalysisLog
@@ -21,7 +21,7 @@ def _insert(log, breakdown, when=None):
         "sentiment_score, confidence, sources_used, sources_breakdown) "
         "VALUES (?,?,?,?,?,?,?,?)",
         (
-            (when or datetime.utcnow().isoformat()),
+            (when or datetime.now(timezone.utc).replace(tzinfo=None).isoformat()),
             "AAPL", "BUY", "BULLISH", 0.7, "MEDIUM",
             sum(breakdown.values()), json.dumps(breakdown),
         ),
@@ -79,7 +79,7 @@ def test_ignores_rows_without_breakdown(tmp_path, monkeypatch):
     log._conn.execute(
         "INSERT INTO analyses (analyzed_at, ticker, recommendation, direction, "
         "sentiment_score, confidence, sources_used) VALUES (?,?,?,?,?,?,?)",
-        (datetime.utcnow().isoformat(), "MSFT", "SKIP", "NEUTRAL", 0.3, "LOW", 5),
+        (datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), "MSFT", "SKIP", "NEUTRAL", 0.3, "LOW", 5),
     )
     log._conn.commit()
     _insert(log, {"newsapi": 2})

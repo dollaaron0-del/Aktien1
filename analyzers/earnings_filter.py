@@ -1,5 +1,5 @@
 """Earnings calendar filter – blocks new entries if earnings are imminent."""
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict
 import yfinance as yf
 
@@ -47,7 +47,7 @@ class EarningsFilter:
         ed = self.next_earnings(ticker)
         if not ed:
             return {"block": False, "warn": False, "days_until": None, "date": None}
-        days_until = (ed - datetime.utcnow()).days
+        days_until = (ed - datetime.now(timezone.utc).replace(tzinfo=None)).days
         if days_until < 0:
             return {"block": False, "warn": False, "days_until": days_until, "date": ed.date().isoformat()}
         return {

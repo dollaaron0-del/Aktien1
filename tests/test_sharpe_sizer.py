@@ -8,7 +8,7 @@ access is required.
 import json
 import os
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
 
 import analyzers.sharpe_sizer as ss_mod
@@ -26,7 +26,7 @@ def make_sizer_with_stats(stats: dict) -> SharpeSizer:
     """
     sizer = SharpeSizer.__new__(SharpeSizer)
     sizer._stats = stats
-    sizer._loaded_at = datetime.utcnow()  # mark as freshly loaded
+    sizer._loaded_at = datetime.now(timezone.utc).replace(tzinfo=None)  # mark as freshly loaded
     return sizer
 
 

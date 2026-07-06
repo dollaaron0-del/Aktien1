@@ -3,7 +3,7 @@ Reddit collector using the public JSON API — no API key required.
 Rate limit: ~60 requests/minute for unauthenticated access.
 """
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
 import requests
@@ -69,7 +69,7 @@ def _parse_posts(data: dict, ticker: str, subreddit: str, cutoff: datetime) -> L
 
 class RedditCollector:
     def collect(self, ticker: str, days_back: int = 3) -> List[Dict]:
-        cutoff = datetime.utcnow() - timedelta(days=days_back)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days_back)
         results = []
         company = TICKER_TO_NAME.get(ticker, "")
         queries = list(dict.fromkeys([ticker] + ([company] if company else [])))

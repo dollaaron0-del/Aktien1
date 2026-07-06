@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Union
 
 import yfinance as yf
@@ -125,8 +125,8 @@ class WeekendPrep:
         briefing = self._generate_briefing(raw)
 
         # 6. Speichern
-        week_start = (datetime.utcnow() - timedelta(days=datetime.utcnow().weekday())).strftime("%Y-%m-%d")
-        _now_iso = datetime.utcnow().isoformat()
+        week_start = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=datetime.now(timezone.utc).replace(tzinfo=None).weekday())).strftime("%Y-%m-%d")
+        _now_iso = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         # generated_at mitschreiben: in alten DBs ist die Spalte NOT NULL
         self._conn.execute(
             "INSERT INTO weekly_briefings (created_at, generated_at, week_start, briefing, raw_data) "
@@ -189,7 +189,7 @@ class WeekendPrep:
             return None
         try:
             ts = datetime.fromisoformat(row[0])
-            return (datetime.utcnow() - ts).total_seconds() / 3600
+            return (datetime.now(timezone.utc).replace(tzinfo=None) - ts).total_seconds() / 3600
         except Exception:
             return None
 
@@ -251,7 +251,7 @@ class WeekendPrep:
 
     def _get_earnings_calendar(self) -> List[Dict]:
         results = []
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         end = now + timedelta(days=7)
         for ticker in (self.watchlist or [])[:30]:
             try:

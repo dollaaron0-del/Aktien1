@@ -197,14 +197,14 @@ def reconcile(
 
     Gibt {ticker: bereinigte_shares} zurück.
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     conn, owns = _connect(db)
     try:
         # Aktuellen Report holen (ohne initial_capital-Abhängigkeit für Orphans)
         rep = check_integrity(conn, initial_capital=0.0)
         fixed: Dict[str, float] = {}
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         with conn:
             for ticker, shares in rep.orphan_trades.items():
                 # Letzten BUY-Preis dieses Tickers als Schließungspreis verwenden
@@ -294,7 +294,7 @@ def reconcile_against_broker(
     bewusst gesetzt) unangetastet bleibt. Teil-Abweichungen werden nur GEMELDET,
     nicht automatisch verändert (zu selten/riskant für Auto-Repair).
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     rep = BrokerReconcileReport()
     held_by_base: Dict[str, float] = {}
@@ -307,7 +307,7 @@ def reconcile_against_broker(
             "SELECT ticker, shares, entry_price, currency, fx_rate_at_entry FROM positions"
         ).fetchall()
         book_bases = {_norm(r[0]) for r in rows}
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         with conn:
             for r in rows:
                 ticker = r[0]

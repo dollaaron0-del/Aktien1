@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from config import config
@@ -187,7 +187,7 @@ class PreMarketScanner:
 
         briefing = PreMarketBriefing(
             exchange=exchange,
-            generated_at=datetime.utcnow(),
+            generated_at=datetime.now(timezone.utc).replace(tzinfo=None),
         )
 
         # 1. Makro-Kalender für heute

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 import requests
 from system.http import http_get
@@ -37,7 +37,7 @@ class JobListingsCollector:
     def _collect_layoff_rss(self, ticker: str, lookback_days: int) -> List[Dict]:
         """Layoffs.fyi RSS – Entlassungsmeldungen aus Tech."""
         results = []
-        cutoff = datetime.utcnow() - timedelta(days=lookback_days)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)
         try:
             resp = http_get(
                 "https://layoffs.fyi/feed/",
@@ -61,7 +61,7 @@ class JobListingsCollector:
                     if pub_dt < cutoff:
                         continue
                 except Exception:
-                    pub_dt = datetime.utcnow()
+                    pub_dt = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 # Extrahiere Anzahl falls vorhanden
                 count_match = re.search(r"(\d[\d,]+)\s*(?:employees?|workers?|jobs?|people)", summary, re.I)
@@ -86,7 +86,7 @@ class JobListingsCollector:
     def _collect_indeed_rss(self, ticker: str, lookback_days: int) -> List[Dict]:
         """Indeed RSS für strategische Stellenausschreibungen."""
         results = []
-        cutoff = datetime.utcnow() - timedelta(days=lookback_days)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)
 
         # Suche nach Unternehmensname (Ticker als Proxy)
         try:
@@ -124,7 +124,7 @@ class JobListingsCollector:
                         f"Massenhiring in Wachstumsbereichen ist ein positives Unternehmensignal."
                     ),
                     "url":          f"https://www.indeed.com/jobs?q={ticker}&sort=date",
-                    "published_at": datetime.utcnow().isoformat(),
+                    "published_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                     "priority":     "LOW",
                 })
         except Exception:

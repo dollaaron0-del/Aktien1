@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import time
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from statistics import median
 from typing import Dict, List
 
@@ -52,7 +52,7 @@ class WikipediaViewsCollector:
         if not name:
             return []
         article = urllib.parse.quote(name.replace(" ", "_"), safe="")
-        end = datetime.utcnow().date()
+        end = datetime.now(timezone.utc).replace(tzinfo=None).date()
         start = end - timedelta(days=35)
         url = _API.format(article=article,
                           start=start.strftime("%Y%m%d"),
@@ -77,6 +77,6 @@ class WikipediaViewsCollector:
                      f"gegenüber Median {base:.0f}. Aufmerksamkeits-Spike – häufig "
                      f"mit Nachrichtenlage/Retail-Interesse korreliert."),
             "url": f"https://en.wikipedia.org/wiki/{article}",
-            "published_at": datetime.utcnow().isoformat(),
+            "published_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "priority": "NORMAL",
         }]

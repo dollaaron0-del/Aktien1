@@ -20,7 +20,7 @@ fällt eine aus, bleibt der Rest nutzbar. Ergebnis wird pro Lauf gecacht (TTL 30
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 from logger import get_logger
@@ -39,11 +39,11 @@ class MacroContext:
         """Sammelt alle Makro-Signale und cached das Ergebnis (TTL 30min)."""
         global _CACHE, _CACHED_AT
         if not force and _CACHED_AT is not None and _CACHE:
-            age_min = (datetime.utcnow() - _CACHED_AT).total_seconds() / 60
+            age_min = (datetime.now(timezone.utc).replace(tzinfo=None) - _CACHED_AT).total_seconds() / 60
             if age_min < _CACHE_TTL_MIN:
                 return _CACHE
 
-        s: Dict = {"timestamp": datetime.utcnow().isoformat()}
+        s: Dict = {"timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat()}
 
         # ── Markt-Lage (VIX, Regime, Cross-Asset, Gesamttendenz) ─────────────
         try:
@@ -175,7 +175,7 @@ class MacroContext:
             log.warning("MacroContext: EONET fehlgeschlagen: %s", e)
 
         _CACHE = s
-        _CACHED_AT = datetime.utcnow()
+        _CACHED_AT = datetime.now(timezone.utc).replace(tzinfo=None)
         return s
 
     # ── Konsum-Schnittstellen ────────────────────────────────────────────────

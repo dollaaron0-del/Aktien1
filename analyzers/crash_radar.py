@@ -22,7 +22,7 @@ import os
 import tempfile
 import time
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 import yfinance as yf
@@ -205,7 +205,7 @@ class CrashRadar:
             summary = self._build_summary(crash_prob, risk_level, indicators, bubbles)
 
             result = CrashRadarResult(
-                timestamp=datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+                timestamp=datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M UTC"),
                 crash_probability=crash_prob,
                 risk_level=risk_level,
                 indicators=indicators,
@@ -217,7 +217,7 @@ class CrashRadar:
         except Exception as e:
             log.warning("CrashRadar: Analyse fehlgeschlagen – %s", e)
             result = CrashRadarResult(
-                timestamp=datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+                timestamp=datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M UTC"),
                 crash_probability=0,
                 risk_level="UNBEKANNT",
                 indicators=[],

@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "analysis_log.db")
@@ -95,7 +95,7 @@ class AnalysisLog:
                 sources_used, sources_breakdown, exchange)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 analysis.ticker,
                 analysis.recommendation,
                 analysis.direction,
@@ -124,7 +124,7 @@ class AnalysisLog:
         Kandidaten (sofern nicht nur ein fehlender API-Key die Ursache ist).
         """
         from datetime import timedelta
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         rows = self._conn.execute(
             "SELECT sources_breakdown FROM analyses "
             "WHERE analyzed_at > ? AND sources_breakdown IS NOT NULL",
@@ -165,7 +165,7 @@ class AnalysisLog:
         """
         contribs = self.get_source_contributions(days=days)
         from datetime import timedelta
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         n = self._conn.execute(
             "SELECT COUNT(*) FROM analyses WHERE analyzed_at > ? AND sources_breakdown IS NOT NULL",
             (cutoff,),

@@ -7,7 +7,7 @@ Warnsignale: "Rectification", "Investigation", "National security".
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 import requests
 from system.http import http_get
@@ -66,7 +66,7 @@ class ChineseMediaCollector:
 
     def collect(self, ticker: str, lookback_days: int = 14) -> List[Dict]:
         results = []
-        cutoff  = datetime.utcnow() - timedelta(days=lookback_days)
+        cutoff  = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)
         keywords = _TICKER_CHINA_KEYWORDS.get(ticker.upper(), [ticker, "China"])
 
         for source in _CHINESE_SOURCES:
@@ -97,7 +97,7 @@ class ChineseMediaCollector:
                         if pub_dt < cutoff:
                             continue
                     except Exception:
-                        pub_dt = datetime.utcnow()
+                        pub_dt = datetime.now(timezone.utc).replace(tzinfo=None)
 
                     is_warning  = any(t in combined_lower for t in _WARNING_TERMS)
                     is_positive = any(t in combined_lower for t in _POSITIVE_TERMS)

@@ -27,7 +27,7 @@ import requests
 from system.http import http_get, sec_user_agent
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
 _HEADERS = {
@@ -92,7 +92,7 @@ class SECEdgarCollector:
     def __init__(self, lookback_days: int = 30, all_items: bool = False):
         self.lookback_days = lookback_days
         self.all_items = all_items  # if False, only high-signal items
-        self._cutoff = (datetime.utcnow() - timedelta(days=lookback_days)).date()
+        self._cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)).date()
         self._cik_cache: Optional[Dict[str, int]] = None
 
     def collect(self, ticker: str) -> List[Dict]:

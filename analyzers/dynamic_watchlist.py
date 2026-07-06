@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
 import yfinance as yf
@@ -254,7 +254,7 @@ class DynamicWatchlist:
         import tempfile, os as _os
         data = {
             "tickers":    tickers,
-            "updated_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         }
         _os.makedirs(_os.path.dirname(_DATA_FILE), exist_ok=True)
         with tempfile.NamedTemporaryFile(
@@ -268,6 +268,6 @@ class DynamicWatchlist:
     def _cache_age_hours(cache: Dict) -> float:
         try:
             updated = datetime.fromisoformat(cache["updated_at"])
-            return (datetime.utcnow() - updated).total_seconds() / 3600
+            return (datetime.now(timezone.utc).replace(tzinfo=None) - updated).total_seconds() / 3600
         except Exception:
             return 999.0

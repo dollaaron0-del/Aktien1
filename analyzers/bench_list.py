@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
 _FILE = os.path.join(os.path.dirname(__file__), "..", "data", "bench_list.json")
@@ -30,7 +30,7 @@ class BenchEntry:
         self.ticker     = ticker.upper()
         self.reason     = reason
         self.score      = max(0.0, min(1.0, score))
-        self.added_at   = datetime.utcnow().isoformat()
+        self.added_at   = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         self.last_seen  = self.added_at
         self.signal_count = 1
         # Geopolitischer Kontext (optional) – wird an Claude weitergegeben
@@ -55,7 +55,7 @@ class BenchEntry:
         e.ticker       = d["ticker"]
         e.reason       = d.get("reason", "")
         e.score        = float(d.get("score", 0.5))
-        e.added_at     = d.get("added_at", datetime.utcnow().isoformat())
+        e.added_at     = d.get("added_at", datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
         e.last_seen    = d.get("last_seen", e.added_at)
         e.signal_count = int(d.get("signal_count", 1))
         e.geo_context  = d.get("geo_context")
@@ -81,7 +81,7 @@ class BenchList:
         existing = next((e for e in entries if e.ticker == ticker), None)
         if existing:
             existing.score       = max(existing.score, score)
-            existing.last_seen   = datetime.utcnow().isoformat()
+            existing.last_seen   = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
             existing.signal_count += 1
             if reason and reason not in existing.reason:
                 existing.reason = f"{existing.reason}; {reason}"[:200]
@@ -136,7 +136,7 @@ class BenchList:
     def cleanup(self) -> int:
         """Entfernt Einträge die älter als _TTL_DAYS sind. Gibt Anzahl zurück."""
         entries = self._load()
-        cutoff = datetime.utcnow() - timedelta(days=_TTL_DAYS)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=_TTL_DAYS)
         before = len(entries)
         entries = [
             e for e in entries
@@ -156,7 +156,7 @@ class BenchList:
 
     def _load_valid(self) -> List[BenchEntry]:
         entries = self._load()
-        cutoff = datetime.utcnow() - timedelta(days=_TTL_DAYS)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=_TTL_DAYS)
         return [e for e in entries if datetime.fromisoformat(e.last_seen) > cutoff]
 
     def _load(self) -> List[BenchEntry]:

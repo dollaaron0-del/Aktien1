@@ -96,8 +96,8 @@ def main():
     # Für jede gelöschte Position einen Gegen-SELL ins Trade-Log buchen, damit
     # keine Phantom-Trades (BUY ohne SELL) zurückbleiben. Sonst driften Trade-Log
     # und Positions-Tabelle auseinander (siehe portfolio/integrity.py).
-    from datetime import datetime
-    now = datetime.utcnow().isoformat()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
     for ticker, shares, price, _date in positions:
         cur.execute(
             """

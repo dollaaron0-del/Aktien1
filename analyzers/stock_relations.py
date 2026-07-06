@@ -14,7 +14,7 @@ auch das Dashboard importiert sie von hier, statt eine eigene Kopie zu pflegen.
 import json
 import os
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List
 
 from logger import get_logger
@@ -312,7 +312,7 @@ class StockRelations:
         entry = {
             "related": related_clean,
             "reason":  reason[:120],
-            "date":    datetime.utcnow().date().isoformat(),
+            "date":    datetime.now(timezone.utc).replace(tzinfo=None).date().isoformat(),
         }
         if key not in self._graph:
             self._graph[key] = []
