@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import json
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 
 from config import config
 from broker.paper_broker import PaperBroker
@@ -159,6 +159,36 @@ prices      = broker.get_prices(list(portfolio.all_positions().keys()))
 total_value = portfolio.total_value(prices)
 phase_info  = phase_ctrl.get_info(total_value)
 acc         = tracker.get_accuracy_report()
+
+
+def _real_trade_stats(pf) -> dict:
+    """Win-Rate/Ø-Rendite direkt aus den echten Portfolio-Trades (SELLs mit P&L).
+
+    Fallback für alle Anzeigen, die am Prediction-Tracking hängen: die
+    predictions-Tabelle ist erst seit dem Tracking-Wiring (14.6.) im Spiel und
+    füllt sich nur bei neuen Kauf→Verkauf-Paaren — die echten Trades davor
+    wären sonst unsichtbar."""
+    try:
+        sells = [t for t in pf.trade_history() if t.action == "SELL" and t.pnl is not None]
+    except Exception:
+        return {}
+    if not sells:
+        return {}
+    wins = sum(1 for t in sells if t.pnl > 0)
+    rets = []
+    for t in sells:
+        basis = t.price * t.shares - t.pnl   # Einstiegsbasis = Verkaufswert − P&L
+        if basis > 0:
+            rets.append(t.pnl / basis * 100)
+    return {
+        "total_closed":   len(sells),
+        "win_rate_pct":   round(wins / len(sells) * 100, 1),
+        "avg_return_pct": round(sum(rets) / len(rets), 2) if rets else 0.0,
+        "total_pnl":      round(sum(t.pnl for t in sells), 2),
+    }
+
+
+_rt_stats = _real_trade_stats(portfolio)
 regime_data = detector.get_latest()
 pending_cnt = sig_queue.count_pending()
 from analyzers.user_request_queue import peek as _peek_analysis_queue
@@ -191,9 +221,60 @@ with c_title:
     )
 with c_refresh:
     st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("🔄 Aktualisieren", use_container_width=True):
+    if st.button("🔄 Aktualisieren", width="stretch"):
         st.cache_resource.clear()
         st.rerun()
+
+# ─── Globaler Bot-Status + Datenstand ────────────────────────────────────────
+# Sichtbar auf JEDEM Tab (nicht nur in der Sidebar): läuft der Bot überhaupt,
+# und von wann stammen die angezeigten Daten? Ohne das wirken eingefrorene
+# Panels wie Defekte, obwohl der Bot schlicht pausiert ist.
+from system import bot_control as _bc_hdr
+_hdr_paused = False
+try:
+    _hdr_status = _bc_hdr.get_status()
+    _hdr_paused = bool(_hdr_status.get("paused"))
+except Exception:
+    _hdr_status = {}
+try:
+    _alog_hdr = AnalysisLog()
+    _hdr_last = _alog_hdr.get_recent(limit=1)
+    _last_analysis_ts = _hdr_last[0]["analyzed_at"][:16].replace("T", " ") if _hdr_last else None
+except Exception:
+    _last_analysis_ts = None
+_regime_ts = ((regime_data.get("recorded_at") or "")[:16].replace("T", " ")
+              if regime_data else None)
+_stand_txt = " · ".join(
+    p for p in (
+        f"Letzte Analyse: {_last_analysis_ts}" if _last_analysis_ts else None,
+        f"Regime-Snapshot: {_regime_ts}" if _regime_ts else None,
+    ) if p
+) or "Noch keine Analysedaten"
+
+if _hdr_paused:
+    _since_hdr = ""
+    try:
+        if _hdr_status.get("since"):
+            _since_hdr = " seit " + datetime.fromisoformat(_hdr_status["since"]).strftime("%d.%m. %H:%M")
+    except Exception:
+        pass
+    st.error(
+        f"⏸ **Bot ist pausiert{_since_hdr}** – alle Panels zeigen den letzten Stand "
+        f"vor der Pause. {_stand_txt}."
+    )
+else:
+    _stale_analysis = False
+    try:
+        if _hdr_last:
+            _age_h = (datetime.now(timezone.utc).replace(tzinfo=None)
+                      - datetime.fromisoformat(_hdr_last[0]["analyzed_at"])).total_seconds() / 3600
+            _stale_analysis = _age_h > 48
+    except Exception:
+        pass
+    if _stale_analysis:
+        st.warning(f"🟡 Bot aktiv, aber letzte Analyse liegt über 48 h zurück. {_stand_txt}.")
+    else:
+        st.caption(f"🟢 Bot aktiv · {_stand_txt}")
 
 # ─── KPI strip ───────────────────────────────────────────────────────────────
 delta_pct  = (total_value - config.initial_capital) / config.initial_capital * 100
@@ -212,11 +293,13 @@ k4.metric(
     f"Score {regime_score:.2f}" if regime_score is not None else "–",
     delta_color="inverse",
 )
-k5.metric(
-    "Win-Rate",
-    f"{acc['win_rate_pct']}%" if acc.get("total_closed") else "–",
-    f"{acc.get('total_closed', 0)} Trades",
-)
+if acc.get("total_closed"):
+    k5.metric("Win-Rate", f"{acc['win_rate_pct']}%", f"{acc['total_closed']} Trades")
+elif _rt_stats:
+    k5.metric("Win-Rate", f"{_rt_stats['win_rate_pct']}%",
+              f"{_rt_stats['total_closed']} Trades (Portfolio-Historie)")
+else:
+    k5.metric("Win-Rate", "–", "0 Trades")
 k6.metric(
     "Signal-Warteschlange",
     f"{pending_cnt} ausstehend",
@@ -232,7 +315,7 @@ def _get_spy_benchmark(days: int, start_value: float) -> "pd.DataFrame":
     try:
         import yfinance as _yf
         from datetime import timedelta as _td2
-        _end = datetime.utcnow()
+        _end = datetime.now(timezone.utc).replace(tzinfo=None)
         _start = _end - _td2(days=days + 5)
         _spy = _yf.Ticker("SPY").history(
             start=_start.strftime("%Y-%m-%d"),
@@ -262,8 +345,9 @@ def _get_ticker_news(ticker: str) -> list:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TABS
 # ═══════════════════════════════════════════════════════════════════════════════
-tab_portfolio, tab_regime, tab_queue, tab_network, tab_briefing, tab_trades, tab_tech, tab_watchlist, tab_log, tab_settings = st.tabs([
+tab_portfolio, tab_decisions, tab_regime, tab_queue, tab_network, tab_briefing, tab_trades, tab_tech, tab_watchlist, tab_log, tab_settings = st.tabs([
     "📊 Portfolio",
+    "🧠 Entscheidungen",
     "🛡 Markt-Regime",
     f"📋 Signal-Queue ({pending_cnt})" + (f" · 🔍{len(_analysis_queue)}" if _analysis_queue else ""),
     "🕸 Aktien-Netzwerk",
@@ -348,7 +432,7 @@ with tab_portfolio:
             price   = prices.get(ticker, pos.entry_price)
             pnl     = (price - pos.entry_price) * pos.shares
             pnl_pct = (price - pos.entry_price) / pos.entry_price * 100
-            days    = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
+            days    = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(pos.entry_date)).days
             is_hedge = pos.rationale and pos.rationale.startswith("[HEDGE]")
             age_ratio = days / max(pos.target_hold_days, 1)
             if age_ratio >= 1.0:
@@ -389,7 +473,7 @@ with tab_portfolio:
 
         st.dataframe(
             df.style.map(_color_pnl, subset=["P&L $", "P&L %"]),
-            use_container_width=True, hide_index=True,
+            width="stretch", hide_index=True,
         )
     else:
         st.info("Keine offenen Positionen.")
@@ -480,7 +564,7 @@ with tab_portfolio:
                         "Score →":  f"{_e.score_after:.1f}",
                         "Grund":    _e.reason,
                     })
-                st.dataframe(pd.DataFrame(_hist_rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(_hist_rows), width="stretch", hide_index=True)
 
             # Meilensteine
             if _bot_score.milestones:
@@ -528,11 +612,11 @@ with tab_portfolio:
             )
             st.altair_chart(
                 _alt.layer(_port_line, _spy_line).properties(height=280).resolve_scale(y="shared"),
-                use_container_width=True,
+                width="stretch",
             )
             st.caption("🟢 Portfolio  ·  ╌╌╌ S&P 500 (normiert auf Startkapital)")
         else:
-            st.altair_chart(_port_line.properties(height=280), use_container_width=True)
+            st.altair_chart(_port_line.properties(height=280), width="stretch")
     else:
         st.info("Noch keine Chart-Daten — erscheint nach dem ersten Analysezyklus.")
 
@@ -550,20 +634,145 @@ with tab_portfolio:
                 "Grund":   (t.reason or "")[:60],
             } for t in reversed(trades)]
             _df_all_trades = pd.DataFrame(trade_rows)
-            st.dataframe(_df_all_trades, use_container_width=True, hide_index=True)
+            st.dataframe(_df_all_trades, width="stretch", hide_index=True)
             st.download_button(
                 "📥 CSV exportieren",
                 _df_all_trades.to_csv(index=False).encode("utf-8"),
                 f"trades_{datetime.now().strftime('%Y%m%d')}.csv",
                 "text/csv",
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.info("Noch keine Transaktionen.")
 
 
 # ══════════════════════════════════════════════════════════
-# TAB 2 – MARKT-REGIME
+# TAB 2 – ENTSCHEIDUNGEN (Warum tut der Bot, was er tut?)
+# ══════════════════════════════════════════════════════════
+with tab_decisions:
+    st.subheader("🧠 Entscheidungs-Transparenz")
+    st.caption(
+        "Der komplette innere Ablauf pro Zyklus: Welche Aktien wurden analysiert, "
+        "was hat die Strategie daraus gemacht — und **warum** (Schwelle, Quellenlage, "
+        "Slots, Korrelation, Filter …)."
+    )
+
+    _BUCKET_LABELS = {
+        "kein_kaufsignal":   "Kein Kaufsignal (Empfehlung/Richtung)",
+        "unter_schwelle":    "Sentiment unter Kaufschwelle",
+        "zu_wenige_quellen": "Zu dünne Quellenlage",
+        "max_positionen":    "Alle Positions-Slots belegt",
+        "earnings_sperre":   "Earnings-Sperre",
+        "korrelation":       "Sektor-Korrelation zu hoch",
+        "liquiditaet":       "Liquiditäts-Gate",
+        "lernfilter_avoid":  "Selbstlern-Filter (AVOID)",
+        "positionsgroesse":  "Positionsgröße = 0",
+        "tagesverlust":      "Tagesverlust-Limit",
+        "kein_kurs":         "Kein Kurs verfügbar",
+        "sonstiges":         "Sonstiges",
+    }
+    _ACTION_ICON = {"BUY": "🟢", "SELL": "🔴", "SKIP": "⏭", "HOLD": "⏸"}
+    _SOURCE_LABEL = {
+        "cycle":       "Analyse-Zyklus",
+        "queue":       "Signal-Queue-Drain",
+        "conditional": "Bedingter Einstieg",
+        "sl_tp":       "SL/TP-Überwachung",
+    }
+
+    try:
+        from analyzers.decision_log import DecisionLog as _DecisionLog
+        _dlog_dash = _DecisionLog()
+        _dec_days = _dlog_dash.days(limit=30)
+    except Exception as _dl_dash_err:
+        _dlog_dash, _dec_days = None, []
+        st.caption(f"Decision-Log nicht verfügbar: {_dl_dash_err}")
+
+    if _dec_days:
+        _sel_day = st.selectbox("Tag", _dec_days, key="dec_day_select")
+        _fn = _dlog_dash.funnel(_sel_day)
+        _acts = _fn["actions"]
+
+        # ── Funnel des Tages ────────────────────────────────────────────────
+        fc1, fc2, fc3, fc4, fc5 = st.columns(5)
+        fc1.metric("Entscheidungen", _fn["total"])
+        fc2.metric("🟢 Käufe",      _acts.get("BUY", 0))
+        fc3.metric("🔴 Verkäufe",   _acts.get("SELL", 0))
+        fc4.metric("⏸ Halten",      _acts.get("HOLD", 0))
+        fc5.metric("⏭ Übersprungen", _acts.get("SKIP", 0))
+
+        if _fn["skip_reasons"]:
+            st.markdown("**Warum wurde übersprungen?**")
+            _sr_total = sum(_fn["skip_reasons"].values()) or 1
+            for _b, _n in _fn["skip_reasons"].items():
+                _pct = _n / _sr_total
+                st.progress(_pct, text=f"{_BUCKET_LABELS.get(_b, _b)} — {_n}× ({_pct:.0%})")
+
+        st.divider()
+
+        # ── Einzel-Entscheidungen ───────────────────────────────────────────
+        _dec_filter = st.multiselect(
+            "Aktionen filtern", ["BUY", "SELL", "SKIP", "HOLD"],
+            default=["BUY", "SELL", "SKIP", "HOLD"], key="dec_action_filter",
+        )
+        _dec_entries = [e for e in _dlog_dash.get_day(_sel_day)
+                        if (e.get("action") or "").upper() in _dec_filter]
+        st.caption(f"{len(_dec_entries)} Entscheidungen am {_sel_day}")
+        for _e in _dec_entries[:100]:
+            _a = (_e.get("action") or "?").upper()
+            _icon = _ACTION_ICON.get(_a, "•")
+            _sc = _e.get("sentiment_score")
+            _sc_txt = f" · Score {_sc:.2f}" if isinstance(_sc, (int, float)) else ""
+            with st.expander(
+                f"{_icon} **{ticker_label(_e['ticker'])}** — {_a}{_sc_txt} "
+                f"· {(_e.get('decided_at') or '')[11:16]} Uhr "
+                f"· {_SOURCE_LABEL.get(_e.get('source'), _e.get('source') or '–')}"
+            ):
+                st.markdown(f"**Strategie-Begründung:** {_e.get('reason') or '–'}")
+                if _e.get("executed"):
+                    st.markdown(f"**Ausführung:** {_e['executed']}")
+                _dc1, _dc2, _dc3, _dc4 = st.columns(4)
+                _dc1.metric("KI-Empfehlung", _e.get("recommendation") or "–")
+                _dc2.metric("Konfidenz",     _e.get("confidence") or "–")
+                _dc3.metric("Regime",        _e.get("regime") or "–")
+                _mb = _e.get("macro_bias")
+                _dc4.metric("Makro-Bias",
+                            f"{_mb:+.2f}" if isinstance(_mb, (int, float)) else "–")
+                if _e.get("sources_used") is not None:
+                    st.caption(f"Quellenlage: {_e['sources_used']} Beiträge · "
+                               f"Richtung: {_e.get('direction') or '–'}")
+    else:
+        # Noch keine Entscheidungs-Daten (Log neu / Bot pausiert) → ehrlicher
+        # Hinweis + Empfehlungs-Funnel aus dem Analyse-Log als Vorschau.
+        st.info(
+            "Noch keine Strategie-Entscheidungen aufgezeichnet — das Decision-Log "
+            "füllt sich ab dem nächsten Bot-Lauf. Bis dahin unten der "
+            "Empfehlungs-Funnel aus dem Analyse-Log (KI-Sicht, ohne Strategie-Gründe)."
+        )
+        try:
+            _alog_dec = AnalysisLog()
+            _prev_cycle = _alog_dec.get_last_cycle_tickers()
+            _prev_entries = _alog_dec.get_latest_per_ticker(limit=200)
+            _prev_recs: dict = {}
+            for _pe in _prev_entries:
+                _r = _pe.get("recommendation") or "?"
+                _prev_recs[_r] = _prev_recs.get(_r, 0) + 1
+            if _prev_entries:
+                pc1, pc2, pc3, pc4 = st.columns(4)
+                pc1.metric("Aktien im Log", len(_prev_entries))
+                pc2.metric("🟢 BUY-Empfehlungen", _prev_recs.get("BUY", 0))
+                pc3.metric("⏸ HOLD", _prev_recs.get("HOLD", 0))
+                pc4.metric("⏭ SKIP", _prev_recs.get("SKIP", 0))
+                st.caption(
+                    "Details pro Aktie im Tab **🔍 Analyse-Log**. Sobald der Bot "
+                    "wieder läuft, erscheint hier zusätzlich der Strategie-Schritt "
+                    "(gekauft / übersprungen + Grund)."
+                )
+        except Exception:
+            pass
+
+
+# ══════════════════════════════════════════════════════════
+# TAB 3 – MARKT-REGIME
 # ══════════════════════════════════════════════════════════
 with tab_regime:
     if not regime_data:
@@ -589,6 +798,21 @@ with tab_regime:
         ys = regime_data.get("yield_spread")
         r4.metric("Zinskurve (10y−2y)", f"{ys:.2f}%" if ys else "–",
                   delta_color="inverse" if ys and ys < 0 else "normal")
+
+        # Alter des Snapshots sichtbar machen — ein eingefrorener Regime-Wert
+        # sieht sonst wie ein aktueller aus.
+        _snap_ts = (regime_data.get("recorded_at") or "")[:16].replace("T", " ")
+        if _snap_ts:
+            try:
+                _snap_age_h = (datetime.now(timezone.utc).replace(tzinfo=None)
+                               - datetime.fromisoformat(regime_data["recorded_at"])).total_seconds() / 3600
+            except Exception:
+                _snap_age_h = None
+            if _snap_age_h is not None and _snap_age_h > 24:
+                st.warning(f"⚠️ Regime-Snapshot ist {int(_snap_age_h // 24)} Tag(e) alt "
+                           f"(vom {_snap_ts}) – Werte spiegeln nicht den aktuellen Markt.")
+            else:
+                st.caption(f"Snapshot: {_snap_ts}")
 
         st.divider()
 
@@ -679,7 +903,7 @@ with tab_regime:
                 df_comp.style
                     .format({"Score": "{:.3f}"})
                     .background_gradient(subset=["Score"], cmap="RdYlGn_r", vmin=0, vmax=1),
-                use_container_width=True, hide_index=True,
+                width="stretch", hide_index=True,
             )
 
         # Macro summary from Claude
@@ -698,7 +922,7 @@ with tab_regime:
         if _all_history_r:
             from datetime import timezone as _tz
             _oldest = pd.to_datetime(_all_history_r[-1]["recorded_at"])
-            _avail_days = max(1, (datetime.utcnow() - _oldest.replace(tzinfo=None)).days + 1)
+            _avail_days = max(1, (datetime.now(timezone.utc).replace(tzinfo=None) - _oldest.replace(tzinfo=None)).days + 1)
 
         _reg_range = st.radio(
             "Zeitraum", ["1 Woche", "2 Wochen", "1 Monat"],
@@ -726,7 +950,7 @@ with tab_regime:
                     _alt.Tooltip("regime:N", title="Regime"),
                 ],
             ).properties(height=260)
-            st.altair_chart(_reg_chart, use_container_width=True)
+            st.altair_chart(_reg_chart, width="stretch")
             # Regime breakdown table
             with st.expander("Datentabelle"):
                 st.dataframe(
@@ -734,7 +958,7 @@ with tab_regime:
                         "recession_score": "Score", "regime": "Regime",
                         "vix": "VIX", "yield_spread": "Zinskurve",
                     }),
-                    use_container_width=True,
+                    width="stretch",
                 )
         else:
             st.info("Noch zu wenige Datenpunkte.")
@@ -753,7 +977,7 @@ with tab_regime:
                 price   = prices.get(ticker, pos.entry_price)
                 pnl     = (price - pos.entry_price) * pos.shares
                 pnl_pct = (price - pos.entry_price) / pos.entry_price * 100
-                days    = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
+                days    = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(pos.entry_date)).days
                 hrows.append({
                     "Ticker":     ticker,
                     "Stück":      pos.shares,
@@ -766,7 +990,7 @@ with tab_regime:
                     "Tage":       days,
                     "Rationale":  (pos.rationale or "")[:60],
                 })
-            st.dataframe(pd.DataFrame(hrows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(hrows), width="stretch", hide_index=True)
         else:
             enabled = config.enable_hedging
             if not enabled:
@@ -915,7 +1139,7 @@ with tab_queue:
             "Verfällt":    s["expires_at"][:16],
             "Begründung":  (s.get("entry_rationale") or "")[:70],
         } for s in history_q])
-        st.dataframe(df_q, use_container_width=True, hide_index=True)
+        st.dataframe(df_q, width="stretch", hide_index=True)
     else:
         st.info("Noch keine Signal-Historie.")
 
@@ -987,7 +1211,7 @@ with tab_network:
                 if _ts.analyzed_at:
                     try:
                         from datetime import timezone
-                        _age_days = (datetime.utcnow() - datetime.fromisoformat(
+                        _age_days = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(
                             _ts.analyzed_at.replace("Z", "")
                         )).days
                         _stale = _age_days > 7
@@ -1464,7 +1688,7 @@ with tab_network:
                         annotations=_zone_annotations,
                     ),
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
                 # ── Kennzahlen unter der Map ─────────────────────────────────────
                 _kpi1, _kpi2, _kpi3, _kpi4 = st.columns(4)
@@ -1485,7 +1709,7 @@ with tab_network:
                     ]
                     st.dataframe(
                         pd.DataFrame(_conn_rows),
-                        use_container_width=True, hide_index=True
+                        width="stretch", hide_index=True
                     )
 
     except ImportError:
@@ -1509,7 +1733,7 @@ with tab_briefing:
 
     b_col1, b_col2 = st.columns([5, 2])
     with b_col2:
-        if st.button("🔄 Neues Briefing generieren", use_container_width=True):
+        if st.button("🔄 Neues Briefing generieren", width="stretch"):
             with st.spinner("Claude bereitet Wochenbriefing vor…"):
                 result = weekend_prep.run()
             if result:
@@ -1544,7 +1768,36 @@ with tab_trades:
     # Learning KPIs
     st.subheader("Performance-Kennzahlen")
     if acc.get("total_closed", 0) == 0:
-        st.info("Noch keine abgeschlossenen Trades. Der Bot lernt nach dem ersten Verkauf.")
+        if _rt_stats:
+            st.caption(
+                "ℹ️ Prediction-Tracking ist noch leer (füllt sich ab dem nächsten "
+                "Kauf→Verkauf-Paar) — die Kennzahlen stammen direkt aus den echten "
+                "Portfolio-Trades."
+            )
+            fk1, fk2, fk3, fk4 = st.columns(4)
+            fk1.metric("Win-Rate",          f"{_rt_stats['win_rate_pct']}%",
+                       f"{_rt_stats['total_closed']} Trades")
+            fk2.metric("Ø Rendite / Trade", f"{_rt_stats['avg_return_pct']:+.2f}%")
+            fk3.metric("Realisiert gesamt", f"${_rt_stats['total_pnl']:+,.2f}")
+            fk4.metric("Richtung/Zielkurs", "–",
+                       "braucht Prediction-Tracking", delta_color="off")
+            _fb_sells = [t for t in reversed(portfolio.trade_history())
+                         if t.action == "SELL"][:15]
+            if _fb_sells:
+                st.markdown("**Letzte Verkäufe (Portfolio-Historie):**")
+                st.dataframe(
+                    pd.DataFrame([{
+                        "Datum":  t.timestamp[:10],
+                        "Ticker": t.ticker,
+                        "Stück":  t.shares,
+                        "Kurs $": t.price,
+                        "P&L $":  round(t.pnl, 2) if t.pnl is not None else None,
+                        "Grund":  (t.reason or "")[:70],
+                    } for t in _fb_sells]),
+                    width="stretch", hide_index=True,
+                )
+        else:
+            st.info("Noch keine abgeschlossenen Trades. Der Bot lernt nach dem ersten Verkauf.")
     else:
         lk1, lk2, lk3, lk4 = st.columns(4)
         lk1.metric("Win-Rate",              f"{acc['win_rate_pct']}%")
@@ -1594,7 +1847,7 @@ with tab_trades:
                                    else ("color: #f44336" if isinstance(v, (int, float)) and v < 0 else "")),
                         subset=["Ø Rendite %"],
                     ),
-                    use_container_width=True, hide_index=True,
+                    width="stretch", hide_index=True,
                 )
 
         with bucket_col:
@@ -1607,7 +1860,7 @@ with tab_trades:
                     "Win-Rate %":    b["win_rate_pct"],
                     "Ø Rendite %":   b["avg_return_pct"],
                 } for b in buckets])
-                st.dataframe(df_bkt, use_container_width=True, hide_index=True)
+                st.dataframe(df_bkt, width="stretch", hide_index=True)
 
         # Source accuracy
         source_acc = tracker.get_source_accuracy()
@@ -1620,7 +1873,7 @@ with tab_trades:
             })
             st.dataframe(
                 df_src[["Quelle", "Ticker", "Trades", "Win-Rate %", "Ø Rendite %"]],
-                use_container_width=True, hide_index=True,
+                width="stretch", hide_index=True,
             )
 
         st.divider()
@@ -1663,7 +1916,7 @@ with tab_trades:
                                else ("color: #f44336" if isinstance(v, (int, float)) and v < 0 else "")),
                     subset=[c for c in ["Rendite %", "Gewinn $"] if c in existing],
                 ),
-                use_container_width=True, hide_index=True,
+                width="stretch", hide_index=True,
             )
             # Full export: all closed trades
             _all_closed = tracker.get_recent_trades(500)
@@ -1674,7 +1927,7 @@ with tab_trades:
                     _df_export.to_csv(index=False).encode("utf-8"),
                     f"closed_trades_{datetime.now().strftime('%Y%m%d')}.csv",
                     "text/csv",
-                    use_container_width=True,
+                    width="stretch",
                 )
 
     st.divider()
@@ -1739,7 +1992,7 @@ with tab_trades:
     reviews = reflection.get_monthly_reviews(limit=12)
     mr_col1, mr_col2 = st.columns([5, 2])
     with mr_col2:
-        if st.button("🔄 Jetzt generieren", use_container_width=True):
+        if st.button("🔄 Jetzt generieren", width="stretch"):
             with st.spinner("Claude reflektiert…"):
                 new_content = reflection.generate_monthly_review()
             if new_content:
@@ -1854,7 +2107,7 @@ with tab_tech:
                 pass
         if all_snaps:
             df_tech = pd.DataFrame(all_snaps).set_index("Ticker")
-            st.dataframe(df_tech, use_container_width=True)
+            st.dataframe(df_tech, width="stretch")
 
 
 # ══════════════════════════════════════════════════════════
@@ -1899,7 +2152,7 @@ with tab_watchlist:
                     "Zuletzt geprüft": _c["last_checked"],
                     "Info":           _c["notes"],
                 })
-            st.dataframe(pd.DataFrame(_ipo_rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(_ipo_rows), width="stretch", hide_index=True)
 
             # Detail-Expander mit Headlines
             _live_cands  = [c for c in _pipeline if c["is_live"]]
@@ -1932,7 +2185,7 @@ with tab_watchlist:
 
     wl_col1, wl_col2 = st.columns([4, 1])
     with wl_col2:
-        if st.button("🔄 Jetzt neu scannen", use_container_width=True):
+        if st.button("🔄 Jetzt neu scannen", width="stretch"):
             with st.spinner("Scanne Markt-Universum…"):
                 active = list(portfolio.all_positions().keys())
                 new_wl = _dw.force_refresh(active_tickers=active)
@@ -1996,7 +2249,7 @@ with tab_watchlist:
                 lambda v: "color: #00e676; font-weight:700" if isinstance(v, (int, float)) and v >= 0 else "",
                 subset=["Momentum 20d %"],
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
         st.caption(f"Top {top_n} werden als Watchlist verwendet.")
@@ -2036,7 +2289,7 @@ with tab_watchlist:
                           ("color: #888" if v is False else ""),
                 subset=["Aktiv"],
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
     else:
@@ -2112,7 +2365,7 @@ with tab_watchlist:
 
     _wl_save_col, _wl_restart_col = st.columns(2)
     with _wl_save_col:
-        if st.button("💾 Watchlist speichern", use_container_width=True, type="primary", key="wl_save_btn"):
+        if st.button("💾 Watchlist speichern", width="stretch", type="primary", key="wl_save_btn"):
             _final_wl = list(_keep)
             for _t in [_add_opt, _add_manual]:
                 if _t and _t not in _final_wl:
@@ -2124,7 +2377,7 @@ with tab_watchlist:
             else:
                 st.error("Watchlist darf nicht leer sein.")
     with _wl_restart_col:
-        if st.button("▶️ Bot neu starten", use_container_width=True, key="wl_restart_btn"):
+        if st.button("▶️ Bot neu starten", width="stretch", key="wl_restart_btn"):
             try:
                 import subprocess as _wl_sp
                 _wl_sp.run(["systemctl", "restart", "aktien_bot"], check=True, timeout=10)
@@ -2180,15 +2433,24 @@ with st.sidebar:
     st.markdown("## ⚙️ Bot-Status")
     st.caption(f"Stand: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
 
-    # Countdown to next analysis (07:30 daily)
-    from datetime import timedelta as _td
-    _now_loc = datetime.now()
-    _next_run = _now_loc.replace(hour=7, minute=30, second=0, microsecond=0)
-    if _now_loc >= _next_run:
-        _next_run += _td(days=1)
-    _secs_left = int((_next_run - _now_loc).total_seconds())
-    _h_left, _m_left = divmod(_secs_left // 60, 60)
-    st.info(f"⏰ Nächste Analyse in **{_h_left}h {_m_left}min**")
+    # Nächste Analyse: echter Marktkalender (Börsen + Vorlauf) statt festem
+    # 07:30-Countdown; bei pausiertem Bot gibt es schlicht keine nächste Analyse.
+    if _hdr_paused:
+        st.error("⏸ Bot pausiert – keine geplanten Analysen.")
+    else:
+        try:
+            from analyzers.market_schedule import MarketSchedule as _MS
+            _nxt = _MS(config.market_exchanges, config.market_lead_minutes).next_window()
+            if _nxt:
+                st.info(f"⏰ Nächste Analyse: **{_nxt['analysis_local']}**")
+            else:
+                st.info("⏰ Kein Handelstag – nächste Analyse am nächsten Börsentag.")
+        except Exception:
+            st.caption("Analyse-Zeitplan nicht verfügbar.")
+
+    # Auto-Refresh: läuft als Fragment-Timer, stößt regelmäßig einen kompletten
+    # Seiten-Rerun an (Streamlit lädt sonst nur bei Interaktion neu).
+    st.toggle("🔄 Auto-Refresh (60 s)", value=False, key="auto_refresh")
 
     # Live regime badge
     if regime_data:
@@ -2325,7 +2587,6 @@ with st.sidebar:
         "US-Bundesaufträge (usaspending)",
         "SEC EDGAR 8-K Meldungen",
         "StockTwits Sentiment",
-        "Twitter/X Sentiment",
         "PRNewswire / BusinessWire",
         "EU-Nachrichten (Google RSS)",
         "Options-Flow (C/P-Ratio)",
@@ -2341,8 +2602,24 @@ with st.sidebar:
     for f in features:
         st.write(f"✓ {f}")
 
+    # Ehrlicher Quellen-Status statt statischer ✓-Liste: was ist bewusst
+    # abgeschaltet (tote Endpoints), was scheitert an fehlenden API-Keys?
+    _dead_srcs = sorted(set(getattr(config, "collectors_disabled", [])))
+    if _dead_srcs:
+        st.write("✗ **Deaktivierte Quellen** (Endpoint tot, `COLLECTORS_DISABLED`): "
+                 + ", ".join(_dead_srcs))
+    _keyless = [
+        _n for _n, _k in (
+            ("Twitter/X", "twitter_bearer_token"),
+            ("Quiver (Congress-Trades)", "quiver_api_key"),
+            ("NewsAPI", "newsapi_key"),
+        ) if not getattr(config, _k, "")
+    ]
+    if _keyless:
+        st.write("✗ **Ohne API-Key inaktiv:** " + ", ".join(_keyless))
+
     st.divider()
-    if st.button("🔄 Cache leeren & neu laden", use_container_width=True):
+    if st.button("🔄 Cache leeren & neu laden", width="stretch"):
         st.cache_resource.clear()
         st.rerun()
 
@@ -2403,8 +2680,8 @@ with tab_log:
             help="Sucht in Ticker-Symbol und Aktienname. Unbekannte Ticker werden beim nächsten Zyklus analysiert.",
         )
         _sc1, _sc2 = st.columns(2)
-        _searched = _sc1.form_submit_button("🔍 Suchen / Anfragen", use_container_width=True)
-        _reset = _sc2.form_submit_button("✖ Filter zurücksetzen", use_container_width=True)
+        _searched = _sc1.form_submit_button("🔍 Suchen / Anfragen", width="stretch")
+        _reset = _sc2.form_submit_button("✖ Filter zurücksetzen", width="stretch")
 
     # ── Auswertung ───────────────────────────────────────────────────────────
     from analyzers.user_request_queue import add_ticker as _req_ticker, peek as _peek_requests
@@ -2497,7 +2774,7 @@ with tab_log:
     else:
         _REC_ICON = {"BUY": "🟢", "SKIP": "⏭", "HOLD": "⏸", "SELL": "🔴"}
         _DIR_ICON = {"BULLISH": "📈", "NEUTRAL": "➡️", "BEARISH": "📉"}
-        _today_str = datetime.utcnow().strftime("%Y-%m-%d")
+        _today_str = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
 
         for entry in entries:
             rec  = entry["recommendation"]
@@ -2514,7 +2791,7 @@ with tab_log:
                 _age_badge = "🔵 Letzter Zyklus"
             elif _entry_date == _today_str:
                 _age_badge = "🟢 Heute"
-            elif _entry_date >= (datetime.utcnow().replace(hour=0,minute=0,second=0) -
+            elif _entry_date >= (datetime.now(timezone.utc).replace(tzinfo=None).replace(hour=0,minute=0,second=0) -
                                   __import__("datetime").timedelta(days=7)).strftime("%Y-%m-%d"):
                 _age_badge = "🟡 Diese Woche"
             else:
@@ -2844,7 +3121,7 @@ with tab_settings:
                 st.success("Frugal: Ollama analysiert alles · Claude nur für Positionen & SEC")
 
         st.divider()
-        save_btn = st.form_submit_button("💾 Einstellungen speichern", use_container_width=True, type="primary")
+        save_btn = st.form_submit_button("💾 Einstellungen speichern", width="stretch", type="primary")
 
     if save_btn:
         updates = {
@@ -2886,21 +3163,21 @@ with tab_settings:
     st.markdown("### 🔄 Bot-Dienste & Zurücksetzen")
     r1, r2, r3 = st.columns(3)
     with r1:
-        if st.button("▶️ Bot neu starten", use_container_width=True, type="primary"):
+        if st.button("▶️ Bot neu starten", width="stretch", type="primary"):
             try:
                 subprocess.run(["systemctl", "restart", "aktien_bot"], check=True, timeout=10)
                 st.success("Bot wurde neu gestartet.")
             except Exception as e:
                 st.error(f"Fehler: {e}")
     with r2:
-        if st.button("▶️ Dashboard neu starten", use_container_width=True):
+        if st.button("▶️ Dashboard neu starten", width="stretch"):
             try:
                 subprocess.run(["systemctl", "restart", "aktien_dashboard"], check=True, timeout=10)
                 st.info("Dashboard-Dienst neu gestartet.")
             except Exception as e:
                 st.error(f"Fehler: {e}")
     with r3:
-        if st.button("🔄 Cache leeren & neu laden", use_container_width=True):
+        if st.button("🔄 Cache leeren & neu laden", width="stretch"):
             st.cache_resource.clear()
             st.rerun()
 
@@ -2915,4 +3192,24 @@ with tab_settings:
         "ENABLE_SOCIAL_SCAN","INITIAL_CAPITAL","BROKER_MODE",
     ]
     env_rows = [{"Einstellung": k, "Wert": _env.get(k, "–")} for k in _display_keys]
-    st.dataframe(pd.DataFrame(env_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(env_rows), width="stretch", hide_index=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AUTO-REFRESH
+# ═══════════════════════════════════════════════════════════════════════════════
+# Streamlit lädt nur bei Interaktion neu — für ein Monitoring-Dashboard braucht
+# es einen Timer. Das Fragment feuert alle 60 s und stößt einen kompletten
+# App-Rerun an; der Zeitstempel-Guard verhindert eine Endlos-Schleife direkt
+# nach einem vollen Lauf.
+import time as _ar_time
+
+st.session_state["_last_full_run"] = _ar_time.time()
+
+if st.session_state.get("auto_refresh"):
+    @st.fragment(run_every="60s")
+    def _auto_refresh_tick():
+        if _ar_time.time() - st.session_state.get("_last_full_run", 0.0) >= 55:
+            st.rerun(scope="app")
+
+    _auto_refresh_tick()

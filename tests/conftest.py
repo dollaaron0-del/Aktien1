@@ -4,7 +4,7 @@ Shared pytest fixtures for the Aktien test suite.
 import os
 import sys
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -12,6 +12,13 @@ import pytest
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+
+# Decision-Log (prozessweites Singleton) in Tests IMMER in ein Temp-File
+# umlenken — Seams wie process_signal_queue loggen sonst in die echte data/.
+os.environ.setdefault(
+    "DECISION_LOG_PATH",
+    os.path.join(tempfile.gettempdir(), f"decision_log_test_{os.getpid()}.db"),
+)
 
 
 @pytest.fixture()
@@ -55,7 +62,7 @@ def sample_position():
         ticker="AAPL",
         shares=10,
         entry_price=150.0,
-        entry_date=datetime.utcnow().isoformat(),
+        entry_date=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         stop_loss=138.0,
         take_profit=180.0,
         target_hold_days=14,

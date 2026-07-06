@@ -6,6 +6,14 @@ Sendet sofortige Benachrichtigungen bei:
   - These gebrochen (⚠ THESIS BROKEN)
   - Tages-Zusammenfassung
 
+Wichtigkeits-Stufen (TELEGRAM_MODE, Default "important"):
+  Jede Nachricht trägt ein level — "trade" (Käufe/Verkäufe/These), "critical"
+  (Fehler, die manuelles Eingreifen brauchen), "digest" (1×-täglich-Berichte)
+  oder "info" (alles andere). Im Modus "important" erreichen NUR trade/
+  critical/digest Telegram; info landet im Log. TELEGRAM_MODE=all stellt das
+  alte Verhalten wieder her. Detailtiefe gehört ins Dashboard, nicht in den
+  Chat (Tab "Entscheidungen").
+
 Einrichtung:
   1. BotFather auf Telegram anschreiben → /newbot → API-Token erhalten
   2. Bot starten und Chat-ID ermitteln (über getUpdates oder @userinfobot)
@@ -14,6 +22,7 @@ Einrichtung:
 Ohne Token sendet der Notifier still keine Nachrichten (fail-safe).
 """
 
+import logging
 import requests
 from typing import Optional
 from config import config
@@ -21,15 +30,27 @@ from config import config
 _API_BASE = "https://api.telegram.org/bot{token}/sendMessage"
 _TIMEOUT = 10
 
+# Stufen, die im Modus "important" durchkommen.
+_IMPORTANT_LEVELS = {"trade", "critical", "digest"}
+
+log = logging.getLogger(__name__)
+
 
 class TelegramNotifier:
     def __init__(self):
         self._token = config.telegram_bot_token
         self._chat_id = config.telegram_chat_id
         self._enabled = bool(self._token and self._chat_id)
+        self._mode = (getattr(config, "telegram_mode", "important") or "important").lower()
 
-    def send(self, message: str):
+    def send(self, message: str, level: str = "info"):
         if not self._enabled:
+            return
+        if self._mode != "all" and level not in _IMPORTANT_LEVELS:
+            # Bewusst unterdrückt (TELEGRAM_MODE=important): Detail gehört ins
+            # Dashboard. Im Log bleibt nachvollziehbar, was gesendet worden wäre.
+            log.info("Telegram unterdrückt (level=%s): %.100s", level,
+                     message.replace("\n", " "))
             return
         try:
             requests.post(
@@ -112,7 +133,7 @@ class TelegramNotifier:
             if src_parts:
                 lines.append(f"📊 <b>Quellen:</b>  {' · '.join(src_parts)}")
 
-        self.send("\n".join(lines))
+        self.send("\n".join(lines), level="trade")
 
     def notify_sell(
         self,
@@ -168,7 +189,7 @@ class TelegramNotifier:
                 short += "…"
             lines += ["", f"💡 <b>Kaufbegründung war:</b>", f"<i>{short}</i>"]
 
-        self.send("\n".join(lines))
+        self.send("\n".join(lines), level="trade")
 
     def notify_thesis_warning(self, ticker: str, break_reason: str, confidence: str):
         msg = (
@@ -178,7 +199,7 @@ class TelegramNotifier:
             f"📝 Grund: <i>{break_reason[:300]}</i>\n"
             f"→ Position wird beim nächsten Kurs geschlossen."
         )
-        self.send(msg)
+        self.send(msg, level="trade")
 
     def notify_daily_summary(
         self,
@@ -204,7 +225,7 @@ class TelegramNotifier:
             f"{phase_icon} Phase:         {phase} ({progress_pct:.1f}% zum Ziel)"
             f"{actions_text}"
         )
-        self.send(msg)
+        self.send(msg, level="digest")
 
     def notify_insider_signal(
         self,
