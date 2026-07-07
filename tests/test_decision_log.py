@@ -73,3 +73,65 @@ def test_get_recent_ticker_filter(dlog):
     dlog.log({"ticker": "BBB", "action": "BUY", "reason": "r"})
     assert len(dlog.get_recent(ticker="AAA")) == 1
     assert dlog.get_recent(ticker="AAA")[0]["ticker"] == "AAA"
+
+
+# ── Kosten-Attribution (Ziel 5) ───────────────────────────────────────────────
+def test_log_with_cost_eur(dlog):
+    dlog.log({"ticker": "NVDA", "action": "BUY", "reason": "ok", "cost_eur": 0.027})
+    row = dlog.get_recent(limit=1)[0]
+    assert row["cost_eur"] == pytest.approx(0.027)
+
+
+def test_add_cost_accumulates_on_latest(dlog):
+    dlog.log({"decided_at": "2026-07-06T10:00:00", "ticker": "AAA", "action": "BUY", "reason": "r"})
+    dlog.log({"decided_at": "2026-07-06T11:00:00", "ticker": "AAA", "action": "HOLD", "reason": "r"})
+    assert dlog.add_cost("AAA", 0.01) is True
+    assert dlog.add_cost("AAA", 0.02) is True      # kumuliert auf die JÜNGSTE
+    recent = dlog.get_recent(limit=5, ticker="AAA")
+    latest = recent[0]
+    assert latest["decided_at"] == "2026-07-06T11:00:00"
+    assert latest["cost_eur"] == pytest.approx(0.03)
+    # die ältere Entscheidung blieb unberührt
+    assert recent[1]["cost_eur"] is None
+
+
+def test_add_cost_unknown_ticker_is_false(dlog):
+    assert dlog.add_cost("GHOST", 0.05) is False
+    assert dlog.add_cost("AAA", 0.0) is False       # 0-Kosten = no-op
+
+
+def test_cost_stats(dlog):
+    dlog.log({"ticker": "AAA", "action": "BUY", "reason": "r", "cost_eur": 0.10})
+    dlog.log({"ticker": "BBB", "action": "BUY", "reason": "r", "cost_eur": 0.20})
+    dlog.log({"ticker": "CCC", "action": "SKIP", "reason": "r"})   # ohne Kosten
+    cs = dlog.cost_stats()
+    assert cs["n_decisions"] == 3
+    assert cs["n_with_cost"] == 2
+    assert cs["total_cost_eur"] == pytest.approx(0.30)
+    assert cs["avg_cost_eur"] == pytest.approx(0.15)
+
+
+def test_migration_adds_cost_column(tmp_path):
+    """Bestehende DB ohne cost_eur → _migrate_locked ergänzt die Spalte idempotent."""
+    import sqlite3
+    db = str(tmp_path / "legacy.db")
+    conn = sqlite3.connect(db)
+    # Alt-Schema = das ursprüngliche decision_log OHNE cost_eur.
+    conn.execute(
+        "CREATE TABLE decisions (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "decided_at TEXT NOT NULL, ticker TEXT NOT NULL, action TEXT NOT NULL, "
+        "reason TEXT, executed TEXT, source TEXT, recommendation TEXT, "
+        "direction TEXT, sentiment_score REAL, confidence TEXT, "
+        "sources_used INTEGER, regime TEXT, macro_bias REAL)"
+    )
+    conn.execute("INSERT INTO decisions (decided_at, ticker, action) "
+                 "VALUES ('2026-07-06T10:00:00', 'OLD', 'BUY')")
+    conn.commit()
+    conn.close()
+    # DecisionLog öffnet die Alt-DB → Migration läuft
+    d = DecisionLog(db_path=db)
+    d.log({"ticker": "NEW", "action": "BUY", "reason": "r", "cost_eur": 0.05})
+    assert d.add_cost("OLD", 0.02) is True          # Spalte existiert jetzt
+    cs = d.cost_stats()
+    assert cs["n_decisions"] == 2 and cs["n_with_cost"] == 2
+    d.close()

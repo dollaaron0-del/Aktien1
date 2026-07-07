@@ -83,20 +83,35 @@ class DecisionLog:
                     confidence      TEXT,
                     sources_used    INTEGER,
                     regime          TEXT,
-                    macro_bias      REAL
+                    macro_bias      REAL,
+                    cost_eur        REAL             -- attribuierte API-Kosten (Ziel 5)
                 );
                 CREATE INDEX IF NOT EXISTS idx_dec_day    ON decisions(decided_at);
                 CREATE INDEX IF NOT EXISTS idx_dec_ticker ON decisions(ticker);
                 """
             )
+            self._migrate_locked()
             self._conn.commit()
+
+    def _migrate_locked(self) -> None:
+        """Idempotente Spalten-Migration für bestehende DBs (ADD COLUMN nur wenn
+        fehlt) – analog experience_store. Nachgerüstete Spalten hier eintragen."""
+        have = {r["name"] for r in self._conn.execute("PRAGMA table_info(decisions)")}
+        for col, decl in (("cost_eur", "REAL"),):
+            if col not in have:
+                self._conn.execute(f"ALTER TABLE decisions ADD COLUMN {col} {decl}")
 
     # ── Schreiben ─────────────────────────────────────────────────────────────
     def log(self, entry: Dict) -> None:
-        """Schreibt eine Entscheidung. Fehlt decided_at, wird jetzt genommen."""
+        """Schreibt eine Entscheidung. Fehlt decided_at, wird jetzt genommen.
+
+        Optional ``cost_eur``: die dieser Entscheidung zurechenbaren API-Kosten
+        (z.B. der Claude-Analyse-Aufruf, der zu ihr führte) – Naht für die
+        Edge−Kosten-Rechnung (Ziel 5, scripts/cost_attribution.py).
+        """
         cols = ("decided_at", "ticker", "action", "reason", "executed", "source",
                 "recommendation", "direction", "sentiment_score", "confidence",
-                "sources_used", "regime", "macro_bias")
+                "sources_used", "regime", "macro_bias", "cost_eur")
         e = dict(entry)
         e.setdefault("decided_at",
                      datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
@@ -107,6 +122,51 @@ class DecisionLog:
                 [e.get(c) for c in cols],
             )
             self._conn.commit()
+
+    def add_cost(self, ticker: str, cost_eur: float) -> bool:
+        """Rechnet API-Kosten der JÜNGSTEN Entscheidung eines Tickers zu (kumulativ).
+
+        Für den realistischen Live-Fall, in dem die Analyse-Kosten erst NACH dem
+        Loggen der Entscheidung bekannt sind (oder über mehrere Aufrufe anfallen).
+        Fail-open: nie eine Exception in den Zyklus. Gibt True bei Treffer zurück.
+        """
+        if not ticker or not cost_eur:
+            return False
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT id FROM decisions WHERE ticker=? ORDER BY decided_at DESC LIMIT 1",
+                    (ticker,),
+                ).fetchone()
+                if row is None:
+                    return False
+                self._conn.execute(
+                    "UPDATE decisions SET cost_eur = COALESCE(cost_eur, 0) + ? WHERE id=?",
+                    (round(float(cost_eur), 6), int(row["id"])),
+                )
+                self._conn.commit()
+            return True
+        except Exception:
+            return False
+
+    def cost_stats(self) -> Dict:
+        """Aggregat der attribuierten Kosten (für den Edge−Kosten-Report)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS n, "
+                "SUM(CASE WHEN cost_eur IS NOT NULL THEN 1 ELSE 0 END) AS n_cost, "
+                "SUM(cost_eur) AS total_cost "
+                "FROM decisions"
+            ).fetchone()
+        d = dict(row) if row else {}
+        n_cost = d.get("n_cost") or 0
+        total = d.get("total_cost") or 0.0
+        return {
+            "n_decisions": d.get("n") or 0,
+            "n_with_cost": n_cost,
+            "total_cost_eur": round(total, 6),
+            "avg_cost_eur": round(total / n_cost, 6) if n_cost else None,
+        }
 
     # ── Lesen (Dashboard) ─────────────────────────────────────────────────────
     def days(self, limit: int = 30) -> List[str]:
