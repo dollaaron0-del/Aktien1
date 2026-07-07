@@ -1,0 +1,11 @@
+[Unit]
+Description=Aktien-Bot Backup (Daten + Lern-Asset, tar.gz)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/Aktien
+# BACKUP_REMOTE optional setzen (rsync-Ziel) für Off-Server-Kopie, z.B.:
+#   Environment=BACKUP_REMOTE=user@host:/pfad/aktien-backups
+# BACKUP_KEEP steuert die Rotation (Default 14).
+ExecStart=/opt/Aktien/scripts/backup.sh

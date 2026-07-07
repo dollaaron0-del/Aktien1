@@ -17,6 +17,13 @@ dashboard.bak/
 backtesting/.cache/
 graphify-out/
 
+# Backup-Archive (scripts/backup.sh) – Daten, kein Code
+backups/
+aktien_backup_*.tar.gz
+
+# Demo-Daten-Swap-Backup (echte data/ während Präsentation; 118 MB, nie committen)
+data_REAL_BACKUP_demo/
+
 # RuFlo runtime state (nicht committen)
 .claude-flow/daemon-state.json
 .claude-flow/daemon.pid
