@@ -2402,6 +2402,16 @@ def run_bot_loop(
                     except Exception:
                         pass
                 schedule.run_pending()
+                # Live-Status (Roadmap 1.5a): zwischen Jobs ist der Bot idle.
+                # Schreibt auch den nächsten geplanten Lauf und heilt einen
+                # nach Crash hängengebliebenen "cycle"-Status von selbst.
+                try:
+                    from system import live_status as _ls
+                    _nr = schedule.next_run()
+                    _ls.set_idle(next_run=_nr.isoformat(timespec="seconds")
+                                 if _nr else None)
+                except Exception:
+                    pass
             except KeyboardInterrupt:
                 raise
             except Exception as _job_err:

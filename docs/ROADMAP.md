@@ -120,12 +120,20 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       provenance-JSON, (d) KI-Prompt-Archiv — beide wirken erst voll bei
       laufendem Bot. Queue-Drain-Entscheidungen tragen bewusst keine
       analysis_id (Signal-Analyse lag zeitlich früher).
-- [ ] **1.5 Live-Sichtbarkeit: "Was macht der Bot gerade?"** — Kernpaket
-      (a) Live-Status-Zeile im Dashboard-Header (data/bot_status.json je
-      Phasenwechsel), (b) Live-Aktivitätsfeed (JSONL/SQLite statt Textlog),
-      dazu optional (c) Nächste-Aktionen-Panel, (d) Gesundheits-Ampelleiste,
-      (e) Zyklus-Zeitleiste, (f) Order-Lifecycle-Ansicht, (g) Telegram
-      /status-Befehl. (a)-(c) bot-unabhängig vorbereitbar.
+- [~] **1.5 Live-Sichtbarkeit: "Was macht der Bot gerade?"** — (a)+(b)+(c)
+      fertig 11.7.: system/live_status.py (fail-open, wirft nie).
+      (a) Runner meldet Phasen (Start/Exits/Vorladen/Analyse je Ticker
+      i/n/Abschluss) → data/bot_status.json (atomar); Scheduler schreibt
+      zwischen Jobs Idle + nächsten geplanten Lauf (heilt Crash-Reste);
+      Dashboard-Header rendert Live-Zeile mit ETA, Staleness-Check >30 min.
+      (b) Aktivitätsfeed data/activity_feed.db (SQLite/WAL, Auto-Pruning
+      ~2000): cycle_start/analysis_done/trade/cycle_end; neuer Dashboard-Tab
+      "Live" zeigt die letzten 50. (c) Nächste-Aktionen-Panel im Live-Tab:
+      nächster Scheduler-Lauf + systemd-Timer (list-timers, JSON) mit
+      letztem/nächstem Lauf. 10 Tests, Suite 418 grün, Dashboard headless
+      gerendert. Wirkt live erst bei laufendem Bot. Offen: (d) Gesundheits-
+      Ampelleiste im Header, (e) Zyklus-Zeitleiste, (f) Order-Lifecycle-
+      Ansicht, (g) Telegram /status-Befehl.
 - [x] **1.6 Versions-Stempel in Entscheidungslogs** — fertig 11.7.
       `analyzers/version_stamp.py`: Git-Hash (kurz) + kuratierter
       Config-Schnappschuss (Whitelist entscheidungsrelevanter Werte +

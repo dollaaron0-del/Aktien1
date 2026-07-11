@@ -760,6 +760,16 @@ def run_analysis_cycle(
     _cycle_ts = datetime.now().strftime('%Y-%m-%d %H:%M')
     console.rule(f"[bold blue]Analyse-Zyklus – {_cycle_ts}{rule_suffix}")
 
+    # Live-Sichtbarkeit (Roadmap 1.5): Status-Zeile + Aktivitätsfeed. Alle
+    # Funktionen sind fail-open (werfen nie) — nur der Import wird geschützt.
+    try:
+        from system import live_status as _live
+    except Exception:
+        class _live:  # noqa: N801 — Null-Objekt, hält die Aufrufstellen schlank
+            set_phase = set_idle = feed_emit = staticmethod(lambda *a, **k: None)
+    _live.set_phase("Start")
+    _live.feed_emit("cycle_start", detail=_cycle_ts)
+
     # Makro-Lagebericht einmal pro Lauf bauen – fließt als Kontext in jede
     # Einzelanalyse und wird hier transparent auf Konsole/Log/Telegram ausgegeben.
     _macro_brief = ""
@@ -879,6 +889,7 @@ def run_analysis_cycle(
             log.debug("Earnings pre-exit check failed: %s", _ee)
 
     # Check stop-loss / take-profit first (no Claude needed)
+    _live.set_phase("Exits prüfen")
     try:
         _open_tickers = list(portfolio.all_positions().keys())
         _exit_prices = broker.get_prices(_open_tickers) if _open_tickers else {}
@@ -1027,6 +1038,7 @@ def run_analysis_cycle(
             price = collectors["yahoo"].get_price_data(t)
         return t, news_result, price
 
+    _live.set_phase("Vorladen", total=len(_normalized_watchlist))
     _pf_workers = min(len(_normalized_watchlist), int(os.getenv("PREFETCH_WORKERS", "8")))  # cap: avoid overwhelming APIs
     if _pf_workers > 1:
         with ThreadPoolExecutor(max_workers=_pf_workers) as _pf_pool:
@@ -1148,6 +1160,7 @@ def run_analysis_cycle(
     _hb_every = max(0, int(os.getenv("HEARTBEAT_EVERY", "20")))  # 0 = Heartbeat aus
     for _wl_idx, ticker in enumerate(active_watchlist, start=1):
         ticker = _normalize_ticker(ticker)
+        _live.set_phase("Analyse", ticker=ticker, idx=_wl_idx, total=_wl_total)
 
         # Heartbeat: periodisches Lebenszeichen während des langen Zyklus. Nur bei
         # der angekündigten Hauptanalyse (announce_start) – intraday/getriggerte
@@ -1433,6 +1446,11 @@ def run_analysis_cycle(
                     analysis, sources_breakdown=sources_breakdown)
             except Exception as _store_err:
                 log.warning("Analysis-Log store(%s) fehlgeschlagen: %s", ticker, _store_err)
+            _live.feed_emit(
+                "analysis_done", ticker=ticker,
+                detail=f"{analysis.recommendation} · Score "
+                       f"{analysis.sentiment_score:.2f} · {analysis.confidence}",
+            )
 
         # Headline-Signal-Ticker: Ergebnis als kompakte Zeile sammeln. Versand
         # erfolgt gebündelt am Zyklus-Ende (eine Digest-Nachricht), nicht pro Aktie.
@@ -1558,6 +1576,7 @@ def run_analysis_cycle(
             # Nur echte Käufe/Verkäufe in die Tages-Zusammenfassung
             if "GEKAUFT" in action or "VERKAUFT" in action:
                 cycle_actions.append(action)
+                _live.feed_emit("trade", ticker=ticker, detail=action)
                 # Prediction-Tracking: Kauf = neue Vorhersage, Verkauf = Outcome.
                 # Speist Genauigkeits-Reports, Reflektion, Kalibrierung, adaptive Schwellen.
                 _px = float((price_data or {}).get("current_price") or 0)
@@ -1701,3 +1720,9 @@ def run_analysis_cycle(
     # Scheduler) sendet sie einmal täglich gebündelt. Einzeltrades werden ohnehin
     # bereits sofort per notify_buy/notify_sell gemeldet.
     record_daily_actions(cycle_actions)
+
+    # Live-Sichtbarkeit: Zyklus fertig → Status auf Idle, Abschluss-Event.
+    _n_trades = sum(1 for a in cycle_actions if "GEKAUFT" in a or "VERKAUFT" in a)
+    _live.feed_emit("cycle_end",
+                    detail=f"{_wl_total} Titel analysiert · {_n_trades} Trade(s)")
+    _live.set_idle(note="Zyklus beendet")
