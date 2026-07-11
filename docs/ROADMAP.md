@@ -189,8 +189,18 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       nachziehen lassen.
 - [ ] **1.13 IBKR-Kursdaten via reqHistoricalData** — Kurse/Historie direkt
       vom Broker statt/neben yfinance, entschärft die yfinance-Abhängigkeit.
-- [ ] **1.14 whatIf-Margin-Check vor Orders** — ib_insync whatIfOrder() vor
-      jeder echten Order als billige Plausibilitätsprüfung.
+- [x] **1.14 whatIf-Margin-Check vor Orders** — fertig 11.7. (Code + Tests).
+      ibkr_broker._whatif_rejection() vor jedem placeOrder (Markt-Orders
+      inkl. Krypto-Pfad): blockt NUR bei klarem Nein von IBKR —
+      DBL_MAX-Sentinel in den Margin-Feldern oder Init-Margin nach Order >
+      Eigenkapital (equityWithLoanAfter) → typisierter OrderResult.error
+      statt Gateway-Ablehnung. Alles andere fail-open (leere Antwort,
+      Exception, Parse-Fehler → Order geht raus, Gateway lehnt zur Not
+      selbst ab). Flag IBKR_WHATIF_CHECK (Default an). 10 Tests, Suite 451
+      grün. E2E gegen Paper-Gateway ausstehend: Gateway-Session Sa-Abend im
+      Zombie-Zustand (Port offen, Anfragen timeout — IBKR-Wartungsfenster);
+      zusammen mit dem offenen 1.9-Fill-Test Mo ab 15:30 CEST nachholen
+      (steht in der 0.7-Checkliste).
 
 ## Block 2 — Kein-Kante-Befund angehen (strategy_lab Prio 1)
 

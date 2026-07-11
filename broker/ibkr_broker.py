@@ -77,6 +77,11 @@ _ORDER_TIMEOUT   = 60   # Sekunden Wartezeit auf Fill (Paper braucht länger als
 # Bot ausgefallen ist. Bewusst NUR Stop-Loss (kein Take-Profit-Limit beim Broker,
 # das würde mit Partial-TP/Trailing/Soft-Stop der Bot-Logik kollidieren).
 _SERVER_STOPS = os.getenv("IBKR_SERVER_STOPS", "true").strip().lower() in ("1", "true", "yes")
+# whatIf-Margin-Check (Roadmap 1.14): vor jeder echten Order eine billige
+# Plausibilitätsprüfung bei IBKR (Margin/Kaufkraft) — verhindert Ablehnungs-
+# Überraschungen, v.a. beim späteren Umstieg auf echtes Geld. Fail-open:
+# liefert der Check kein klares NEIN, geht die Order normal raus.
+_WHATIF_CHECK = os.getenv("IBKR_WHATIF_CHECK", "true").strip().lower() in ("1", "true", "yes")
 _RECONNECT_DELAY = 5    # Sekunden vor Reconnect-Versuch
 _PAPER_ONLY      = os.getenv("IBKR_PAPER_ONLY", "false").lower() == "true"
 # Marktdaten-Typ: 1=Echtzeit (braucht Abo), 2=Frozen, 3=Delayed (~15min, abo-frei),
@@ -351,6 +356,52 @@ class IBKRBroker:
 
     # ── Orders ────────────────────────────────────────────────────────────────
 
+    def _whatif_rejection(self, contract, order) -> Optional[str]:
+        """Vorab-Margin-Check via ib_insync whatIfOrder (Roadmap 1.14).
+
+        Liefert einen Ablehnungsgrund (str) NUR bei einem klaren Nein von
+        IBKR; None heißt "einreichen" — auch bei Fehlern/leerer Antwort
+        (fail-open: ein kaputter Check darf keinen Trade verhindern, der
+        echte Gateway lehnt zur Not selbst ab).
+        """
+        if not _WHATIF_CHECK:
+            return None
+        try:
+            state = self._ib.whatIfOrder(contract, order)
+            if state is None:
+                return None
+
+            def _num(v) -> Optional[float]:
+                try:
+                    f = float(str(v).replace(",", ""))
+                except (TypeError, ValueError):
+                    return None
+                # IBKR-Sentinel für "ungültig/abgelehnt" ist DBL_MAX
+                # (1.7976931348623157E308) — als "kein Wert" behandeln.
+                return f if math.isfinite(f) and abs(f) < 1e300 else None
+
+            # Klares Nein #1: Margin-Felder tragen den DBL_MAX-Sentinel.
+            _raw_init = str(getattr(state, "initMarginChange", "") or "")
+            if "E308" in _raw_init.upper():
+                return ("whatIf-Margin-Check: IBKR meldet Ablehnung "
+                        "(Margin-Sentinel) – Order nicht eingereicht")
+
+            # Klares Nein #2: Init-Margin NACH der Order überstiege das
+            # Eigenkapital (equityWithLoan) → Order würde abgelehnt.
+            init_after   = _num(getattr(state, "initMarginAfter", None))
+            equity_after = _num(getattr(state, "equityWithLoanAfter", None))
+            if (init_after is not None and equity_after is not None
+                    and init_after > equity_after):
+                return (f"whatIf-Margin-Check: Init-Margin nach Order "
+                        f"({init_after:,.0f}) > Eigenkapital "
+                        f"({equity_after:,.0f}) – Order nicht eingereicht")
+            return None
+        except Exception as e:
+            log.debug("whatIf-Check übersprungen (%s %s): %s",
+                      getattr(contract, "symbol", "?"),
+                      getattr(order, "action", "?"), e)
+            return None
+
     def _place_order(self, contract, action: str, shares: float) -> Dict:
         from ib_insync import MarketOrder
         # Hinweis: _place_order wird auch von buy_crypto/sell_crypto genutzt –
@@ -366,6 +417,14 @@ class IBKRBroker:
                 "IBKR: Kein Account gesetzt – Order geht an Default-Account. "
                 "IBKR_ACCOUNT in .env setzen um sicherzustellen dass Paper-Account genutzt wird."
             )
+
+        # Billiger Margin-Vorab-Check (Roadmap 1.14): klares Nein von IBKR →
+        # Order gar nicht erst einreichen, typisierter Fehler statt Ablehnung.
+        _reject = self._whatif_rejection(contract, order)
+        if _reject:
+            log.warning("IBKR %s %s: %s", action, contract.symbol, _reject)
+            return OrderResult.error(
+                ticker=contract.symbol, reason=_reject, mode="ibkr")
 
         trade = self._ib.placeOrder(contract, order)
         log.info(
