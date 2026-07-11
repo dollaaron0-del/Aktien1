@@ -27,7 +27,7 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
 - [ ] **0.3 Demo-Daten-Rücktausch** — Pflicht vor Bot-Reaktivierung; echte
       `data/` liegt im Backup, aktuell Demo-Kopie für Präsentation aktiv.
       Danach `python -m scripts.backfill_regime` auf der echten DB.
-- [~] **0.4 Dashboard/Ports absichern** (AKUT; 11.7. teilweise erledigt).
+- [~] **0.4 Dashboard/Ports absichern** (11.7. erledigt, Netzwerk-Teil fertig).
       Befund: manuell gestartete Streamlit-Instanz auf :8503 (0.0.0.0, XSRF
       aus), ufw ließ 8503 weltweit rein, kein Login, Settings-Tab kann echte
       `.env` (Anthropic/Telegram/IBKR-Keys) lesen+schreiben. 8501/8888/8082 =
@@ -35,12 +35,13 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Erledigt: ufw-Regel 8503 entfernt (v4+v6, extern nicht mehr erreichbar);
       `scripts/aktien_dashboard.service` korrigiert (Pfade `/opt/Aktien`, Port
       vereinheitlicht auf 8503, `--server.address=127.0.0.1`, SSH-Tunnel-Doku),
-      nach `/etc/systemd/system/` gespiegelt + `daemon-reload` — bleibt
-      disabled/inactive. Offen: laufender manueller Prozess lauscht noch auf
-      0.0.0.0:8503 (ufw blockt nur außen), Neustart bindet ihn auf 127.0.0.1,
-      Zugriff dann per `ssh -L 8503:localhost:8503 <server>`. Noch nicht
-      behoben: Settings-Tab ohne In-App-Login (Netzwerk-Absicherung war
-      Kernfix, Login/Reverse-Proxy wäre Zusatzhärtung).
+      nach `/etc/systemd/system/` gespiegelt + `daemon-reload`; manueller
+      Alt-Prozess (PID 3057754, seit 27.6. auf 0.0.0.0) beendet, Service
+      `enable --now` gesetzt (reboot-fest, aktiv, lauscht jetzt nur auf
+      127.0.0.1:8503, verifiziert per `ss`). Zugriff per
+      `ssh -L 8503:localhost:8503 <server>`. Noch nicht behoben: Settings-Tab
+      ohne In-App-Login (Netzwerk-Absicherung war Kernfix, Login/Reverse-Proxy
+      wäre Zusatzhärtung — bleibt offen, kein akuter Netzwerk-Zugriff mehr).
 - [ ] **0.5 Restore-Probe + Server-Runbook** — Backup (0.1) wurde noch nie
       zurückgespielt; einmal auf leerem Verzeichnis komplett restaurieren und
       Bot-Start simulieren, dazu kurzes "Server von Null"-Runbook (Pakete,
