@@ -86,7 +86,8 @@ class DecisionLog:
                     macro_bias      REAL,
                     cost_eur        REAL,            -- attribuierte API-Kosten (Ziel 5)
                     git_hash        TEXT,            -- Code-Stand (Roadmap 1.6)
-                    config_json     TEXT             -- Config-Schnappschuss (Roadmap 1.6)
+                    config_json     TEXT,            -- Config-Schnappschuss (Roadmap 1.6)
+                    analysis_id     INTEGER          -- Verkettung → analysis_log (Roadmap 1.4b)
                 );
                 CREATE INDEX IF NOT EXISTS idx_dec_day    ON decisions(decided_at);
                 CREATE INDEX IF NOT EXISTS idx_dec_ticker ON decisions(ticker);
@@ -101,7 +102,8 @@ class DecisionLog:
         have = {r["name"] for r in self._conn.execute("PRAGMA table_info(decisions)")}
         for col, decl in (("cost_eur", "REAL"),
                           ("git_hash", "TEXT"),
-                          ("config_json", "TEXT")):
+                          ("config_json", "TEXT"),
+                          ("analysis_id", "INTEGER")):
             if col not in have:
                 self._conn.execute(f"ALTER TABLE decisions ADD COLUMN {col} {decl}")
 
@@ -116,7 +118,7 @@ class DecisionLog:
         cols = ("decided_at", "ticker", "action", "reason", "executed", "source",
                 "recommendation", "direction", "sentiment_score", "confidence",
                 "sources_used", "regime", "macro_bias", "cost_eur",
-                "git_hash", "config_json")
+                "git_hash", "config_json", "analysis_id")
         e = dict(entry)
         e.setdefault("decided_at",
                      datetime.now(timezone.utc).replace(tzinfo=None).isoformat())

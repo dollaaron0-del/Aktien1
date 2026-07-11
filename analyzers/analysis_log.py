@@ -60,10 +60,13 @@ class AnalysisLog:
         self._conn.commit()
 
     def store(self, analysis, exchange: str = "",
-              sources_breakdown: Optional[dict] = None) -> None:
+              sources_breakdown: Optional[dict] = None) -> Optional[int]:
+        """Speichert eine Analyse; gibt die Zeilen-ID zurück (Roadmap 1.4b:
+        der Runner reicht sie ans decision_log weiter → Entscheidung und
+        zugehörige Analyse samt Quellen sind verkettet)."""
         from analyzers.claude_analyzer import AnalysisResult
         if not isinstance(analysis, AnalysisResult):
-            return
+            return None
         # sources_used ist je nach Analyzer-Pfad mal Dict[str,int] (Quelle→Anzahl),
         # mal int, mal {} (Default). Die Spalte ist INTEGER → hier zu einer Zahl
         # normalisieren, sonst crasht SQLite ("type 'dict' is not supported") und
@@ -96,7 +99,7 @@ class AnalysisLog:
             _git_hash, _config_json = stamp()
         except Exception:
             _git_hash, _config_json = None, None
-        self._conn.execute(
+        cur = self._conn.execute(
             """INSERT INTO analyses
                (analyzed_at, ticker, recommendation, direction, sentiment_score,
                 confidence, entry_rationale, bull_case, bear_case, debate_winner,
@@ -126,6 +129,20 @@ class AnalysisLog:
             ),
         )
         self._conn.commit()
+        return cur.lastrowid
+
+    def get_by_id(self, analysis_id: int) -> Optional[Dict]:
+        """Einzelne Analyse per ID — für die Verkettung decision_log →
+        analysis_log (Dashboard-Tab "Entscheidungen", Roadmap 1.4b)."""
+        row = self._conn.execute(
+            "SELECT * FROM analyses WHERE id=?", (analysis_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["key_catalysts"] = json.loads(d.get("key_catalysts") or "[]")
+        d["risk_factors"]  = json.loads(d.get("risk_factors")  or "[]")
+        return d
 
     def get_source_contributions(self, days: int = 30) -> List[Dict]:
         """Aggregiert den Beitrag jedes Collectors über die letzten `days` Tage.

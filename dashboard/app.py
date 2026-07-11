@@ -206,6 +206,40 @@ def regime_badge(regime: str) -> str:
     return f'<span class="{css}">{icon} {regime}</span>'
 
 
+# Sprechende Namen für Collector-Schlüssel im sources_breakdown (Roadmap 1.4a).
+# Unbekannte Schlüssel werden unverändert angezeigt — kein Pflege-Zwang.
+_SOURCE_NAMES = {
+    "yahoo": "Yahoo Finance", "reddit": "Reddit", "newsapi": "NewsAPI",
+    "sec": "SEC EDGAR", "finra": "FINRA Short-Volume", "fda": "FDA-Kalender",
+    "trends": "Google Trends", "wiki": "Wikipedia-Views",
+    "insider": "Insider-Trades", "congress": "Congress-Trades",
+}
+
+
+def render_sources_breakdown(raw, total=None) -> None:
+    """Quellen-Provenienz einer Analyse anzeigen: welche Collectors haben
+    wie viele Beiträge geliefert (Roadmap 1.4a). Fail-open: kaputtes JSON
+    → nur die Gesamtzahl."""
+    breakdown = {}
+    if raw:
+        try:
+            breakdown = json.loads(raw) if isinstance(raw, str) else dict(raw)
+        except (json.JSONDecodeError, TypeError):
+            breakdown = {}
+    if breakdown:
+        parts = [
+            f"{_SOURCE_NAMES.get(src, src)} ×{cnt}"
+            for src, cnt in sorted(breakdown.items(), key=lambda kv: -int(kv[1] or 0))
+            if cnt
+        ]
+        leer = [_SOURCE_NAMES.get(s, s) for s, c in breakdown.items() if not c]
+        st.markdown("**📡 Quellen:** " + (" · ".join(parts) if parts else "keine Treffer"))
+        if leer:
+            st.caption("Ohne Treffer: " + ", ".join(leer))
+    elif total is not None:
+        st.caption(f"Quellenlage: {total} Beiträge (kein Detail-Breakdown gespeichert)")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # HEADER
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -740,6 +774,27 @@ with tab_decisions:
                 if _e.get("sources_used") is not None:
                     st.caption(f"Quellenlage: {_e['sources_used']} Beiträge · "
                                f"Richtung: {_e.get('direction') or '–'}")
+                # Verkettung → analysis_log (Roadmap 1.4b): die Analyse, die zu
+                # dieser Entscheidung führte, samt Quellen-Provenienz. Nur bei
+                # Einträgen ab Einbau gefüllt (Alt-Zeilen: analysis_id NULL).
+                if _e.get("analysis_id"):
+                    try:
+                        _lk = AnalysisLog().get_by_id(int(_e["analysis_id"]))
+                    except Exception:
+                        _lk = None
+                    if _lk:
+                        st.markdown("---")
+                        st.markdown(
+                            f"**🔍 Zugehörige Analyse** (#{_e['analysis_id']} · "
+                            f"{(_lk.get('analyzed_at') or '')[:16]})"
+                        )
+                        if _lk.get("entry_rationale"):
+                            st.caption(_lk["entry_rationale"])
+                        render_sources_breakdown(_lk.get("sources_breakdown"),
+                                                 total=_lk.get("sources_used"))
+                    else:
+                        st.caption(f"Zugehörige Analyse #{_e['analysis_id']} "
+                                   "nicht (mehr) im Analyse-Log gefunden.")
     else:
         # Noch keine Entscheidungs-Daten (Log neu / Bot pausiert) → ehrlicher
         # Hinweis + Empfehlungs-Funnel aus dem Analyse-Log als Vorschau.
@@ -2655,6 +2710,38 @@ with tab_log:
             hc2.metric("SKIP gesamt", hist_stats.get("skips", 0))
             hc3.metric("HOLD gesamt", hist_stats.get("holds", 0))
             hc4.metric("Ø Sentiment", f"{hist_stats.get('avg_score', 0):.2f}")
+
+        # ── Quellen-Health-Ampel (Roadmap 1.4e) ─────────────────────────────
+        # Nutzt die bestehende source_health-Mechanik: welche Collectors
+        # liefern real Beiträge, welche sind schwach oder tot?
+        try:
+            _sh = _alog.source_health(days=30)
+        except Exception:
+            _sh = None
+        if _sh and (_sh["healthy"] or _sh["weak"] or _sh["dead"]):
+            _n_dead = len(_sh["dead"])
+            _sh_icon = "🔴" if _n_dead else ("🟡" if _sh["weak"] else "🟢")
+            with st.expander(
+                f"{_sh_icon} Quellen-Health — {len(_sh['healthy'])} gesund · "
+                f"{len(_sh['weak'])} schwach · {_n_dead} tot "
+                f"(letzte {_sh['days']} Tage)", expanded=False,
+            ):
+                if not _sh["reliable"]:
+                    st.caption(
+                        f"⚠ Nur {_sh['n_analyses']} Analysen im Zeitraum — "
+                        "Aussage statistisch dünn (Bot pausiert?)."
+                    )
+                def _src_names(keys):
+                    return ", ".join(_SOURCE_NAMES.get(k, k) for k in keys)
+                if _sh["healthy"]:
+                    st.markdown(f"🟢 **Gesund:** {_src_names(_sh['healthy'])}")
+                if _sh["weak"]:
+                    st.markdown(f"🟡 **Schwach** (<10 % der Analysen): "
+                                f"{_src_names(_sh['weak'])}")
+                if _sh["dead"]:
+                    st.markdown(f"🔴 **Tot** (0 Treffer): {_src_names(_sh['dead'])}")
+                    st.caption("Tote Quellen: API-Key fehlt, Quelle defekt — "
+                               "oder Abschalt-Kandidat (Roadmap 2.4).")
         st.divider()
 
     # Alle bisher analysierten Ticker laden (für Queue-Logik)
@@ -2839,6 +2926,9 @@ with tab_log:
                     st.markdown("**⚡ Kaufkatalysatoren:** " + " · ".join(catalysts[:4]))
                 if risks:
                     st.markdown("**⚠️ Risiken:** " + " · ".join(risks[:3]))
+                # Quellen-Provenienz (Roadmap 1.4a): was floss in diese Analyse ein?
+                render_sources_breakdown(entry.get("sources_breakdown"),
+                                         total=entry.get("sources_used"))
 
 
 # ══════════════════════════════════════════════════════════

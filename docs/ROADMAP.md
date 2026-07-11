@@ -105,14 +105,21 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Break-even-Positionsgröße + Selbsttragend-Gate. Befund: API-Kosten
       0,12 €/Trade vernachlässigbar — das Problem ist die Kante, nicht die
       Kosten.
-- [ ] **1.4 Transparenz: Quellen-Provenienz & Pipeline-Trace im Dashboard** —
-      pro Entscheidung sichtbar machen, welche Quellen einflossen und wie sie
-      verarbeitet wurden. Gestaffelt: (a) vorhandenes sources_breakdown im
-      Dashboard anzeigen, (b) decision_log↔analysis_log verknüpfen, (c)
+- [~] **1.4 Transparenz: Quellen-Provenienz & Pipeline-Trace im Dashboard** —
+      (a)+(b)+(e) fertig 11.7.: (a) sources_breakdown wird im Analyse-Log-Tab
+      pro Eintrag gerendert (sprechende Collector-Namen, Treffer absteigend,
+      leere Quellen als Caption); (b) analysis_log.store() liefert die
+      Zeilen-ID, Runner reicht sie als analysis_id ans decision_log durch
+      (Spalte + idempotente Migration), Entscheidungen-Tab zeigt die
+      verkettete Analyse samt Quellen auf; (e) Quellen-Health-Ampel im
+      Analyse-Log-Tab aus der bestehenden source_health-Mechanik
+      (gesund/schwach/tot, Warnung bei dünner Datenlage). 8 Tests
+      (test_provenance_link.py), Suite 408 grün, Dashboard headless
+      durchgerendert (AppTest, keine Exceptions). Offen: (c)
       Verarbeitungs-Trace (Modell-Route, Makro-Brief-Bausteine, Gates) als
-      provenance-JSON, (d) KI-Prompt-Archiv (voller Prompt + Antwort je
-      Analyse), (e) Quellen-Health-Ampel im Dashboard. (a)-(b) sofort
-      möglich, (c)-(d) wirken erst voll bei laufendem Bot.
+      provenance-JSON, (d) KI-Prompt-Archiv — beide wirken erst voll bei
+      laufendem Bot. Queue-Drain-Entscheidungen tragen bewusst keine
+      analysis_id (Signal-Analyse lag zeitlich früher).
 - [ ] **1.5 Live-Sichtbarkeit: "Was macht der Bot gerade?"** — Kernpaket
       (a) Live-Status-Zeile im Dashboard-Header (data/bot_status.json je
       Phasenwechsel), (b) Live-Aktivitätsfeed (JSONL/SQLite statt Textlog),

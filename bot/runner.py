@@ -1422,11 +1422,15 @@ def run_analysis_cycle(
             and not portfolio.get_position(ticker)
             and ticker not in _force_claude_tickers
         )
+        _analysis_row_id = None
         if not _is_noise:
             # Persistenz-Fehler eines einzelnen Tickers darf den gesamten
             # Analyse-Zyklus nicht abreißen (vgl. sources_used-dict-Crash).
             try:
-                _analysis_log.store(analysis, sources_breakdown=sources_breakdown)
+                # Zeilen-ID einfangen: verkettet die Entscheidung unten mit
+                # ihrer Analyse samt Quellen-Breakdown (Roadmap 1.4b).
+                _analysis_row_id = _analysis_log.store(
+                    analysis, sources_breakdown=sources_breakdown)
             except Exception as _store_err:
                 log.warning("Analysis-Log store(%s) fehlgeschlagen: %s", ticker, _store_err)
 
@@ -1537,6 +1541,7 @@ def run_analysis_cycle(
                     "sources_used": _dl_nsrc,
                     "regime": str(regime) if regime else None,
                     "macro_bias": _dl_mb,
+                    "analysis_id": _analysis_row_id,
                 })
         except Exception as _dl_err:
             log.debug("Decision-Log Fehler [%s]: %s", ticker, _dl_err)
