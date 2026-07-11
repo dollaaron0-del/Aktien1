@@ -29,6 +29,8 @@ DB_PATH = os.getenv("DECISION_LOG_PATH") or os.path.join(
 # zählt: der erste Regex-Treffer gewinnt. Muster folgen den reason-Texten der
 # SwingStrategy (strategy/swing_strategy.py).
 _REASON_BUCKETS = (
+    # Vor "kein_kurs": Gate-Reasons enthalten oft "kein gültiger Kurs".
+    ("daten_gate",        re.compile(r"Daten-Gate", re.I)),
     ("kein_kaufsignal",   re.compile(r"Kein Kaufsignal", re.I)),
     ("unter_schwelle",    re.compile(r"< Schwelle", re.I)),
     ("zu_wenige_quellen", re.compile(r"wenige Quellen", re.I)),

@@ -1077,8 +1077,13 @@ def run_analysis_cycle(
             {"current_price": broker.get_crypto_price(t), "volume": 0}
             if _is_crypto(t) else collectors["yahoo"].get_price_data(t)
         )
-        if not _is_crypto(t) and not _valid_price(_price.get("current_price")):
-            return None  # kein (gültiger, NaN-freier) Kurs → Schleife überspringt ohnehin
+        if not _is_crypto(t):
+            # Daten-Qualitäts-Gate (Roadmap 1.8): ungültiger/veralteter/
+            # unplausibler Kurs → Claude-Call sparen. Die serielle Schleife
+            # prüft erneut und übernimmt das Logging (SKIP + Event).
+            from analyzers.data_quality import check_price_data
+            if not check_price_data(t, _price).ok:
+                return None
         # FinBERT-Signal voranstellen (read-only)
         try:
             from analyzers.finbert_analyzer import FinBERTAnalyzer
@@ -1216,14 +1221,31 @@ def run_analysis_cycle(
         if not _is_crypto(ticker):
             price_data = _ensure_current_price(ticker, price_data, broker)
 
-        # Kurs-Check vor Claude: kein (gültiger) Kurs → Claude-Aufruf sparen.
-        # _valid_price fängt auch NaN ab – sonst rutscht ein Titel mit
-        # current_price=NaN (z.B. neue/illiquide IPOs) hier durch, Claude
-        # erzwingt einen BUY und es feuert eine "Kauf nicht ausgeführt"-Nachricht,
-        # obwohl die Order mangels Kurs nie platziert werden kann.
-        if not _is_crypto(ticker) and not _valid_price(price_data.get("current_price")):
-            console.print(f"  [dim]Kein Kurs für {ticker} verfügbar – übersprungen[/dim]")
-            continue
+        # Daten-Qualitäts-Gate vor Claude (Roadmap 1.8): ungültiger Kurs
+        # (None/NaN/inf/≤0 — die alte _valid_price-Schranke), veralteter Kurs
+        # (stale) oder Skalenfehler (Kurs weit außerhalb der 52W-Spanne) →
+        # Claude-Aufruf sparen, SKIP loggen statt mit Müll zu rechnen.
+        # Bereinigt zudem nicht-finite Begleitfelder (NaN-Falle) in place.
+        if not _is_crypto(ticker):
+            from analyzers.data_quality import check_price_data
+            _gate = check_price_data(ticker, price_data)
+            if _gate.sanitized_fields:
+                log.debug("[%s] Daten-Gate: nicht-finite Felder bereinigt: %s",
+                          ticker, ", ".join(_gate.sanitized_fields))
+            if not _gate.ok:
+                console.print(f"  [dim]⛔ Daten-Gate {ticker}: {_gate.reason} – übersprungen[/dim]")
+                _live.feed_emit("gate_blocked", ticker=ticker, detail=_gate.reason)
+                try:
+                    from analyzers.decision_log import get_decision_log
+                    _dg = get_decision_log()
+                    if _dg is not None:
+                        _dg.log({"ticker": ticker, "action": "SKIP",
+                                 "reason": f"Daten-Gate: {_gate.reason}",
+                                 "source": "cycle",
+                                 "regime": str(regime) if regime else None})
+                except Exception:
+                    pass
+                continue
 
         # ── FinBERT lokales Sentiment ─────────────────────────────────────────
         try:

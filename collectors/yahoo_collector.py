@@ -86,9 +86,17 @@ class YahooCollector:
             hist = None
 
         current_price = None
+        last_bar_date = None
         if hist is not None and not hist.empty:
             try:
                 current_price = round(float(hist["Close"].iloc[-1]), 2)
+            except Exception:
+                pass
+            # Datum der letzten Kerze → Staleness-Check im Daten-Gate
+            # (analyzers/data_quality.py): veraltete Kurse vor der Analyse
+            # erkennen statt mit ihnen zu rechnen.
+            try:
+                last_bar_date = hist.index[-1].date().isoformat()
             except Exception:
                 pass
 
@@ -100,6 +108,7 @@ class YahooCollector:
         return {
             "ticker": ticker,
             "current_price": current_price,
+            "last_bar_date": last_bar_date,
             "price_change_1w": self._pct_change(hist, 5) if hist is not None else None,
             "price_change_1m": self._pct_change(hist, 21) if hist is not None else None,
             "volume_avg": int(hist["Volume"].mean()) if hist is not None and not hist.empty else None,

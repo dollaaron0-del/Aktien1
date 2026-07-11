@@ -448,6 +448,7 @@ with tab_live:
         "cycle_end":     "🏁",
         "analysis_done": "🔍",
         "trade":         "💼",
+        "gate_blocked":  "⛔",
     }
     try:
         from system.live_status import feed_recent as _feed_recent
@@ -825,6 +826,7 @@ with tab_decisions:
         "positionsgroesse":  "Positionsgröße = 0",
         "tagesverlust":      "Tagesverlust-Limit",
         "kein_kurs":         "Kein Kurs verfügbar",
+        "daten_gate":        "Daten-Qualitäts-Gate",
         "sonstiges":         "Sonstiges",
     }
     _ACTION_ICON = {"BUY": "🟢", "SELL": "🔴", "SKIP": "⏭", "HOLD": "⏸"}

@@ -149,9 +149,20 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
 - [ ] **1.7 Externer Dead-Man-Switch** — watchdog.sh läuft auf demselben
       Server; externer Dienst (z.B. healthchecks.io) soll Ausbleiben von
       Zyklus-Pings alarmieren.
-- [ ] **1.8 Zentrales Daten-Qualitäts-Gate** — NaN/inf, veraltete Kurse,
-      unplausible Sprünge vor der Analyse erkennen → Ticker überspringen +
-      Event loggen statt mit Müll zu rechnen.
+- [x] **1.8 Zentrales Daten-Qualitäts-Gate** — fertig 11.7.
+      analyzers/data_quality.py: (1) Kurs gültig (None/NaN/inf/≤0 → SKIP),
+      (2) Kurs frisch (yahoo_collector liefert jetzt last_bar_date; älter
+      als DATA_GATE_MAX_STALE_DAYS=5 → SKIP), (3) Skalenfehler-Detektor
+      (Kurs >5× über 52W-Hoch bzw. <1/5 unter 52W-Tief, GBp↔GBP-Fälle;
+      bewusst KEINE Volatilitäts-Bremse — echte Ausbrüche passieren),
+      (4) nicht-finite Begleitfelder werden in place auf None bereinigt
+      (NaN-Falle systematisch statt Punkt-Fix). Verdrahtet an beiden
+      Analyse-Pfaden (Prefetch-Worker spart Claude-Call; serielle Schleife
+      loggt SKIP ins decision_log mit eigenem Funnel-Bucket "daten_gate" +
+      gate_blocked-Event in den Live-Feed). Fail-open: fehlende Felder
+      werden nicht geprüft, Gate-Fehler blockt nie (Executor-Pfad behält
+      eigene _valid_price-Schranke). 23 Tests, Suite 441 grün; E2E gegen
+      echten yfinance-Abruf verifiziert.
 - [x] **1.9 Broker-seitige Stop-Loss-Orders (IBKR)** — fertig & committet
       11.7. (b03f967). Jede Position hat einen ruhenden GTC-Stop bei IBKR
       (Notfallnetz bei Bot-Ausfall; Bot-Exits bleiben führend, bewusst kein
