@@ -25,11 +25,13 @@ class AnalysisLog:
 
     def _migrate(self):
         """Fügt neue Spalten zu bestehenden DBs hinzu (idempotent)."""
-        try:
-            self._conn.execute("ALTER TABLE analyses ADD COLUMN sources_breakdown TEXT")
-            self._conn.commit()
-        except Exception:
-            pass  # Spalte existiert bereits
+        have = {r["name"] for r in self._conn.execute("PRAGMA table_info(analyses)")}
+        for col, decl in (("sources_breakdown", "TEXT"),
+                          ("git_hash", "TEXT"),          # Roadmap 1.6
+                          ("config_json", "TEXT")):      # Roadmap 1.6
+            if col not in have:
+                self._conn.execute(f"ALTER TABLE analyses ADD COLUMN {col} {decl}")
+        self._conn.commit()
 
     def _init_db(self):
         self._conn.executescript("""
@@ -87,13 +89,20 @@ class AnalysisLog:
             _breakdown = json.dumps(sources_breakdown)
             if not _sources:
                 _sources = sum(sources_breakdown.values())
+        # Versions-Stempel (Roadmap 1.6), fail-open — Logging darf den Zyklus
+        # nie reißen.
+        try:
+            from analyzers.version_stamp import stamp
+            _git_hash, _config_json = stamp()
+        except Exception:
+            _git_hash, _config_json = None, None
         self._conn.execute(
             """INSERT INTO analyses
                (analyzed_at, ticker, recommendation, direction, sentiment_score,
                 confidence, entry_rationale, bull_case, bear_case, debate_winner,
                 key_catalysts, risk_factors, target_price, suggested_hold,
-                sources_used, sources_breakdown, exchange)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                sources_used, sources_breakdown, exchange, git_hash, config_json)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 analysis.ticker,
@@ -112,6 +121,8 @@ class AnalysisLog:
                 _sources,
                 _breakdown,
                 exchange,
+                _git_hash,
+                _config_json,
             ),
         )
         self._conn.commit()

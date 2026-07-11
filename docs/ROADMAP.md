@@ -119,11 +119,18 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       dazu optional (c) Nächste-Aktionen-Panel, (d) Gesundheits-Ampelleiste,
       (e) Zyklus-Zeitleiste, (f) Order-Lifecycle-Ansicht, (g) Telegram
       /status-Befehl. (a)-(c) bot-unabhängig vorbereitbar.
-- [ ] **1.6 Versions-Stempel in Entscheidungslogs** (vor Reaktivierung!) —
-      decision_log/analysis_log speichern weder Git-Hash noch
-      Config-Schnappschuss → Evidenz-Gates (1.1) messen sonst ein
-      bewegliches Ziel. Billige Spalten (git_hash, config_json), idempotente
-      Migration wie cost_eur — wirkt nur ab Einbau, rückwirkend nie.
+- [x] **1.6 Versions-Stempel in Entscheidungslogs** — fertig 11.7.
+      `analyzers/version_stamp.py`: Git-Hash (kurz) + kuratierter
+      Config-Schnappschuss (Whitelist entscheidungsrelevanter Werte +
+      ENV-Flags, bewusst NIE die ganze Config — enthält Keys), einmal pro
+      Prozess gecacht (laufender Prozess führt den Start-Code aus, frisch
+      gelesener Hash wäre bei Änderungen im Working Tree falscher).
+      decision_log + analysis_log stempeln jeden neuen Eintrag automatisch
+      (Spalten git_hash/config_json, idempotente Migration wie cost_eur;
+      analysis_log-Migration dabei auf PRAGMA-Muster umgestellt). Fail-open
+      an jeder Naht. 9 Tests (test_version_stamp.py), Suite 400 grün;
+      Migration gegen Kopien der echten DBs verifiziert (1620 Analyse-
+      Zeilen erhalten, Alt-Zeilen NULL — rückwirkend nie).
 - [ ] **1.7 Externer Dead-Man-Switch** — watchdog.sh läuft auf demselben
       Server; externer Dienst (z.B. healthchecks.io) soll Ausbleiben von
       Zyklus-Pings alarmieren.

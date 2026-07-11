@@ -84,7 +84,9 @@ class DecisionLog:
                     sources_used    INTEGER,
                     regime          TEXT,
                     macro_bias      REAL,
-                    cost_eur        REAL             -- attribuierte API-Kosten (Ziel 5)
+                    cost_eur        REAL,            -- attribuierte API-Kosten (Ziel 5)
+                    git_hash        TEXT,            -- Code-Stand (Roadmap 1.6)
+                    config_json     TEXT             -- Config-Schnappschuss (Roadmap 1.6)
                 );
                 CREATE INDEX IF NOT EXISTS idx_dec_day    ON decisions(decided_at);
                 CREATE INDEX IF NOT EXISTS idx_dec_ticker ON decisions(ticker);
@@ -97,7 +99,9 @@ class DecisionLog:
         """Idempotente Spalten-Migration für bestehende DBs (ADD COLUMN nur wenn
         fehlt) – analog experience_store. Nachgerüstete Spalten hier eintragen."""
         have = {r["name"] for r in self._conn.execute("PRAGMA table_info(decisions)")}
-        for col, decl in (("cost_eur", "REAL"),):
+        for col, decl in (("cost_eur", "REAL"),
+                          ("git_hash", "TEXT"),
+                          ("config_json", "TEXT")):
             if col not in have:
                 self._conn.execute(f"ALTER TABLE decisions ADD COLUMN {col} {decl}")
 
@@ -111,10 +115,20 @@ class DecisionLog:
         """
         cols = ("decided_at", "ticker", "action", "reason", "executed", "source",
                 "recommendation", "direction", "sentiment_score", "confidence",
-                "sources_used", "regime", "macro_bias", "cost_eur")
+                "sources_used", "regime", "macro_bias", "cost_eur",
+                "git_hash", "config_json")
         e = dict(entry)
         e.setdefault("decided_at",
                      datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
+        # Versions-Stempel (Roadmap 1.6): automatisch anhängen, damit jeder
+        # Aufrufer ihn gratis bekommt. Fail-open (None), nie eine Exception.
+        try:
+            from analyzers.version_stamp import stamp
+            git_hash, config_json = stamp()
+            e.setdefault("git_hash", git_hash)
+            e.setdefault("config_json", config_json)
+        except Exception:
+            pass
         with self._lock:
             self._conn.execute(
                 f"INSERT INTO decisions ({','.join(cols)}) "
