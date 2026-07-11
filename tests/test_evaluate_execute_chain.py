@@ -122,6 +122,39 @@ def test_stop_loss_exit_chain(tmp_path, monkeypatch):
     assert p.get_position("NVDA") is None
 
 
+def test_realized_loss_trips_circuit_breaker(tmp_path, monkeypatch):
+    """End-to-End-Regression (gefixt 11.7.2026): TradeExecutor kannte die
+    Strategy-Instanz nicht → record_loss() (Grundlage von
+    _circuit_breaker_active) wurde im Live-Pfad NIE aufgerufen, _daily_loss_usd
+    blieb für immer 0 und der Tagesverlust-Circuit-Breaker griff nie."""
+    p = make_portfolio(tmp_path, monkeypatch)
+    p.open_position(Position(
+        ticker="NVDA", shares=10, entry_price=120.0,
+        entry_date="2026-06-10T00:00:00", stop_loss=110.0, take_profit=150.0,
+        target_hold_days=10,
+    ))
+    strat = make_strategy(p)
+    broker = FakeBroker()
+    ex = TradeExecutor(p, broker, journal=None, notifier=_NullNotifier(), strategy=strat)
+
+    # Kurs unter Stop-Loss → realer Verlust wird verkauft und gebucht
+    results = strat.check_exits({"NVDA": 105.0}, regime="NEUTRAL")
+    for r in results:
+        ex.execute(r, days_held=4)
+
+    assert strat._daily_loss_usd == pytest.approx(10 * (120.0 - 105.0))
+
+    import config as config_mod
+    # circuit_breaker_loss_pct ist kein deklariertes Config-Feld (immer der
+    # getattr-Default 0.05) – raising=False, um es testweise trotzdem zu setzen.
+    monkeypatch.setattr(config_mod.config, "circuit_breaker_loss_pct", 0.0001, raising=False)
+    assert strat._circuit_breaker_active(config_mod.config) is True
+
+    result = strat.evaluate("AAPL", _bullish_analysis(), current_price=50.0, regime="NEUTRAL")
+    assert result.action == "SKIP"
+    assert "Circuit-Breaker" in result.reason
+
+
 def test_full_queue_enqueues_with_dict_sources(tmp_path, monkeypatch):
     """sources_used als Dict (Quelle→Anzahl) crashte den Enqueue-Pfad früher
     mit int(dict) — jetzt wird die normalisierte Summe eingereiht."""

@@ -275,7 +275,7 @@ def run_bot_loop(
     # (SL/TP-Job, Conditional Entries). Siehe strategy/executor.py.
     from strategy.executor import TradeExecutor
     from strategy.swing_strategy import StrategyResult
-    _executor = TradeExecutor(portfolio, broker, getattr(strategy, "journal", None))
+    _executor = TradeExecutor(portfolio, broker, getattr(strategy, "journal", None), strategy=strategy)
 
     try:
         start_dashboard(port=int(os.getenv("DASHBOARD_PORT", "8080")))

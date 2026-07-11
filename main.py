@@ -587,7 +587,7 @@ def main():
         kelly_sizer=kelly_sizer,
         goal_risk_assessor=goal_risk,
     )
-    earnings_strategy = EarningsStrategy(portfolio, broker)
+    earnings_strategy = EarningsStrategy(portfolio, broker, strategy=strategy)
 
     # TradingView Sofortausführungs-Thread
     if config.tradingview_webhook_enabled:

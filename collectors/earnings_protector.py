@@ -75,7 +75,7 @@ def _check_and_protect(strategy: "SwingStrategy") -> None:
 
     from strategy.executor import TradeExecutor
     from strategy.swing_strategy import StrategyResult
-    _executor = TradeExecutor(portfolio, broker, getattr(strategy, "journal", None))
+    _executor = TradeExecutor(portfolio, broker, getattr(strategy, "journal", None), strategy=strategy)
 
     for ticker, pos in positions:
         try:

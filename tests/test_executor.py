@@ -133,6 +133,36 @@ def test_full_sell_closes_position(tmp_path, monkeypatch):
     assert p.get_position("AAPL") is None          # geschlossen
 
 
+class FakeStrategy:
+    """Spy für strategy.record_loss() – prüft die Circuit-Breaker-Verdrahtung."""
+    def __init__(self):
+        self.losses = []
+
+    def record_loss(self, pnl):
+        self.losses.append(pnl)
+
+
+def test_full_sell_reports_pnl_to_circuit_breaker(tmp_path, monkeypatch):
+    """Regression: TradeExecutor kannte die Strategy-Instanz nicht → record_loss()
+    (Grundlage von SwingStrategy._circuit_breaker_active) wurde im Live-Pfad NIE
+    aufgerufen, der Tagesverlust-Circuit-Breaker griff daher nie."""
+    p = make_portfolio(tmp_path, monkeypatch)
+    p.open_position(Position(
+        ticker="AAPL", shares=10, entry_price=150.0,
+        entry_date="2026-06-10T00:00:00", stop_loss=135.0, take_profit=180.0,
+        target_hold_days=14,
+    ))
+    broker = FakeBroker(fill=True)
+    fake_strategy = FakeStrategy()
+    ex = TradeExecutor(p, broker, journal=None, notifier=_NullNotifier(), strategy=fake_strategy)
+    res = StrategyResult("SELL", "AAPL", "Stop-Loss ausgelöst @ $140.00",
+                         shares=10, price=140.0)
+
+    ex.execute(res, days_held=2)
+
+    assert fake_strategy.losses == [pytest.approx(10 * (140.0 - 150.0))]
+
+
 def test_partial_tp_sells_without_closing(tmp_path, monkeypatch):
     """Partial-TP: Engine hat das Buch schon reduziert → nur Broker-Order, kein close."""
     p = make_portfolio(tmp_path, monkeypatch)

@@ -829,7 +829,7 @@ def run_analysis_cycle(
     # Führt die StrategyResult-Entscheidungen der (reinen) SwingStrategy aus.
     from strategy.executor import TradeExecutor
     from strategy.swing_strategy import StrategyResult
-    executor = TradeExecutor(portfolio, broker, getattr(strategy, "journal", None))
+    executor = TradeExecutor(portfolio, broker, getattr(strategy, "journal", None), strategy=strategy)
 
     # Regime-Default, falls kein Hedge aktiv ist oder der Regime-Check scheitert –
     # sonst NameError weiter unten (check_exits / evaluate brauchen regime).

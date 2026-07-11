@@ -118,12 +118,17 @@ def _fail_reason(fill) -> str:
 
 
 class TradeExecutor:
-    def __init__(self, portfolio, broker, journal=None, notifier=None):
+    def __init__(self, portfolio, broker, journal=None, notifier=None, strategy=None):
         self.portfolio = portfolio
         self.broker = broker
         self.journal = journal
         self._notifier = notifier  # lazy: erst bei Bedarf erstellen
         self._accepts_stop = None  # lazy: kennt broker.buy stop_loss?
+        # Für den Circuit-Breaker: SwingStrategy.record_loss() muss den
+        # REALISIERTEN Verlust (echter Fill-Preis) erfahren, sonst bleibt
+        # SwingStrategy._daily_loss_usd für immer 0 und der Tagesverlust-
+        # Circuit-Breaker (_circuit_breaker_active) greift nie.
+        self._strategy = strategy
 
     @property
     def notifier(self):
@@ -363,6 +368,11 @@ class TradeExecutor:
 
         _throttle_clear(f"SELL_FAIL:{ticker}")  # Exit geglückt → Alarm zurücksetzen
         pnl = self.portfolio.close_position(ticker, actual_price, result.reason)
+        if self._strategy is not None:
+            try:
+                self._strategy.record_loss(pnl)
+            except Exception as e:
+                log.debug("[%s] record_loss (Circuit-Breaker) fehlgeschlagen: %s", ticker, e)
         self._notify_sell(ticker, sell_shares, actual_price, pos, pnl, result.reason, days_held)
         self._journal_exit(ticker, actual_price, pos.entry_price, pnl, result.reason, days_held)
 

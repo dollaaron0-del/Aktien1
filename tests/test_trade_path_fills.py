@@ -70,15 +70,37 @@ def _position(ticker="AAPL", shares=10.0, entry=100.0, rationale="Test"):
 
 # ── EarningsStrategy: Zwangs-Exit vor Earnings ──────────────────────────────
 
-def _make_earnings(portfolio, broker):
+def _make_earnings(portfolio, broker, strategy=None):
     from strategy.earnings_strategy import EarningsStrategy
-    es = EarningsStrategy(portfolio, broker)
+    es = EarningsStrategy(portfolio, broker, strategy=strategy)
     es._executor._notifier = _NullNotifier()
     # Earnings morgen → Exit-Bedingung erfüllt
     es._ef = types.SimpleNamespace(
         next_earnings=lambda t: datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=1)
     )
     return es
+
+
+def test_earnings_exit_reports_pnl_to_circuit_breaker(tmp_path, monkeypatch):
+    """Regression (gefixt 11.7.2026): EarningsStrategy baute ihren TradeExecutor
+    ohne Strategy-Referenz – ein Verlust-Exit vor Earnings erreichte nie den
+    Tagesverlust-Circuit-Breaker der SwingStrategy, obwohl dieselbe Kasse betroffen ist."""
+    class _FakeStrategy:
+        def __init__(self):
+            self.losses = []
+
+        def record_loss(self, pnl):
+            self.losses.append(pnl)
+
+    p = make_portfolio(tmp_path, monkeypatch)
+    p.open_position(_position("NVDA", entry=100.0, rationale="EARNINGS_PRE: 7d, Beat-Score 0.8"))
+    fake_strategy = _FakeStrategy()
+    broker = FakeBroker(fill=True, price=90.0)  # Verlust ggü. Entry 100.0
+    es = _make_earnings(p, broker, strategy=fake_strategy)
+
+    es.check_pre_earnings_exits()
+
+    assert fake_strategy.losses == [pytest.approx(10.0 * (90.0 - 100.0))]
 
 
 def test_earnings_exit_places_broker_order(tmp_path, monkeypatch):

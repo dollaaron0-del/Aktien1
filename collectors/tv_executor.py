@@ -76,7 +76,7 @@ def _execute_cycle(strategy: "SwingStrategy") -> None:
     # ── SELL-Signale sofort ausführen ─────────────────────────────────────────
     from strategy.executor import TradeExecutor
     from strategy.swing_strategy import StrategyResult
-    _executor = TradeExecutor(portfolio, broker, getattr(strategy, "journal", None))
+    _executor = TradeExecutor(portfolio, broker, getattr(strategy, "journal", None), strategy=strategy)
     for sig in get_pending_sells():
         ticker = sig["ticker"]
         pos    = portfolio.get_position(ticker)

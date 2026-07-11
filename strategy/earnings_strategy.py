@@ -79,15 +79,18 @@ class EarningsStrategy:
         exits  = earnings_strategy.check_pre_earnings_exits()
     """
 
-    def __init__(self, portfolio: Portfolio, broker) -> None:
+    def __init__(self, portfolio: Portfolio, broker, strategy=None) -> None:
         self.portfolio  = portfolio
         self.broker     = broker
         self._ef        = EarningsFilter(block_days=4, warn_days=_PRE_WIN_MAX)
         self._predictor = EarningsPredictor()
         self._surprise  = EarningsSurprise()
         # Exits laufen über den TradeExecutor: Broker-Order zuerst, Buch nur bei
-        # Fill, Fehlschlag-Alarm mit Throttle, Anti-Short-Guard.
-        self._executor  = TradeExecutor(portfolio, broker)
+        # Fill, Fehlschlag-Alarm mit Throttle, Anti-Short-Guard. strategy (die
+        # SwingStrategy-Instanz, optional) erhält realisierte Verluste auch aus
+        # Earnings-Trades – dieselbe Kasse speist denselben Tagesverlust-Circuit-
+        # Breaker (siehe strategy/executor.py record_loss-Wiring).
+        self._executor  = TradeExecutor(portfolio, broker, strategy=strategy)
 
     # ── Public API ──────────────────────────────────────────────────────────
 
