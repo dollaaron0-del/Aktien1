@@ -73,6 +73,10 @@ _ACCOUNT   = os.getenv("IBKR_ACCOUNT",   "")
 
 _PRICE_TIMEOUT   = 8    # Sekunden Wartezeit auf Marktdaten
 _ORDER_TIMEOUT   = 60   # Sekunden Wartezeit auf Fill (Paper braucht länger als Live)
+# Broker-seitige Schutz-Stops (GTC-Stop-Orders bei IBKR): greifen auch, wenn der
+# Bot ausgefallen ist. Bewusst NUR Stop-Loss (kein Take-Profit-Limit beim Broker,
+# das würde mit Partial-TP/Trailing/Soft-Stop der Bot-Logik kollidieren).
+_SERVER_STOPS = os.getenv("IBKR_SERVER_STOPS", "true").strip().lower() in ("1", "true", "yes")
 _RECONNECT_DELAY = 5    # Sekunden vor Reconnect-Versuch
 _PAPER_ONLY      = os.getenv("IBKR_PAPER_ONLY", "false").lower() == "true"
 # Marktdaten-Typ: 1=Echtzeit (braucht Abo), 2=Frozen, 3=Delayed (~15min, abo-frei),
@@ -114,6 +118,11 @@ def _parse_ticker(ticker: str):
             symbol = ticker[:len(ticker) - len(suffix)]
             return symbol, exch, cur
     return ticker, "SMART", "USD"
+
+
+def _norm_symbol(sym: str) -> str:
+    """Ticker auf IBKR-Basissymbol normalisieren (z.B. 'ASML.AS' → 'ASML')."""
+    return (sym or "").split(".")[0].upper()
 
 
 def _valid_price(p) -> bool:
@@ -443,7 +452,14 @@ class IBKRBroker:
                 return OrderResult.error(
                     ticker=ticker, mode="ibkr",
                     reason=f"Positionsgröße {shares:.4f} < 1 Stück – IBKR-API kann keine Teilaktien handeln")
-            return self._place_order(contract, "BUY", whole)
+            result = self._place_order(contract, "BUY", whole)
+            # Schutz-Stop (GTC) direkt nach dem Fill hinterlegen – überlebt
+            # Bot-Ausfälle. stop_placed=False signalisiert dem Aufrufer, dass
+            # die Position NUR bot-seitig überwacht ist (Executor alarmiert).
+            if _SERVER_STOPS and stop_loss and result.get("status") == "filled":
+                filled_qty = float(result.get("shares") or whole)
+                result["stop_placed"] = self._place_stop(contract, filled_qty, stop_loss)
+            return result
         except Exception as e:
             log.exception("IBKR buy %s: %s", ticker, e)
             return OrderResult.error(reason=str(e), mode="ibkr")
@@ -465,10 +481,128 @@ class IBKRBroker:
                     ticker=ticker, mode="ibkr",
                     reason=f"Restbestand {shares:.4f} < 1 Stück – IBKR-API kann keine Teilaktien verkaufen "
                            f"(Dust ggf. manuell im Desktop schließen)")
+            # Ruhenden Schutz-Stop VOR dem Verkauf räumen: bliebe er liegen,
+            # würde er nach dem Exit auf leerer Position auslösen → Short.
+            # (Schlägt der Verkauf danach fehl, ist die Position kurz ohne
+            # Broker-Stop – der Bot lebt aber gerade und alarmiert/retryt.)
+            if _SERVER_STOPS:
+                self._cancel_stops(contract.symbol)
             return self._place_order(contract, "SELL", whole)
         except Exception as e:
             log.exception("IBKR sell %s: %s", ticker, e)
             return OrderResult.error(reason=str(e), mode="ibkr")
+
+    # ── Broker-seitige Schutz-Stops (GTC) ────────────────────────────────────
+    # Notfallnetz für Bot-Ausfälle: die Exit-Logik des Bots bleibt führend,
+    # aber jede Position hat einen ruhenden GTC-Stop beim Broker. Lebenszyklus:
+    # buy() legt ihn an, sell() räumt ihn weg, update_stop() ersetzt ihn nach
+    # Partial-TP, sync_protective_stops() heilt Lücken beim Start.
+
+    def _open_stop_orders(self, symbol: str) -> List:
+        """Offene SELL-Stop-Orders für `symbol`. reqAllOpenOrders sieht auch
+        Orders früherer Sessions (GTC überlebt Neustarts), openTrades nur die
+        eigene Session – beide abfragen und per orderId deduplizieren."""
+        trades: Dict[int, object] = {}
+        for fn_name in ("reqAllOpenOrders", "openTrades"):
+            fn = getattr(self._ib, fn_name, None)
+            if not callable(fn):
+                continue
+            try:
+                for tr in (fn() or []):
+                    trades.setdefault(getattr(tr.order, "orderId", id(tr)), tr)
+            except Exception as e:
+                log.debug("IBKR %s: %s", fn_name, e)
+        base = _norm_symbol(symbol)
+        out = []
+        for tr in trades.values():
+            try:
+                if (_norm_symbol(tr.contract.symbol) == base
+                        and tr.order.action == "SELL"
+                        and tr.order.orderType == "STP"
+                        and tr.orderStatus.status not in ("Filled", "Cancelled", "Inactive")):
+                    out.append(tr)
+            except Exception:
+                continue
+        return out
+
+    def _cancel_stops(self, symbol: str) -> int:
+        """Cancelt alle ruhenden Schutz-Stops für `symbol`. Fehlschlag ist laut:
+        ein liegengebliebener Stop würde auf leerer Position shorten."""
+        n = 0
+        for tr in self._open_stop_orders(symbol):
+            try:
+                self._ib.cancelOrder(tr.order)
+                n += 1
+            except Exception as e:
+                log.error("IBKR: Schutz-Stop-Cancel %s fehlgeschlagen (%s) – "
+                          "Order kann auf leerer Position auslösen (Short-Gefahr)!",
+                          symbol, e)
+        if n:
+            log.info("IBKR: %d Schutz-Stop(s) für %s gecancelt", n, symbol)
+        return n
+
+    def _place_stop(self, contract, shares: float, stop_price: float) -> bool:
+        """Platziert einen GTC-Stop (SELL). Kein Fill-Warten – die Order ruht."""
+        try:
+            from ib_insync import StopOrder
+            whole = math.floor(float(shares))
+            stop_price = round(float(stop_price), 2)
+            if whole <= 0 or stop_price <= 0:
+                return False
+            order = StopOrder("SELL", whole, stop_price, tif="GTC")
+            account = getattr(self, "_active_account", _ACCOUNT) or _ACCOUNT
+            if account:
+                order.account = account
+            self._ib.placeOrder(contract, order)
+            log.info("IBKR: GTC-Schutz-Stop platziert: SELL %d %s @ %.2f",
+                     whole, contract.symbol, stop_price)
+            return True
+        except Exception as e:
+            log.error("IBKR: Schutz-Stop für %s NICHT platziert: %s", contract.symbol, e)
+            return False
+
+    @_synchronized
+    def update_stop(self, ticker: str, shares: float, stop_price: float) -> bool:
+        """Ersetzt den Schutz-Stop (z.B. nach Partial-TP: neue Restmenge/SL).
+        shares<=0 oder stop_price<=0 → nur aufräumen."""
+        if not _SERVER_STOPS or not self._ensure_connected():
+            return False
+        try:
+            contract = self._stock_contract(ticker)
+            if not self._ib.qualifyContracts(contract):
+                return False
+            self._cancel_stops(contract.symbol)
+            if shares <= 0 or not stop_price or stop_price <= 0:
+                return True
+            return self._place_stop(contract, shares, stop_price)
+        except Exception as e:
+            log.error("IBKR update_stop %s: %s", ticker, e)
+            return False
+
+    @_synchronized
+    def sync_protective_stops(self, book: Dict[str, tuple]) -> Optional[Dict[str, bool]]:
+        """Start-Heilung: stellt sicher, dass jede Buch-Position einen ruhenden
+        GTC-Stop hat (Positionen aus der Zeit vor diesem Feature, verlorene
+        Orders). `book` = {ticker: (shares, stop_loss)}. Bestehende Stops werden
+        NICHT angefasst (Preis-Anpassung wäre Doppel-Management mit der
+        Trailing-Logik des Bots). None = nicht prüfbar (offline/abgeschaltet)."""
+        if not _SERVER_STOPS or not self._ensure_connected():
+            return None
+        result: Dict[str, bool] = {}
+        for ticker, (shares, stop_price) in book.items():
+            try:
+                contract = self._stock_contract(ticker)
+                if not self._ib.qualifyContracts(contract):
+                    result[ticker] = False
+                    continue
+                if self._open_stop_orders(contract.symbol):
+                    result[ticker] = True  # bereits geschützt
+                    continue
+                result[ticker] = self._place_stop(contract, shares, stop_price)
+            except Exception as e:
+                log.warning("IBKR Stop-Sync %s: %s", ticker, e)
+                result[ticker] = False
+        return result
 
     @_synchronized
     def buy_crypto(self, symbol: str, usd_amount: float) -> Dict:

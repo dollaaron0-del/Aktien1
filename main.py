@@ -343,6 +343,36 @@ def main():
                         pass
     except Exception as _be:
         log.debug("Broker-Abgleich übersprungen: %s", _be)
+    # Broker-seitige Schutz-Stops (GTC) für alle Buch-Positionen sicherstellen –
+    # greifen auch bei Bot-Ausfall. Heilt Positionen aus der Zeit vor dem Feature
+    # und nach verlorenen Orders; bestehende Stops bleiben unangetastet.
+    try:
+        _sync_stops = getattr(broker, "sync_protective_stops", None)
+        if callable(_sync_stops):
+            _stop_book = {t: (p.shares, p.stop_loss)
+                          for t, p in portfolio.all_positions().items()
+                          if p.stop_loss and p.shares > 0}
+            if _stop_book:
+                _sres = _sync_stops(_stop_book)
+                if _sres is None:
+                    log.info("Schutz-Stop-Sync übersprungen (offline/deaktiviert).")
+                else:
+                    _missing = [t for t, ok in _sres.items() if not ok]
+                    if _missing:
+                        log.warning("Schutz-Stop-Sync: NICHT platziert für %s", ", ".join(_missing))
+                        try:
+                            from notifier.telegram_notifier import TelegramNotifier
+                            TelegramNotifier().send(
+                                "⚠️ <b>Schutz-Stops beim Start unvollständig</b>\n"
+                                "Kein Broker-Stop platzierbar für: " + ", ".join(_missing),
+                                level="critical",
+                            )
+                        except Exception:
+                            pass
+                    else:
+                        log.info("Schutz-Stop-Sync: %d Position(en) broker-seitig abgesichert.", len(_sres))
+    except Exception as _se:
+        log.debug("Schutz-Stop-Sync übersprungen: %s", _se)
     tracker = PerformanceTracker()
     phase_ctrl = _make_phase_ctrl()
     focus_ctrl = _make_focus_ctrl()

@@ -1057,6 +1057,15 @@ def run_bot_loop(
                     try:
                         portfolio.open_position(pos)
                         watcher.remove(entry.ticker)
+                        # Broker-seitigen GTC-Schutz-Stop hinterlegen (greift
+                        # auch bei Bot-Ausfall); update_stop platziert neu.
+                        _upd = getattr(broker, "update_stop", None)
+                        if callable(_upd):
+                            try:
+                                _upd(entry.ticker, shares, round(sl, 4))
+                            except Exception as _ste:
+                                log.warning("Schutz-Stop für Limit-Fill %s nicht platziert: %s",
+                                            entry.ticker, _ste)
                         log.info(
                             "IBKR Limit-Order gefüllt: %s %.4f @ $%.4f (Order #%d)",
                             entry.ticker, shares, fill_price, entry.ibkr_order_id,

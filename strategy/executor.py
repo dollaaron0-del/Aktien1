@@ -123,6 +123,7 @@ class TradeExecutor:
         self.broker = broker
         self.journal = journal
         self._notifier = notifier  # lazy: erst bei Bedarf erstellen
+        self._accepts_stop = None  # lazy: kennt broker.buy stop_loss?
 
     @property
     def notifier(self):
@@ -133,6 +134,30 @@ class TradeExecutor:
             except Exception:
                 self._notifier = _NullNotifier()
         return self._notifier
+
+    def _broker_accepts_stop(self) -> bool:
+        """True, wenn broker.buy einen stop_loss-Parameter annimmt."""
+        if self._accepts_stop is None:
+            try:
+                import inspect
+                self._accepts_stop = "stop_loss" in inspect.signature(self.broker.buy).parameters
+            except (TypeError, ValueError):
+                self._accepts_stop = False
+        return self._accepts_stop
+
+    def _sync_stop_after_partial(self, ticker: str) -> None:
+        """Nach Partial-TP den Broker-Schutz-Stop auf Restmenge + neuen SL
+        nachziehen (die Engine hat das Buch bereits aktualisiert)."""
+        upd = getattr(self.broker, "update_stop", None)
+        if not callable(upd):
+            return
+        try:
+            pos = self.portfolio.get_position(ticker)
+            if pos and pos.shares > 0:
+                upd(ticker, pos.shares, pos.stop_loss)
+        except Exception as e:
+            log.warning("[%s] Schutz-Stop-Nachführung nach Partial-TP fehlgeschlagen: %s",
+                        ticker, e)
 
     # ── Broker-Deckungs-Check (Anti-Short bei Buch/IBKR-Desync) ──────────────
     def _broker_held(self, ticker: str) -> Optional[float]:
@@ -205,7 +230,15 @@ class TradeExecutor:
         if shares <= 0:
             return f"[{ticker}] Positionsgröße = 0 – übersprungen"
 
-        fill = self.broker.buy(ticker, shares, result.price)
+        # stop_loss nur durchreichen, wenn der Broker den Parameter kennt
+        # (IBKR platziert daraus einen GTC-Schutz-Stop; Paper ignoriert ihn).
+        # Signatur-Check statt try/TypeError: ein TypeError aus dem Broker-
+        # Inneren darf NIE eine zweite Order auslösen.
+        if self._broker_accepts_stop():
+            fill = self.broker.buy(ticker, shares, result.price,
+                                   stop_loss=result.stop_loss or None)
+        else:
+            fill = self.broker.buy(ticker, shares, result.price)
         if not _is_filled(fill):
             warn = _fail_reason(fill)
             return f"[{ticker}] ⛔ BUY-Order fehlgeschlagen: {warn}"
@@ -242,6 +275,16 @@ class TradeExecutor:
             rationale=result.reason or getattr(analysis, "entry_rationale", "") or "",
             entry_catalysts=catalysts,
         )
+        # IBKR meldet stop_placed=False, wenn der GTC-Schutz-Stop nicht
+        # hinterlegt werden konnte → Position ist NUR bot-seitig überwacht.
+        if fill.get("stop_placed") is False:
+            log.error("[%s] Schutz-Stop beim Broker NICHT platziert – nur Bot-Überwachung aktiv", ticker)
+            self.notifier.send(
+                f"⚠️ <b>{ticker}: Broker-Schutz-Stop NICHT platziert</b>\n"
+                f"Position ist nur bot-seitig abgesichert – bitte IBKR prüfen.",
+                level="critical",
+            )
+
         try:
             self.portfolio.open_position(position)
         except ValueError as ve:
@@ -287,6 +330,10 @@ class TradeExecutor:
                 )
                 log.error("[%s] Partial-TP Broker-Sell fehlgeschlagen: %s", ticker, warn)
             actual_price = _fill_price(fill, result.price)
+            if _is_filled(fill):
+                # Broker-Schutz-Stop auf Restmenge/neuen SL nachziehen – der
+                # alte Stop deckte die volle Menge und würde sonst überverkaufen.
+                self._sync_stop_after_partial(ticker)
             self.notifier.send(
                 f"📊 <b>{ticker} Partial-TP</b>: {sell_shares:.4f} Stück @ ${actual_price:.2f}\n{result.reason}",
                 level="trade",

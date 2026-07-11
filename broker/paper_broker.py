@@ -146,7 +146,10 @@ class PaperBroker:
 
     # ── Aktien-Orders ──────────────────────────────────────────────────────────
 
-    def buy(self, ticker: str, shares: float, price: float) -> Dict:
+    def buy(self, ticker: str, shares: float, price: float,
+            stop_loss: Optional[float] = None, take_profit: Optional[float] = None) -> Dict:
+        # stop_loss/take_profit: Signatur-Kompatibilität zum IBKR-Broker
+        # (broker-seitige Schutz-Stops). Paper simuliert keine ruhenden Orders.
         fill_price, slippage, commission = self._calc_slippage(ticker, price, shares, "BUY")
         self._track_costs(slippage, commission)
         return OrderResult.filled(
