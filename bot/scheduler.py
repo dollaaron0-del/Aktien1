@@ -1055,7 +1055,11 @@ def run_bot_loop(
                         entry_catalysts=entry.key_catalysts,
                     )
                     try:
-                        portfolio.open_position(pos)
+                        # force=True: der Fill ist beim Broker bereits Tatsache
+                        # (Geld ausgegeben) – ein Buch-Cash-Mangel darf die
+                        # Buchung nicht auf ewig verhindern (sonst hält IBKR die
+                        # Position, das Buch weiß nie davon, Job spammt alle 5min).
+                        portfolio.open_position(pos, force=True)
                         watcher.remove(entry.ticker)
                         # Broker-seitigen GTC-Schutz-Stop hinterlegen (greift
                         # auch bei Bot-Ausfall); update_stop platziert neu.

@@ -151,6 +151,40 @@ def test_partial_tp_sells_without_closing(tmp_path, monkeypatch):
     assert p.get_position("AAPL") is not None        # Position bleibt offen
 
 
+class RecordingNotifier(_NullNotifier):
+    def __init__(self):
+        self.sent = []
+
+    def send(self, msg, level=None):
+        self.sent.append((msg, level))
+
+
+def test_partial_tp_failed_order_sends_only_critical_alert(tmp_path, monkeypatch):
+    """Regression: bei fehlgeschlagener Partial-TP-Order wurde nach dem
+    kritischen Fehlalarm zusätzlich eine widersprüchliche Erfolgsmeldung
+    ("📊 Partial-TP: ... @ $result.price") verschickt – mit dem angefragten
+    statt einem echten Fill-Preis. Jetzt: nur der Fehlalarm, klare Fehler-Rückgabe."""
+    p = make_portfolio(tmp_path, monkeypatch)
+    p.open_position(Position(
+        ticker="AAPL", shares=10, entry_price=150.0,
+        entry_date="2026-06-10T00:00:00", stop_loss=135.0, take_profit=180.0,
+        target_hold_days=14,
+    ))
+    broker = FakeBroker(fill=False)
+    notifier = RecordingNotifier()
+    ex = TradeExecutor(p, broker, journal=None, notifier=notifier)
+    res = StrategyResult("SELL", "AAPL", "Partial-TP Stufe 1: 35% @ +10.0%",
+                         shares=3.5, price=165.0)
+
+    out = ex.execute(res)
+
+    assert "fehlgeschlagen" in out
+    assert "Partial-TP" not in out.split("fehlgeschlagen")[-1]  # keine Erfolgsmeldung angehängt
+    levels = [lvl for _, lvl in notifier.sent]
+    assert levels == ["critical"]        # KEINE zusätzliche "trade"-Erfolgsmeldung
+    assert p.get_position("AAPL").shares == 10  # Buch (von der Engine reduziert) unverändert durch Executor
+
+
 def test_failed_buy_opens_no_position(tmp_path, monkeypatch):
     p = make_portfolio(tmp_path, monkeypatch)
     ex, broker = make_exec(p, fill=False)

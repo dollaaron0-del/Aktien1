@@ -329,11 +329,11 @@ class TradeExecutor:
                     level="critical",
                 )
                 log.error("[%s] Partial-TP Broker-Sell fehlgeschlagen: %s", ticker, warn)
+                return f"[{ticker}] ⛔ Partial-TP Broker-Order fehlgeschlagen: {warn}"
             actual_price = _fill_price(fill, result.price)
-            if _is_filled(fill):
-                # Broker-Schutz-Stop auf Restmenge/neuen SL nachziehen – der
-                # alte Stop deckte die volle Menge und würde sonst überverkaufen.
-                self._sync_stop_after_partial(ticker)
+            # Broker-Schutz-Stop auf Restmenge/neuen SL nachziehen – der alte
+            # Stop deckte die volle Menge und würde sonst überverkaufen.
+            self._sync_stop_after_partial(ticker)
             self.notifier.send(
                 f"📊 <b>{ticker} Partial-TP</b>: {sell_shares:.4f} Stück @ ${actual_price:.2f}\n{result.reason}",
                 level="trade",

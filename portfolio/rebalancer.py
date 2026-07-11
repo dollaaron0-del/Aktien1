@@ -351,7 +351,7 @@ class PortfolioRebalancer:
             pos.shares * current_prices.get(pos.ticker, pos.entry_price)
             for pos in positions.values()
         )
-        cash = portfolio.get_cash()
+        cash = portfolio.cash
         return positions_value + cash
 
     def _calc_sector_allocations(

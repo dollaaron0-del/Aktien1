@@ -228,3 +228,42 @@ def test_rebalancer_reduce_keeps_book_on_failed_order(tmp_path, monkeypatch):
     assert p.get_position("AAPL").shares == pytest.approx(10.0)
     assert p.cash == pytest.approx(cash_before)
     assert any("FEHLER REDUCE" in m for m in msgs)
+
+
+def test_rebalancer_plan_reads_cash_without_crash(tmp_path, monkeypatch):
+    """Regression: _calc_portfolio_value rief portfolio.get_cash() auf – die
+    Methode gibt es nicht (nur die `cash`-Property) – jeder Aufruf von
+    check_rebalance_needed()/get_rebalance_plan() crashte mit AttributeError."""
+    from portfolio.rebalancer import PortfolioRebalancer
+    p = make_portfolio(tmp_path, monkeypatch)
+    p.open_position(_position("AAPL", shares=100.0, entry=100.0))  # Technology
+    p.open_position(_position("JPM", shares=50.0, entry=100.0))    # Finance
+    p.open_position(_position("XOM", shares=50.0, entry=100.0))    # Energy
+    prices = {"AAPL": 100.0, "JPM": 100.0, "XOM": 100.0}
+    reb = PortfolioRebalancer()
+
+    needed = reb.check_rebalance_needed(p, prices)
+    plan = reb.get_rebalance_plan(p, prices)
+
+    assert isinstance(needed, bool)
+    assert isinstance(plan, list)
+
+
+# ── Portfolio: force=True für bereits am Broker bestätigte Fills ───────────
+
+def test_open_position_force_bypasses_cash_gate(tmp_path, monkeypatch):
+    """Regression: der IBKR-Fill-Check-Job bucht bestätigte Limit-Order-Fills
+    direkt via portfolio.open_position(). Reicht das Buch-Cash nicht (z.B. weil
+    zwischenzeitlich ein anderer Trade das Cash verbraucht hat), blockte der
+    Cash-Gate die Buchung für immer – obwohl der Broker das Geld bereits
+    ausgegeben hat. force=True muss trotzdem buchen."""
+    p = make_portfolio(tmp_path, monkeypatch, capital=100.0)  # zu wenig für die Position unten
+    pos = _position("NVDA", shares=10.0, entry=150.0)  # entry_value = 1500 > 100 Cash
+
+    with pytest.raises(ValueError):
+        p.open_position(pos)  # ohne force: Cash-Gate blockt weiterhin
+
+    p.open_position(pos, force=True)
+
+    assert p.get_position("NVDA") is not None
+    assert p.get_position("NVDA").shares == 10.0

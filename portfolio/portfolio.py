@@ -251,12 +251,17 @@ class Portfolio:
         ).fetchall()
         return {row[0]: self._row_to_position(row) for row in rows}
 
-    def open_position(self, position: Position) -> None:
+    def open_position(self, position: Position, force: bool = False) -> None:
+        """force=True überspringt den Cash-Gate: für Fälle, in denen der Broker
+        die Order bereits ausgeführt hat (z.B. gefüllte IBKR-Limit-Order) und
+        das Geld real schon ausgegeben ist – ein Cash-Mangel im Buch darf dann
+        die Buchung nicht dauerhaft verhindern (sonst bleibt die Position für
+        immer unverbucht, während der Broker sie längst hält)."""
         cost = position.entry_value
         with _db_lock:
             with self._conn:
                 current_cash = self._get_cash()
-                if cost > current_cash:
+                if cost > current_cash and not force:
                     raise ValueError(
                         f"Nicht genug Cash: benötigt ${cost:.2f}, verfügbar ${current_cash:.2f}"
                     )
