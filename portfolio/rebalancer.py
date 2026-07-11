@@ -132,7 +132,7 @@ class PortfolioRebalancer:
         Returns:
             True wenn Rebalancing empfohlen wird
         """
-        positions = portfolio.get_positions()
+        positions = portfolio.all_positions()
 
         # Mindest-Bedingungen prüfen
         if len(positions) < _MIN_POSITIONS:
@@ -186,7 +186,7 @@ class PortfolioRebalancer:
             }
             Sortiert nach absolutem Diff (größte Abweichungen zuerst).
         """
-        positions = portfolio.get_positions()
+        positions = portfolio.all_positions()
         total_value = self._calc_portfolio_value(portfolio, current_prices)
 
         if total_value <= 0 or len(positions) < _MIN_POSITIONS:
@@ -273,7 +273,7 @@ class PortfolioRebalancer:
 
             if action == "REDUCE":
                 # Position um diff_pct / current_pct Anteil reduzieren
-                positions = portfolio.get_positions()
+                positions = portfolio.all_positions()
                 pos = positions.get(ticker)
                 if not pos:
                     nachricht = f"SKIP {ticker}: Position nicht mehr vorhanden"
@@ -290,10 +290,38 @@ class PortfolioRebalancer:
                     continue
 
                 result = broker.sell(ticker, shares_to_sell, current_price)
+                # Nur bei bestätigtem Fill buchen – und mit den echten Fill-Werten.
+                if not (isinstance(result, dict) and result.get("status") == "filled"):
+                    warn = (result.get("reason") or result.get("error") or "unbekannt") \
+                        if isinstance(result, dict) else str(result)
+                    nachricht = (f"FEHLER REDUCE {ticker}: Order fehlgeschlagen ({warn}) "
+                                 f"– Buch unverändert")
+                    log_eintraege.append(nachricht)
+                    log.error("Rebalancer: %s", nachricht)
+                    continue
+                fill_price = float(result.get("fill_price") or current_price)
+                sold = float(result.get("shares") or shares_to_sell)
+                new_shares = round(pos.shares - sold, 4)
+                pnl = sold * (fill_price - pos.entry_price)
+                # Buch nachziehen: Teilverkauf reduziert Position + bucht Erlös.
+                if new_shares > 0:
+                    portfolio.update_partial_tp(
+                        ticker,
+                        new_shares=new_shares,
+                        new_stop_loss=pos.stop_loss,
+                        sell_shares=sold,
+                        sell_price=fill_price,
+                        pnl=pnl,
+                        new_count=pos.partial_tp_count,
+                        currency=pos.currency,
+                        fx_rate=pos.fx_rate_at_entry,
+                    )
+                else:
+                    portfolio.close_position(ticker, fill_price, reason="Rebalancing")
                 nachricht = (
                     f"REDUCE {ticker} ({sektor}): "
-                    f"-{shares_to_sell:.4f} Shares @ ${current_price:.2f} "
-                    f"(Drift: {diff:+.1f}%) fill=${result.get('fill_price', current_price):.2f}"
+                    f"-{sold:.4f} Shares @ ${fill_price:.2f} "
+                    f"(Drift: {diff:+.1f}%)"
                 )
                 log_eintraege.append(nachricht)
                 log.info("Rebalancer: %s", nachricht)
@@ -318,7 +346,7 @@ class PortfolioRebalancer:
         current_prices: Dict[str, float],
     ) -> float:
         """Berechnet den Gesamtwert des Portfolios."""
-        positions = portfolio.get_positions()
+        positions = portfolio.all_positions()
         positions_value = sum(
             pos.shares * current_prices.get(pos.ticker, pos.entry_price)
             for pos in positions.values()

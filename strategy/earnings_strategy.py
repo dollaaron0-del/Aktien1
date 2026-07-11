@@ -40,6 +40,8 @@ from analyzers.earnings_predictor import EarningsPredictor
 from analyzers.earnings_surprise import EarningsSurprise
 from config import config
 from logger import get_logger
+from strategy.executor import TradeExecutor, _fail_reason, _fill_price, _fill_shares, _is_filled
+from strategy.swing_strategy import StrategyResult
 
 if TYPE_CHECKING:
     pass
@@ -83,6 +85,9 @@ class EarningsStrategy:
         self._ef        = EarningsFilter(block_days=4, warn_days=_PRE_WIN_MAX)
         self._predictor = EarningsPredictor()
         self._surprise  = EarningsSurprise()
+        # Exits laufen über den TradeExecutor: Broker-Order zuerst, Buch nur bei
+        # Fill, Fehlschlag-Alarm mit Throttle, Anti-Short-Guard.
+        self._executor  = TradeExecutor(portfolio, broker)
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -120,13 +125,20 @@ class EarningsStrategy:
             days_left = (ed.date() - datetime.now(timezone.utc).replace(tzinfo=None).date()).days
             if days_left <= 1:
                 price = self.broker.get_price(ticker) or pos.entry_price
-                pnl = self.portfolio.close_position(ticker, price, reason="EARNINGS_EXIT")
-                pnl_str = f"+${pnl:.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}"
-                actions.append(
-                    f"[EARNINGS_PRE][{ticker}] 🗓 Earnings morgen – Position geschlossen "
-                    f"@ ${price:.2f} ({pnl_str})"
-                )
-                log.info("[%s] Pre-Earnings Exit: %d Tage bis Report", ticker, days_left)
+                try:
+                    days_held = (datetime.now(timezone.utc).replace(tzinfo=None)
+                                 - datetime.fromisoformat(pos.entry_date)).days
+                except (TypeError, ValueError):
+                    days_held = 0
+                out = self._executor.execute(StrategyResult(
+                    "SELL", ticker,
+                    "EARNINGS_EXIT – Earnings morgen, Event-Risiko vermeiden",
+                    shares=pos.shares, price=price,
+                ), days_held=days_held)
+                if out:
+                    actions.append(f"[EARNINGS_PRE]{out}")
+                log.info("[%s] Pre-Earnings Exit: %d Tage bis Report → %s",
+                         ticker, days_left, out)
         return actions
 
     # ── Pre-Earnings ────────────────────────────────────────────────────────
@@ -155,12 +167,17 @@ class EarningsStrategy:
         if shares <= 0:
             return None
 
-        sl = round(current_price * (1 - _PRE_SL_PCT), 2)
-        tp = round(current_price * (1 + _PRE_TP_PCT), 2)
         earnings_date = ec["date"] or "?"
 
         fill = self.broker.buy(ticker, shares, current_price)
-        actual_price = fill.get("avg_price", current_price) if fill else current_price
+        if not _is_filled(fill):
+            return f"[EARNINGS_PRE][{ticker}] ⛔ BUY-Order fehlgeschlagen: {_fail_reason(fill)}"
+        actual_price = _fill_price(fill, current_price)
+        shares = _fill_shares(fill, shares)
+        if shares <= 0:
+            return f"[EARNINGS_PRE][{ticker}] ⛔ BUY 0 Stück gefüllt – nicht gebucht"
+        sl = round(actual_price * (1 - _PRE_SL_PCT), 2)
+        tp = round(actual_price * (1 + _PRE_TP_PCT), 2)
 
         pos = Position(
             ticker=ticker,
@@ -213,12 +230,17 @@ class EarningsStrategy:
         if shares <= 0:
             return None
 
-        sl  = round(current_price * (1 - _POST_SL_PCT), 2)
-        tp  = round(current_price * (1 + _POST_TP_PCT), 2)
         surp_pct = surprise.get("surprise_pct", 0.0) or 0.0
 
         fill = self.broker.buy(ticker, shares, current_price)
-        actual_price = fill.get("avg_price", current_price) if fill else current_price
+        if not _is_filled(fill):
+            return f"[EARNINGS_POST][{ticker}] ⛔ BUY-Order fehlgeschlagen: {_fail_reason(fill)}"
+        actual_price = _fill_price(fill, current_price)
+        shares = _fill_shares(fill, shares)
+        if shares <= 0:
+            return f"[EARNINGS_POST][{ticker}] ⛔ BUY 0 Stück gefüllt – nicht gebucht"
+        sl  = round(actual_price * (1 - _POST_SL_PCT), 2)
+        tp  = round(actual_price * (1 + _POST_TP_PCT), 2)
 
         pos = Position(
             ticker=ticker,
