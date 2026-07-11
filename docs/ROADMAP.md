@@ -46,10 +46,16 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       zurückgespielt; einmal auf leerem Verzeichnis komplett restaurieren und
       Bot-Start simulieren, dazu kurzes "Server von Null"-Runbook (Pakete,
       systemd-Units, .env, IB Gateway, crontab).
-- [ ] **0.6 Dependency-Pinning** — requirements.txt hat nur Untergrenzen
-      (>=), pip-Upgrade kann Verhalten still ändern (yfinance bricht
-      notorisch). Lockfile erzeugen (`pip freeze` → requirements.lock), venv
-      danach nur noch bewusst + mit Testsuite aktualisieren.
+- [x] **0.6 Dependency-Pinning** — fertig 11.7. `requirements.lock` per
+      `pip freeze` aus der laufenden venv erzeugt (101 Pakete, exakt gepinnt,
+      keine lokalen/editable Pfade). `requirements.txt` bleibt die
+      Quelle mit Untergrenzen für bewusste Upgrades, Kommentar-Block verweist
+      auf den Workflow (`pip install --upgrade -r requirements.txt && pip
+      freeze > requirements.lock`, danach Testsuite). `scripts/restore.sh`
+      nutzt jetzt bevorzugt `requirements.lock` (Fallback auf
+      `requirements.txt`, falls kein Lockfile im Archiv) — direkt relevant
+      für die geplante Restore-Probe (0.5). `setup_mac_mini.sh` bewusst
+      unverändert (anderes Ziel-System, andere Wheels).
 - [ ] **0.7 Reaktivierungs-Runbook** — verstreute Vorbedingungen als eine
       geordnete Checkliste: Demo-Swap zurück (0.3) → backfill_regime →
       SEC_CONTACT_EMAIL in .env → Registry neu (schlank!) → Versions-Stempel

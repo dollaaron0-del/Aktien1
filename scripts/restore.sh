@@ -73,12 +73,14 @@ if command -v pip3 &>/dev/null; then
 elif command -v pip &>/dev/null; then
     PIP="pip"
 else
-    echo "⚠  pip nicht gefunden – bitte manuell ausführen: pip install -r requirements.txt"
+    echo "⚠  pip nicht gefunden – bitte manuell ausführen: pip install -r requirements.lock"
     PIP=""
 fi
 
-if [[ -n "$PIP" && -f "$PROJECT_DIR/requirements.txt" ]]; then
-    $PIP install -r "$PROJECT_DIR/requirements.txt" -q && echo "  ✓ Pakete installiert" || echo "  ⚠ pip install fehlgeschlagen – bitte manuell prüfen"
+if [[ -n "$PIP" && -f "$PROJECT_DIR/requirements.lock" ]]; then
+    $PIP install -r "$PROJECT_DIR/requirements.lock" -q && echo "  ✓ Pakete installiert (requirements.lock, gepinnt)" || echo "  ⚠ pip install fehlgeschlagen – bitte manuell prüfen"
+elif [[ -n "$PIP" && -f "$PROJECT_DIR/requirements.txt" ]]; then
+    $PIP install -r "$PROJECT_DIR/requirements.txt" -q && echo "  ✓ Pakete installiert (requirements.txt, kein Lockfile gefunden)" || echo "  ⚠ pip install fehlgeschlagen – bitte manuell prüfen"
 fi
 
 # ── Datenbank-Verzeichnis sicherstellen ───────────────────────────────────────
