@@ -69,13 +69,17 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       `requirements.txt`, falls kein Lockfile im Archiv) — direkt relevant
       für die geplante Restore-Probe (0.5). `setup_mac_mini.sh` bewusst
       unverändert (anderes Ziel-System, andere Wheels).
-- [ ] **0.7 Reaktivierungs-Runbook** — verstreute Vorbedingungen als eine
-      geordnete Checkliste: Demo-Swap zurück (0.3) → backfill_regime →
-      SEC_CONTACT_EMAIL in .env → Registry neu (schlank!) → Versions-Stempel
-      (1.6) drin? → Backup-Timer enablen (0.1) → Services/Crontab enablen
-      (CLAUDE.md) → erster Zyklus beaufsichtigt + Montagslauf gegenchecken;
-      dabei 1.9 E2E prüfen: GTC-Schutz-Stops nach erstem Kauf im IB Gateway
-      sichtbar?
+- [x] **0.7 Reaktivierungs-Runbook** — fertig 11.7.: `docs/REAKTIVIERUNG.md`.
+      Geordnete 8-Schritte-Checkliste: Demo-Swap zurück (0.3, selektiver
+      Merge statt rm -rf — data/ ist seit 2.7. divergiert!) → backfill_regime
+      → SEC_CONTACT_EMAIL/BACKUP_REMOTE in .env → Versions-Stempel (1.6,
+      Gate: erst einbauen, dann starten) → Registry schlank neu
+      (walk_forward --total 12 --max-combos 24) → Backup-Timer enablen (0.1)
+      → Services/Crontab enablen → erster Zyklus beaufsichtigt +
+      Montagslauf-Gegencheck → 1.9-Rest E2E (GTC-Stop nach erstem echten
+      Kauf im Gateway sichtbar?). Inkl. Rückabwicklungs-Abschnitt. Das
+      Dokument ist die Checkliste — ausgeführt wird sie erst bei der
+      tatsächlichen Reaktivierung (User-Entscheidung).
 - [x] **0.8 Roadmap ins Repo spiegeln** — dieses Dokument; lebte vorher nur im
       Assistenten-Memory, nicht in Git/Backup erfasst. Bei Änderungen beide
       Stellen pflegen (Memory bleibt Arbeitskopie).
@@ -211,6 +215,11 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
   11.7.2026: nicht nötig, Bot läuft ohnehin erstmal auf Paper-Account,
   Fehler dort egal. Ggf. neu bewerten, falls Umstieg auf echtes Geld
   ansteht.
+- ✗ **Trade Republic als Datenquelle** — geprüft 11.7.2026: keine offizielle
+  API (nur fragile Reverse-Engineering-Clients gegen die AGB, mit echten
+  Login-Daten), Kurse sind nur LS-Exchange-Quotes (redundant zu
+  yfinance/IBKR, qualitativ schlechter als 1.13), kein Informationsvorsprung.
+  Widerspricht zudem dem Collector-Pruning-Ziel (2.4).
 
 ## User-Entscheidungen (Geld/Zugang, blockieren jeweilige Punkte)
 
