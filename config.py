@@ -285,9 +285,10 @@ class Config:
     partial_tp2_pct: float = field(
         default_factory=lambda: float(os.getenv("PARTIAL_TP2_PCT", "0.30"))
     )
-    # SL-Cooldown: N Tage nach SL-Auslösung kein Wiederkauf.
-    # ACHTUNG: Wird nur vom Backtest genutzt (backtesting/engine.py via
-    # scripts/run_backtest.py). Im Live-Pfad gibt es derzeit KEINE solche Sperre.
+    # SL-Cooldown: N Tage nach verlustigem Stop-Loss (ohne vorherigen
+    # Partial-TP) kein Wiederkauf. Gilt im Live-Pfad (analyzers/sl_cooldown.py,
+    # verdrahtet in executor + swing_strategy) UND im Backtest
+    # (backtesting/engine.py via scripts/run_backtest.py).
     sl_cooldown_days: int = field(
         default_factory=lambda: int(os.getenv("SL_COOLDOWN_DAYS", "2"))
     )

@@ -359,6 +359,17 @@ class SwingStrategy:
         if self.earnings_filter and self.earnings_filter.is_blocked(ticker):
             return StrategyResult("SKIP", ticker, "Earnings-Sperre aktiv")
 
+        # SL-Cooldown: nach verlustigem Stop-Loss N Tage keinen Re-Entry
+        # (config.sl_cooldown_days; Pendant zur Backtest-Regel in
+        # backtesting/engine.py). Fail-open bei Lese-/Importfehlern.
+        try:
+            from analyzers.sl_cooldown import StopLossCooldown
+            _sl_blocked, _sl_why = StopLossCooldown().is_blocked(ticker)
+            if _sl_blocked:
+                return StrategyResult("SKIP", ticker, _sl_why)
+        except Exception as _e:
+            log.debug("SL-Cooldown-Check übersprungen [%s]: %s", ticker, _e)
+
         # Correlation check
         if self.correlation_checker:
             positions = self.portfolio.all_positions()

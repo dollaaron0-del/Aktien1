@@ -373,6 +373,20 @@ class TradeExecutor:
                 self._strategy.record_loss(pnl)
             except Exception as e:
                 log.debug("[%s] record_loss (Circuit-Breaker) fehlgeschlagen: %s", ticker, e)
+        # SL-Cooldown: nur nach einem "sauberen", verlustigen Stop-Loss (kein
+        # vorheriger Partial-TP, kein Trailing-Stop im Gewinn) den Ticker für
+        # config.sl_cooldown_days sperren — Pendant zur Cooldown-Regel im
+        # Backtest (backtesting/engine.py). Fail-open.
+        if (
+            (result.reason or "").startswith("Stop-Loss")
+            and pnl < 0
+            and not getattr(pos, "partial_tp_count", 0)
+        ):
+            try:
+                from analyzers.sl_cooldown import StopLossCooldown
+                StopLossCooldown().record(ticker, actual_price)
+            except Exception as e:
+                log.debug("[%s] SL-Cooldown record fehlgeschlagen: %s", ticker, e)
         self._notify_sell(ticker, sell_shares, actual_price, pos, pnl, result.reason, days_held)
         self._journal_exit(ticker, actual_price, pos.entry_price, pnl, result.reason, days_held)
 

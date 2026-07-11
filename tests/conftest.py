@@ -21,6 +21,15 @@ os.environ.setdefault(
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_sl_cooldown(tmp_path, monkeypatch):
+    """SL-Cooldown-Datei IMMER in ein Temp-File umlenken: der Executor-Hook
+    (Clean-SL → record()) feuert sonst aus beliebigen Exit-Tests heraus in die
+    echte data/sl_cooldown.json und sperrt dort Ticker für Folge-Tests."""
+    import analyzers.sl_cooldown as slc_mod
+    monkeypatch.setattr(slc_mod, "_FILE", str(tmp_path / "sl_cooldown_test.json"))
+
+
 @pytest.fixture()
 def tmp_data_dir(tmp_path, monkeypatch):
     """
