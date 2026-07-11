@@ -43,7 +43,6 @@ _CONFIG_FIELDS = (
     "learning_filter_enabled",
     "frugal_mode",
     "frugal_smart_mode",
-    "turbo_mode",
     "correlation_signals_enabled",
 )
 

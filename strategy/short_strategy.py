@@ -1,7 +1,7 @@
 """
 Short Strategy – Profitiert von Kursrückgängen via:
   1. Inverse ETFs (direkt kaufbar, kein Options-Broker nötig)
-  2. ETF Puts via Alpaca Options API (wenn ALPACA_OPTIONS_ENABLED=true)
+  2. ETF Puts (Options-Handel derzeit nicht implementiert – Stub)
 
 Inverse ETF Mapping:
   SPY → SH (1×), SDS (2×)   – S&P 500 short
@@ -380,9 +380,8 @@ class ShortStrategy:
         analysis: AnalysisResult,
     ) -> Optional[str]:
         """
-        Kauft einen ATM Put via Alpaca Options API.
+        Kauft einen ATM Put (Options-Handel derzeit nicht implementiert).
 
-        Nur aktiv wenn ALPACA_OPTIONS_ENABLED=true in .env.
         Fällt graceful zurück (None) wenn nicht verfügbar.
 
         Strike: 95% des aktuellen Preises (leicht OTM)

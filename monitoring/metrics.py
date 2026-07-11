@@ -87,7 +87,7 @@ class MetricsCollector:
             }
 
     def record_api_call(self, api: str, success: bool = True, latency_ms: float = 0.0) -> None:
-        """API-Aufruf-Statistik (claude, yfinance, alpaca, newsapi, ...)."""
+        """API-Aufruf-Statistik (claude, yfinance, ibkr, newsapi, ...)."""
         with self._lock:
             apis = self._data.setdefault("apis", {})
             entry = apis.setdefault(api, {"calls": 0, "errors": 0, "total_latency_ms": 0})

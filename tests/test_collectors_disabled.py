@@ -1,17 +1,20 @@
 """
-Tests für den Collector-Abschalt-Mechanismus (N3-Befund 5.7.2026):
-nachweislich tote Quellen (Endpoint 404/403) werden per config.collectors_disabled
-deaktiviert, bleiben aber als 0-Einträge im sources_breakdown sichtbar.
+Tests für den Collector-Abschalt-Mechanismus (Kill-Switch via
+config.collectors_disabled): deaktivierte Quellen werden auf None gesetzt,
+bleiben aber als 0-Einträge im sources_breakdown sichtbar.
 """
 import types
 
 from config import Config
 
 
-def test_config_default_disables_dead_sources(monkeypatch):
+def test_config_default_disables_nothing(monkeypatch):
+    # Die früheren Default-Abschaltungen (reddit/patents/earn_transcripts/
+    # aaii_sentiment, N3-Befund 5.7.2026) wurden im Juli 2026 komplett
+    # entfernt — der Default ist seitdem eine leere Liste.
     monkeypatch.delenv("COLLECTORS_DISABLED", raising=False)
     c = Config()
-    assert set(c.collectors_disabled) == {"reddit", "patents", "earn_transcripts", "aaii_sentiment"}
+    assert c.collectors_disabled == []
 
 
 def test_config_env_override_and_normalization(monkeypatch):
@@ -44,11 +47,11 @@ def test_make_collectors_nulls_disabled_sources(monkeypatch):
         if name.endswith("Collector"):
             monkeypatch.setattr(runner_mod, name, _DummyCollector)
     monkeypatch.setattr(
-        runner_mod.config, "collectors_disabled", ["reddit", "patents"], raising=False
+        runner_mod.config, "collectors_disabled", ["newsapi", "wire"], raising=False
     )
 
     cols = runner_mod._make_collectors()
-    assert cols["reddit"] is None
-    assert cols["patents"] is None
+    assert cols["newsapi"] is None
+    assert cols["wire"] is None
     assert cols["yahoo"] is not None
-    assert cols["earn_transcripts"] is not None  # nicht in der Liste → aktiv
+    assert cols["stocktwits"] is not None  # nicht in der Liste → aktiv

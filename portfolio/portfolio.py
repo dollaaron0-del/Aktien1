@@ -221,7 +221,7 @@ class Portfolio:
         return self._get_cash()
 
     def set_cash(self, value: float) -> None:
-        """Setzt den Cash-Stand direkt (z.B. nach Alpaca-Sync oder Portfolio-Reset)."""
+        """Setzt den Cash-Stand direkt (z.B. nach Broker-Sync oder Portfolio-Reset)."""
         with _db_lock:
             with self._conn:
                 self._set_cash(max(0.0, value))

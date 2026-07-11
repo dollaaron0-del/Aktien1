@@ -66,7 +66,6 @@ from portfolio.trade_journal import TradeJournal
 from portfolio.signal_queue import SignalQueue
 from portfolio.goal_risk_assessor import GoalRiskAssessor
 from analyzers.reflection_engine import ReflectionEngine
-from analyzers.turbo_learner import TurboLearner
 from analyzers.earnings_filter import EarningsFilter
 from analyzers.correlation_check import CorrelationChecker
 from analyzers.kelly_sizing import KellySizer
@@ -100,7 +99,7 @@ from cli.display import (
 from cli.commands import (
     run_weekend_prep, run_backtest, run_scan,
     run_small_cap_scan, run_crypto_scan, run_eu_scan,
-    _run_optimizer, _handle_exploration_command, _apply_exploration_overrides,
+    _run_optimizer,
 )
 from cli.tax_commands import (
     run_risk_metrics, run_tax_report, run_dividend_overview, run_fx_pnl,
@@ -139,7 +138,6 @@ def main():
     parser.add_argument("--reentry", action="store_true", help="Re-Entry-Kandidaten anzeigen (verkaufte Positionen die sich erholen)")
     parser.add_argument("--velocity", metavar="TICKER", help="News-Geschwindigkeit für einen Ticker anzeigen")
     parser.add_argument("--sentiment-memory", action="store_true", help="Sentiment-Verlässlichkeit pro Ticker anzeigen")
-    parser.add_argument("--exploration", metavar="{on|off|status}", help="Exploration-Mode ein-/ausschalten oder Status anzeigen")
     parser.add_argument("--crash-radar", action="store_true", help="Crash-Wahrscheinlichkeit, Blasen-Detektor und historischer Vergleich")
     parser.add_argument("--refresh", action="store_true", help="Cache ignorieren (zusammen mit --crash-radar)")
     parser.add_argument("--walk-forward", action="store_true", help="Walk-Forward Backtesting: Parameter-Stabilität über Zeitfenster validieren")
@@ -174,10 +172,6 @@ def main():
     if args.check:
         from cli.startup_check import run_startup_check
         run_startup_check()
-        return
-
-    if args.exploration is not None:
-        _handle_exploration_command(args.exploration.lower())
         return
 
     if args.fx_status:
@@ -224,44 +218,6 @@ def main():
 
     # Konfiguration validieren – bricht bei fatalen Fehlern ab
     validate_config()
-
-    # Turbo-Modus aktiviert Exploration automatisch als Basis-Stufe
-    if config.turbo_mode and config.broker_mode == "paper":
-        config.exploration_mode = True
-
-    # Exploration-Mode: lockere Parameter für Datensammlung (vor allem anderen!)
-    _apply_exploration_overrides()
-    if config.exploration_mode and not config.turbo_mode:
-        console.print(Panel(
-            "[bold yellow]EXPLORATION MODE AKTIV[/bold yellow]  –  "
-            f"Kaufschwelle={config.buy_threshold}  |  "
-            f"MinQuellen={config.min_sources}  |  "
-            f"MaxPos={config.max_position_pct*100:.0f}%  |  "
-            f"CB-Verlust={config.expl_max_daily_loss*100:.0f}%\n"
-            "[dim]Deaktivieren: python main.py --exploration off[/dim]",
-            title="⚠  Exploration Mode", border_style="yellow",
-        ))
-
-    # Turbo-Mode Banner + gelernte Parameter laden
-    if config.turbo_mode and config.broker_mode == "paper":
-        learner = TurboLearner()
-        learned = learner.load()
-        learned_info = ""
-        if learned:
-            changes = learner.apply_to_config(config)
-            if changes:
-                learned_info = "\n[dim]Gelernte Werte aktiv: " + " | ".join(changes) + "[/dim]"
-        console.print(Panel(
-            "[bold red]🚀 TURBO MODE AKTIV[/bold red]  –  Alle Sicherheitsfilter deaktiviert!\n"
-            f"Kaufschwelle={config.turbo_buy_threshold}  |  "
-            f"MaxPos={config.turbo_max_position_pct*100:.0f}%  |  "
-            f"SL={config.turbo_stop_loss_pct*100:.0f}%  |  "
-            f"TP={config.turbo_take_profit_pct*100:.0f}%  |  "
-            f"MaxPositionen={config.turbo_max_positions}\n"
-            f"Exploration-Basis aktiv | Lernauswertung täglich 02:30 UTC"
-            f"{learned_info}",
-            title="⚠  TURBO MODE – NUR PAPER TRADING", border_style="red",
-        ))
 
     # Select broker based on config
     if config.broker_mode == "ibkr":
@@ -724,7 +680,7 @@ def _run_fill_archive() -> None:
             total_new += len(news)
             console.print(
                 f"[green]{len(news)} Artikel[/green]  "
-                f"(Yahoo:{src.get('yahoo',0)} Reddit:{src.get('reddit',0)} "
+                f"(Yahoo:{src.get('yahoo',0)} "
                 f"NewsAPI:{src.get('newsapi',0)} Wire:{src.get('wire',0)} "
                 f"EU:{src.get('european_news',0)})"
             )

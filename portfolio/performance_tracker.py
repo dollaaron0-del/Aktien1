@@ -471,7 +471,7 @@ class PerformanceTracker:
         stats.sort(key=lambda s: -s["trades"])
         return stats
 
-    # Sentiment-Score-Buckets – Labels müssen mit sentiment_calibrator übereinstimmen
+    # Sentiment-Score-Buckets – Labels müssen mit analyzers/calibration.py übereinstimmen
     _SENTIMENT_BUCKETS = [
         ("0.65–0.70", 0.65, 0.70),
         ("0.70–0.75", 0.70, 0.75),

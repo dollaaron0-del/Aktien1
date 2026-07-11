@@ -2,9 +2,8 @@
 reset_paper_positions.py
 
 Löscht alle Paper-Positionen aus der Portfolio-Datenbank, stellt das
-Cash auf den echten Alpaca-Kontostand (oder INITIAL_CAPITAL) zurück,
-und trägt die Ticker zur Analyse-Queue ein damit der Bot sie via
-Alpaca neu kauft.
+Cash auf INITIAL_CAPITAL zurück und trägt die Ticker zur Analyse-Queue
+ein, damit der Bot sie neu bewertet.
 
 Aufruf (auf dem Server):
     cd /opt/Aktien && source venv/bin/activate
@@ -18,25 +17,6 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 DB_PATH = os.path.join("data", "portfolio.db")
-
-
-def _get_alpaca_buying_power() -> float:
-    """Liest echte Kaufkraft vom Alpaca-Account. Gibt 0.0 zurück wenn nicht möglich."""
-    try:
-        from config import config
-        from broker.alpaca_broker import AlpacaBroker
-        if config.broker_mode != "alpaca" or not config.alpaca_api_key:
-            return 0.0
-        broker = AlpacaBroker()
-        acct = broker.get_account()
-        if acct:
-            bp = float(acct.get("buying_power", 0))
-            eq = float(acct.get("equity", 0))
-            print(f"  Alpaca-Account: Kaufkraft ${bp:,.2f} | Eigenkapital ${eq:,.2f}")
-            return bp
-    except Exception as e:
-        print(f"  ⚠️  Alpaca-Account nicht lesbar: {e}")
-    return 0.0
 
 
 def main():
@@ -64,21 +44,13 @@ def main():
         for ticker, shares, price, date in positions:
             print(f"  {ticker}: {shares} Stück @ ${price:.2f} (seit {date[:10]})")
 
-    # Alpaca-Kaufkraft abfragen
-    print("\nLese Alpaca-Kontostand...")
-    alpaca_bp = _get_alpaca_buying_power()
-
     # Ziel-Cash bestimmen
-    if alpaca_bp > 0:
-        new_cash = alpaca_bp
-        cash_source = f"Alpaca-Kaufkraft ${new_cash:,.2f}"
-    else:
-        try:
-            from config import config
-            new_cash = config.initial_capital
-        except Exception:
-            new_cash = 10000.0
-        cash_source = f"INITIAL_CAPITAL ${new_cash:,.2f}"
+    try:
+        from config import config
+        new_cash = config.initial_capital
+    except Exception:
+        new_cash = 10000.0
+    cash_source = f"INITIAL_CAPITAL ${new_cash:,.2f}"
 
     print(f"\nGeplante Aktionen:")
     print(f"  • {len(positions)} Positionen löschen")

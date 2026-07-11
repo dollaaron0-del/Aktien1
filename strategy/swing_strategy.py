@@ -317,7 +317,7 @@ class SwingStrategy:
 
         # Informationsdichte-Boden: nicht auf zu dünner Quellenlage handeln.
         # (Beim 7.6.-Umbau verloren gegangen – hier wiederhergestellt.)
-        min_src = config.expl_min_sources if getattr(config, "exploration_mode", False) else config.min_sources
+        min_src = config.min_sources
         _su = getattr(analysis, "sources_used", 0)
         # sources_used ist je nach Analyzer-Pfad int ODER Dict[str,int] (Quelle→Anzahl).
         if isinstance(_su, dict):

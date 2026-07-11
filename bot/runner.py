@@ -15,16 +15,16 @@ from rich.console import Console
 from config import config
 from logger import get_logger
 from collectors import (
-    RedditCollector, YahooCollector, NewsAPICollector,
+    YahooCollector, NewsAPICollector,
     InsiderCollector, USASpendingCollector,
     SECEdgarCollector, StockTwitsCollector, WireCollector,
     OptionsFlowCollector, EuropeanNewsCollector, TwitterCollector,
     SEC8KCollector, ShortInterestCollector, InstitutionalCollector,
-    AnalystCollector, EarningsTranscriptCollector, PatentCollector,
+    AnalystCollector,
     JobListingsCollector, CEOInterviewCollector, EURegulationCollector,
     ChineseMediaCollector, WebTrafficCollector, GermanMediaCollector,
     InternationalMediaCollector, QuiverCollector,
-    EconomicCalendarCollector, AAIISentimentCollector, AdhocCollector,
+    EconomicCalendarCollector, AdhocCollector,
     FDACalendarCollector, EstimateRevisionsCollector, ShortVolumeCollector,
     GoogleTrendsCollector, WikipediaViewsCollector, OpenFDACollector,
     NHTSARecallsCollector, SECActivistCollector,
@@ -453,7 +453,6 @@ def _make_collectors() -> Dict:
     _twitter = _safe("twitter", TwitterCollector)
     out = {
         "yahoo":             _safe("yahoo",           YahooCollector),
-        "reddit":            _safe("reddit",          RedditCollector),
         "newsapi":           _safe("newsapi",         NewsAPICollector),
         "insider":           _safe("insider",         lambda: InsiderCollector(lookback_days=90)),
         "usaspending":       _safe("usaspending",     lambda: USASpendingCollector(lookback_days=180, min_award_usd=1_000_000)),
@@ -467,8 +466,6 @@ def _make_collectors() -> Dict:
         "short_interest":    _safe("short_interest",  ShortInterestCollector),
         "institutional_13f": _safe("institutional",   InstitutionalCollector),
         "analyst_ratings":   _safe("analyst",         AnalystCollector),
-        "earn_transcripts":  _safe("transcripts",     EarningsTranscriptCollector),
-        "patents":           _safe("patents",         PatentCollector),
         "job_listings":      _safe("jobs",            JobListingsCollector),
         "ceo_interviews":    _safe("ceo",             CEOInterviewCollector),
         "eu_regulation":     _safe("eu_reg",          EURegulationCollector),
@@ -479,7 +476,6 @@ def _make_collectors() -> Dict:
         "intl_media":        _safe("intl",            lambda: InternationalMediaCollector(lookback_hours=48)),
         "quiver":            _safe("quiver",          lambda: QuiverCollector(lookback_days=90)),
         "econ_calendar":     _safe("econ_cal",        lambda: EconomicCalendarCollector(lookahead_days=14)),
-        "aaii_sentiment":    _safe("aaii",            AAIISentimentCollector),
         "adhoc_de":          _safe("adhoc",           AdhocCollector),
         "fda_calendar":      _safe("fda_calendar",    lambda: FDACalendarCollector(lookahead_days=120, lookback_days=21)),
         "estimate_revisions":_safe("est_revisions",   EstimateRevisionsCollector),
@@ -513,8 +509,8 @@ def collect_news(ticker: str, archive: NewsArchive, collectors: Dict) -> tuple:
     is_crypto = _is_crypto(ticker)
     # Collectors that make sense for crypto assets; stock-specific ones are skipped.
     _CRYPTO_ALLOWED = {
-        "yahoo", "reddit", "newsapi", "wire", "stocktwits",
-        "twitter", "crypto_news", "econ_calendar", "aaii_sentiment",
+        "yahoo", "newsapi", "wire", "stocktwits",
+        "twitter", "crypto_news", "econ_calendar",
     }
 
     active_collectors = {
@@ -756,9 +752,8 @@ def run_analysis_cycle(
     announce_start: bool = False,
     only_tickers: Optional[List[str]] = None,
 ):
-    rule_suffix = "  [bold yellow][EXPLORATION][/bold yellow]" if config.exploration_mode else ""
     _cycle_ts = datetime.now().strftime('%Y-%m-%d %H:%M')
-    console.rule(f"[bold blue]Analyse-Zyklus – {_cycle_ts}{rule_suffix}")
+    console.rule(f"[bold blue]Analyse-Zyklus – {_cycle_ts}")
 
     # Live-Sichtbarkeit (Roadmap 1.5): Status-Zeile + Aktivitätsfeed. Alle
     # Funktionen sind fail-open (werfen nie) — nur der Import wird geschützt.
@@ -1298,7 +1293,7 @@ def run_analysis_cycle(
         src = sources_breakdown
         console.print(
             f"  [bold]{len(news)}[/bold] Artikel total | {len(historical)} historisch | "
-            f"Yahoo:{src['yahoo']} Reddit:{src['reddit']} NewsAPI:{src['newsapi']} "
+            f"Yahoo:{src['yahoo']} NewsAPI:{src['newsapi']} "
             f"SEC:{src['sec_edgar']} Wire:{src['wire']} "
             f"Twits:{src['stocktwits']} Twitter:{src.get('twitter', 0)} Insider:{src['insider']} "
             f"Contracts:{src['usaspending']} OptFlow:{src['options_flow']} "

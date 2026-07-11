@@ -29,10 +29,8 @@ from collectors.news_archive import NewsArchive
 from analyzers.market_schedule import MarketSchedule
 from analyzers.weekend_prep import WeekendPrep
 from analyzers.parameter_optimizer import ParameterOptimizer, _MIN_TRADES
-from analyzers.turbo_learner import TurboLearner
 from bot.pre_market_scanner import PreMarketScanner
 from bot.runner import run_analysis_cycle, safe_run_analysis_cycle, _print_portfolio_summary
-from bot.web_dashboard import start_dashboard
 from cli.commands import run_weekend_prep
 
 console = Console()
@@ -276,11 +274,6 @@ def run_bot_loop(
     from strategy.executor import TradeExecutor
     from strategy.swing_strategy import StrategyResult
     _executor = TradeExecutor(portfolio, broker, getattr(strategy, "journal", None), strategy=strategy)
-
-    try:
-        start_dashboard(port=int(os.getenv("DASHBOARD_PORT", "8080")))
-    except Exception as _de:
-        log.warning("Web-Dashboard konnte nicht gestartet werden: %s", _de)
 
     prices = broker.get_prices(list(portfolio.all_positions().keys()))
     total = portfolio.total_value(prices)
@@ -741,27 +734,6 @@ def run_bot_loop(
             _thr.Thread(target=_ipo_check_job, daemon=True, name="ipo-startup").start()
     except Exception as _ipo_st_err:
         log.debug("IPO-Startup-Check fehlgeschlagen: %s", _ipo_st_err)
-
-    # Turbo-Lernauswertung: täglich um 02:30 UTC (nur wenn Turbo-Modus aktiv)
-    if config.turbo_mode and config.broker_mode == "paper":
-        def _turbo_learn_job():
-            try:
-                learner = TurboLearner()
-                result  = learner.analyze_and_save()
-                if result:
-                    notifier = TelegramNotifier()
-                    notifier.send(learner.summary_text(result))
-                    changes = learner.apply_to_config(config)
-                    if changes:
-                        notifier.send(
-                            "⚙️ <b>Turbo-Lernwerte angewendet:</b>\n"
-                            + "\n".join(f"• {c}" for c in changes)
-                        )
-                    log.info("Turbo-Lernauswertung abgeschlossen: %d Trades", result["turbo_trades_total"])
-            except Exception as exc:
-                log.exception("Turbo-Lernauswertung fehlgeschlagen: %s", exc)
-
-        schedule.every().day.at("02:30").do(_turbo_learn_job)
 
     # ── Nutzeranfragen-Job: alle 15 Minuten prüfen ──────────────────────────
     def _user_request_job():

@@ -16,30 +16,20 @@ def _parse_exchanges(raw: str) -> List[str]:
 class Config:
     # API Keys
     anthropic_api_key: str = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", ""))
-    reddit_client_id: str = field(default_factory=lambda: os.getenv("REDDIT_CLIENT_ID", ""))
-    reddit_client_secret: str = field(default_factory=lambda: os.getenv("REDDIT_CLIENT_SECRET", ""))
-    reddit_user_agent: str = field(default_factory=lambda: os.getenv("REDDIT_USER_AGENT", "StockSentimentBot/1.0"))
     newsapi_key: str = field(default_factory=lambda: os.getenv("NEWSAPI_KEY", ""))
     twitter_bearer_token: str = field(default_factory=lambda: os.getenv("TWITTER_BEARER_TOKEN", ""))
     quiver_api_key: str = field(default_factory=lambda: os.getenv("QUIVER_API_KEY", ""))
 
     # ── Abgeschaltete Collector-Quellen ──────────────────────────────────────
-    # N3-Befund (5.7.2026, gegen echte analysis_log-Daten verifiziert): diese
-    # keylosen Quellen lieferten 0 Beiträge über alle Analysen, weil ihre
-    # Endpoints nicht mehr existieren oder Server-IPs dauerhaft blocken:
-    #   patents          → patents.google.com/rss: 404 (RSS-Dienst eingestellt)
-    #   earn_transcripts → seekingalpha-/fool-RSS: beide 404
-    #   reddit           → reddit.com/*.json: 403 für Datacenter-IPs
-    #   aaii_sentiment   → aaii.com sent_results: 403
-    # Sie kosten sonst pro Ticker und Zyklus nur Timeout-Wartezeit. Übersteuern
-    # via COLLECTORS_DISABLED (Komma-Liste; leer = alle Quellen aktiv lassen).
+    # Kill-Switch: Quellen per Namen (Key im Collector-Hub, bot/runner.py)
+    # deaktivieren, ohne Code anzufassen. COLLECTORS_DISABLED=Komma-Liste.
+    # Historie: reddit/patents/earn_transcripts/aaii_sentiment waren hier
+    # per Default abgeschaltet (N3-Befund 5.7.2026: Endpoints tot bzw. 403
+    # für Datacenter-IPs) und wurden im Juli 2026 komplett entfernt.
     collectors_disabled: List[str] = field(
         default_factory=lambda: [
             s.strip().lower()
-            for s in os.getenv(
-                "COLLECTORS_DISABLED",
-                "reddit,patents,earn_transcripts,aaii_sentiment",
-            ).split(",")
+            for s in os.getenv("COLLECTORS_DISABLED", "").split(",")
             if s.strip()
         ]
     )
@@ -210,7 +200,8 @@ class Config:
     # ── Margin / Hebel (progressives Tier-System) ─────────────────────────────
     # false = kein Hebel (Standard)
     # true  = Bot verdient sich Hebel durch Performance (Tier 1–4: 1.25×–2.00×)
-    # Erfordert Alpaca Margin-Account (nicht Cash-Account).
+    # Erfordert einen IBKR Margin-Account (nicht Cash-Account); jede Order
+    # läuft zusätzlich durch den whatIf-Margin-Check des IBKRBroker.
     use_margin: bool = field(
         default_factory=lambda: os.getenv("USE_MARGIN", "false").lower() in ("1", "true", "yes")
     )
@@ -294,7 +285,9 @@ class Config:
     partial_tp2_pct: float = field(
         default_factory=lambda: float(os.getenv("PARTIAL_TP2_PCT", "0.30"))
     )
-    # Stop-Loss Re-Entry Sperre: N Tage nach SL-Auslösung kein Wiederkauf
+    # SL-Cooldown: N Tage nach SL-Auslösung kein Wiederkauf.
+    # ACHTUNG: Wird nur vom Backtest genutzt (backtesting/engine.py via
+    # scripts/run_backtest.py). Im Live-Pfad gibt es derzeit KEINE solche Sperre.
     sl_cooldown_days: int = field(
         default_factory=lambda: int(os.getenv("SL_COOLDOWN_DAYS", "2"))
     )
@@ -310,23 +303,6 @@ class Config:
     news_stale_pct: float = field(
         default_factory=lambda: float(os.getenv("NEWS_STALE_PCT", "0.05"))
     )
-    # ── Multi-Signal-Bestätigung ──────────────────────────────────────────────
-    # Mindestanzahl grüner Sekundärsignale (von 4) bevor gekauft wird
-    signal_min_confirmations: int = field(
-        default_factory=lambda: int(os.getenv("SIGNAL_MIN_CONFIRMATIONS", "2"))
-    )
-    # Volumen-Boost: heutiges Volumen muss X× des 20d-Avg betragen
-    signal_volume_boost_ratio: float = field(
-        default_factory=lambda: float(os.getenv("SIGNAL_VOLUME_BOOST_RATIO", "1.20"))
-    )
-    # Momentum-Fenster: 5d-Return muss zwischen min und max liegen
-    signal_momentum_min_pct: float = field(
-        default_factory=lambda: float(os.getenv("SIGNAL_MOMENTUM_MIN_PCT", "0.01"))
-    )
-    signal_momentum_max_pct: float = field(
-        default_factory=lambda: float(os.getenv("SIGNAL_MOMENTUM_MAX_PCT", "0.10"))
-    )
-
     # ── Hedge / Rezessions-Absicherung ───────────────────────────────────────
     # Inverse ETFs kaufen wenn Marktregime BEAR oder CRISIS erreicht
     enable_hedging: bool = field(
@@ -350,8 +326,9 @@ class Config:
     tradingview_webhook_enabled: bool = field(
         default_factory=lambda: os.getenv("TRADINGVIEW_WEBHOOK_ENABLED", "false").lower() in ("1", "true", "yes")
     )
+    # Achtung: 8080 ist auf diesem Server durch nginx (KI-Nachhilfe) belegt.
     tradingview_webhook_port: int = field(
-        default_factory=lambda: int(os.getenv("TRADINGVIEW_WEBHOOK_PORT", "8080"))
+        default_factory=lambda: int(os.getenv("TRADINGVIEW_WEBHOOK_PORT", "8089"))
     )
     tradingview_webhook_secret: str = field(
         default_factory=lambda: os.getenv("TRADINGVIEW_WEBHOOK_SECRET", "")
@@ -386,50 +363,8 @@ class Config:
         default_factory=lambda: os.getenv("CORRELATION_SIGNALS_ENABLED", "true").lower() in ("1", "true", "yes")
     )
 
-    # ── Exploration Mode ──────────────────────────────────────────────────────
-    # Lockere Parameter für die Datensammlungsphase (Paper-Trading).
-    # Ein: EXPLORATION_MODE=true in .env  oder  python main.py --exploration on
-    # Aus: EXPLORATION_MODE=false         oder  python main.py --exploration off
-    # Wenn aktiv, überschreiben die expl_* Werte die normalen Schwellwerte.
-    exploration_mode: bool = field(
-        default_factory=lambda: os.getenv("EXPLORATION_MODE", "false").lower() in ("1", "true", "yes")
-    )
-    # Explorations-Parameter (nur aktiv wenn exploration_mode=True)
-    expl_buy_threshold:    float = field(default_factory=lambda: float(os.getenv("EXPL_BUY_THRESHOLD",    "0.55")))
-    expl_min_sources:      int   = field(default_factory=lambda: int(os.getenv("EXPL_MIN_SOURCES",       "1")))
-    expl_max_position_pct: float = field(default_factory=lambda: float(os.getenv("EXPL_MAX_POSITION_PCT", "0.25")))
-    expl_max_daily_loss:   float = field(default_factory=lambda: float(os.getenv("EXPL_MAX_DAILY_LOSS",   "0.08")))
-
-    # ── Turbo Mode (nur Paper-Trading!) ──────────────────────────────────────
-    # Maximaler Gewinnversuch ohne Sicherheitsgrenzen – nur zur Analyse ob
-    # aggressive Strategien profitabel sind. NUR mit BROKER_MODE=paper nutzbar.
-    # Ein: TURBO_MODE=true in .env
-    turbo_mode: bool = field(
-        default_factory=lambda: os.getenv("TURBO_MODE", "false").lower() in ("1", "true", "yes")
-    )
-    # Wie viel % des Portfolios pro Position (aggressiv: 40 %)
-    turbo_max_position_pct: float = field(
-        default_factory=lambda: float(os.getenv("TURBO_MAX_POSITION_PCT", "0.40"))
-    )
-    # Kaufschwelle Sentiment (aggressiv: 0.45 – auch schwache Signale kaufen)
-    turbo_buy_threshold: float = field(
-        default_factory=lambda: float(os.getenv("TURBO_BUY_THRESHOLD", "0.45"))
-    )
-    # Stop-Loss enger (aggressiv: 12 % um Gewinne laufen zu lassen)
-    turbo_stop_loss_pct: float = field(
-        default_factory=lambda: float(os.getenv("TURBO_STOP_LOSS_PCT", "0.12"))
-    )
-    # Take-Profit weiter (aggressiv: 40 %)
-    turbo_take_profit_pct: float = field(
-        default_factory=lambda: float(os.getenv("TURBO_TAKE_PROFIT_PCT", "0.40"))
-    )
-    # Max. gleichzeitige Positionen
-    turbo_max_positions: int = field(
-        default_factory=lambda: int(os.getenv("TURBO_MAX_POSITIONS", "15"))
-    )
-
     # ── Krypto ───────────────────────────────────────────────────────────────
-    # Krypto-Handel via Alpaca (gleiche API-Credentials, kein Extra-Account nötig).
+    # Krypto-Handel via IBKR (PAXOS) bzw. Paper-Broker.
     # CRYPTO_ENABLED=true  aktiviert Krypto im normalen Bot-Zyklus.
     # --crypto-scan läuft immer manuell (unabhängig von CRYPTO_ENABLED).
     crypto_enabled: bool = field(
@@ -493,11 +428,6 @@ def validate_config() -> None:
         warnings.append("TELEGRAM_BOT_TOKEN / CHAT_ID fehlen – keine Push-Benachrichtigungen.")
     if not config.newsapi_key:
         warnings.append("NEWSAPI_KEY fehlt – NewsAPI-Quelle deaktiviert.")
-    if not config.quiver_api_key:
-        warnings.append(
-            "QUIVER_API_KEY fehlt – Congressional-Trades mit Ausschuss-Kontext deaktiviert. "
-            "Kostenlosen Key auf quiverquant.com registrieren."
-        )
 
     # ── Wertebereich-Prüfungen ────────────────────────────────────────────────
     if not (0.0 < config.stop_loss_pct < 1.0):

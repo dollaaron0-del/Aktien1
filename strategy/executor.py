@@ -111,7 +111,7 @@ def _fill_shares(fill, fallback: float) -> float:
 
 def _fail_reason(fill) -> str:
     """Fehlergrund aus einem nicht-gefüllten Fill (IBKR nutzt 'reason',
-    Paper/Alpaca ggf. 'error'; sonst Roh-Status)."""
+    Paper ggf. 'error'; sonst Roh-Status)."""
     if isinstance(fill, dict):
         return str(fill.get("reason") or fill.get("error") or fill.get("status") or "unbekannt")
     return str(fill)
@@ -168,7 +168,7 @@ class TradeExecutor:
     def _broker_held(self, ticker: str) -> Optional[float]:
         """Tatsächlich beim Broker gehaltene Stückzahl für `ticker`.
 
-        None = nicht prüfbar (Broker ohne positions()-API wie Paper/Alpaca,
+        None = nicht prüfbar (Broker ohne positions()-API wie Paper,
         oder Stand nicht ermittelbar) → Guard greift bewusst NICHT, weil ein
         nicht-deckbarer Sell im No-Fallback-Modus ohnehin sicher errort statt
         zu shorten. Ein leeres {} heißt sicher 'flach' → 0.0."""
