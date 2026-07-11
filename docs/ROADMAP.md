@@ -42,10 +42,23 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       `ssh -L 8503:localhost:8503 <server>`. Noch nicht behoben: Settings-Tab
       ohne In-App-Login (Netzwerk-Absicherung war Kernfix, Login/Reverse-Proxy
       wäre Zusatzhärtung — bleibt offen, kein akuter Netzwerk-Zugriff mehr).
-- [ ] **0.5 Restore-Probe + Server-Runbook** — Backup (0.1) wurde noch nie
-      zurückgespielt; einmal auf leerem Verzeichnis komplett restaurieren und
-      Bot-Start simulieren, dazu kurzes "Server von Null"-Runbook (Pakete,
-      systemd-Units, .env, IB Gateway, crontab).
+- [x] **0.5 Restore-Probe + Server-Runbook** — fertig 11.7. Echtes Backup
+      erzeugt (34 MB, `backups/`), auf frischem `git clone` in isoliertem
+      Verzeichnis komplett zurückgespielt (nicht gegen `/opt/Aktien` — dort
+      ist `data/` aktuell Demo/Lern-Mix, siehe 0.3). Dabei **Bug gefunden &
+      gefixt**: `restore.sh` installierte Pakete zuvor ins System-Python
+      statt in eine venv — schlägt auf diesem Debian/Ubuntu mit PEP 668
+      (`externally-managed-environment`) fehl; unbeaufsichtigt zurückgespielt
+      liefe der Bot ganz ohne Pakete, der alte Schnelltest hätte das nicht
+      gemerkt (nutzte ebenfalls System-Python, das zufällig bereits ähnliche
+      Pakete hatte). Jetzt legt `restore.sh` bei Bedarf `venv/` an und
+      installiert/testet konsequent darüber (101/101 Pakete exakt wie
+      `requirements.lock`, Konfiguration + DB-Zugriff grün). Zweiter Fund:
+      `aktien_premarket_ibkr.*` und `aktien_source_health.*` (wiederkehrende
+      Timer) lagen nur in `/etc/systemd/system/`, nicht im Repo — bei
+      Server-Neuaufbau verloren gewesen; jetzt nach `scripts/` nachgezogen
+      und committet. Ergebnis: `docs/SERVER_RUNBOOK.md` (Pakete, Code,
+      Restore, systemd-Units, IB Gateway, Firewall, Abschluss-Check).
 - [x] **0.6 Dependency-Pinning** — fertig 11.7. `requirements.lock` per
       `pip freeze` aus der laufenden venv erzeugt (101 Pakete, exakt gepinnt,
       keine lokalen/editable Pfade). `requirements.txt` bleibt die

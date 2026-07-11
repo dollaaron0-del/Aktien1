@@ -1,0 +1,8 @@
+[Unit]
+Description=Aktien-Bot Pre-Market IBKR-Connectivity-Check (vor 07:30-Zyklus)
+After=network-online.target ibgateway.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/Aktien
+ExecStart=/opt/Aktien/venv/bin/python /opt/Aktien/scripts/premarket_ibkr_check.py

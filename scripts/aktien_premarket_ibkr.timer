@@ -1,0 +1,9 @@
+[Unit]
+Description=Pre-Market IBKR-Check werktags 07:15 (vor dem Analyse-Zyklus 07:30)
+
+[Timer]
+OnCalendar=Mon-Fri 07:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
