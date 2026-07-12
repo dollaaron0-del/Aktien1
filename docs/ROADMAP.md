@@ -494,15 +494,24 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       _FiresToday-Klasse). Benchmark echte Cache-Daten: 3,0× mit 4 Workern
       (52,6s → 17,3s), identisches Ergebnis. 5 Tests, Suite 552 grün.
       Auf dem 6-Kern-Server ~4–5× drin, auf dem neuen Server ~Kernzahl.
-- [ ] **6.4 Anti-Overfit-Protokoll für große Suchräume** (PFLICHT vor
-      "intensiver"): heutige Gates (Bootstrap-CI 4.2, Promotion-Verdikt)
-      reichen für 24 Kombos, nicht für 10.000. Ergänzen: Deflated Sharpe
-      Ratio / White's-Reality-Check-artige Multiple-Testing-Korrektur (n
-      getesteter Kombos fließt ins Verdikt ein), purged/embargoed CV bzw.
-      CPCV als zweite Achse neben Walk-Forward, festes Holdout-Fenster das
-      NIE in die Suche fließt (z.B. letzte 2 Jahre, einmal pro Quartal
-      angefasst). Sonst produziert der große Server nur schnellere
-      Selbsttäuschung.
+- [~] **6.4 Anti-Overfit-Protokoll für große Suchräume** (PFLICHT vor
+      "intensiver") — KERN FERTIG 12.7. (9372f14):
+      (a) Multiple-Testing-Korrektur AKTIV: strategy_lab/anti_overfit.py,
+          Šidák-korrigierte Signifikanzschwelle — n getesteter Kombos fließt
+          ins Promotion-Verdikt ein (ROBUST verlangt p_le0 ≤ šidák(n); n=1 ≙
+          altes 4.2-Verhalten, 60 Kombos → p ≤ 0.00086, 10.000 → p ≤ 5e-6).
+          Bewusst Šidák statt echtem Deflated Sharpe: DSR braucht
+          Skew/Kurtosis-Schätzungen, die auf 3–8 OOS-Fenstern nicht tragen.
+          Report zeigt n_combos_tested + alpha_adjusted.
+      (b) Holdout AKTIV: run_walk_forward(holdout_years=…) spart den
+          jüngsten Schwanz KOMPLETT von der Suche aus (CLI --holdout);
+          run_holdout() bewertet feste (modale) Parameter darauf und
+          protokolliert JEDEN Zugriff (data/holdout_access.json) —
+          Disziplin-Ziel ≤1×/Quartal bleibt Prozess, kein Schloss.
+          7 Tests, Suite 559 grün, CLI-E2E verifiziert.
+      (c) OFFEN: purged/embargoed CV bzw. CPCV als zweite Achse neben
+          Walk-Forward (rechenintensiv → sinnvoll mit 6.3-Workern auf dem
+          neuen Server); Holdout in 6.7-Quartalsroutine verdrahten.
 - [ ] **6.5 GPU-Nutzen realistisch einordnen**:
       (a) GRÖSSTER SICHERER GEWINN: Ollama/lokales LLM wieder tragfähig —
           der aktuelle CPU-Server schaffte nur 1,7 tok/s, deshalb läuft
