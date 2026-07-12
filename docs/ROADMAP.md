@@ -441,6 +441,14 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
 > GARANTIERT Scheinkanten, wenn das Anti-Overfit-Protokoll nicht vorher steht.
 > Deshalb Reihenfolge: Daten → Protokoll → Compute. GPU-Punkt mit dem größten
 > sicheren Nutzen ist NICHT der Backtest, sondern Ollama (6.5a).
+>
+> **🔒 FREIGABE-REGEL (User-Anweisung 12.7.):** Alle Features in diesem Block,
+> die auf der besseren Hardware aufbauen, werden nur VORBEREITET — Code, Tests,
+> Nähte, Flags (Default AUS, exakt altes Verhalten). AKTIVIERT wird nichts
+> davon eigenmächtig: erst wenn der User ausdrücklich mitteilt, dass das
+> Programm auf dem neuen Server läuft, werden die vorbereiteten Features
+> freigegeben. Analog zur Bot-Pausierung: Vorbereitung ja, Scharfschalten nur
+> auf Anweisung.
 
 - [ ] **6.1 Umzugs-Fundament** (Großteil existiert schon): restore.sh +
       docs/SERVER_RUNBOOK.md sind erprobt (0.5); Push-Frage 0.2 wird damit
@@ -635,6 +643,29 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       nicht wiederbeleben" + ein Zeit-Budget. Ohne das kann das Lab ewig laufen,
       ohne dass je ein Verdikt fällt — als bewusstes Hobby okay, aber es soll
       eine Entscheidung sein, kein Versehen.
+- [ ] **6.11 Breite Tages-Analyse + Analyse-Tiefe als A/B** (12.7. ergänzt,
+      User-Frage "Schwellen senken und viel mehr Aktien analysieren?").
+      KERN-TRENNUNG: Analyse breit, Funnel streng — Entscheidungs-/
+      Eskalations-Schwellen werden NICHT gesenkt, eher verschärft (Multiple-
+      Testing im Live-Funnel: wer täglich 500 statt 10 Aktien prüft, findet
+      garantiert zufällig "starke" — 6.4-Logik gilt auch hier).
+      (a) BEOBACHTUNGS-RADAR: täglich hunderte Aktien LOKAL analysieren
+          (GPU-Ollama, Grenzkosten ~0). Wert: Score-ZEITREIHE je Aktie
+          (Signal-Halbwertszeit, Kalibrierung je Titel/Sektor messbar) +
+          jede Analyse+Ausgang = Trainingsbeispiel (löst das 78-Label-
+          Problem über Zeit; speist 1.2/6.5b). Gehandelt wird weiter nur,
+          was den strengen Funnel übersteht — Radar ≠ Trade-Kandidat.
+          Praktische Grenze sind Datenquellen-Limits, nicht Compute:
+          braucht Parquet-Cache 6.2(a) + gestaffelte Abrufe.
+      (b) ANALYSE-TIEFE ALS A/B-EXPERIMENT: mehrstufige Analyse (Technik/
+          News/Fundamental getrennt + expliziter CONTRA-Pass gegen die
+          bekannte Überkonfidenz aus 1.2, dann Synthese), mehr Kontext
+          (10-K/Transkripte 6.9a, Präzedenzfälle 6.9b), Ensemble 6.9e,
+          Ticker-Dossier (Analyse baut auf Vorwissen je Titel auf).
+          MESSPFLICHT: dieselben Aktien parallel schlank vs. tief
+          analysieren, Kalibrierungs-Monitor (1.2) entscheidet per
+          Brier/AUC — tiefe Analyse wird nur Standard, wenn sie messbar
+          besser ist, nicht weil sie fundierter KLINGT.
 
 ## Verworfen (nicht wieder vorschlagen)
 
