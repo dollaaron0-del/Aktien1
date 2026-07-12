@@ -586,6 +586,12 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
           max. 10 req/s, User-Agent mit Kontakt-Mail — braucht die offene
           SEC_CONTACT_EMAIL in .env), Rohmaterial liegt dann beim
           GPU-Start bereit.
+          ✅ SKRIPT GEBAUT (12.7., Vision V0.2): scripts/edgar_download.py —
+          Submissions-API inkl. Archiv-Pagination, 5 req/s-Drossel,
+          Manifest-Parquet (data/edgar/), idempotent wiederaufsetzbar,
+          Abbruch ohne SEC_CONTACT_EMAIL; netzfreie Tests
+          (test_edgar_download.py, Suite 567). OFFEN: .env-Eintrag (User)
+          + erster Nachtlauf über die Watchlist.
       (b) EIGENES PIT-ARCHIV VORWÄRTS: Dauer-Collector auf dem neuen Server
           schreibt ab Tag 1 alles versioniert weg (Quotes, News-Snapshots,
           Alt-Data, Prompts) → selbstgebautes Point-in-Time-Archiv, das
