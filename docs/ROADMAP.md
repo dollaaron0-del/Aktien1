@@ -574,22 +574,48 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
           netzfrei; CLI-Smoke-Test gegen echte Cache-Daten verifiziert.
           Holdout-in-6.7-Verdrahtung bleibt Teil der 6.7-Routine (dort, wo
           6.7 selbst noch offen ist).
-- [ ] **6.5 GPU-Nutzen realistisch einordnen**:
-      (a) GRÖSSTER SICHERER GEWINN: Ollama/lokales LLM wieder tragfähig —
-          der aktuelle CPU-Server schaffte nur 1,7 tok/s, deshalb läuft
-          heute alles über Claude-API (Kosten!). GPU-Server → Frugal-Mode
-          kann wieder maximal lokal routen, Claude nur für echte
-          Katalysatoren. Direkt messbarer Euro-Effekt, null Overfit-Risiko.
-      (b) ML-Meta-Labeling (echtes "Lernen aus alten Daten", aber richtig):
-          Modell lernt NICHT Kurse vorherzusagen, sondern WELCHE der
-          mechanischen Signale man hätte nehmen sollen (Features: Regime,
-          Vola, Breadth, Quellen-Kontext; Label: Trade-Ausgang aus dem
-          Backtest/ExperienceStore). Gradient Boosting zuerst (CPU reicht,
-          interpretierbar), NN/GPU erst wenn GBM eine Kante zeigt.
-          Validierung zwingend walk-forward + 6.4-Protokoll.
-      (c) TimesFM-Experiment (bereits evaluiert: NICHT für Kurse, evtl. für
-          Alt-Data-Reihen) — auf GPU-Server günstig nachholbar, zero-shot
-          vs. naive Baseline.
+- [~] **6.5 GPU-Nutzen realistisch einordnen**:
+      (a) ✅ GRÖSSTER SICHERER GEWINN bereits VORBEREITET (Fund 12.7. beim
+          Sichten, kein neuer Code nötig): system/resource_manager.py::
+          _has_inference_gpu() erkennt automatisch Apple Silicon (Darwin),
+          eine per nvidia-smi sichtbare NVIDIA-GPU oder OLLAMA_FORCE_GPU und
+          schaltet TIER_MODELS dann selbständig von den kleinen CPU-Defaults
+          (llama3.2:3b) auf die großen GPU-Defaults (qwen2.5:32b/14b) um —
+          ohne Codeänderung beim Umzug, genau im Sinne der Freigabe-Regel
+          (vorbereitet, aktiviert sich am Hardware-Signal selbst). War bisher
+          UNGETESTET trotz zentraler Rolle; 6 Tests ergänzt
+          (test_resource_manager_gpu.py: Darwin/Force-Override/nvidia-smi-
+          Erfolg/-Timeout/-Fehlen/Falsy-Override), netzfrei (subprocess
+          gemockt). Direkt messbarer Euro-Effekt sobald GPU da ist, null
+          Overfit-Risiko — reine Infrastruktur.
+      (b) ✅ ML-Meta-Labeling GEBAUT 12.7.: strategy_lab/meta_label.py + CLI
+          scripts/meta_label.py. Modell lernt NICHT Kurse vorherzusagen,
+          sondern WELCHE der mechanischen Signale (Donchian/RSI/…) im
+          Nachhinein Gewinner waren — Features Regime/Trailing-Vola/
+          Trailing-Rendite/Breadth zum Signalzeitpunkt (streng vor dem
+          Stichtag, kein Look-Ahead), Label = Backtest-Trade-Ausgang (NICHT
+          die 78 echten Trades — die bleiben Validierung, 6.8c).
+          HistGradientBoostingClassifier (CPU reicht, sklearn bereits
+          gepinnt) — bewusst kein NN/GPU, da noch keine Kante gezeigt.
+          VALIDIERUNG NACH 6.4-PROTOKOLL: expandierendes Fenster über
+          Zeitblöcke (dieselbe make_blocks()-Mechanik wie CPCV) statt
+          Zufalls-Split; mehrere P(Win)-Schwellen als kleine Multiple-
+          Testing-Situation mit Šidák-Korrektur + Bootstrap-CI (dieselbe
+          Maschinerie wie Walk-Forward/CPCV); Holdout-Schwanz ausgespart +
+          protokolliert (anti_overfit.log_holdout_access). Feature-
+          Importance bewusst NICHT Teil davon — bleibt eigener 6.9(g)-Punkt
+          (Permutation-Importance, rechenintensiver). 15 Tests
+          (test_meta_label.py, u.a. Look-Ahead-Freiheit per Zukunfts-
+          Manipulation verifiziert + Positivkontrolle: ein künstlich
+          eingebautes Signal wird auch wirklich erkannt, nicht nur immer
+          NO_SIGNAL zurückgegeben), netzfrei. CLI-Smoke-Test gegen echte
+          Cache-Daten (5 Ticker/15J) verifiziert — ehrlicher Befund dort:
+          NO_SIGNAL bei nur 1 Auswertungs-Block (zu kleine Stichprobe),
+          erwartungsgemäß, kein Overselling.
+      (c) OFFEN: TimesFM-Experiment (bereits evaluiert: NICHT für Kurse,
+          evtl. für Alt-Data-Reihen) — auf GPU-Server günstig nachholbar,
+          zero-shot vs. naive Baseline. Braucht die Hardware selbst, bleibt
+          Block-6-Hardware-gated.
       (d) BEWUSST NICHT: Deep Learning / RL direkt auf Kursen — 78 gelabelte
           Trades und Random-Walk-Preise; das wäre Overfitting mit Ansage.
 - [ ] **6.6 Lern-Loop-Realität**: Echtes Weiterlernen (Kalibrierung,
