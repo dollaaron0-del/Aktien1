@@ -302,9 +302,27 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       wie stark reales Kapital das unbeschränkte Signal-Universum tatsächlich
       einschränkt. Die Allokator-Frage selbst ("hilft weight_plan gegenüber
       Gleichgewichtung?") bleibt unbeantwortet, bis eine Strategie ACTIVE wird.
-- [ ] **2.3 Stress-Test-Harness** — 2008/2020/2022 durch die
+- [x] **2.3 Stress-Test-Harness** — fertig 12.7. 2008/2020/2022 durch die
       Entscheidungs-Pipeline; gestuftes De-Risking statt binärem
       CircuitBreaker.
+      Teil A (dad8fec): strategy_lab/stress_test.py — benannte Krisenfenster
+      (GFC_2008, COVID_2020, BEAR_2022) via Loader-Wrapper auf die bestehende
+      run_portfolio_backtest() (2.2) zugeschnitten, kein neuer Simulations-
+      code. Ehrlicher Survivorship-Hinweis: yfinance purgt 2008-Pleiten
+      (Lehman, WaMu, Bear Stearns) — ein GFC-Lauf über das heutige Universum
+      läuft nur auf Überlebenden. 6 neue Tests, Suite 513 grün.
+      Teil B: gestuftes De-Risking in strategy_lab/portfolio_backtest.py
+      (DeriskConfig, standardmäßig AUS/opt-in) — Größen-Multiplikator für
+      NEUE Entries stufenweise nach laufendem Drawdown vom Portfolio-Equity-
+      Peak (< 5 % voll, 5–10 % halb, 10–15 % viertel, ≥ 15 % kein Entry mehr
+      = spiegelt den bestehenden binären CircuitBreaker als harte Unter-
+      grenze statt ihn zu ersetzen). Bewusst nur neue Käufe gebremst, offene
+      Positionen unangetastet (kein aktives Exposure-Abbauen) — einfachster
+      Fail-Safe-Fall, keine Rücknahme-Logik nötig, da der Multiplikator bei
+      jedem neuen Entry-Event live aus dem aktuellen Drawdown neu berechnet
+      wird. 7 neue Tests, Suite 520 grün. Ob Stufung gegenüber binär/aus
+      tatsächlich hilft, ist offene Forschungsfrage — noch nicht durch den
+      Stress-Test-Harness (Teil A) laufen lassen und verglichen.
 - [ ] **2.4 Quellen-Ablation / Collector-Pruning** — 30+ Collectors, bisher
       nur hinzugefügt, nie entfernt. Periodisch messen, welche Quelle
       Entscheidungen messbar verbessert; tote/wertlose Quellen abschalten.

@@ -16,8 +16,8 @@ import pytest
 import strategy_lab.portfolio_backtest as pb
 from backtesting.engine import Trade
 from strategy_lab.portfolio_backtest import (
-    PortfolioTrade, VolTargetConfig, SkipReasons,
-    _vol_multiplier, _theme_cap_violated, _build_events, _simulate_events,
+    PortfolioTrade, VolTargetConfig, DeriskConfig, SkipReasons,
+    _vol_multiplier, _derisk_multiplier, _theme_cap_violated, _build_events, _simulate_events,
     equal_weight_plan, run_portfolio_backtest,
 )
 from strategy_lab.strategies import Strategy
@@ -73,6 +73,67 @@ def test_vol_multiplier_fails_open_on_bad_data():
     df = _ramp_df(n=5)  # zu wenig Bars für ATR(14) -> NaN
     cfg = VolTargetConfig()
     assert _vol_multiplier(df, 2, cfg) == 1.0
+
+
+# ── _derisk_multiplier ───────────────────────────────────────────────────────
+
+def test_derisk_multiplier_disabled_is_one():
+    cfg = DeriskConfig(enabled=False)
+    assert _derisk_multiplier(current_equity=50.0, peak_equity=100.0, cfg=cfg) == 1.0
+
+
+def test_derisk_multiplier_no_drawdown_is_full_size():
+    cfg = DeriskConfig(enabled=True)
+    assert _derisk_multiplier(current_equity=100.0, peak_equity=100.0, cfg=cfg) == 1.0
+
+
+def test_derisk_multiplier_steps_down_with_drawdown():
+    cfg = DeriskConfig(enabled=True, tiers=((0.05, 1.0), (0.10, 0.5), (0.15, 0.25)))
+    assert _derisk_multiplier(96.0, 100.0, cfg) == pytest.approx(1.0)    # 4% DD
+    assert _derisk_multiplier(92.0, 100.0, cfg) == pytest.approx(0.5)    # 8% DD
+    assert _derisk_multiplier(87.0, 100.0, cfg) == pytest.approx(0.25)   # 13% DD
+
+
+def test_derisk_multiplier_zero_beyond_last_tier():
+    cfg = DeriskConfig(enabled=True, tiers=((0.05, 1.0), (0.10, 0.5), (0.15, 0.25)))
+    assert _derisk_multiplier(80.0, 100.0, cfg) == 0.0   # 20% DD
+
+
+def test_derisk_multiplier_zero_peak_fails_open():
+    cfg = DeriskConfig(enabled=True)
+    assert _derisk_multiplier(current_equity=0.0, peak_equity=0.0, cfg=cfg) == 1.0
+
+
+# ── _simulate_events: gestuftes De-Risking ──────────────────────────────────
+
+def test_derisk_blocks_new_entry_after_deep_drawdown():
+    df = _ramp_df()
+    trades = [
+        PortfolioTrade(_trade("A", "2022-01-03", "2022-02-01", -0.30), "s", 1.0, "A", df),  # -30%
+        PortfolioTrade(_trade("A", "2022-02-02", "2022-03-01", 0.10), "s", 1.0, "A", df),
+    ]
+    events = _build_events(trades)
+    res = _simulate_events(events, trades, initial_capital=100.0, max_positions=1,
+                           max_positions_per_theme=10, vol_target_cfg=VolTargetConfig(enabled=False),
+                           relations=_StubRelations({}), derisk_cfg=DeriskConfig(enabled=True))
+    # Nach -30% DD (> letztem Tier 15%) wird der zweite Entry geblockt.
+    assert res.n_trades_taken == 1
+    assert res.skip_reasons.derisk == 1
+
+
+def test_derisk_off_by_default_matches_no_derisk_result():
+    df = _ramp_df()
+    trades = [
+        PortfolioTrade(_trade("A", "2022-01-03", "2022-02-01", -0.30), "s", 1.0, "A", df),
+        PortfolioTrade(_trade("A", "2022-02-02", "2022-03-01", 0.10), "s", 1.0, "A", df),
+    ]
+    common = dict(initial_capital=100.0, max_positions=1, max_positions_per_theme=10,
+                  vol_target_cfg=VolTargetConfig(enabled=False), relations=_StubRelations({}))
+    res_default = _simulate_events(_build_events(trades), trades, **common)
+    res_explicit_off = _simulate_events(_build_events(trades), trades, **common,
+                                        derisk_cfg=DeriskConfig(enabled=False))
+    assert res_default.final_equity == pytest.approx(res_explicit_off.final_equity)
+    assert res_default.n_trades_taken == 2
 
 
 # ── _theme_cap_violated ──────────────────────────────────────────────────────

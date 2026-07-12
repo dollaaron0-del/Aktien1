@@ -47,6 +47,27 @@ class VolTargetConfig:
     enabled: bool = True
 
 
+@dataclass
+class DeriskConfig:
+    """Gestuftes De-Risking (Roadmap 2.3 Teil B) – Alternative zum binären
+    CircuitBreaker (portfolio/circuit_breaker.py: hartes Kauf-Verbot erst ab
+    MAX_DRAWDOWN_PCT, Standard 15 %). Reduziert stattdessen die Größe NEUER
+    Entries stufenweise mit dem laufenden Drawdown vom Portfolio-Equity-Peak
+    – offene Positionen werden nicht angetastet, nur frisches Kapital wird
+    vorsichtiger eingesetzt. `tiers` sind (Drawdown-Obergrenze, Multiplikator)-
+    Paare, aufsteigend sortiert erwartet; jenseits des letzten Tiers ist der
+    Multiplikator 0 (kein neuer Entry) – spiegelt damit den binären
+    CircuitBreaker als harte Untergrenze, statt ihn zu ersetzen.
+    Standardmäßig AUS (opt-in) – ob Stufung gegenüber binär/aus tatsächlich
+    hilft, ist offene Forschungsfrage (s. strategy_lab/stress_test.py)."""
+    tiers: Tuple[Tuple[float, float], ...] = (
+        (0.05, 1.00),   # < 5 % DD: volle Größe
+        (0.10, 0.50),   # 5–10 % DD: halbe Größe
+        (0.15, 0.25),   # 10–15 % DD: viertel Größe
+    )                    # >= 15 % DD: 0 (kein neuer Entry)
+    enabled: bool = False
+
+
 # ── Ergebnis-Datentypen ──────────────────────────────────────────────────────
 
 @dataclass
@@ -63,6 +84,7 @@ class SkipReasons:
     cash: int = 0
     max_positions: int = 0
     theme_cap: int = 0
+    derisk: int = 0
 
 
 @dataclass
@@ -115,6 +137,18 @@ def _vol_multiplier(df: pd.DataFrame, entry_idx: int, cfg: VolTargetConfig) -> f
         return max(cfg.size_floor, min(cfg.size_cap, mult))
     except Exception:
         return 1.0
+
+
+def _derisk_multiplier(current_equity: float, peak_equity: float, cfg: DeriskConfig) -> float:
+    """Größen-Multiplikator für neue Entries nach laufendem Drawdown vom
+    Equity-Peak. Fail-open (1.0) wenn deaktiviert oder Peak <= 0 (Start)."""
+    if not cfg.enabled or peak_equity <= 0:
+        return 1.0
+    drawdown = max(0.0, (peak_equity - current_equity) / peak_equity)
+    for threshold, mult in cfg.tiers:
+        if drawdown < threshold:
+            return mult
+    return 0.0
 
 
 def _theme_cap_violated(open_tickers, candidate: str, relations, cap: int,
@@ -226,7 +260,10 @@ def _simulate_events(
     max_positions_per_theme: int,
     vol_target_cfg: VolTargetConfig,
     relations,
+    derisk_cfg: Optional[DeriskConfig] = None,
 ) -> PortfolioBacktestResult:
+    if derisk_cfg is None:
+        derisk_cfg = DeriskConfig()
     cash = initial_capital
     open_positions: Dict[int, Dict] = {}   # trade_id -> {"dollars", "ticker"}
     equity_curve: List[Tuple[pd.Timestamp, float]] = []
@@ -234,6 +271,7 @@ def _simulate_events(
     trades_taken: List[PortfolioTrade] = []
     trades_skipped: List[Tuple[PortfolioTrade, str]] = []
     peak_concurrent = 0
+    peak_equity = initial_capital
     theme_cache: Dict[str, List[str]] = {}
 
     utilization_weighted_sum = 0.0
@@ -263,16 +301,20 @@ def _simulate_events(
             _record_utilization(event.date, equity_before)
             pos = open_positions.pop(event.trade_id)
             cash += pos["dollars"] * (1 + pt.trade.return_pct)
-            equity_curve.append((event.date, cash + _deployed()))
+            equity_after_close = cash + _deployed()
+            peak_equity = max(peak_equity, equity_after_close)
+            equity_curve.append((event.date, equity_after_close))
             continue
 
         # OPEN
         current_equity = cash + _deployed()
+        peak_equity = max(peak_equity, current_equity)
         _record_utilization(event.date, current_equity)
 
         entry_idx = pt.df.index.get_loc(pt.trade.entry_date)
         vol_mult = _vol_multiplier(pt.df, entry_idx, vol_target_cfg)
-        target = pt.weight * current_equity * vol_mult
+        derisk_mult = _derisk_multiplier(current_equity, peak_equity, derisk_cfg)
+        target = pt.weight * current_equity * vol_mult * derisk_mult
 
         if len(open_positions) >= max_positions:
             skip_reasons.max_positions += 1
@@ -284,6 +326,11 @@ def _simulate_events(
                                max_positions_per_theme, theme_cache):
             skip_reasons.theme_cap += 1
             trades_skipped.append((pt, "theme_cap"))
+            continue
+
+        if derisk_mult <= 0:
+            skip_reasons.derisk += 1
+            trades_skipped.append((pt, "derisk"))
             continue
 
         dollars = min(target, cash)
@@ -326,14 +373,18 @@ def run_portfolio_backtest(
     max_positions_per_theme: int = 3,
     vol_target_cfg: Optional[VolTargetConfig] = None,
     stock_relations=None,
+    derisk_cfg: Optional[DeriskConfig] = None,
 ) -> PortfolioBacktestResult:
     """Simuliert EIN Portfolio über den `plan` (weight_plan()-förmig:
     [{"strategy","params","weight",...}]) hinweg – Cash-Constraint,
-    Max-Positionen, Themen-Kappung (Korrelations-Proxy), Vol-Targeting.
+    Max-Positionen, Themen-Kappung (Korrelations-Proxy), Vol-Targeting,
+    optional gestuftes De-Risking (Roadmap 2.3 Teil B, standardmäßig aus).
     `plan=[]` (z.B. weil der Allokator gerade keine ACTIVE Strategie hat)
     liefert ein flaches Ergebnis (final_equity == initial_capital), kein Crash."""
     if vol_target_cfg is None:
         vol_target_cfg = VolTargetConfig()
+    if derisk_cfg is None:
+        derisk_cfg = DeriskConfig()
     if stock_relations is None:
         from analyzers.stock_relations import StockRelations
         stock_relations = StockRelations()
@@ -349,4 +400,5 @@ def run_portfolio_backtest(
 
     events = _build_events(trades)
     return _simulate_events(events, trades, initial_capital, max_positions,
-                            max_positions_per_theme, vol_target_cfg, stock_relations)
+                            max_positions_per_theme, vol_target_cfg, stock_relations,
+                            derisk_cfg=derisk_cfg)
