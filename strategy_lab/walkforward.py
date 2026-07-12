@@ -27,6 +27,8 @@ import pandas as pd
 
 from backtesting import data_loader
 from backtesting.metrics import TickerMetrics, compute, aggregate
+from strategy_lab.anti_overfit import (BASE_ALPHA, log_holdout_access,
+                                       passes_multiple_testing, sidak_alpha)
 from strategy_lab.regime import classify_window, regime_breakdown, robust_regimes
 from strategy_lab.strategies import Strategy, get
 
@@ -118,6 +120,10 @@ class WalkForwardReport:
     test_return_p_le0: float = 1.0     # Bootstrap-P(Ø-OOS-Kante ≤ 0)
     max_drawdown_ci_lo: float = 0.0    # CI der mittleren OOS-MaxDD (beide ≤ 0)
     max_drawdown_ci_hi: float = 0.0
+    # Roadmap 6.4: Multiple-Testing-Korrektur + Holdout.
+    n_combos_tested: int = 1           # Größe der Grid-Search (fließt ins Verdikt)
+    alpha_adjusted: float = BASE_ALPHA  # Šidák-Schwelle, die p_le0 schlagen muss
+    holdout_years: int = 0             # ausgesparter Daten-Schwanz (0 = keiner)
 
 
 # ── Hilfen ──────────────────────────────────────────────────────────────────
@@ -164,6 +170,7 @@ def run_walk_forward(
     max_combos: int = 60,
     loader: Callable[[str, int], object] = data_loader.load,
     workers: Optional[int] = None,
+    holdout_years: int = 0,
 ) -> WalkForwardReport:
     if isinstance(strategy, str):
         strategy = get(strategy)
@@ -176,6 +183,16 @@ def run_walk_forward(
             full[t] = df
     if not full:
         return WalkForwardReport(strategy.name, 0, 0, 0, 0, 0, 0, 0, 0, "OVERFIT")
+
+    # Roadmap 6.4: Holdout — der jüngste Daten-Schwanz fließt NIE in die Suche.
+    # Bewertung darauf nur separat + protokolliert über run_holdout().
+    if holdout_years > 0:
+        cut = max(df.index.max() for df in full.values()) - pd.DateOffset(years=holdout_years)
+        full = {t: df.loc[df.index < cut] for t, df in full.items()}
+        full = {t: df for t, df in full.items() if len(df) >= 252}
+        if not full:
+            return WalkForwardReport(strategy.name, 0, 0, 0, 0, 0, 0, 0, 0,
+                                     "OVERFIT", holdout_years=holdout_years)
 
     # Gemeinsame Zeitachse (frühestes/spätestes Datum über alle Ticker).
     starts = min(df.index.min() for df in full.values())
@@ -250,12 +267,16 @@ def run_walk_forward(
         if pool is not None:
             pool.shutdown()
 
-    return _aggregate_report(strategy.name, windows)
+    return _aggregate_report(strategy.name, windows, n_combos=len(combos),
+                             holdout_years=holdout_years)
 
 
-def _aggregate_report(name: str, windows: List[WindowEval]) -> WalkForwardReport:
+def _aggregate_report(name: str, windows: List[WindowEval], n_combos: int = 1,
+                      holdout_years: int = 0) -> WalkForwardReport:
     if not windows:
-        return WalkForwardReport(name, 0, 0, 0, 0, 0, 0, 0, 0, "OVERFIT")
+        return WalkForwardReport(name, 0, 0, 0, 0, 0, 0, 0, 0, "OVERFIT",
+                                 n_combos_tested=max(n_combos, 1),
+                                 holdout_years=holdout_years)
     import statistics as st
     test_rets = [w.test_return for w in windows]
     train_rets = [w.train_return for w in windows]
@@ -275,13 +296,17 @@ def _aggregate_report(name: str, windows: List[WindowEval]) -> WalkForwardReport
     ret_lo, ret_hi, p_le0 = _bootstrap_ci(test_rets)
     dd_lo, dd_hi, _ = _bootstrap_ci(dds)
 
-    # Robustheits-Verdikt (konservativ + konfidenzbewusst): ROBUST verlangt jetzt
-    # zusätzlich, dass die mittlere OOS-Kante SIGNIFIKANT > 0 ist (Bootstrap-CI-
-    # Untergrenze > 0) – ein bloß im Mittel positives, aber die-Null-berührendes
-    # Ergebnis ist FRAGILE, nicht mehr ROBUST.
+    # Robustheits-Verdikt (konservativ + konfidenzbewusst): ROBUST verlangt
+    # eine SIGNIFIKANT positive OOS-Kante (Bootstrap-CI-Untergrenze > 0, 4.2)
+    # UND — Roadmap 6.4 — dass die Signifikanz die Šidák-korrigierte Schwelle
+    # für die Größe der Grid-Search überlebt: wer n Kombos testet, findet auch
+    # in Rauschen "p < 0.05"; die Schwelle sinkt deshalb mit n. Bei kleinen
+    # Suchräumen (n≈1) ist das Gate praktisch deckungsgleich mit 4.2.
+    alpha_adj = sidak_alpha(n_combos)
     if avg_test <= 0 or pct_pos < 0.4:
         verdict = "OVERFIT"
-    elif wf_eff >= 0.5 and pct_pos >= 0.6 and ret_lo > 0:
+    elif (wf_eff >= 0.5 and pct_pos >= 0.6 and ret_lo > 0
+          and passes_multiple_testing(p_le0, n_combos)):
         verdict = "ROBUST"
     else:
         verdict = "FRAGILE"
@@ -307,4 +332,43 @@ def _aggregate_report(name: str, windows: List[WindowEval]) -> WalkForwardReport
         test_return_p_le0=round(p_le0, 3),
         max_drawdown_ci_lo=round(dd_lo, 4),
         max_drawdown_ci_hi=round(dd_hi, 4),
+        n_combos_tested=max(n_combos, 1),
+        alpha_adjusted=round(alpha_adj, 6),
+        holdout_years=holdout_years,
     )
+
+
+def run_holdout(
+    strategy: Strategy | str,
+    universe: List[str],
+    params: Dict,
+    holdout_years: int = 2,
+    total_years: int = 20,
+    loader: Callable[[str, int], object] = data_loader.load,
+    note: str = "",
+) -> TickerMetrics:
+    """Roadmap 6.4: bewertet FESTE Parameter (z.B. die modalen Parameter aus
+    der Promotion-Registry) EINMALIG auf dem Holdout-Schwanz, den
+    run_walk_forward(holdout_years=…) nie durchsucht hat. Jeder Aufruf wird
+    nach data/holdout_access.json protokolliert — das Fenster nutzt sich durch
+    Anfassen ab (Disziplin-Ziel: ≤1×/Quartal). Kein Grid-Search hier, bewusst:
+    genau EIN Parametersatz, sonst wäre es wieder Suche."""
+    if isinstance(strategy, str):
+        strategy = get(strategy)
+    full: Dict[str, pd.DataFrame] = {}
+    for t in universe:
+        df = loader(t, total_years)
+        if df is not None and len(df) >= 252:
+            full[t] = df
+    if not full:
+        return aggregate([])
+    ends = max(df.index.max() for df in full.values())
+    cut = ends - pd.DateOffset(years=holdout_years)
+    tail: Dict[str, pd.DataFrame] = {}
+    for t, df in full.items():
+        sub = df.loc[df.index >= cut]
+        if len(sub) >= 60:
+            tail[t] = sub
+    metrics = _evaluate_dfs(strategy, tail, params)
+    log_holdout_access(strategy.name, str(cut.date()), str(ends.date()), note)
+    return metrics

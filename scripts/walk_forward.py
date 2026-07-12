@@ -57,6 +57,10 @@ def main() -> None:
     ap.add_argument("--workers", type=int, default=None,
                     help="Prozesse für die Grid-Search (0 = Kerne−1; "
                          "Default ENV STRATEGY_LAB_WORKERS bzw. 1 = seriell)")
+    ap.add_argument("--holdout", type=int, default=0, metavar="JAHRE",
+                    help="jüngste N Jahre als Holdout aussparen — fließen NIE "
+                         "in die Suche; Bewertung nur separat via run_holdout() "
+                         "(Roadmap 6.4)")
     ap.add_argument("--no-save", action="store_true",
                     help="Promotion-Registry NICHT auf data/strategy_registry.json schreiben")
     args = ap.parse_args()
@@ -83,7 +87,7 @@ def main() -> None:
         rep = run_walk_forward(
             name, universe, total_years=args.total, train_years=args.train,
             test_years=args.test, step_years=args.step, max_combos=args.max_combos,
-            workers=args.workers)
+            workers=args.workers, holdout_years=args.holdout)
         reports.append(rep)
         vc = _VERDICT_COLOR.get(rep.verdict, "white")
         ci_color = "green" if rep.test_return_ci_lo > 0 else "yellow"
@@ -98,7 +102,15 @@ def main() -> None:
             f"[{vc}]{rep.verdict}[/{vc}]",
         )
     console.print(table)
-    console.print("[dim]ROBUST = OOS-Kante signifikant > 0 (Bootstrap-CI-Untergrenze) & stabil · "
+    if reports:
+        r0 = reports[0]
+        console.print(f"[dim]Multiple-Testing (6.4): {r0.n_combos_tested} Kombos getestet → "
+                      f"Šidák-Schwelle p ≤ {r0.alpha_adjusted:.4f} für ROBUST.[/dim]")
+    if args.holdout > 0:
+        console.print(f"[yellow]Holdout: jüngste {args.holdout}J ausgespart — nie durchsucht; "
+                      f"Bewertung nur via run_holdout() (protokolliert).[/yellow]")
+    console.print("[dim]ROBUST = OOS-Kante signifikant > 0 (Bootstrap-CI-Untergrenze, "
+                  "Šidák-korrigiert für die Suchraum-Größe) & stabil · "
                   "OVERFIT = Train gut, Test schlecht.[/dim]")
 
     # ── Phase 4: Promotion-Registry (Survivorship) ───────────────────────────
