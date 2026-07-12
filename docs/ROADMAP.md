@@ -320,9 +320,30 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Positionen unangetastet (kein aktives Exposure-Abbauen) — einfachster
       Fail-Safe-Fall, keine Rücknahme-Logik nötig, da der Multiplikator bei
       jedem neuen Entry-Event live aus dem aktuellen Drawdown neu berechnet
-      wird. 7 neue Tests, Suite 520 grün. Ob Stufung gegenüber binär/aus
-      tatsächlich hilft, ist offene Forschungsfrage — noch nicht durch den
-      Stress-Test-Harness (Teil A) laufen lassen und verglichen.
+      wird. 7 neue Tests, Suite 520 grün.
+      REALER VERGLEICH 12.7. (scripts/stress_test.py, neues CLI: aus/binär/
+      gestuft je Krisenfenster über die 10-Ticker-Watchlist, Gleichgewichtung
+      da Registry 0 ACTIVE): GFC_2008 (nur Überlebende, s.o.) — aus MaxDD
+      −34,9 %/Return −25,0 %; binär (1 Tier bei 15 %, spiegelt den Live-
+      CircuitBreaker) MaxDD −19,1 %/Return −19,1 %; gestuft MaxDD −15,7 %/
+      Return −15,7 % (beste MaxDD UND beste Return). BEAR_2022 — aus MaxDD
+      −20,6 %/Return −14,0 %; binär MaxDD −16,5 %/Return −11,0 %; gestuft
+      MaxDD −13,4 %/Return −10,2 % (wieder beste MaxDD UND beste Return).
+      COVID_2020 (Erholung zu schnell/Fenster zu kurz für 5 %-Portfolio-DD)
+      — alle drei identisch (Derisk greift nie, 0 Sperren). Damit: gestuft
+      schlägt binär, binär schlägt aus, in beiden Krisen mit nennenswertem
+      Drawdown. AUFFÄLLIGKEIT: bei binär/gestuft in GFC_2008 ist Return ≈
+      MaxDD (Portfolio bleibt bis Fensterende praktisch flach auf dem
+      Tiefpunkt liegen, da nach der Sperre kaum noch neue Trades laufen und
+      keine Erholung mehr eingefangen wird) — Kehrseite des Schutzes:
+      verpasste Erholung, wenn das Fenster kurz nach dem Tief endet.
+      Sharpe verschlechtert sich unter Derisking in GFC_2008 (aus −1,47 →
+      binär −2,49 → gestuft −3,03) trotz besserem MaxDD/Return — Artefakt
+      der Formel (bestraft niedrige Vola bei negativem Mittelwert), NICHT
+      als Gegenargument zu werten; MaxDD/Return sind hier die relevanten
+      Metriken, nicht Sharpe. Fazit: Stufung hilft in dieser Stichprobe
+      (2 von 3 Fenstern mit Wirkung) klar gegenüber binär und aus — aber nur
+      2 Krisenfenster mit echtem Ausschlag, keine große Stichprobe.
 - [ ] **2.4 Quellen-Ablation / Collector-Pruning** — 30+ Collectors, bisher
       nur hinzugefügt, nie entfernt. Periodisch messen, welche Quelle
       Entscheidungen messbar verbessert; tote/wertlose Quellen abschalten.
