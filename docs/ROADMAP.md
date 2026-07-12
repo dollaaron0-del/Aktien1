@@ -539,8 +539,8 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       _FiresToday-Klasse). Benchmark echte Cache-Daten: 3,0× mit 4 Workern
       (52,6s → 17,3s), identisches Ergebnis. 5 Tests, Suite 552 grün.
       Auf dem 6-Kern-Server ~4–5× drin, auf dem neuen Server ~Kernzahl.
-- [~] **6.4 Anti-Overfit-Protokoll für große Suchräume** (PFLICHT vor
-      "intensiver") — KERN FERTIG 12.7. (9372f14):
+- [x] **6.4 Anti-Overfit-Protokoll für große Suchräume** (PFLICHT vor
+      "intensiver") — FERTIG 12.7. (9372f14 + CPCV-Ergänzung):
       (a) Multiple-Testing-Korrektur AKTIV: strategy_lab/anti_overfit.py,
           Šidák-korrigierte Signifikanzschwelle — n getesteter Kombos fließt
           ins Promotion-Verdikt ein (ROBUST verlangt p_le0 ≤ šidák(n); n=1 ≙
@@ -554,9 +554,26 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
           protokolliert JEDEN Zugriff (data/holdout_access.json) —
           Disziplin-Ziel ≤1×/Quartal bleibt Prozess, kein Schloss.
           7 Tests, Suite 559 grün, CLI-E2E verifiziert.
-      (c) OFFEN: purged/embargoed CV bzw. CPCV als zweite Achse neben
-          Walk-Forward (rechenintensiv → sinnvoll mit 6.3-Workern auf dem
-          neuen Server); Holdout in 6.7-Quartalsroutine verdrahten.
+      (c) ✅ CPCV GEBAUT 12.7. (Vision, Roadmap-Abarbeitung): strategy_lab/
+          cpcv.py + CLI scripts/cpcv.py. Zweite Validierungs-Achse: statt
+          nur EINER vorwärtslaufenden Fenster-Abfolge (Walk-Forward) prüft
+          CPCV viele verschiedene Kombinationen, welcher Zeitblock als Test
+          dient (C(n_blocks,test_blocks), gedeckelt via --max-paths), mit
+          Purging (Trainingsende vor einem Testblock um purge_days
+          verkürzt — ein Signal dort könnte sonst einen Trade eröffnen, der
+          in den Test hineinläuft) + Embargo (Trainingsstart nach einem
+          Testblock um embargo_days verzögert, gegen serielle Korrelation).
+          Bewusste Vereinfachung ggü. dem Originalpapier (wie Šidák statt
+          DSR): keine Pfad-Rekonstruktion, jede Testblock-Kombination zählt
+          als eigenes unabhängiges OOS-Ergebnis — statistisch konservativer,
+          nicht großzügiger. Nutzt dieselbe Grid-Search-/Aggregations-/
+          6.3-Worker-Maschinerie wie walkforward.py (_aggregate_report
+          wiederverwendet → identische Šidák/Bootstrap-Gates auf beiden
+          Achsen). 18 Tests (test_cpcv.py, u.a. Purge/Embargo-Grenzfälle:
+          mittig/Rand/mehrere/angrenzende Testblöcke, Parallel==Seriell),
+          netzfrei; CLI-Smoke-Test gegen echte Cache-Daten verifiziert.
+          Holdout-in-6.7-Verdrahtung bleibt Teil der 6.7-Routine (dort, wo
+          6.7 selbst noch offen ist).
 - [ ] **6.5 GPU-Nutzen realistisch einordnen**:
       (a) GRÖSSTER SICHERER GEWINN: Ollama/lokales LLM wieder tragfähig —
           der aktuelle CPU-Server schaffte nur 1,7 tok/s, deshalb läuft
