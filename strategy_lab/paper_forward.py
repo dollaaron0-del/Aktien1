@@ -29,7 +29,7 @@ from typing import Callable, Dict, List, Optional
 
 import pandas as pd
 
-from backtesting.engine import BacktestConfig
+from backtesting.engine import BacktestConfig, _run_exit_loop
 from strategy_lab import allocator
 
 _LEDGER_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "paper_forward.json")
@@ -85,69 +85,24 @@ def _entry_index(df: pd.DataFrame, signal_date: str) -> Optional[int]:
 
 def _resolve(df: pd.DataFrame, entry_idx: int, cfg: BacktestConfig) -> Dict:
     """Löst eine Position über die vorhandenen Balken ab Entry auf. df ist bereits
-    auf `as_of` zugeschnitten (nur existierende Balken). Identische TP1/TP2/SL/Time-
-    Mechanik wie engine._simulate – ABER wenn die Haltedauer mangels Balken (Zukunft)
-    nicht voll ist, bleibt die Position OFFEN (mark-to-market am letzten Close)."""
-    entry_row = df.iloc[entry_idx]
-    entry_price = float(entry_row["Open"])
+    auf `as_of` zugeschnitten (nur existierende Balken). Nutzt denselben Exit-
+    Resolver wie engine._simulate (Roadmap 2.1, backtesting.engine._run_exit_loop)
+    – ABER wenn die Haltedauer mangels Balken (Zukunft) nicht voll ist, bleibt die
+    Position OFFEN (mark-to-market am letzten Close) statt zwangsgeschlossen."""
+    entry_price = float(df.iloc[entry_idx]["Open"])
+    r = _run_exit_loop(df, entry_idx, entry_price, cfg, force_close_at_boundary=False)
 
-    sl_price = entry_price * (1 - cfg.sl_pct)
-    tp1_price = entry_price * (1 + cfg.tp1_pct)
-    tp2_price = entry_price * (1 + cfg.tp2_pct)
-
-    realized = 0.0
-    remaining = 1.0
-    breakeven = False
-    tp1_hit = tp2_hit = False
-
-    last_idx = len(df) - 1
-    horizon_idx = entry_idx + cfg.max_hold_days          # voller Time-Stop wäre hier
-    end_idx = min(horizon_idx, last_idx)
-
-    def _result(status, j, price, reason):
-        return {
-            "status": status,
-            "entry_price": round(entry_price, 4),
-            "tp1_hit": tp1_hit, "tp2_hit": tp2_hit,
-            "exit_date": _to_day(df.index[j]) if status == CLOSED else None,
-            "exit_price": round(price, 4) if status == CLOSED else None,
-            "return_pct": round(realized if status == CLOSED
-                                else realized + remaining * (price / entry_price - 1), 6),
-            "exit_reason": reason,
-            "last_checked": _to_day(df.index[j]),
-        }
-
-    for j in range(entry_idx, end_idx + 1):
-        row = df.iloc[j]
-        high, low, close = float(row["High"]), float(row["Low"]), float(row["Close"])
-
-        if not tp1_hit and high >= tp1_price:
-            realized += cfg.tp1_frac * cfg.tp1_pct
-            remaining -= cfg.tp1_frac
-            breakeven = True
-            sl_price = entry_price
-            tp1_hit = True
-
-        if tp1_hit and not tp2_hit and high >= tp2_price:
-            sell = cfg.tp2_frac * remaining
-            realized += sell * cfg.tp2_pct
-            remaining -= sell
-            tp2_hit = True
-
-        if low <= sl_price:
-            realized += remaining * (0.0 if breakeven else -cfg.sl_pct)
-            return _result(CLOSED, j, sl_price, "SL_breakeven" if breakeven else "SL")
-
-        if j == end_idx:
-            if horizon_idx <= last_idx:           # volle Haltedauer erreicht → Time-Stop
-                realized += remaining * (close / entry_price - 1)
-                return _result(CLOSED, j, close, "time_stop")
-            # sonst: Balken sind ausgegangen (Zukunft fehlt) → Position bleibt OFFEN
-            return _result(OPEN, j, close, "open")
-
-    # nur erreichbar, wenn entry_idx == last_idx (Entry-Balken selbst, kein Folgebalken)
-    last = df.iloc[end_idx]
-    return _result(OPEN, end_idx, float(last["Close"]), "open")
+    status = r["status"]
+    return {
+        "status": status,
+        "entry_price": round(entry_price, 4),
+        "tp1_hit": r["tp1_hit"], "tp2_hit": r["tp2_hit"],
+        "exit_date": _to_day(df.index[r["exit_idx"]]) if status == CLOSED else None,
+        "exit_price": round(r["exit_price"], 4) if status == CLOSED else None,
+        "return_pct": round(r["return_pct"], 6),
+        "exit_reason": r["exit_reason"],
+        "last_checked": _to_day(df.index[r["exit_idx"]]),
+    }
 
 
 # ── Ledger-IO ───────────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ Prüft die Exit-Mechanik (spiegelt engine._simulate), die Vorwärts-Logik
 """
 import numpy as np
 import pandas as pd
+import pytest
 
 from backtesting.engine import BacktestConfig
 from strategy_lab import allocator, paper_forward as pf
@@ -53,6 +54,36 @@ def test_entry_index_first_bar_after_signal():
     assert pf._entry_index(df, sig) == 4
     # Signal auf letztem Balken → noch kein Entry-Balken
     assert pf._entry_index(df, pf._to_day(df.index[-1])) is None
+
+
+# ── Roadmap 2.1: _resolve und engine._simulate teilen sich denselben Exit-
+# Resolver (_run_exit_loop) – müssen auf identischen, langen genug Daten (nie
+# OFFEN) exakt dasselbe Ergebnis liefern, für jede Exit-Stil-Kombination.
+def test_resolve_matches_engine_simulate_on_identical_data():
+    from backtesting.engine import _simulate
+
+    df = _ramp_df(n=200, daily=0.01, base=50.0)
+    combos = [
+        {"sl_mode": "fixed", "time_stop_mode": "hard"},
+        {"sl_mode": "fixed", "time_stop_mode": "soft"},
+        {"sl_mode": "atr_trail", "time_stop_mode": "hard"},
+        {"sl_mode": "atr_trail", "time_stop_mode": "soft"},
+        {"sl_mode": "regime", "time_stop_mode": "hard"},
+        {"sl_mode": "regime", "time_stop_mode": "soft"},
+    ]
+    for kwargs in combos:
+        cfg = BacktestConfig(max_hold_days=20, soft_time_stop_min_gain=0.01,
+                             soft_time_stop_extension_days=10, **kwargs)
+        entry_idx = 60  # genug Vorlauf-Bars für regime_lookback, genug Folge-Bars für hard hold
+        trade = _simulate(df, entry_idx - 1, cfg, "X")
+        res = pf._resolve(df, entry_idx, cfg)
+
+        assert res["status"] == pf.CLOSED, kwargs
+        assert res["exit_reason"] == trade.exit_reason, kwargs
+        assert res["tp1_hit"] == trade.tp1_hit, kwargs
+        assert res["tp2_hit"] == trade.tp2_hit, kwargs
+        assert res["return_pct"] == pytest.approx(trade.return_pct, abs=1e-6), kwargs
+        assert res["exit_date"] == pf._to_day(trade.exit_date), kwargs
 
 
 # ── record_signals: Aufnahme + Dedup ────────────────────────────────────────────

@@ -44,6 +44,23 @@ def test_walk_forward_runs_and_aggregates():
     assert -1.0 <= rep.pct_positive_windows <= 1.0
 
 
+def test_walk_forward_runs_with_enlarged_exit_param_space():
+    """Roadmap 2.1: der vergrößerte, kategoriale param_space (sl_mode/
+    time_stop_mode als Strings) darf _param_combos/_aggregate_report nicht
+    zum Absturz bringen (Counter(tuple(sorted(...))) braucht hashbare Werte
+    – Strings sind das, aber das war vor Exit-Lab ungetestet)."""
+    loader = lambda t, y: _long_df(seed=hash(t) % 100)
+    rep = run_walk_forward("baseline_swing", ["AAA", "BBB"],
+                           total_years=12, train_years=4, test_years=2, step_years=2,
+                           max_combos=12, loader=loader)
+    assert rep.n_windows >= 1
+    assert rep.verdict in ("ROBUST", "FRAGILE", "OVERFIT")
+    assert rep.avg_test_max_drawdown <= 0
+    assert rep.worst_test_max_drawdown <= rep.avg_test_max_drawdown
+    for w in rep.windows:
+        assert w.test_max_drawdown <= 0
+
+
 def test_no_data_yields_overfit():
     rep = run_walk_forward("donchian_breakout", ["X"], loader=lambda t, y: None)
     assert rep.n_windows == 0

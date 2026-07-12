@@ -17,7 +17,7 @@ from typing import Callable, Dict, List
 import pandas as pd
 
 from backtesting.engine import BacktestConfig, Trade, _simulate, _rsi
-from strategy_lab.strategies import Strategy, register
+from strategy_lab.strategies import Strategy, register, EXIT_PARAM_SPACE
 
 _CFG_FIELDS = set(BacktestConfig.__dataclass_fields__)
 
@@ -151,7 +151,8 @@ register(Strategy(
     runner=_donchian_run,
     default_params={"breakout_window": 20},
     param_space={"breakout_window": [20, 40, 55], "sl_pct": [0.07, 0.10],
-                 "tp1_pct": [0.15, 0.20], "max_hold_days": [45, 60, 90]},
+                 "tp1_pct": [0.15, 0.20], "max_hold_days": [45, 60, 90],
+                 **EXIT_PARAM_SPACE},
     signal=_fires_today(_donchian_prepare, _donchian_signal, min_bars=25),
 ))
 
@@ -161,7 +162,8 @@ register(Strategy(
     runner=_rsimr_run,
     default_params={"rsi_buy": 30.0, "trend_ma": 200},
     param_space={"rsi_buy": [25.0, 30.0, 35.0], "trend_ma": [100, 200],
-                 "sl_pct": [0.05, 0.07], "tp1_pct": [0.08, 0.12], "max_hold_days": [15, 30]},
+                 "sl_pct": [0.05, 0.07], "tp1_pct": [0.08, 0.12], "max_hold_days": [15, 30],
+                 **EXIT_PARAM_SPACE},
     signal=_fires_today(_rsimr_prepare, _rsimr_signal, min_bars=205),
 ))
 
@@ -171,6 +173,7 @@ register(Strategy(
     runner=_tsmom_run,
     default_params={"lookback": 126, "trend_ma": 200},
     param_space={"lookback": [63, 126, 252], "trend_ma": [100, 200],
-                 "sl_pct": [0.07, 0.10], "tp1_pct": [0.15, 0.20], "max_hold_days": [60, 90]},
+                 "sl_pct": [0.07, 0.10], "tp1_pct": [0.15, 0.20], "max_hold_days": [60, 90],
+                 **EXIT_PARAM_SPACE},
     signal=_fires_today(_tsmom_prepare, _tsmom_signal, min_bars=205),
 ))

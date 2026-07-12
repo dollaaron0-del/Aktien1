@@ -44,6 +44,7 @@ class WindowEval:
     test_trades: int
     test_win_rate: float
     regime: str = ""           # Markt-Regime des Testfensters (Phase 4-Rest)
+    test_max_drawdown: float = 0.0   # Roadmap 2.1: primäre Erfolgsmetrik des Exit-Labs
 
 
 @dataclass
@@ -58,6 +59,8 @@ class WalkForwardReport:
     wf_efficiency: float        # avg_test / avg_train (≈1 gut, ≪1 = overfit)
     param_stability: float      # Anteil Fenster mit dem häufigsten Parametersatz
     verdict: str                # ROBUST | FRAGILE | OVERFIT
+    avg_test_max_drawdown: float = 0.0     # Roadmap 2.1: Ø MaxDD über alle Testfenster
+    worst_test_max_drawdown: float = 0.0   # Roadmap 2.1: schlechtestes Testfenster
     windows: List[WindowEval] = field(default_factory=list)
     regime_breakdown: Dict = field(default_factory=dict)   # je Regime: n/Median/%pos
     robust_regimes: List[str] = field(default_factory=list)
@@ -158,6 +161,7 @@ def run_walk_forward(
             test_return=round(tm.total_return, 4), test_sharpe=round(tm.sharpe, 3),
             test_trades=tm.n_trades, test_win_rate=round(tm.win_rate, 4),
             regime=classify_window(test_dfs),
+            test_max_drawdown=round(tm.max_drawdown, 4),
         ))
 
     return _aggregate_report(strategy.name, windows)
@@ -172,6 +176,9 @@ def _aggregate_report(name: str, windows: List[WindowEval]) -> WalkForwardReport
     avg_test = st.mean(test_rets)
     avg_train = st.mean(train_rets)
     pct_pos = sum(1 for r in test_rets if r > 0) / len(test_rets)
+    dds = [w.test_max_drawdown for w in windows]
+    avg_dd = st.mean(dds)
+    worst_dd = min(dds)
     wf_eff = (avg_test / avg_train) if avg_train > 0 else 0.0
     # Parameter-Stabilität: Anteil des häufigsten Parametersatzes.
     from collections import Counter
@@ -196,7 +203,10 @@ def _aggregate_report(name: str, windows: List[WindowEval]) -> WalkForwardReport
         avg_test_return=round(avg_test, 4),
         wf_efficiency=round(wf_eff, 3),
         param_stability=round(stability, 3),
-        verdict=verdict, windows=windows,
+        verdict=verdict,
+        avg_test_max_drawdown=round(avg_dd, 4),
+        worst_test_max_drawdown=round(worst_dd, 4),
+        windows=windows,
         regime_breakdown=breakdown,
         robust_regimes=robust_regimes(breakdown),
     )

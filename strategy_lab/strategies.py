@@ -53,6 +53,19 @@ def all_names() -> List[str]:
     return sorted(REGISTRY)
 
 
+# Exit-Achse (Roadmap 2.1) – wird in jede Familie gemischt, damit der
+# bestehende Walk-Forward-Grid-Search automatisch auch Exit-Stile testet.
+# Bewusst klein gehalten (kein Data-Dredging, s. Modul-Docstring): nur die
+# Stil-Wahl + der eine ATR-Hyperparameter werden gesucht, alle übrigen neuen
+# BacktestConfig-Felder (regime_*, soft_time_stop_*, atr_period) bleiben auf
+# sicheren Fix-Defaults.
+EXIT_PARAM_SPACE: Dict[str, List] = {
+    "sl_mode":        ["fixed", "atr_trail", "regime"],
+    "atr_mult":       [2.0, 2.5, 3.0],
+    "time_stop_mode": ["hard", "soft"],
+}
+
+
 # ── Baseline: die bestehende Swing-Mechanik (EMA21-Pullback + RSI + Volumen) ────
 def _baseline_cfg(params: dict) -> BacktestConfig:
     # Nur bekannte BacktestConfig-Felder durchreichen (robust gegen Extra-Keys).
@@ -88,5 +101,6 @@ register(Strategy(
         "tp2_pct":  [0.25, 0.30, 0.40],
         "rsi_max":  [60.0, 65.0, 70.0],
         "max_hold_days": [30, 45, 60],
+        **EXIT_PARAM_SPACE,
     },
 ))

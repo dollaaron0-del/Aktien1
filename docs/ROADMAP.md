@@ -228,8 +228,45 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
 
 ## Block 2 — Kein-Kante-Befund angehen (strategy_lab Prio 1)
 
-- [ ] **2.1 Exit-Lab** — Exits parametrisierbar (ATR-Trailing, Regime-Stops,
-      Time-Varianten) + Walk-Forward. Adressiert MaxDD −69,5%.
+- [x] **2.1 Exit-Lab** — fertig 12.7. Exits parametrisierbar gemacht (ATR-
+      Trailing-SL, regime-abhängige SL/TP-Skalierung, Soft-Time-Stop) und
+      durch den bestehenden Walk-Forward gejagt. Neue BacktestConfig-Felder
+      (sl_mode/atr_mult/atr_period, regime_lookback/regime_vol_threshold/
+      regime_sl_mult_*/regime_tp_mult_*, time_stop_mode/soft_time_stop_*),
+      alle Defaults reproduzieren exakt das alte feste %-Verhalten (Golden-
+      Test vor dem Umbau aufgenommen, 0 Drift). Gemeinsamer Exit-Resolver
+      backtesting.engine._run_exit_loop ersetzt zwei unabhängig kopierte
+      Implementierungen (engine._simulate UND paper_forward._resolve hatten
+      dieselbe TP1/TP2/SL/Time-Logik dupliziert – ein echtes Bug-Risiko, da
+      neue Exit-Logik sonst nur in einem Pfad gewirkt hätte). EXIT_PARAM_SPACE
+      (sl_mode/atr_mult/time_stop_mode) in alle 4 Familien gemischt; die
+      übrigen neuen Felder bewusst NICHT gesucht (Anti-Data-Dredging, inkl.
+      der regime_*_mult-Felder – dazu unten mehr). WalkForwardReport/
+      WindowEval bekamen avg_test_max_drawdown/worst_test_max_drawdown (war
+      vorher berechnet, aber verworfen). 22 neue Tests (test_engine_exits.py,
+      Erweiterungen in test_paper_forward.py/test_strategy_lab.py/
+      test_walkforward.py, inkl. Cross-Check engine._simulate ≡
+      paper_forward._resolve für alle Exit-Stil-Kombinationen), Suite 494
+      grün.
+      EHRLICHER BEFUND (Walk-Forward baseline_swing, 10-Ticker-Watchlist,
+      12J/4×2J-Fenster, survivorship-verzerrt): MaxDD hat sich in diesem
+      kleinen Lauf NICHT verbessert (Ø −21,1%→−22,6%, Worst −24,6%→−31,0%),
+      Return leicht schlechter (Ø +48%→+38%). Modale Wahl über die Fenster:
+      2× sl_mode=fixed+soft, 1× fixed+hard, 1× regime+hard — atr_trail wurde
+      NIE gewählt. Zwei Gründe, sauber getrennt von der Code-Qualität: (1)
+      Walk-Forward wählt Trainings-Parameter nach total_return, nicht
+      MaxDD-adjustiert — ein Exit-Stil, der Drawdown senkt, wird nur
+      gewählt, wenn er ZUGLEICH den Trainings-Return schlägt; (2) die
+      regime_sl_mult_*/regime_tp_mult_*-Multiplikatoren bleiben in diesem
+      Lauf alle auf neutralem 1.0 (bewusst nicht gesucht) → sl_mode=regime
+      unterscheidet sich in der Praxis kaum von fixed. Die ATR-Trailing-
+      Mechanik selbst ist isoliert unit-getestet korrekt (schützt in einem
+      Rallye-dann-Crash-Szenario deutlich mehr Gewinn als der feste %-SL) —
+      sie hat auf diesem kleinen, überlebensverzerrten Sample nur nicht den
+      Trainings-Return-Wettbewerb gewonnen. Folge-Idee (nicht Teil von 2.1):
+      risiko-adjustierte Trainings-Selektion (z.B. Sharpe/Calmar statt
+      total_return) wäre nötig, damit der Walk-Forward drawdown-schonende
+      Exits überhaupt bevorzugen KANN.
 - [ ] **2.2 Portfolio-Level-Backtest** — Cash-Constraint, Max-Positionen,
       Korrelations-Kappung, Vol-Targeting.
 - [ ] **2.3 Stress-Test-Harness** — 2008/2020/2022 durch die
