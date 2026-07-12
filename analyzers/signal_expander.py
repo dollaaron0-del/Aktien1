@@ -185,21 +185,6 @@ class SignalDrivenExpander:
 
         return self._add_tickers(found)
 
-    def process_social_spikes(self, spikes: List[Dict]) -> List[str]:
-        """
-        Verarbeitet Social-Pulse-Spikes direkt (aus run_social_scan).
-        spikes: Liste mit {ticker, spike_ratio, avg_score}
-        """
-        found: Dict[str, tuple] = {}
-        for spike in spikes:
-            ticker = (spike.get("ticker") or "").upper().strip()
-            ratio  = spike.get("spike_ratio", 0)
-            score  = spike.get("avg_score", 0)
-            if self._is_valid_ticker(ticker) and ratio >= 3.0:
-                # Spike ist stärker als eine Einzel-Erwähnung → höheres Gewicht
-                found[ticker] = (f"Social-Spike {ratio:.1f}× (score {score:+.2f})", _W_OPTIONS, "social")
-        return self._add_tickers(found)
-
     def get_active_tickers(self) -> List[str]:
         """Gibt alle noch gültigen Signal-Ticker zurück (nicht abgelaufen)."""
         data = self._load()
