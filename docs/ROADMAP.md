@@ -475,15 +475,19 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
           Parquet-Cache vorab befüllen; EU-Universum durchs selbe Lab
           (zieht 5.2 vor).
       (b) GRATIS/TEILFIX gegen (2): HISTORISCHE Index-Zusammensetzungen
-          statt heutiger Liste (S&P-500-Mitglieder je Jahr, frei via
-          GitHub/Wikipedia-Snapshots) — Bias wird kleiner, nicht null
+          statt heutiger Liste — fertige freie Datensätze existieren
+          (GitHub fja05680/sp500 bzw. hanshof/sp500_constituents, ab 1996,
+          CSV je Datum; recherchiert 12.7.) — Bias wird kleiner, nicht null
           (Kurse delisteter Werte fehlen bei yfinance trotzdem).
       (c) USER-ENTSCHEID (einziger echter Fix für (2)): Point-in-Time-Daten
-          inkl. Delistings. Kandidaten: Norgate (~30–40 $/Mon., US inkl.
-          Delistings + historische Index-Mitgliedschaft, Klassiker),
-          Sharadar/Nasdaq Data Link (auch Fundamentals), EODHD (~30–80 €/
-          Mon., breiter, weniger sauber). Wird mit mehr Compute WICHTIGER,
-          nicht optionaler — Survivorship-Bias wächst mit dem Suchraum mit.
+          inkl. Delistings. RECHERCHIERT 12.7. (docs/DEEP_RESEARCH_2026-07.md):
+          EODHD All-World ~20 €/Mon. — Delistings in JEDEM Paket (11.000+
+          delistete US-Ticker ab ~2000) = pragmatischster Einstieg;
+          Norgate Platinum ~630 $/JAHR (nicht 30–40 $/Mon. wie zunächst
+          angenommen) = sauberste Lösung inkl. fertiger historischer
+          Index-Mitgliedschaft; Sharadar erst ab ~2014 → zu kurz.
+          Wird mit mehr Compute WICHTIGER, nicht optionaler —
+          Survivorship-Bias wächst mit dem Suchraum mit.
       (d) ZEIT STATT GELD gegen (3): Bot-Paper-Betrieb über Monate (Block
           3/6.6) — kein Hardware-Ersatz möglich.
       (e) AB-JETZT-ARCHIVIEREN gegen (4): alles selbst wegschreiben
