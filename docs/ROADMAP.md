@@ -430,12 +430,18 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       ergänzt, CLI zeigt OOS-CI-Spalte. 4 Tests, Suite 538 grün.
 - [ ] **4.3 Regime-Übergangsmodell** — Hysterese, Regime-Signal selbst per
       Paper-Forward tracken.
-- [ ] **4.4 Code-Gesundheit + lokale CI** — 500-Zeilen-Regel (CLAUDE.md)
-      verletzt: dashboard/app.py 3215, bot/scheduler.py 2415, bot/runner.py
-      1698 Zeilen — genau in diesen Monolithen entstanden stille Bugs
-      (Watchdog-Zeitzonen, Headline-Trigger). Schrittweiser Modul-Split;
-      dazu lokale CI (Pre-Commit-Hook oder Timer für die Testsuite —
-      GitHub Actions geht mangels Push nicht, vgl. 0.2).
+- [~] **4.4 Code-Gesundheit + lokale CI** — (b) lokale CI GEBAUT 12.7.:
+      scripts/git-hooks/pre-commit (Testsuite vor jedem Commit, bricht bei
+      Rot ab) + scripts/install_git_hooks.sh (verlinkt nach .git/hooks/,
+      das Verzeichnis ist nie Git-getrackt); installiert und live mit dem
+      eigenen Commit verifiziert (583 Tests, 83s). Notausgang bewusst nur
+      manuell (`--no-verify`), nicht automatisiert. (a) 500-Zeilen-Regel
+      (CLAUDE.md) weiter verletzt: dashboard/app.py 3215+, bot/scheduler.py
+      2419, bot/runner.py 1698 Zeilen — genau in diesen Monolithen
+      entstanden stille Bugs (Watchdog-Zeitzonen, Headline-Trigger).
+      Schrittweiser Modul-Split bleibt OFFEN — eigener, größerer Task
+      (hohes Regressionsrisiko in Live-kritischem Bot-Code), bewusst NICHT
+      im selben Rutsch mit anderen Roadmap-Punkten gemacht.
 - [ ] **4.5 Entscheidungs-Replay** — baut auf 1.4d Prompt-Archiv. Vergangenen
       Zyklus deterministisch aus archivierten Eingangsdaten nachspielen.
 
