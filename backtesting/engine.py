@@ -79,6 +79,18 @@ class BacktestConfig:
     soft_time_stop_min_gain: float = 0.05      # wie swing_strategy.py's Live-Schwelle
     soft_time_stop_extension_days: int = 20    # wird nur EINMAL gewährt
 
+    # ── Roadmap 2.5: Ziel-Nachführung (TP-Update) – mechanischer Stand-in für
+    # "neue Analyse liefert neuen target_price": backtesting hat keine echten
+    # historischen Claude-Urteile, daher wird TP2 periodisch auf den Wert
+    # re-verankert, den dieselbe %-Formel (tp2_pct) HEUTE (statt beim Entry)
+    # liefern würde – kausal, kein Look-Ahead. Default "fixed" reproduziert
+    # exakt das bisherige starre Verhalten.
+    tp_mode: str = "fixed"                     # "fixed" | "reanchor"
+    tp_reanchor_every_days: int = 10           # Prüf-Intervall (Re-Analyse-Kadenz-Proxy)
+    tp_reanchor_min_dev_pct: float = 0.10      # nur bei signifikanter Abweichung (Roadmap-Leitplanke)
+    tp_reanchor_raise_frac: float = 1.0        # Anhebung großzügig: voll übernehmen
+    tp_reanchor_lower_frac: float = 0.5        # Absenkung gedämpft: nur zur Hälfte, nie unter Kurs/SL
+
 
 # ── Indicator helpers ──────────────────────────────────────────────────────────
 
@@ -220,6 +232,21 @@ def _run_exit_loop(
             if pd.notna(atr_j):
                 sl_price = max(sl_price, running_high - cfg.atr_mult * float(atr_j))  # nur nach oben
 
+        if (cfg.tp_mode == "reanchor" and not tp2_hit and j > entry_idx
+                and (j - entry_idx) % cfg.tp_reanchor_every_days == 0):
+            new_target = close * (1 + cfg.tp2_pct * tp_mult)
+            if new_target > tp2_price:
+                dev = (new_target - tp2_price) / tp2_price
+                if dev >= cfg.tp_reanchor_min_dev_pct:
+                    tp2_price += (new_target - tp2_price) * cfg.tp_reanchor_raise_frac
+            elif new_target < tp2_price:
+                dev = (tp2_price - new_target) / tp2_price
+                if dev >= cfg.tp_reanchor_min_dev_pct:
+                    floor = max(close, sl_price)     # nie unter aktuellen Kurs/Trailing-SL
+                    clamped = max(new_target, floor)
+                    if clamped < tp2_price:
+                        tp2_price -= (tp2_price - clamped) * cfg.tp_reanchor_lower_frac
+
         # TP1 check (only if not already hit)
         if not tp1_hit and high >= tp1_price:
             realized       += cfg.tp1_frac * cfg.tp1_pct * tp_mult
@@ -231,7 +258,11 @@ def _run_exit_loop(
         # TP2 check
         if tp1_hit and not tp2_hit and high >= tp2_price:
             sell_frac       = cfg.tp2_frac * remaining_frac
-            realized       += sell_frac * cfg.tp2_pct * tp_mult
+            # tp2_price/entry_price-1 statt des statischen cfg.tp2_pct*tp_mult:
+            # in tp_mode="reanchor" (Roadmap 2.5) weicht der tatsächliche
+            # Trigger-Preis vom ursprünglichen %-Ziel ab; in fixed/regime ist
+            # das algebraisch identisch (tp2_price wurde genau daraus gebaut).
+            realized       += sell_frac * (tp2_price / entry_price - 1)
             remaining_frac -= sell_frac
             tp2_hit         = True
 

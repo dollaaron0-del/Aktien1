@@ -53,16 +53,17 @@ def all_names() -> List[str]:
     return sorted(REGISTRY)
 
 
-# Exit-Achse (Roadmap 2.1) – wird in jede Familie gemischt, damit der
-# bestehende Walk-Forward-Grid-Search automatisch auch Exit-Stile testet.
-# Bewusst klein gehalten (kein Data-Dredging, s. Modul-Docstring): nur die
-# Stil-Wahl + der eine ATR-Hyperparameter werden gesucht, alle übrigen neuen
-# BacktestConfig-Felder (regime_*, soft_time_stop_*, atr_period) bleiben auf
-# sicheren Fix-Defaults.
+# Exit-Achse (Roadmap 2.1, + 2.5 tp_mode) – wird in jede Familie gemischt,
+# damit der bestehende Walk-Forward-Grid-Search automatisch auch Exit-Stile
+# testet. Bewusst klein gehalten (kein Data-Dredging, s. Modul-Docstring): nur
+# die Stil-Wahl + der eine ATR-Hyperparameter werden gesucht, alle übrigen
+# neuen BacktestConfig-Felder (regime_*, soft_time_stop_*, atr_period,
+# tp_reanchor_*) bleiben auf sicheren Fix-Defaults.
 EXIT_PARAM_SPACE: Dict[str, List] = {
     "sl_mode":        ["fixed", "atr_trail", "regime"],
     "atr_mult":       [2.0, 2.5, 3.0],
     "time_stop_mode": ["hard", "soft"],
+    "tp_mode":        ["fixed", "reanchor"],
 }
 
 

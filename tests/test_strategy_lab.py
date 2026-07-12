@@ -47,6 +47,7 @@ def test_all_families_expose_exit_param_space():
         assert "sl_mode" in space, fam
         assert "atr_mult" in space, fam
         assert "time_stop_mode" in space, fam
+        assert "tp_mode" in space, fam          # Roadmap 2.5 (TP-Nachführung)
 
 
 @pytest.mark.parametrize("fam", ["baseline_swing", "donchian_breakout",
