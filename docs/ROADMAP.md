@@ -564,6 +564,40 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
           nur Scheinkanten. Genau dafür einsetzen.
       (e) GRENZE KLAR BENENNEN: Kurse delisteter Aktien kann kein Compute
           rekonstruieren — Survivorship-Fix bleibt Kauf-Entscheid 6.2-(c).
+- [ ] **6.9 Weitere Compute-Hebel** (gesammelt 12.7., User wählt bei Umzug aus) —
+      Aufgaben, die heute zu rechenintensiv sind, auf dem GPU-Server aber
+      einmalig oder als Routine laufen können.
+      EINMALIG (Backfill):
+      (a) WHISPER-TRANSKRIPTION: Earnings-Calls/IR-Webcasts (Audio frei
+          zugänglich) auf der GPU transkribieren → Ton-/Sentiment-Zeitreihe
+          je Ticker; der tote earn_transcripts-Collector (2.4-Befund) bekäme
+          damit erstmals eine echte Quelle.
+      (b) EMBEDDING-INDEX über alles Archivierte (analysis_log ~1620
+          Einträge, News-Snapshots, 6.8a-Filings): lokales Embedding-Modell
+          + Vektorsuche → "ähnliche historische Situationen" als
+          Analyse-Kontext (Präzedenzfall-Abruf statt nur aktueller Daten).
+      (c) RE-ANALYSE-STUDIE: alle archivierten Analysen per lokalem LLM
+          gegen die echten Ausgänge nachbewerten (LLM-as-Judge) →
+          systematische Analysefehler finden, Kalibrierung (1.2) schärfen;
+          via Claude-API unbezahlbar, lokal ~0 €.
+      (d) SKIP-KONTRAFAKTIK XXL: 3.2 hochskaliert — ALLE historischen SKIPs
+          + großes Universum durchsimulieren → EntryFilter-Schwellen mit
+          echten Gegenproben statt kleiner Stichprobe validieren.
+      REGELMÄSSIG (im Zyklus / nächtlich):
+      (e) LLM-ENSEMBLE/SELBST-KONSISTENZ: n Samples je Analyse statt 1,
+          Streuung der Antworten = ehrliches Unsicherheitsmaß → speist die
+          Kalibrierung; lokal ~kostenlos, via API n-facher Preis.
+      (f) HEADLINE-MASSEN-TRIAGE: jede Schlagzeile lokal scoren statt
+          Keyword-Filter (bei 1,7 tok/s unmöglich) → bessere
+          Eskalations-Qualität + weniger Claude-Calls (verzahnt
+          Frugal-/Quiet-Mode).
+      (g) TEURE STATISTIK ALS STANDARD: purged CPCV, Deflated Sharpe,
+          Permutation-Importance der Meta-Labeling-Features — heute
+          Sonderläufe, künftig fester Teil jedes 6.7-Nachtlaufs (macht
+          6.4 vom Einmal-Protokoll zum Dauer-Gate).
+      LEITPLANKE: LLM-Annotationen sind verrauscht und alles daraus
+      Gelernte läuft durch die 6.4-Gates; (e)/(f) verbessern KALIBRIERUNG
+      und KOSTEN, nicht automatisch die Kante.
 
 ## Verworfen (nicht wieder vorschlagen)
 
