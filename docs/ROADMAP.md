@@ -146,9 +146,17 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       an jeder Naht. 9 Tests (test_version_stamp.py), Suite 400 grün;
       Migration gegen Kopien der echten DBs verifiziert (1620 Analyse-
       Zeilen erhalten, Alt-Zeilen NULL — rückwirkend nie).
-- [ ] **1.7 Externer Dead-Man-Switch** — watchdog.sh läuft auf demselben
-      Server; externer Dienst (z.B. healthchecks.io) soll Ausbleiben von
-      Zyklus-Pings alarmieren.
+- [x] **1.7 Externer Dead-Man-Switch** — fertig 12.7.
+      system/dead_man_switch.py: ping() an eine konfigurierbare
+      DEAD_MAN_SWITCH_URL (z.B. healthchecks.io, kostenlos), aus der
+      Scheduler-Hauptschleife heraus alle DEAD_MAN_SWITCH_INTERVAL_MIN
+      (Default 5) Minuten. No-Op ohne gesetzte URL, fail-open bei
+      Netzwerkfehlern. Ergänzt watchdog.sh um den Fall, dass Server/Netz
+      selbst ausfällt (watchdog.sh kann dann nicht mehr alarmieren) — bleibt
+      der Ping aus, meldet der externe Dienst selbst. Setup: Account bei
+      healthchecks.io (o.ä.) anlegen, Check mit Periode ≥ Intervall +
+      Karenzzeit anlegen, Ping-URL in DEAD_MAN_SWITCH_URL (.env) eintragen.
+      4 Tests (test_dead_man_switch.py), Suite 467 grün.
 - [x] **1.8 Zentrales Daten-Qualitäts-Gate** — fertig 11.7.
       analyzers/data_quality.py: (1) Kurs gültig (None/NaN/inf/≤0 → SKIP),
       (2) Kurs frisch (yahoo_collector liefert jetzt last_bar_date; älter

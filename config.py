@@ -163,6 +163,18 @@ class Config:
         default_factory=lambda: os.getenv("TELEGRAM_MODE", "important").lower()
     )
 
+    # Externer Dead-Man-Switch (Roadmap 1.7, optional): Ping-URL eines Diensts
+    # wie healthchecks.io. Bleibt der Ping aus (Server/Netz down, Bot-Prozess
+    # tot), alarmiert der Dienst selbst extern — ergänzt watchdog.sh, das ja
+    # auf demselben Server läuft und bei Totalausfall selbst nicht mehr melden
+    # kann. Leer = Feature aus (kein Default-Endpunkt, Anmeldung ist User-Sache).
+    dead_man_switch_url: str = field(
+        default_factory=lambda: os.getenv("DEAD_MAN_SWITCH_URL", "").strip()
+    )
+    dead_man_switch_interval_min: int = field(
+        default_factory=lambda: int(os.getenv("DEAD_MAN_SWITCH_INTERVAL_MIN", "5"))
+    )
+
     # Focus mode: WEALTH_BUILDING | INCOME | TARGET_GOAL
     focus_mode: str = field(default_factory=lambda: os.getenv("FOCUS_MODE", "WEALTH_BUILDING"))
     target_goal_amount: float = field(

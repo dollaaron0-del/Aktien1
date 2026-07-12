@@ -2384,6 +2384,15 @@ def run_bot_loop(
                                  if _nr else None)
                 except Exception:
                     pass
+                # Externer Dead-Man-Switch (Roadmap 1.7): Lebenszeichen an einen
+                # Dienst außerhalb dieses Servers – deckt Server-/Netzausfall ab,
+                # den watchdog.sh (läuft auf demselben Host) nicht mehr melden
+                # könnte. No-Op ohne konfigurierte URL, intern gedrosselt.
+                try:
+                    from system import dead_man_switch as _dms
+                    _dms.ping()
+                except Exception:
+                    pass
             except KeyboardInterrupt:
                 raise
             except Exception as _job_err:
