@@ -497,6 +497,24 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Meta-Labeling auf LIVE-Ausgängen) braucht laufenden Bot + Zeit —
       der neue Server beschleunigt die Forschung, ersetzt aber nicht die
       Live-Historie (Block 3 bleibt eigener Engpass).
+- [ ] **6.7 Intensiv-Fahrplan (Lab als Dauerbetrieb)** — rechenintensive
+      Läufe vom Hand-Anstoß in feste Routine überführen (systemd-Timer
+      analog der bestehenden Bot-Timer). Skizze:
+      (a) NÄCHTLICH: Walk-Forward über alle Familien (--workers 0) →
+          Registry-Refresh; solange der Bot pausiert ist rein advisory,
+          data/strategy_registry.json bleibt die einzige Schnittstelle.
+      (b) WÖCHENTLICH: Meta-Backtest des Allokators (4.1-Lauf) +
+          Paper-Forward-Abgleich (Soll vs. Ist).
+      (c) MONATLICH: Quellen-Ablation (2.4) + Stress-Test-Vergleich (2.3);
+          QUARTALSWEISE das 6.4-Holdout-Fenster (bewusst selten — Holdout
+          nutzt sich durch Anfassen ab).
+      (d) OUTPUT: Reports als Dateien (reports/ o.ä.) + kurze
+          Telegram-Zusammenfassung (TELEGRAM_MODE=important); ALARM nur
+          bei Verdikt-Wechsel (z.B. ROBUST→FRAGILE) oder Lauf-Fehler,
+          kein Zahlenspam (Lehre aus dem Watchdog-Spam).
+      (e) VORAUSSETZUNG: 6.4-Gates zuerst — ein nächtlicher Suchlauf ohne
+          Multiple-Testing-Korrektur automatisiert nur die Selbsttäuschung;
+          Läufe versionieren (Config-Hash + Datenstand in den Report).
 
 ## Verworfen (nicht wieder vorschlagen)
 
