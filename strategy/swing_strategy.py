@@ -612,7 +612,7 @@ class SwingStrategy:
             return False
 
     @staticmethod
-    def _atr_vol_multiplier(ticker: str, current_price: float) -> float:
+    def _atr_vol_multiplier(ticker: str, current_price: float, broker=None) -> float:
         """Volatilitäts-Normierung der Positionsgröße über ATR(14).
 
         Gleicher Dollar-Einsatz pro Trade unabhängig von der Tagesvolatilität:
@@ -624,7 +624,8 @@ class SwingStrategy:
             return 1.0
         try:
             from analyzers.technical_indicators import TechnicalIndicators
-            snap = TechnicalIndicators().calculate(ticker)
+            kwargs = {"broker": broker} if broker is not None else {}
+            snap = TechnicalIndicators().calculate(ticker, **kwargs)
             atr   = getattr(snap, "atr_14", None) if snap else None
             price = (getattr(snap, "price", None) if snap else None) or current_price
             if not atr or not price or price <= 0:
@@ -690,7 +691,7 @@ class SwingStrategy:
         # ruhige oder wilde Aktie. Helper ist fail-open (Faktor 1.0 bei fehlendem
         # ATR), daher ohne zusätzlichen Guard direkt multipliziert.
         ticker = getattr(analysis, "ticker", "") or ""
-        base *= self._atr_vol_multiplier(ticker, current_price)
+        base *= self._atr_vol_multiplier(ticker, current_price, broker=getattr(self, "broker", None))
 
         # Congress×CEO-Confluence-Bonus (Flag aus _evaluate_new durchgereicht –
         # kein zweiter Netzaufruf). Leichter Größen-Aufschlag; durch die 40%-

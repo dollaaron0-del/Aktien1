@@ -105,12 +105,8 @@ class TechnicalSnapshot:
 
 class TechnicalIndicators:
 
-    def calculate(self, ticker: str, period: str = "3mo") -> Optional[TechnicalSnapshot]:
-        try:
-            df = yf.Ticker(ticker).history(period=period)
-        except Exception:
-            return None
-
+    def calculate(self, ticker: str, period: str = "3mo", broker=None) -> Optional[TechnicalSnapshot]:
+        df = self._history(ticker, period, broker)
         if df is None or len(df) < 26:
             return None
 
@@ -166,6 +162,27 @@ class TechnicalIndicators:
             vwap=vwap,
             vwap_distance_pct=vwap_dist,
         )
+
+    @staticmethod
+    def _history(ticker: str, period: str, broker) -> Optional[pd.DataFrame]:
+        """Kursreihe für die Indikator-Berechnung. Bevorzugt IBKR
+        (Roadmap 1.13, reduziert die yfinance-Abhängigkeit im Live-Pfad),
+        wenn ein Broker mit get_history()-API übergeben wird – dessen
+        eigener yfinance-Fallback greift schon bei Verbindungsfehlern.
+        Ohne Broker (z.B. Dashboard, Backtests) unverändert nur yfinance."""
+        if broker is not None:
+            getter = getattr(broker, "get_history", None)
+            if callable(getter):
+                try:
+                    df = getter(ticker, yf_period=period)
+                    if df is not None and len(df) >= 26:
+                        return df
+                except Exception:
+                    pass
+        try:
+            return yf.Ticker(ticker).history(period=period)
+        except Exception:
+            return None
 
     # ── Indicator helpers ────────────────────────────────────────────────────
 

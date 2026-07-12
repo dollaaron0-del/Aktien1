@@ -89,6 +89,13 @@ _PAPER_ONLY      = os.getenv("IBKR_PAPER_ONLY", "false").lower() == "true"
 # dann NaN (Error 354 "not subscribed") und jeder Trade scheitert mangels Kurs.
 # Default 3 (Delayed) macht den Bot abo-frei lauffähig; per ENV überschreibbar.
 _MKT_DATA_TYPE   = int(os.getenv("IBKR_MARKET_DATA_TYPE", "3"))
+# Historische Kursreihen via reqHistoricalData (Roadmap 1.13) statt/neben
+# yfinance – reduziert die yfinance-Abhängigkeit (NaN-Fälle, Rate-Limits,
+# stille API-Brüche) im Live-Pfad. Gilt für dieselbe Session wie
+# _MKT_DATA_TYPE, Delayed-Bars funktionieren auch ohne Echtzeit-Abo.
+# Fail-open: bei jedem Fehler (Flag aus, kein Connect, leere Antwort) fällt
+# get_history() auf yfinance zurück.
+_HISTORICAL_DATA = os.getenv("IBKR_HISTORICAL_DATA", "true").strip().lower() in ("1", "true", "yes")
 
 # ── Ticker-Suffix → (Exchange, Currency) ─────────────────────────────────────
 _SUFFIX_MAP: Dict[str, tuple] = {
@@ -353,6 +360,41 @@ class IBKRBroker:
         except Exception as e:
             log.debug("IBKR get_crypto_price %s: %s – Fallback yfinance", symbol, e)
         return self._yf_price(f"{base}-USD")
+
+    @_synchronized
+    def get_history(
+        self,
+        ticker: str,
+        duration: str = "3 M",
+        bar_size: str = "1 day",
+        yf_period: str = "3mo",
+    ):
+        """Historische OHLCV-Bars (Roadmap 1.13). Spalten/Index wie
+        yf.Ticker().history() (Open/High/Low/Close/Volume, DatetimeIndex),
+        damit bestehende Aufrufer (z.B. TechnicalIndicators) unverändert
+        bleiben. Fällt bei ausgeschaltetem Flag, fehlender Verbindung oder
+        jedem Fehler auf yfinance zurück – nie ein harter Fehlschlag."""
+        if _HISTORICAL_DATA and self._ensure_connected():
+            try:
+                contract = self._stock_contract(ticker)
+                self._ib.qualifyContracts(contract)
+                bars = self._ib.reqHistoricalData(
+                    contract, endDateTime="", durationStr=duration,
+                    barSizeSetting=bar_size, whatToShow="TRADES",
+                    useRTH=True, formatDate=1,
+                )
+                if bars:
+                    from ib_insync import util
+                    df = util.df(bars)
+                    if df is not None and not df.empty:
+                        df = df.rename(columns={
+                            "date": "Date", "open": "Open", "high": "High",
+                            "low": "Low", "close": "Close", "volume": "Volume",
+                        }).set_index("Date")
+                        return df
+            except Exception as e:
+                log.debug("IBKR get_history %s: %s – Fallback yfinance", ticker, e)
+        return self._yf_history(ticker, yf_period)
 
     # ── Orders ────────────────────────────────────────────────────────────────
 
@@ -793,3 +835,12 @@ class IBKRBroker:
         except Exception as e:
             log.debug("yfinance fallback %s: %s", ticker, e)
         return None
+
+    @staticmethod
+    def _yf_history(ticker: str, yf_period: str):
+        try:
+            import yfinance as yf
+            return yf.Ticker(ticker).history(period=yf_period)
+        except Exception as e:
+            log.debug("yfinance history fallback %s: %s", ticker, e)
+            return None

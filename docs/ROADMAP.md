@@ -201,8 +201,18 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       nicht — jede Trailing-Ratchet-Anhebung crashte check_exits() für den
       GANZEN Zyklus (AttributeError, kein try/except). Methode ergänzt
       (portfolio/portfolio.py). 3 neue Tests, Suite 470 grün.
-- [ ] **1.13 IBKR-Kursdaten via reqHistoricalData** — Kurse/Historie direkt
-      vom Broker statt/neben yfinance, entschärft die yfinance-Abhängigkeit.
+- [x] **1.13 IBKR-Kursdaten via reqHistoricalData** — fertig 12.7., erster
+      Schritt (Live-Pfad-Kurse, Backtests bewusst noch unangetastet).
+      IBKRBroker.get_history() (reqHistoricalData, Delayed-Bars reichen dank
+      IBKR_MARKET_DATA_TYPE) liefert ein DataFrame im yfinance-Format
+      (Open/High/Low/Close/Volume, DatetimeIndex) → TechnicalIndicators
+      nimmt jetzt optional einen broker-Parameter und bevorzugt IBKR, fällt
+      aber bei Flag aus/Verbindungsfehler/leerer Antwort/zu kurzer Historie
+      auf yfinance zurück (mehrstufig fail-open). Einziger Live-Aufrufer
+      (SwingStrategy._atr_vol_multiplier, ATR-Sizing) reicht jetzt den
+      Broker durch. Neues Flag IBKR_HISTORICAL_DATA (Default an). 8 neue
+      Tests, Suite 478 grün. Backtests/Dashboard bewusst unverändert auf
+      yfinance (kein Broker im Kontext).
 - [x] **1.14 whatIf-Margin-Check vor Orders** — fertig 11.7. (Code + Tests).
       ibkr_broker._whatif_rejection() vor jedem placeOrder (Markt-Orders
       inkl. Krypto-Pfad): blockt NUR bei klarem Nein von IBKR —
