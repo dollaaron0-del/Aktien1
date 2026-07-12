@@ -267,8 +267,41 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       risiko-adjustierte Trainings-Selektion (z.B. Sharpe/Calmar statt
       total_return) wäre nötig, damit der Walk-Forward drawdown-schonende
       Exits überhaupt bevorzugen KANN.
-- [ ] **2.2 Portfolio-Level-Backtest** — Cash-Constraint, Max-Positionen,
-      Korrelations-Kappung, Vol-Targeting.
+- [x] **2.2 Portfolio-Level-Backtest** — fertig 12.7. Neues Modul
+      strategy_lab/portfolio_backtest.py: verschmilzt die (unveränderten)
+      Trade-Listen aller (Strategie, Ticker)-Kombinationen eines weight_plan()-
+      förmigen Plans zu Open/Close-Events, simuliert event-getrieben EIN
+      Portfolio mit gemeinsamem Cash-Pool statt der bisherigen Per-Ticker-
+      Durchschnittsbildung (backtesting.metrics.aggregate()). Cash-Constraint
+      (Dollar-Sizing = plan_weight × aktuelle Equity × Vol-Multiplikator,
+      gecappt auf verfügbares Cash), Max-Positionen, Themen-Kappung als
+      Korrelations-Proxy (analyzers/stock_relations.py::StockRelations.
+      get_themes() — bewusst NICHT der live-netzwerk-abhängige, kaputte
+      CorrelationChecker), Vol-Targeting (spiegelt swing_strategy.py's
+      _atr_vol_multiplier-Formel/-Clamps, kausal aus backtesting.engine._atr()
+      am Entry-Balken). Gleicher Tag: Close vor Open (Kapital wird frei, bevor
+      es ein neuer Entry beansprucht). Sharpe jetzt echt datumsbasiert
+      (Tages-Resampling der Dollar-Equity-Kurve), nicht mehr trade-count-
+      basiert wie TickerMetrics.sharpe. Kein Engine-/Trade-Umbau nötig — reine
+      Downstream-Simulation über bestehende strategy.runner()-Ergebnisse.
+      13 neue Tests (Cash/Max-Pos/Themen-Kappung/Vol-Targeting/Equity-Kurve-
+      Golden/Plan-Vergleich), Suite 507 grün. Neues CLI scripts/
+      portfolio_backtest.py vergleicht weight_plan() (Allokator) gegen
+      Gleichgewichtung.
+      REALER LAUF (12J, 10-Ticker-Watchlist): Registry hat aktuell 0 ACTIVE
+      Strategien (baseline_swing WATCH/FRAGILE, s. [[exit-lab-befund]]) →
+      weight_plan() ist leer, Allokator-Zeile zeigt ehrlich Flat/0 Trades statt
+      eines erfundenen Vergleichs. Gleichgewichtung über alle 4 Familien:
+      +829 % Return, MaxDD NUR −14,5 %, Sharpe 1,45 — deutlich besser als die
+      per-Ticker-gemittelten MaxDD-Werte aus dem Walk-Forward (−21…−31 %,
+      [[exit-lab-befund]]), weil Diversifikation über mehrere gleichzeitig
+      offene, unkorrelierte Positionen den gemittelten Einzel-Ticker-Drawdown
+      tatsächlich abfedert — genau der Effekt, den die reine Per-Ticker-
+      Mittelung bisher unsichtbar gemacht hat. 962 von 1306 Signalen wurden
+      NICHT genommen (519 Cash, 395 Max-Positionen, 48 Themen-Kappung) — zeigt,
+      wie stark reales Kapital das unbeschränkte Signal-Universum tatsächlich
+      einschränkt. Die Allokator-Frage selbst ("hilft weight_plan gegenüber
+      Gleichgewichtung?") bleibt unbeantwortet, bis eine Strategie ACTIVE wird.
 - [ ] **2.3 Stress-Test-Harness** — 2008/2020/2022 durch die
       Entscheidungs-Pipeline; gestuftes De-Risking statt binärem
       CircuitBreaker.
