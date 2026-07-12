@@ -31,6 +31,7 @@ from strategy_lab.anti_overfit import (BASE_ALPHA, log_holdout_access,
                                        passes_multiple_testing, sidak_alpha)
 from strategy_lab.regime import classify_window, regime_breakdown, robust_regimes
 from strategy_lab.strategies import Strategy, get
+from strategy_lab.universe import constituents_at
 
 # Mindest-Trades, damit ein Fenster-Ergebnis überhaupt zählt (sonst Rauschen).
 _MIN_TRADES_TRAIN = 10
@@ -124,6 +125,9 @@ class WalkForwardReport:
     n_combos_tested: int = 1           # Größe der Grid-Search (fließt ins Verdikt)
     alpha_adjusted: float = BASE_ALPHA  # Šidák-Schwelle, die p_le0 schlagen muss
     holdout_years: int = 0             # ausgesparter Daten-Schwanz (0 = keiner)
+    # Roadmap 6.2b: Punkt-in-Zeit-Universum (Look-Ahead bei der Ticker-Auswahl).
+    pit_universe: bool = False         # True = Mitgliederliste je Fenster-Stichtag genutzt
+    pit_windows_dropped: int = 0       # Fenster, in denen PIT-Filter alle Ticker entfernte
 
 
 # ── Hilfen ──────────────────────────────────────────────────────────────────
@@ -171,9 +175,11 @@ def run_walk_forward(
     loader: Callable[[str, int], object] = data_loader.load,
     workers: Optional[int] = None,
     holdout_years: int = 0,
+    pit_membership: Optional[pd.DataFrame] = None,
 ) -> WalkForwardReport:
     if isinstance(strategy, str):
         strategy = get(strategy)
+    pit_active = pit_membership is not None and not pit_membership.empty
 
     # Volle Historie einmal laden, dann pro Fenster slicen.
     full: Dict[str, pd.DataFrame] = {}
@@ -182,7 +188,8 @@ def run_walk_forward(
         if df is not None and len(df) >= 252:
             full[t] = df
     if not full:
-        return WalkForwardReport(strategy.name, 0, 0, 0, 0, 0, 0, 0, 0, "OVERFIT")
+        return WalkForwardReport(strategy.name, 0, 0, 0, 0, 0, 0, 0, 0, "OVERFIT",
+                                 pit_universe=pit_active)
 
     # Roadmap 6.4: Holdout — der jüngste Daten-Schwanz fließt NIE in die Suche.
     # Bewertung darauf nur separat + protokolliert über run_holdout().
@@ -192,7 +199,8 @@ def run_walk_forward(
         full = {t: df for t, df in full.items() if len(df) >= 252}
         if not full:
             return WalkForwardReport(strategy.name, 0, 0, 0, 0, 0, 0, 0, 0,
-                                     "OVERFIT", holdout_years=holdout_years)
+                                     "OVERFIT", holdout_years=holdout_years,
+                                     pit_universe=pit_active)
 
     # Gemeinsame Zeitachse (frühestes/spätestes Datum über alle Ticker).
     starts = min(df.index.min() for df in full.values())
@@ -215,6 +223,7 @@ def run_walk_forward(
             log.warning("Walk-Forward: ProcessPool nicht verfügbar (%s), seriell.", e)
             pool = None
 
+    pit_dropped = 0
     try:
         cur = starts
         train_td = pd.DateOffset(years=train_years)
@@ -226,6 +235,25 @@ def run_walk_forward(
             train_dfs = _slice(full, tr_s, tr_e)
             test_dfs = _slice(full, te_s, te_e)
             cur = cur + step_td
+
+            # Roadmap 6.2b: Punkt-in-Zeit-Filter — ein Fenster darf nur Ticker
+            # sehen, die AM STICHTAG des jeweiligen Teilfensters wirklich im
+            # Index saßen (kein Look-Ahead über die heutige Mitgliederliste).
+            # `None` (kein Datensatz für den Stichtag) lässt das Fenster
+            # unangetastet statt es zu löschen.
+            if pit_active:
+                had_data = bool(train_dfs) and bool(test_dfs)
+                tr_members = constituents_at(tr_s, pit_membership)
+                if tr_members is not None:
+                    keep = set(tr_members)
+                    train_dfs = {t: df for t, df in train_dfs.items() if t in keep}
+                te_members = constituents_at(te_s, pit_membership)
+                if te_members is not None:
+                    keep = set(te_members)
+                    test_dfs = {t: df for t, df in test_dfs.items() if t in keep}
+                if had_data and (not train_dfs or not test_dfs):
+                    pit_dropped += 1
+
             if not train_dfs or not test_dfs:
                 continue
 
@@ -268,15 +296,19 @@ def run_walk_forward(
             pool.shutdown()
 
     return _aggregate_report(strategy.name, windows, n_combos=len(combos),
-                             holdout_years=holdout_years)
+                             holdout_years=holdout_years, pit_universe=pit_active,
+                             pit_windows_dropped=pit_dropped)
 
 
 def _aggregate_report(name: str, windows: List[WindowEval], n_combos: int = 1,
-                      holdout_years: int = 0) -> WalkForwardReport:
+                      holdout_years: int = 0, pit_universe: bool = False,
+                      pit_windows_dropped: int = 0) -> WalkForwardReport:
     if not windows:
         return WalkForwardReport(name, 0, 0, 0, 0, 0, 0, 0, 0, "OVERFIT",
                                  n_combos_tested=max(n_combos, 1),
-                                 holdout_years=holdout_years)
+                                 holdout_years=holdout_years,
+                                 pit_universe=pit_universe,
+                                 pit_windows_dropped=pit_windows_dropped)
     import statistics as st
     test_rets = [w.test_return for w in windows]
     train_rets = [w.train_return for w in windows]
@@ -335,6 +367,8 @@ def _aggregate_report(name: str, windows: List[WindowEval], n_combos: int = 1,
         n_combos_tested=max(n_combos, 1),
         alpha_adjusted=round(alpha_adj, 6),
         holdout_years=holdout_years,
+        pit_universe=pit_universe,
+        pit_windows_dropped=pit_windows_dropped,
     )
 
 

@@ -23,7 +23,7 @@ from rich.console import Console  # noqa: E402
 from rich.table import Table  # noqa: E402
 from rich import box  # noqa: E402
 
-from strategy_lab import all_names, build_universe  # noqa: E402
+from strategy_lab import all_names, build_universe, load_membership  # noqa: E402
 from strategy_lab.walkforward import run_walk_forward  # noqa: E402
 from strategy_lab.promotion import build_registry, save_registry  # noqa: E402
 
@@ -49,6 +49,13 @@ def main() -> None:
     ap.add_argument("--include-delisted", action="store_true",
                     help="Graveyard delisteter/pleitegegangener Titel mitnehmen "
                          "(Survivorship-Bias mildern)")
+    ap.add_argument("--pit-universe", action="store_true",
+                    help="je Fenster nur Ticker nutzen, die AM STICHTAG wirklich "
+                         "im S&P 500 saßen (Roadmap 6.2b) — braucht lokale "
+                         "data/sp500_membership.csv, siehe "
+                         "scripts/sp500_membership_download.py")
+    ap.add_argument("--membership-path", default=None,
+                    help="Pfad zur Mitgliederliste (Default: data/sp500_membership.csv)")
     ap.add_argument("--total", type=int, default=20)
     ap.add_argument("--train", type=int, default=4)
     ap.add_argument("--test", type=int, default=2)
@@ -78,6 +85,21 @@ def main() -> None:
     console.print("[dim]Out-of-Sample-Validierung – technisch, kein News-Sentiment.[/dim]")
     console.print(f"[dim]{info.survivorship_note}[/dim]")
 
+    pit_membership = None
+    if args.pit_universe:
+        from strategy_lab.universe import DEFAULT_MEMBERSHIP_PATH
+        mpath = args.membership_path or DEFAULT_MEMBERSHIP_PATH
+        pit_membership = load_membership(mpath)
+        if pit_membership.empty:
+            console.print(f"[red]--pit-universe: keine Mitgliederliste unter {mpath} — "
+                          "erst `python -m scripts.sp500_membership_download` laufen "
+                          "lassen. Fahre OHNE PIT-Filter fort.[/red]")
+            pit_membership = None
+        else:
+            console.print(f"[dim]PIT-Universum aktiv: {len(pit_membership)} Stichtage "
+                          f"({pit_membership['date'].min().date()} … "
+                          f"{pit_membership['date'].max().date()}) aus {mpath}.[/dim]")
+
     table = Table(title="Walk-Forward-Robustheit (OOS)", box=box.ROUNDED, border_style="dim")
     for col in ["Strategie", "Fenster", "Ø Test", "Median", "Worst", "OOS-CI 90%", "%pos", "WF-Eff", "Stabil", "robuste Regime", "Verdikt"]:
         table.add_column(col, justify="right" if col not in ("Strategie", "robuste Regime") else "left")
@@ -87,7 +109,8 @@ def main() -> None:
         rep = run_walk_forward(
             name, universe, total_years=args.total, train_years=args.train,
             test_years=args.test, step_years=args.step, max_combos=args.max_combos,
-            workers=args.workers, holdout_years=args.holdout)
+            workers=args.workers, holdout_years=args.holdout,
+            pit_membership=pit_membership)
         reports.append(rep)
         vc = _VERDICT_COLOR.get(rep.verdict, "white")
         ci_color = "green" if rep.test_return_ci_lo > 0 else "yellow"
@@ -109,6 +132,11 @@ def main() -> None:
     if args.holdout > 0:
         console.print(f"[yellow]Holdout: jüngste {args.holdout}J ausgespart — nie durchsucht; "
                       f"Bewertung nur via run_holdout() (protokolliert).[/yellow]")
+    if pit_membership is not None and reports:
+        dropped = sum(r.pit_windows_dropped for r in reports)
+        console.print(f"[dim]PIT-Filter: {dropped} Fenster (über alle Strategien) "
+                      "hatten nach dem Stichtags-Filter keine Ticker mehr übrig "
+                      "und wurden übersprungen.[/dim]")
     console.print("[dim]ROBUST = OOS-Kante signifikant > 0 (Bootstrap-CI-Untergrenze, "
                   "Šidák-korrigiert für die Suchraum-Größe) & stabil · "
                   "OVERFIT = Train gut, Test schlecht.[/dim]")

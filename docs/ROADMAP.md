@@ -474,11 +474,19 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       (a) GRATIS/SOFORT gegen (1): Universum auf mehrere hundert Ticker,
           Parquet-Cache vorab befüllen; EU-Universum durchs selbe Lab
           (zieht 5.2 vor).
-      (b) GRATIS/TEILFIX gegen (2): HISTORISCHE Index-Zusammensetzungen
-          statt heutiger Liste — fertige freie Datensätze existieren
-          (GitHub fja05680/sp500 bzw. hanshof/sp500_constituents, ab 1996,
-          CSV je Datum; recherchiert 12.7.) — Bias wird kleiner, nicht null
-          (Kurse delisteter Werte fehlen bei yfinance trotzdem).
+      (b) ✅ GRATIS/TEILFIX gegen (2): HISTORISCHE Index-Zusammensetzungen
+          statt heutiger Liste — GEBAUT 12.7. (Vision V0.3):
+          scripts/sp500_membership_download.py lädt github.com/fja05680/sp500
+          (ab 1996, CSV je Änderungsdatum) → data/sp500_membership.csv;
+          strategy_lab.universe.constituents_at(datum) liefert die Punkt-
+          in-Zeit-Liste (kein Look-Ahead); CLI-Flag --pit-universe in
+          scripts/walk_forward.py filtert JEDES Teilfenster auf die
+          DAMALIGE Mitgliedschaft. Sanity-Check gegen echte Daten bestätigt
+          den Fix: TSLA fehlt 2010 (trat erst Ende 2020 bei), NVDA war
+          schon dabei — ohne PIT hätte 2010 heimlich mit der heutigen
+          Liste gerechnet. 11 Tests (test_pit_universe.py, netzfrei),
+          Suite 578 grün. Bias wird kleiner, nicht null (Kurse delisteter
+          Werte fehlen bei yfinance trotzdem — Rest bleibt (c)).
       (c) USER-ENTSCHEID (einziger echter Fix für (2)): Point-in-Time-Daten
           inkl. Delistings. RECHERCHIERT 12.7. (docs/DEEP_RESEARCH_2026-07.md):
           EODHD All-World ~20 €/Mon. — Delistings in JEDEM Paket (11.000+

@@ -37,7 +37,10 @@ Bezahl-/Alternativquelle ersetzt nur die `loader`-Callable, der Rest bleibt.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
+
+import pandas as pd
 
 
 @dataclass(frozen=True)
@@ -195,3 +198,71 @@ class UniverseInfo:
         return (f"Survivorship gemildert: {self.survivors} Überlebende + "
                 f"{self.graveyard_with_data}/{self.graveyard_requested} Graveyard-Titel "
                 f"mit Daten. Rest delistet ohne yfinance-Historie (übersprungen).")
+
+
+# ── PIT-Universum: historische S&P-500-Mitgliederliste (Roadmap 6.2b) ──────
+#
+# GEGENMITTEL für ein ANDERES Bias als der Graveyard oben: nicht fehlende
+# Kurse von Toten, sondern die stille Verwendung der HEUTIGEN Indexliste für
+# vergangene Fenster ("wer heute im S&P 500 sitzt, war es schon immer nicht"
+# — falsch: NVDA/TSLA kamen erst spät rein, andere flogen raus). Ohne PIT-
+# Disziplin testet ein Walk-Forward-Fenster von 2010 heimlich mit der
+# Mitgliederliste von heute — ein echter Look-Ahead-Fehler.
+#
+# Quelle: github.com/fja05680/sp500 (frei, ab 1996, CSV je Änderungsdatum:
+# date,tickers). scripts/sp500_membership_download.py lädt sie lokal ab.
+# Ersetzt NICHT den Kurs-Survivorship-Fix (6.2c) — Kurse delistete Titel
+# fehlen bei yfinance weiterhin; das hier korrigiert nur, WELCHE Ticker ein
+# Fenster überhaupt sehen darf.
+
+MEMBERSHIP_COLUMNS = ["date", "tickers"]
+DEFAULT_MEMBERSHIP_PATH = Path(__file__).parent.parent / "data" / "sp500_membership.csv"
+
+
+def parse_membership_csv(text: str) -> pd.DataFrame:
+    """Parst die 'date,tickers'-CSV (tickers = kommagetrennt, in Anführung).
+
+    Ergebnis ist nach Datum sortiert; jede Zeile trägt die ab diesem Datum
+    gültige Mitgliederliste (bis zur nächsten Zeile).
+    """
+    import csv
+    import io
+    rows = []
+    reader = csv.DictReader(io.StringIO(text))
+    for row in reader:
+        raw_date = (row.get("date") or "").strip()
+        raw_tickers = (row.get("tickers") or "").strip()
+        if not raw_date or not raw_tickers:
+            continue
+        tickers = tuple(t.strip().upper() for t in raw_tickers.split(",") if t.strip())
+        rows.append({"date": raw_date, "tickers": tickers})
+    df = pd.DataFrame(rows, columns=MEMBERSHIP_COLUMNS)
+    if df.empty:
+        return df
+    df["date"] = pd.to_datetime(df["date"])
+    return df.sort_values("date").reset_index(drop=True)
+
+
+def load_membership(path: Path = DEFAULT_MEMBERSHIP_PATH) -> pd.DataFrame:
+    """Lädt die lokal abgelegte Mitgliederliste (scripts/sp500_membership_download.py).
+
+    Leerer DataFrame, falls die Datei fehlt — Aufrufer entscheiden, ob das ein
+    Abbruch oder ein stiller Fallback aufs Voll-Universum ist."""
+    p = Path(path)
+    if not p.exists():
+        return pd.DataFrame(columns=MEMBERSHIP_COLUMNS)
+    return parse_membership_csv(p.read_text())
+
+
+def constituents_at(when, membership: pd.DataFrame) -> Optional[List[str]]:
+    """Mitgliederliste zum Stichtag `when` (Punkt-in-Zeit, kein Look-Ahead):
+    die zuletzt VOR ODER AN `when` gültige Zeile. `None`, wenn `when` vor dem
+    ersten Datensatz liegt oder `membership` leer ist — bewusst kein stiller
+    Fallback, das wäre wieder Look-Ahead."""
+    if membership is None or membership.empty:
+        return None
+    ts = pd.Timestamp(when)
+    eligible = membership[membership["date"] <= ts]
+    if eligible.empty:
+        return None
+    return list(eligible.iloc[-1]["tickers"])
