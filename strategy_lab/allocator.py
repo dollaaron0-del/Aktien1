@@ -75,6 +75,7 @@ def weight_plan(
     max_weight: float = 0.6,
     risk_budget: float = 1.0,
     regime: Optional[str] = None,
+    registry: Optional[Dict] = None,
 ) -> List[Dict]:
     """Allokations-Plan aus der Registry: aktive Strategien mit gekappten,
     renormierten Gewichten und Risiko-Anteil (weight * risk_budget).
@@ -82,8 +83,16 @@ def weight_plan(
     Mit `regime` wird regime-bedingt gewichtet: jedes Basisgewicht mit der
     Regime-Eignung (_regime_factor) skaliert, dann renormiert. Verliert eine
     Strategie in diesem Regime historisch, fällt sie raus. Passt KEINE Strategie
-    zum Regime (alle Faktoren 0), ist [] das ehrliche Ergebnis = risk-off/flat."""
-    active = promotion.active_strategies()
+    zum Regime (alle Faktoren 0), ist [] das ehrliche Ergebnis = risk-off/flat.
+
+    `registry` erlaubt eine In-Memory-Registry (build_registry()-Form) statt der
+    persistierten Datei — Naht für den Meta-Backtest (Roadmap 4.1), der zu jedem
+    historischen Stichtag eine Registry NUR aus Vergangenheitsdaten nachstellt,
+    ohne data/strategy_registry.json anzufassen."""
+    if registry is not None:
+        active = [e for e in registry.get("entries", []) if e.get("status") == "ACTIVE"]
+    else:
+        active = promotion.active_strategies()
     if not active:
         return []
     by_name = {e["strategy"]: e for e in active}
