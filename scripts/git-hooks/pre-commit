@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Lokale CI (Roadmap 4.4a) — Ersatz für GitHub Actions, solange Push nicht
+# geht (0.2, Token-Frage offen). Läuft die Testsuite vor jedem Commit;
+# bricht den Commit bei rotem Test ab. Notausgang bei Bedarf: `git commit
+# --no-verify` (bewusst nicht automatisiert — soll eine Ausnahme bleiben,
+# kein Standardweg).
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+PY=""
+for cand in venv/bin/python .venv/bin/python; do
+    if [ -x "$cand" ]; then PY="$cand"; break; fi
+done
+if [ -z "$PY" ]; then
+    PY="$(command -v python3 || command -v python)"
+fi
+
+echo "[pre-commit] Testsuite läuft ($PY) …"
+if ! "$PY" -m pytest -q; then
+    echo "[pre-commit] Tests rot — Commit abgebrochen. Fix oder 'git commit --no-verify' (Notausgang, nicht Standard)."
+    exit 1
+fi
+echo "[pre-commit] Tests grün."
