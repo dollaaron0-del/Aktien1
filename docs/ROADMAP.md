@@ -420,6 +420,72 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Generalitäts-Check.
 - [ ] **5.3 Slippage-Kalibrierung** aus echten IBKR-Paper-Fills.
 
+## Block 6 — Server-Umzug + Intensiv-Lab (GPU-Server, geplant ~Ende Juli/Aug. 2026)
+
+> User-Plan 12.7.: In einigen Wochen Umzug auf eigenen Server (bessere CPU,
+> GPU, mehr RAM). Ziel: das Walk-Forward-/Meta-Backtest-Verfahren deutlich
+> genauer und intensiver fahren.
+>
+> **Ehrliche Leitplanke zuerst**: Das Nadelöhr ist DATEN, nicht Rechenleistung.
+> Aktuell: ~10er-Watchlist bzw. 42-Ticker-Cache, survivorship-verzerrte
+> yfinance-Kurse, 78 gelabelte echte Trades. Mehr Compute auf denselben Daten
+> macht Ergebnisse nur PRÄZISER FALSCH — und ein 100× größerer Suchraum findet
+> GARANTIERT Scheinkanten, wenn das Anti-Overfit-Protokoll nicht vorher steht.
+> Deshalb Reihenfolge: Daten → Protokoll → Compute. GPU-Punkt mit dem größten
+> sicheren Nutzen ist NICHT der Backtest, sondern Ollama (6.5a).
+
+- [ ] **6.1 Umzugs-Fundament** (Großteil existiert schon): restore.sh +
+      docs/SERVER_RUNBOOK.md sind erprobt (0.5); Push-Frage 0.2 wird damit
+      PFLICHT (Code muss versioniert auf den neuen Server, nicht per scp);
+      Demo-Daten-Swap-Rücktausch VOR dem Umzug klären (sonst zieht die
+      Demo-data/ mit um); .env-Secrets-Transfer manuell (nie ins Repo);
+      IB-Gateway + autologin auf neuem Server neu aufsetzen.
+- [ ] **6.2 Daten-Ausbau** (Voraussetzung, dass mehr Compute überhaupt lohnt):
+      Universum von 10/42 auf mehrere hundert Ticker (z.B. S&P-500-Bestand),
+      Parquet-Cache vorab befüllen; EU-Universum durchs selbe Lab (zieht 5.2
+      vor); User-Entscheid Point-in-Time-Daten (Norgate/Sharadar/EODHD) wird
+      mit mehr Compute WICHTIGER, nicht optionaler — Survivorship-Bias wächst
+      mit dem Suchraum mit.
+- [ ] **6.3 Parallel-Walk-Forward** (größter sicherer CPU-Gewinn, kann
+      TEILWEISE schon auf dem alten Server vorbereitet werden): strategy_lab
+      läuft heute komplett single-core (Meta-Backtest-Lauf 12.7. = 1 Kern
+      100%, Stunden Laufzeit). Naht: run_walk_forward-Aufrufe je Familie ×
+      Meta-Fenster sind unabhängig → multiprocessing.Pool; Loader sind
+      bereits injizierbar/deterministisch (gute Voraussetzung). Ziel: Faktor
+      ~Kernzahl. Vorbereitung jetzt = Funktionen pickle-fähig halten +
+      Pool-Naht bauen; Nutzen sofort auch auf altem Server.
+- [ ] **6.4 Anti-Overfit-Protokoll für große Suchräume** (PFLICHT vor
+      "intensiver"): heutige Gates (Bootstrap-CI 4.2, Promotion-Verdikt)
+      reichen für 24 Kombos, nicht für 10.000. Ergänzen: Deflated Sharpe
+      Ratio / White's-Reality-Check-artige Multiple-Testing-Korrektur (n
+      getesteter Kombos fließt ins Verdikt ein), purged/embargoed CV bzw.
+      CPCV als zweite Achse neben Walk-Forward, festes Holdout-Fenster das
+      NIE in die Suche fließt (z.B. letzte 2 Jahre, einmal pro Quartal
+      angefasst). Sonst produziert der große Server nur schnellere
+      Selbsttäuschung.
+- [ ] **6.5 GPU-Nutzen realistisch einordnen**:
+      (a) GRÖSSTER SICHERER GEWINN: Ollama/lokales LLM wieder tragfähig —
+          der aktuelle CPU-Server schaffte nur 1,7 tok/s, deshalb läuft
+          heute alles über Claude-API (Kosten!). GPU-Server → Frugal-Mode
+          kann wieder maximal lokal routen, Claude nur für echte
+          Katalysatoren. Direkt messbarer Euro-Effekt, null Overfit-Risiko.
+      (b) ML-Meta-Labeling (echtes "Lernen aus alten Daten", aber richtig):
+          Modell lernt NICHT Kurse vorherzusagen, sondern WELCHE der
+          mechanischen Signale man hätte nehmen sollen (Features: Regime,
+          Vola, Breadth, Quellen-Kontext; Label: Trade-Ausgang aus dem
+          Backtest/ExperienceStore). Gradient Boosting zuerst (CPU reicht,
+          interpretierbar), NN/GPU erst wenn GBM eine Kante zeigt.
+          Validierung zwingend walk-forward + 6.4-Protokoll.
+      (c) TimesFM-Experiment (bereits evaluiert: NICHT für Kurse, evtl. für
+          Alt-Data-Reihen) — auf GPU-Server günstig nachholbar, zero-shot
+          vs. naive Baseline.
+      (d) BEWUSST NICHT: Deep Learning / RL direkt auf Kursen — 78 gelabelte
+          Trades und Random-Walk-Preise; das wäre Overfitting mit Ansage.
+- [ ] **6.6 Lern-Loop-Realität**: Echtes Weiterlernen (Kalibrierung,
+      Meta-Labeling auf LIVE-Ausgängen) braucht laufenden Bot + Zeit —
+      der neue Server beschleunigt die Forschung, ersetzt aber nicht die
+      Live-Historie (Block 3 bleibt eigener Engpass).
+
 ## Verworfen (nicht wieder vorschlagen)
 
 - ✗ **Trade-Freigabe per Telegram (Human-in-the-Loop)** — User-Entscheid
