@@ -395,8 +395,12 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
 
 - [ ] **4.1 Meta-Backtest des Allokators** — weight_plan + Regime-Faktor
       selbst validieren.
-- [ ] **4.2 Bootstrap/Monte-Carlo in der Promotion** — DD-Konfidenzintervalle
-      statt Punkt-Verdikte.
+- [x] **4.2 Bootstrap/Monte-Carlo in der Promotion** — FERTIG 12.7. (4d28454).
+      _bootstrap_ci() (numpy, fester Seed) zieht ein 90%-CI über die wenigen
+      OOS-Fenster; Verdikt konfidenzbewusst: ROBUST verlangt zusätzlich
+      CI-Untergrenze > 0 → verrauschte, die-Null-berührende Strategien fallen
+      auf FRAGILE. Report um test_return_ci_lo/hi/p_le0 + max_drawdown_ci
+      ergänzt, CLI zeigt OOS-CI-Spalte. 4 Tests, Suite 538 grün.
 - [ ] **4.3 Regime-Übergangsmodell** — Hysterese, Regime-Signal selbst per
       Paper-Forward tracken.
 - [ ] **4.4 Code-Gesundheit + lokale CI** — 500-Zeilen-Regel (CLAUDE.md)
