@@ -27,7 +27,7 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
 - [ ] **0.3 Demo-Daten-Rücktausch** — Pflicht vor Bot-Reaktivierung; echte
       `data/` liegt im Backup, aktuell Demo-Kopie für Präsentation aktiv.
       Danach `python -m scripts.backfill_regime` auf der echten DB.
-- [~] **0.4 Dashboard/Ports absichern** (11.7. erledigt, Netzwerk-Teil fertig).
+- [x] **0.4 Dashboard/Ports absichern** (11.7. Netzwerk-Teil, 12.7. Login-Rest).
       Befund: manuell gestartete Streamlit-Instanz auf :8503 (0.0.0.0, XSRF
       aus), ufw ließ 8503 weltweit rein, kein Login, Settings-Tab kann echte
       `.env` (Anthropic/Telegram/IBKR-Keys) lesen+schreiben. 8501/8888/8082 =
@@ -39,9 +39,15 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Alt-Prozess (PID 3057754, seit 27.6. auf 0.0.0.0) beendet, Service
       `enable --now` gesetzt (reboot-fest, aktiv, lauscht jetzt nur auf
       127.0.0.1:8503, verifiziert per `ss`). Zugriff per
-      `ssh -L 8503:localhost:8503 <server>`. Noch nicht behoben: Settings-Tab
-      ohne In-App-Login (Netzwerk-Absicherung war Kernfix, Login/Reverse-Proxy
-      wäre Zusatzhärtung — bleibt offen, kein akuter Netzwerk-Zugriff mehr).
+      `ssh -L 8503:localhost:8503 <server>`.
+      ✅ REST GEBAUT 12.7.: dashboard/auth.py — Passwort-Gate vor dem
+      gesamten Rendering (require_login(), st.stop() bis Login), optional
+      per DASHBOARD_PASSWORD in .env (Default AUS = exakt altes Verhalten,
+      kein Breaking Change). Konstante-Zeit-Vergleich (secrets.compare_digest),
+      Zustand in session_state (kein erneutes Passwort bei jedem Rerun). In
+      app.py direkt nach st.set_page_config() verdrahtet. 5 Tests
+      (test_dashboard_auth.py, headless via streamlit.testing.v1 AppTest auf
+      einem isolierten Mini-Skript statt des vollen app.py), Suite grün.
 - [x] **0.5 Restore-Probe + Server-Runbook** — fertig 11.7. Echtes Backup
       erzeugt (34 MB, `backups/`), auf frischem `git clone` in isoliertem
       Verzeichnis komplett zurückgespielt (nicht gegen `/opt/Aktien` — dort

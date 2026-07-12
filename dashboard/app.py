@@ -97,6 +97,9 @@ st.set_page_config(
     initial_sidebar_state="auto",
 )
 
+from dashboard.auth import require_login  # noqa: E402
+require_login()
+
 # ─── Custom CSS ──────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
