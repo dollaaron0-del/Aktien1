@@ -448,6 +448,14 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Demo-Daten-Swap-Rücktausch VOR dem Umzug klären (sonst zieht die
       Demo-data/ mit um); .env-Secrets-Transfer manuell (nie ins Repo);
       IB-Gateway + autologin auf neuem Server neu aufsetzen.
+      ERGÄNZT 12.7.: (a) SICHERHEITS-CHECKLISTE als fester Umzugsschritt
+      (Lehre aus 0.4: Dashboard stand offen im Netz, Settings-Tab konnte
+      .env lesen+schreiben): ufw default-deny, Dashboard nur 127.0.0.1 +
+      SSH-Tunnel, kein Dienst auf 0.0.0.0 ohne Grund, ss-Audit nach Setup.
+      (b) SPEICHER/BACKUP-DIMENSIONIERUNG: PIT-Archiv (6.8b) + EDGAR-Rohdaten
+      (6.8a) wachsen auf zig–hunderte GB; Backup-Strategie muss das UND die
+      Lern-DBs off-server abdecken (heute: Backup nur lokal, Timer nicht
+      enabled — 0.1-Rest wird mit dem Umzug PFLICHT statt optional).
 - [ ] **6.2 Daten-Ausbau** (Voraussetzung, dass mehr Compute überhaupt lohnt).
       Das Nadelöhr konkret: (1) nur 10/42 Ticker = zu wenige unabhängige
       Stichproben, (2) Survivorship-Bias — yfinance kennt nur heutige
@@ -548,6 +556,15 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
           Ergänzend GDELT (News-Events frei ab 2015). Damit wird die
           KI-/Katalysator-Hälfte des Bots erstmals backtestbar — mit
           Punkt-in-Zeit-Disziplin (nur Filing-Datum, kein Lookahead).
+          GATE DAVOR (12.7. ergänzt): Annotationsqualität erst BEWEISEN —
+          ~200 Filings doppelt labeln (lokales LLM vs. Claude vs. echter
+          Kursausgang), Übereinstimmung messen; Massen-Backfill nur wenn
+          das lokale Modell trägt, sonst lernen wir Rauschen.
+          VORZIEHBAR: der EDGAR-Download ist I/O- nicht CPU-lastig → kann
+          schon auf dem ALTEN Server laufen (SEC-Fair-Access beachten:
+          max. 10 req/s, User-Agent mit Kontakt-Mail — braucht die offene
+          SEC_CONTACT_EMAIL in .env), Rohmaterial liegt dann beim
+          GPU-Start bereit.
       (b) EIGENES PIT-ARCHIV VORWÄRTS: Dauer-Collector auf dem neuen Server
           schreibt ab Tag 1 alles versioniert weg (Quotes, News-Snapshots,
           Alt-Data, Prompts) → selbstgebautes Point-in-Time-Archiv, das
@@ -598,6 +615,17 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       LEITPLANKE: LLM-Annotationen sind verrauscht und alles daraus
       Gelernte läuft durch die 6.4-Gates; (e)/(f) verbessern KALIBRIERUNG
       und KOSTEN, nicht automatisch die Kante.
+- [ ] **6.10 Erfolgs-/Abbruchkriterien definieren** (12.7. ergänzt; ehrlichster
+      offener Punkt). Langfrist-Ziel ist "Kante beweisen statt Rendite jagen" —
+      aber BEWIESEN/WIDERLEGT ist nirgends kodiert. Die Mechanik allein hat
+      nachweislich keine Kante (Paper-Forward-Befund); die Wette liegt auf der
+      KI-/Katalysator-Hälfte, und die ist ungetestet. Festlegen (User + kodieren,
+      Nähte existieren in track_record.py-Gates): pro Strategie-These ein
+      Verdikt-Kriterium à la "nach n Trades (z.B. 100 live/paper): Bootstrap-CI-
+      Untergrenze der Kante > 0 UND schlägt Buy&Hold, sonst These VERWERFEN und
+      nicht wiederbeleben" + ein Zeit-Budget. Ohne das kann das Lab ewig laufen,
+      ohne dass je ein Verdikt fällt — als bewusstes Hobby okay, aber es soll
+      eine Entscheidung sein, kein Versehen.
 
 ## Verworfen (nicht wieder vorschlagen)
 
@@ -617,6 +645,12 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Survivorship-Mechanik scharf.
 - [ ] Push-Token mit Contents:write? (→ 0.2)
 - [ ] Bot-Reaktivierung wann? → Voraussetzung für Block 3 + Ziel 1/2.
+- [ ] GPU-Server-Sizing VOR dem Kauf gemeinsam durchgehen (→ Block 6):
+      entscheidende Größe ist VRAM, nicht CPU/RAM — bestimmt, welches
+      lokale Modell läuft (8B ≈ 8–12 GB, 32B ≈ ~24 GB, 70B ≈ 48 GB+/
+      quantisiert) und ob Whisper (6.9a) parallel passt. Dazu grobe
+      Strom-vs-API-Kosten-Rechnung (6.5a nicht blind glauben).
+- [ ] Erfolgs-/Abbruchkriterien je These festlegen (→ 6.10).
 
 **Vor Live-Relevanz außerdem**: Registry neu generieren (aktuell
 Spielzeug-Lauf; schlank fahren: `--total 12 --max-combos 24`, sonst
