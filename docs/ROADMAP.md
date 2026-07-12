@@ -448,8 +448,23 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       CI-Untergrenze > 0 → verrauschte, die-Null-berührende Strategien fallen
       auf FRAGILE. Report um test_return_ci_lo/hi/p_le0 + max_drawdown_ci
       ergänzt, CLI zeigt OOS-CI-Spalte. 4 Tests, Suite 538 grün.
-- [ ] **4.3 Regime-Übergangsmodell** — Hysterese, Regime-Signal selbst per
-      Paper-Forward tracken.
+- [x] **4.3 Regime-Übergangsmodell** — GEBAUT 12.7.: strategy_lab/regime.py
+      um eine rollierende Tages-Regime-Zeitreihe erweitert (track_regime(),
+      im Vorwärts-Schritt-Stil von paper_forward.replay() — Truncating-
+      Loader über einen Tagesbereich, Punkt-in-Zeit, kein Look-Ahead) +
+      Hysterese/Debounce (apply_hysteresis(): ein neues Label muss
+      min_confirm-mal in Folge auftreten, bevor es übernommen wird) +
+      Churn-Messung (count_transitions()). CLI scripts/regime_track.py.
+      17 neue Tests (u.a. Look-Ahead-Freiheit per Zukunfts-Manipulation
+      verifiziert, Trailing-Fenster-Grenzfall Bär→Bulle-Wende, Hysterese
+      erhöht Übergänge nie). REALER LAUF (7 Mega-Caps, 15J, wöchentliche
+      Kadenz): Hysterese senkt das Schwellen-Flackern deutlich — 14
+      Übergänge/Jahr roh → 5/Jahr bei min_confirm=5 (−64%). Bewusst NICHT
+      live verdrahtet (weder analyzers/recession_detector.py noch die
+      regime_*_mult-Exit-Multiplikatoren aus 2.1) — nur gebaut + gemessen,
+      dieselbe Zurückhaltung wie 2.5 (reanchor): Wiring erst, wenn ein
+      Effekt auf echte Entscheidungen belegt ist, nicht nur auf die
+      Signal-Stabilität selbst.
 - [~] **4.4 Code-Gesundheit + lokale CI** — (b) lokale CI GEBAUT 12.7.:
       scripts/git-hooks/pre-commit (Testsuite vor jedem Commit, bricht bei
       Rot ab) + scripts/install_git_hooks.sh (verlinkt nach .git/hooks/,

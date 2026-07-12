@@ -14,7 +14,7 @@ bereits abgeschlossene Fenster zu Auswertungszwecken).
 """
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Callable, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -121,3 +121,101 @@ def robust_regimes(breakdown: Dict[str, Dict], min_n: int = 2) -> List[str]:
         label for label, s in breakdown.items()
         if s["n"] >= min_n and s["median_test_return"] > 0
     )
+
+
+# ── Regime-Übergangsmodell (Roadmap 4.3): tagesweise Zeitreihe + Hysterese ──
+#
+# classify_window() oben klassifiziert einen ABGESCHLOSSENEN Block (Walk-
+# Forward-Fenster, Jahre lang) — für ein Übergangsmodell braucht es
+# stattdessen eine ROLLIERENDE Zeitreihe: an jedem Stichtag nur das
+# Trailing-Fenster VOR diesem Tag klassifizieren (Punkt-in-Zeit, kein
+# Look-Ahead), im selben Vorwärts-Schritt-Stil wie paper_forward.replay()
+# (Truncating-Loader über einen Tagesbereich).
+#
+# WARUM HYSTERESE: ein Roh-Regime-Signal knapp an einer Schwelle (BULL/SIDE-
+# Grenze) kann tageweise hin- und herkippen, ohne dass sich am Markt viel
+# ändert — reines Rauschen an der Schwelle, kein echter Übergang. Ein
+# Regime-abhängiger Mechanismus (regime_sl_mult_*/regime_tp_mult_* aus dem
+# Exit-Lab, oder künftige Sizing-Logik) würde dieses Flackern 1:1
+# mitmachen. Die Debounce-Regel hier verlangt `min_confirm` aufeinander-
+# folgende Rohmessungen im NEUEN Label, bevor es tatsächlich übernommen
+# wird — verzögert echte Übergänge um bis zu min_confirm Schritte, dämpft
+# aber Schwellen-Rauschen dazwischen.
+#
+# Bewusst NUR gebaut + gemessen, NICHT live verdrahtet (weder in
+# analyzers/recession_detector.py noch in die regime_*_mult-Exit-
+# Multiplikatoren) — dieselbe Zurückhaltung wie bei 2.5 (reanchor): erst
+# den Effekt zeigen, dann über Wiring entscheiden.
+
+_TRACK_LOOKBACK_YEARS = 2   # gleiche Konvention wie allocator.current_regime()
+
+
+def track_regime(
+    universe: List[str],
+    loader: Callable[[str, int], object],
+    start,
+    end=None,
+    lookback_years: int = _TRACK_LOOKBACK_YEARS,
+    step_days: int = 5,
+    history_years: int = 10,
+) -> List[Dict]:
+    """Rollierende Tages-Regime-Zeitreihe: an jedem Stichtag classify_window()
+    NUR auf das Trailing-`lookback_years`-Fenster VOR diesem Tag (Punkt-in-
+    Zeit). `step_days` reduziert die Kadenz (Default 5 ≈ wöchentlich – ein
+    tägliches Reklassifizieren wäre selbst schon fast nur Rauschen).
+    Ergebnis: Liste von {"date", "regime"} in chronologischer Reihenfolge."""
+    full: Dict[str, pd.DataFrame] = {}
+    for t in universe:
+        df = loader(t, history_years)
+        if df is not None and len(df) > 0:
+            full[t] = df
+    if not full:
+        return []
+
+    start_ts = pd.Timestamp(start)
+    end_ts = pd.Timestamp(end) if end is not None else max(df.index.max() for df in full.values())
+    all_days = sorted({d for df in full.values() for d in df.index if start_ts <= d <= end_ts})
+    all_days = all_days[::max(1, step_days)]
+
+    lookback_td = pd.DateOffset(years=lookback_years)
+    out: List[Dict] = []
+    for day in all_days:
+        window = {t: df[(df.index > day - lookback_td) & (df.index <= day)]
+                 for t, df in full.items()}
+        window = {t: w for t, w in window.items() if len(w) >= 20}
+        out.append({"date": day.strftime("%Y-%m-%d"), "regime": classify_window(window)})
+    return out
+
+
+def apply_hysteresis(sequence: List[Dict], min_confirm: int = 3) -> List[Dict]:
+    """Debounce über eine Regime-Zeitreihe (siehe Modul-Docstring oben): ein
+    neues Label muss `min_confirm`-mal in Folge auftreten, bevor es das
+    bestätigte Regime ersetzt. min_confirm<=1 ist ein No-Op (identisch zu
+    den Rohmessungen). Jede Zeile bekommt zusätzlich "regime_raw" (das
+    unveränderte Originallabel) neben dem geglätteten "regime"."""
+    if not sequence:
+        return []
+    out: List[Dict] = []
+    confirmed = sequence[0]["regime"]
+    pending_label: Optional[str] = None
+    pending_count = 0
+    for row in sequence:
+        raw = row["regime"]
+        if raw == confirmed:
+            pending_label, pending_count = None, 0
+        else:
+            if raw == pending_label:
+                pending_count += 1
+            else:
+                pending_label, pending_count = raw, 1
+            if pending_count >= max(min_confirm, 1):
+                confirmed = raw
+                pending_label, pending_count = None, 0
+        out.append({**row, "regime_raw": raw, "regime": confirmed})
+    return out
+
+
+def count_transitions(sequence: List[Dict], key: str = "regime") -> int:
+    """Wie oft wechselt `key` zwischen aufeinanderfolgenden Einträgen — das
+    Churn-Maß, das Hysterese senken soll."""
+    return sum(1 for a, b in zip(sequence, sequence[1:]) if a[key] != b[key])
