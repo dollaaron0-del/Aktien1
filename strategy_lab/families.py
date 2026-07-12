@@ -132,16 +132,25 @@ def _tsmom_run(df, ticker, params):
 
 
 # ── Heute-Signal (Phase-5-Naht) ────────────────────────────────────────────────
-def _fires_today(prepare, signal, min_bars):
-    """Baut eine Heute-Abfrage: feuert die Entry-Flanke auf dem LETZTEN Balken?
+class _FiresToday:
+    """Heute-Abfrage: feuert die Entry-Flanke auf dem LETZTEN Balken?
     Gleiche prepare/signal wie der Backtest – kein Look-Ahead (roll_high etc.
-    sind bereits geshiftet). Ignoriert Position/Cooldown (reine Signal-Sicht)."""
-    def _fn(df: pd.DataFrame, params: dict) -> bool:
-        d = prepare(df.copy(), params or {}).dropna()
-        if len(d) < min_bars:
+    sind bereits geshiftet). Ignoriert Position/Cooldown (reine Signal-Sicht).
+    Klasse statt Closure, damit Strategy-Objekte picklebar sind
+    (multiprocessing im Parallel-Walk-Forward, Roadmap 6.3)."""
+
+    def __init__(self, prepare, signal, min_bars: int):
+        self.prepare, self.signal, self.min_bars = prepare, signal, min_bars
+
+    def __call__(self, df: pd.DataFrame, params: dict) -> bool:
+        d = self.prepare(df.copy(), params or {}).dropna()
+        if len(d) < self.min_bars:
             return False
-        return bool(signal(d, len(d) - 1, params or {}))
-    return _fn
+        return bool(self.signal(d, len(d) - 1, params or {}))
+
+
+def _fires_today(prepare, signal, min_bars):
+    return _FiresToday(prepare, signal, min_bars)
 
 
 # ── Registrierung ──────────────────────────────────────────────────────────────

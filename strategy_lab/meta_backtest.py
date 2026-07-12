@@ -182,6 +182,7 @@ def run_meta_backtest(
     max_combos: int = 60,
     loader: Callable[[str, int], object] = data_loader.load,
     max_weight: float = 0.6,
+    workers: Optional[int] = None,
     **portfolio_kwargs,
 ) -> MetaBacktestReport:
     """Rollierender Meta-Walk-Forward über den Allokator selbst.
@@ -223,6 +224,7 @@ def run_meta_backtest(
             name, list(full), total_years=total_years,
             train_years=train_years, test_years=test_years,
             step_years=test_years, max_combos=max_combos, loader=sel_loader,
+            workers=workers,
         ) for name in strategies]
         registry = build_registry(reports)
         regime = _regime_at(full, as_of)

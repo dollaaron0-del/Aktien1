@@ -54,6 +54,9 @@ def main() -> None:
     ap.add_argument("--oos-years", type=int, default=2)
     ap.add_argument("--step-years", type=int, default=2)
     ap.add_argument("--max-combos", type=int, default=60)
+    ap.add_argument("--workers", type=int, default=None,
+                    help="Prozesse für die innere Grid-Search (0 = Kerne−1; "
+                         "Default ENV STRATEGY_LAB_WORKERS bzw. 1 = seriell)")
     ap.add_argument("--capital", type=float, default=100_000.0)
     ap.add_argument("--max-positions", type=int, default=10)
     ap.add_argument("--max-positions-per-theme", type=int, default=3)
@@ -72,7 +75,7 @@ def main() -> None:
         strategies, universe,
         total_years=args.total_years, selection_years=args.selection_years,
         oos_years=args.oos_years, step_years=args.step_years,
-        max_combos=args.max_combos,
+        max_combos=args.max_combos, workers=args.workers,
         initial_capital=args.capital, max_positions=args.max_positions,
         max_positions_per_theme=args.max_positions_per_theme,
     )

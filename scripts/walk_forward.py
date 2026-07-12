@@ -54,6 +54,9 @@ def main() -> None:
     ap.add_argument("--test", type=int, default=2)
     ap.add_argument("--step", type=int, default=2)
     ap.add_argument("--max-combos", type=int, default=60)
+    ap.add_argument("--workers", type=int, default=None,
+                    help="Prozesse für die Grid-Search (0 = Kerne−1; "
+                         "Default ENV STRATEGY_LAB_WORKERS bzw. 1 = seriell)")
     ap.add_argument("--no-save", action="store_true",
                     help="Promotion-Registry NICHT auf data/strategy_registry.json schreiben")
     args = ap.parse_args()
@@ -79,7 +82,8 @@ def main() -> None:
     for name in strategies:
         rep = run_walk_forward(
             name, universe, total_years=args.total, train_years=args.train,
-            test_years=args.test, step_years=args.step, max_combos=args.max_combos)
+            test_years=args.test, step_years=args.step, max_combos=args.max_combos,
+            workers=args.workers)
         reports.append(rep)
         vc = _VERDICT_COLOR.get(rep.verdict, "white")
         ci_color = "green" if rep.test_return_ci_lo > 0 else "yellow"

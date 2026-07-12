@@ -15,7 +15,10 @@ Reine numpy/pandas-Analyse, kein LLM, kein Live-Eingriff.
 from __future__ import annotations
 
 import itertools
+import logging
+import os
 import random
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -38,6 +41,22 @@ _MIN_TRADES_TEST = 3
 _BOOTSTRAP_ITERS = 2000
 _BOOTSTRAP_CI = 0.90
 _BOOTSTRAP_SEED = 20260712
+
+log = logging.getLogger(__name__)
+
+
+def _resolve_workers(workers: Optional[int]) -> int:
+    """Parallelität der Grid-Search (Roadmap 6.3). None → ENV
+    STRATEGY_LAB_WORKERS (Default 1 = seriell, exakt altes Verhalten);
+    0 oder negativ → Kernzahl − 1 (ein Kern bleibt frei)."""
+    if workers is None:
+        try:
+            workers = int(os.getenv("STRATEGY_LAB_WORKERS", "1"))
+        except ValueError:
+            workers = 1
+    if workers <= 0:
+        workers = max((os.cpu_count() or 2) - 1, 1)
+    return workers
 
 
 def _bootstrap_ci(values: List[float], ci: float = _BOOTSTRAP_CI,
@@ -144,6 +163,7 @@ def run_walk_forward(
     step_years: int = 2,
     max_combos: int = 60,
     loader: Callable[[str, int], object] = data_loader.load,
+    workers: Optional[int] = None,
 ) -> WalkForwardReport:
     if isinstance(strategy, str):
         strategy = get(strategy)
@@ -164,40 +184,71 @@ def run_walk_forward(
     combos = _param_combos(strategy.param_space, max_combos)
     windows: List[WindowEval] = []
 
-    cur = starts
-    train_td = pd.DateOffset(years=train_years)
-    test_td = pd.DateOffset(years=test_years)
-    step_td = pd.DateOffset(years=step_years)
-    while cur + train_td + test_td <= ends:
-        tr_s, tr_e = cur, cur + train_td
-        te_s, te_e = tr_e, tr_e + test_td
-        train_dfs = _slice(full, tr_s, tr_e)
-        test_dfs = _slice(full, te_s, te_e)
-        cur = cur + step_td
-        if not train_dfs or not test_dfs:
-            continue
+    # Parallel-Grid-Search (Roadmap 6.3): die Kombos eines Fensters sind
+    # unabhängig → ProcessPool. Ergebnis ist deterministisch identisch zur
+    # seriellen Schleife (pool.map erhält die Reihenfolge, Auswahl nutzt
+    # strikt >, also gewinnt weiter der erste Bestwert). Fail-open: jeder
+    # Pool-Fehler degradiert auf die serielle Schleife.
+    n_workers = _resolve_workers(workers)
+    pool: Optional[ProcessPoolExecutor] = None
+    if n_workers > 1 and len(combos) > 1:
+        try:
+            pool = ProcessPoolExecutor(max_workers=min(n_workers, len(combos)))
+        except Exception as e:                      # pragma: no cover - env-abhängig
+            log.warning("Walk-Forward: ProcessPool nicht verfügbar (%s), seriell.", e)
+            pool = None
 
-        # Grid-Search auf TRAIN: bester Parametersatz nach total_return (mit Mindest-Trades).
-        best, best_score, best_train_ret = None, float("-inf"), 0.0
-        for params in combos:
-            m = _evaluate_dfs(strategy, train_dfs, params)
-            score = m.total_return if m.n_trades >= _MIN_TRADES_TRAIN else float("-inf")
-            if score > best_score:
-                best, best_score, best_train_ret = params, score, m.total_return
-        if best is None:
-            continue
+    try:
+        cur = starts
+        train_td = pd.DateOffset(years=train_years)
+        test_td = pd.DateOffset(years=test_years)
+        step_td = pd.DateOffset(years=step_years)
+        while cur + train_td + test_td <= ends:
+            tr_s, tr_e = cur, cur + train_td
+            te_s, te_e = tr_e, tr_e + test_td
+            train_dfs = _slice(full, tr_s, tr_e)
+            test_dfs = _slice(full, te_s, te_e)
+            cur = cur + step_td
+            if not train_dfs or not test_dfs:
+                continue
 
-        # OOS-Bewertung auf TEST mit den auf Train gewählten Parametern.
-        tm = _evaluate_dfs(strategy, test_dfs, best)
-        windows.append(WindowEval(
-            train_start=str(tr_s.date()), train_end=str(tr_e.date()),
-            test_start=str(te_s.date()), test_end=str(te_e.date()),
-            best_params=best, train_return=round(best_train_ret, 4),
-            test_return=round(tm.total_return, 4), test_sharpe=round(tm.sharpe, 3),
-            test_trades=tm.n_trades, test_win_rate=round(tm.win_rate, 4),
-            regime=classify_window(test_dfs),
-            test_max_drawdown=round(tm.max_drawdown, 4),
-        ))
+            # Grid-Search auf TRAIN: bester Parametersatz nach total_return (mit Mindest-Trades).
+            metrics: Optional[List[TickerMetrics]] = None
+            if pool is not None:
+                try:
+                    metrics = list(pool.map(
+                        _evaluate_dfs,
+                        itertools.repeat(strategy), itertools.repeat(train_dfs), combos))
+                except Exception as e:
+                    log.warning("Walk-Forward: Pool-Lauf fehlgeschlagen (%s), "
+                                "Rest seriell.", e)
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    pool = None
+            if metrics is None:
+                metrics = [_evaluate_dfs(strategy, train_dfs, p) for p in combos]
+
+            best, best_score, best_train_ret = None, float("-inf"), 0.0
+            for params, m in zip(combos, metrics):
+                score = m.total_return if m.n_trades >= _MIN_TRADES_TRAIN else float("-inf")
+                if score > best_score:
+                    best, best_score, best_train_ret = params, score, m.total_return
+            if best is None:
+                continue
+
+            # OOS-Bewertung auf TEST mit den auf Train gewählten Parametern.
+            tm = _evaluate_dfs(strategy, test_dfs, best)
+            windows.append(WindowEval(
+                train_start=str(tr_s.date()), train_end=str(tr_e.date()),
+                test_start=str(te_s.date()), test_end=str(te_e.date()),
+                best_params=best, train_return=round(best_train_ret, 4),
+                test_return=round(tm.total_return, 4), test_sharpe=round(tm.sharpe, 3),
+                test_trades=tm.n_trades, test_win_rate=round(tm.win_rate, 4),
+                regime=classify_window(test_dfs),
+                test_max_drawdown=round(tm.max_drawdown, 4),
+            ))
+    finally:
+        if pool is not None:
+            pool.shutdown()
 
     return _aggregate_report(strategy.name, windows)
 
