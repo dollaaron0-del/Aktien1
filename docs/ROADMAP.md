@@ -448,12 +448,32 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Demo-Daten-Swap-Rücktausch VOR dem Umzug klären (sonst zieht die
       Demo-data/ mit um); .env-Secrets-Transfer manuell (nie ins Repo);
       IB-Gateway + autologin auf neuem Server neu aufsetzen.
-- [ ] **6.2 Daten-Ausbau** (Voraussetzung, dass mehr Compute überhaupt lohnt):
-      Universum von 10/42 auf mehrere hundert Ticker (z.B. S&P-500-Bestand),
-      Parquet-Cache vorab befüllen; EU-Universum durchs selbe Lab (zieht 5.2
-      vor); User-Entscheid Point-in-Time-Daten (Norgate/Sharadar/EODHD) wird
-      mit mehr Compute WICHTIGER, nicht optionaler — Survivorship-Bias wächst
-      mit dem Suchraum mit.
+- [ ] **6.2 Daten-Ausbau** (Voraussetzung, dass mehr Compute überhaupt lohnt).
+      Das Nadelöhr konkret: (1) nur 10/42 Ticker = zu wenige unabhängige
+      Stichproben, (2) Survivorship-Bias — yfinance kennt nur heutige
+      Überlebende, alle Delistings/Pleiten fehlen → Backtests systematisch
+      geschönt, (3) nur 78 gelabelte echte Trades, (4) keine historischen
+      News-/Sentiment-Daten (halber Bot nicht backtestbar). Maßnahmen nach
+      Aufwand:
+      (a) GRATIS/SOFORT gegen (1): Universum auf mehrere hundert Ticker,
+          Parquet-Cache vorab befüllen; EU-Universum durchs selbe Lab
+          (zieht 5.2 vor).
+      (b) GRATIS/TEILFIX gegen (2): HISTORISCHE Index-Zusammensetzungen
+          statt heutiger Liste (S&P-500-Mitglieder je Jahr, frei via
+          GitHub/Wikipedia-Snapshots) — Bias wird kleiner, nicht null
+          (Kurse delisteter Werte fehlen bei yfinance trotzdem).
+      (c) USER-ENTSCHEID (einziger echter Fix für (2)): Point-in-Time-Daten
+          inkl. Delistings. Kandidaten: Norgate (~30–40 $/Mon., US inkl.
+          Delistings + historische Index-Mitgliedschaft, Klassiker),
+          Sharadar/Nasdaq Data Link (auch Fundamentals), EODHD (~30–80 €/
+          Mon., breiter, weniger sauber). Wird mit mehr Compute WICHTIGER,
+          nicht optionaler — Survivorship-Bias wächst mit dem Suchraum mit.
+      (d) ZEIT STATT GELD gegen (3): Bot-Paper-Betrieb über Monate (Block
+          3/6.6) — kein Hardware-Ersatz möglich.
+      (e) AB-JETZT-ARCHIVIEREN gegen (4): alles selbst wegschreiben
+          (Prompt-Archiv 1.4d zahlt darauf ein) → in einem Jahr rückwirkend
+          testbar; historische News-Archive kaufen ist institutionell teuer
+          (RavenPack & Co.) → verworfen.
 - [x] **6.3 Parallel-Walk-Forward** — FERTIG 12.7. (4cce16b), vorgezogen auf
       dem alten Server. ProcessPoolExecutor über die Grid-Search-Kombos je
       Fenster (unabhängig), deterministisch BIT-IDENTISCH zur seriellen
@@ -515,6 +535,35 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       (e) VORAUSSETZUNG: 6.4-Gates zuerst — ein nächtlicher Suchlauf ohne
           Multiple-Testing-Korrektur automatisiert nur die Selbsttäuschung;
           Läufe versionieren (Config-Hash + Datenstand in den Report).
+- [ ] **6.8 Datenlücke mit Compute schließen** — was der GPU-Server GEGEN
+      das Daten-Nadelöhr (6.2) tun kann, statt nur schneller zu rechnen.
+      Kernidee: Compute erzeugt keine neuen Kurs-Informationen, aber es
+      kann FREIE ROH-ARCHIVE in nutzbare Zeitreihen verwandeln, für die
+      bisher die Annotations-Kosten prohibitiv waren (Claude-API), mit
+      lokalem GPU-LLM aber ~0 € kosten:
+      (a) LLM-BACKFILL AUS FREIEN ARCHIVEN (größter Hebel gegen 6.2-(4)):
+          SEC EDGAR Volltext (8-K/10-K/10-Q, frei, Jahrzehnte zurück) per
+          Ollama massen-annotieren → historische Event-/Katalysator-
+          Zeitreihe je Ticker (Earnings-Überraschung, Guidance, FDA, M&A).
+          Ergänzend GDELT (News-Events frei ab 2015). Damit wird die
+          KI-/Katalysator-Hälfte des Bots erstmals backtestbar — mit
+          Punkt-in-Zeit-Disziplin (nur Filing-Datum, kein Lookahead).
+      (b) EIGENES PIT-ARCHIV VORWÄRTS: Dauer-Collector auf dem neuen Server
+          schreibt ab Tag 1 alles versioniert weg (Quotes, News-Snapshots,
+          Alt-Data, Prompts) → selbstgebautes Point-in-Time-Archiv, das
+          mit jedem Monat wertvoller wird (Verzahnung 6.7d-Reports).
+      (c) LABEL-VERVIELFACHUNG gegen 6.2-(3): Meta-Labeling-Trainingsdaten
+          nicht nur aus 78 echten Trades, sondern aus zehntausenden
+          BACKTEST-Signalausgängen über das große Universum (Features:
+          Regime/Vola/Breadth zum Signalzeitpunkt; Label: simulierter
+          Ausgang). Echte Trades bleiben Validierung, nicht Training.
+      (d) RESAMPLING STATT SYNTHETIK: Block-Bootstrap/Monte-Carlo-Pfade
+          machen die VALIDIERUNG härter (Verteilungen statt Punktwerte,
+          verzahnt mit 6.4) — ehrlich bleiben: synthetische Kurse enthalten
+          keine neue Information, sie finden keine Kante, sie zerstören
+          nur Scheinkanten. Genau dafür einsetzen.
+      (e) GRENZE KLAR BENENNEN: Kurse delisteter Aktien kann kein Compute
+          rekonstruieren — Survivorship-Fix bleibt Kauf-Entscheid 6.2-(c).
 
 ## Verworfen (nicht wieder vorschlagen)
 
