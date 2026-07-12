@@ -373,10 +373,16 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       hier reine Vermutung. Werkzeug ist einsatzbereit, braucht aber echte
       Live-Historie (Bot pausiert, kaum 'live'-gelabelte Entscheidungen) für
       ein belastbares Verdikt.
-- [ ] **2.5 Ziel-Nachführung aus Neuanalysen (TP-Update)** — target_price aus
-      Neuanalysen offener Positionen ins Positions-Buch übernehmen (nur bei
-      signifikanter Abweichung + Konfidenz≥MEDIUM). Vorher im Exit-Lab (2.1)
-      walk-forward gegentesten, ob TP-Updates überhaupt Kante bringen.
+- [x] **2.5 Ziel-Nachführung aus Neuanalysen (TP-Update)** — Backtest-Seite
+      FERTIG 12.7. (32d6fa4): wie in der Leitplanke gefordert ZUERST im Exit-Lab
+      (2.1) walk-forward gegengetestet. backtesting/engine tp_mode="reanchor"
+      (mechanischer Stand-in: TP2 periodisch auf dieselbe %-Formel vom heutigen
+      Kurs re-verankert; min_dev-Sperre, Anhebung großzügig, Absenkung gedämpft +
+      nie unter Kurs/SL). Default "fixed" = No-Op; 4. Achse in EXIT_PARAM_SPACE.
+      7 Tests, Suite 534 grün. A/B (46 Ticker, 4659 Trades): reanchor ändert nur
+      3,6 % der Trades, Ø-Kante +1,88 %→+1,90 %, MaxDD minimal schlechter — nahezu
+      neutral, keine belegte Kante. Live-Wiring bewusst NICHT gebaut (Backtest
+      rechtfertigt die Komplexität nicht).
 
 ## Block 3 — Alpha-These prüfen (braucht laufenden Bot + Zeit)
 
