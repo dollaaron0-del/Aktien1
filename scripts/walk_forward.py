@@ -72,7 +72,7 @@ def main() -> None:
     console.print(f"[dim]{info.survivorship_note}[/dim]")
 
     table = Table(title="Walk-Forward-Robustheit (OOS)", box=box.ROUNDED, border_style="dim")
-    for col in ["Strategie", "Fenster", "Ø Test", "Median", "Worst", "%pos", "WF-Eff", "Stabil", "robuste Regime", "Verdikt"]:
+    for col in ["Strategie", "Fenster", "Ø Test", "Median", "Worst", "OOS-CI 90%", "%pos", "WF-Eff", "Stabil", "robuste Regime", "Verdikt"]:
         table.add_column(col, justify="right" if col not in ("Strategie", "robuste Regime") else "left")
 
     reports = []
@@ -82,16 +82,20 @@ def main() -> None:
             test_years=args.test, step_years=args.step, max_combos=args.max_combos)
         reports.append(rep)
         vc = _VERDICT_COLOR.get(rep.verdict, "white")
+        ci_color = "green" if rep.test_return_ci_lo > 0 else "yellow"
         table.add_row(
             name, str(rep.n_windows),
             f"{rep.avg_test_return:+.2f}", f"{rep.median_test_return:+.2f}",
-            f"{rep.worst_test_return:+.2f}", f"{rep.pct_positive_windows*100:.0f}%",
+            f"{rep.worst_test_return:+.2f}",
+            f"[{ci_color}][{rep.test_return_ci_lo:+.2f},{rep.test_return_ci_hi:+.2f}][/{ci_color}]",
+            f"{rep.pct_positive_windows*100:.0f}%",
             f"{rep.wf_efficiency:.2f}", f"{rep.param_stability*100:.0f}%",
             ", ".join(rep.robust_regimes) or "—",
             f"[{vc}]{rep.verdict}[/{vc}]",
         )
     console.print(table)
-    console.print("[dim]ROBUST = OOS-positiv & stabil · OVERFIT = Train gut, Test schlecht.[/dim]")
+    console.print("[dim]ROBUST = OOS-Kante signifikant > 0 (Bootstrap-CI-Untergrenze) & stabil · "
+                  "OVERFIT = Train gut, Test schlecht.[/dim]")
 
     # ── Phase 4: Promotion-Registry (Survivorship) ───────────────────────────
     registry = build_registry(reports)

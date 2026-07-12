@@ -19,6 +19,7 @@ import random
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 
 from backtesting import data_loader
@@ -29,6 +30,34 @@ from strategy_lab.strategies import Strategy, get
 # Mindest-Trades, damit ein Fenster-Ergebnis überhaupt zählt (sonst Rauschen).
 _MIN_TRADES_TRAIN = 10
 _MIN_TRADES_TEST = 3
+
+# Bootstrap über die (wenigen) OOS-Fenster-Ergebnisse (Roadmap 4.2): macht aus
+# Punkt-Verdikten Konfidenz-Verdikte. Deterministisch (fester Seed). Ein
+# Strategie-Verdikt gilt nur dann als ROBUST, wenn die Kante SIGNIFIKANT positiv
+# ist (Bootstrap-CI-Untergrenze > 0), nicht bloß im Mittel positiv-durch-Glück.
+_BOOTSTRAP_ITERS = 2000
+_BOOTSTRAP_CI = 0.90
+_BOOTSTRAP_SEED = 20260712
+
+
+def _bootstrap_ci(values: List[float], ci: float = _BOOTSTRAP_CI,
+                  iters: int = _BOOTSTRAP_ITERS,
+                  seed: int = _BOOTSTRAP_SEED) -> Tuple[float, float, float]:
+    """Bootstrap-CI auf den Mittelwert einer kleinen Stichprobe (numpy, kein
+    scipy). Gibt (lo, hi, p_le0) zurück. n=0 → (0,0,1); n=1 → degeneriert auf
+    den Einzelwert (CI-Breite 0), damit konstruierte Ein-Fenster-Läufe stabil
+    bleiben."""
+    x = np.asarray([v for v in values if v is not None], dtype=float)
+    n = len(x)
+    if n == 0:
+        return (0.0, 0.0, 1.0)
+    if n == 1:
+        return (float(x[0]), float(x[0]), 1.0 if x[0] <= 0 else 0.0)
+    rng = np.random.default_rng(seed)
+    means = x[rng.integers(0, n, size=(iters, n))].mean(axis=1)
+    lo = float(np.quantile(means, (1 - ci) / 2))
+    hi = float(np.quantile(means, 1 - (1 - ci) / 2))
+    return (lo, hi, float((means <= 0).mean()))
 
 
 @dataclass
@@ -64,6 +93,12 @@ class WalkForwardReport:
     windows: List[WindowEval] = field(default_factory=list)
     regime_breakdown: Dict = field(default_factory=dict)   # je Regime: n/Median/%pos
     robust_regimes: List[str] = field(default_factory=list)
+    # Roadmap 4.2: Bootstrap-Konfidenz statt Punkt-Verdikt.
+    test_return_ci_lo: float = 0.0     # CI-Untergrenze der mittleren OOS-Rendite
+    test_return_ci_hi: float = 0.0
+    test_return_p_le0: float = 1.0     # Bootstrap-P(Ø-OOS-Kante ≤ 0)
+    max_drawdown_ci_lo: float = 0.0    # CI der mittleren OOS-MaxDD (beide ≤ 0)
+    max_drawdown_ci_hi: float = 0.0
 
 
 # ── Hilfen ──────────────────────────────────────────────────────────────────
@@ -185,10 +220,17 @@ def _aggregate_report(name: str, windows: List[WindowEval]) -> WalkForwardReport
     keyed = Counter(tuple(sorted(w.best_params.items())) for w in windows)
     stability = keyed.most_common(1)[0][1] / len(windows)
 
-    # Robustheits-Verdikt (konservativ).
+    # Bootstrap-Konfidenz über die Fenster (Roadmap 4.2).
+    ret_lo, ret_hi, p_le0 = _bootstrap_ci(test_rets)
+    dd_lo, dd_hi, _ = _bootstrap_ci(dds)
+
+    # Robustheits-Verdikt (konservativ + konfidenzbewusst): ROBUST verlangt jetzt
+    # zusätzlich, dass die mittlere OOS-Kante SIGNIFIKANT > 0 ist (Bootstrap-CI-
+    # Untergrenze > 0) – ein bloß im Mittel positives, aber die-Null-berührendes
+    # Ergebnis ist FRAGILE, nicht mehr ROBUST.
     if avg_test <= 0 or pct_pos < 0.4:
         verdict = "OVERFIT"
-    elif wf_eff >= 0.5 and pct_pos >= 0.6:
+    elif wf_eff >= 0.5 and pct_pos >= 0.6 and ret_lo > 0:
         verdict = "ROBUST"
     else:
         verdict = "FRAGILE"
@@ -209,4 +251,9 @@ def _aggregate_report(name: str, windows: List[WindowEval]) -> WalkForwardReport
         windows=windows,
         regime_breakdown=breakdown,
         robust_regimes=robust_regimes(breakdown),
+        test_return_ci_lo=round(ret_lo, 4),
+        test_return_ci_hi=round(ret_hi, 4),
+        test_return_p_le0=round(p_le0, 3),
+        max_drawdown_ci_lo=round(dd_lo, 4),
+        max_drawdown_ci_hi=round(dd_hi, 4),
     )

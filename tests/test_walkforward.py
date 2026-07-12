@@ -9,7 +9,9 @@ import pandas as pd
 import pytest
 
 from strategy_lab.strategies import Strategy, register, REGISTRY
-from strategy_lab.walkforward import run_walk_forward, _param_combos, _aggregate_report, WindowEval
+from strategy_lab.walkforward import (
+    run_walk_forward, _param_combos, _aggregate_report, WindowEval, _bootstrap_ci,
+)
 
 
 def _long_df(n=3000, trend=0.0005, seed=0):
@@ -78,3 +80,50 @@ def test_verdict_logic():
     rep2 = _aggregate_report("x", w2)
     assert rep2.verdict == "ROBUST"
     assert rep2.param_stability == 1.0  # immer derselbe Parametersatz
+
+
+# ── Bootstrap-Konfidenz (Roadmap 4.2) ────────────────────────────────────────
+
+def _win(test_return, train_return=1.0, dd=-0.1):
+    return WindowEval("", "", "", "", {"a": 1}, train_return=train_return,
+                      test_return=test_return, test_sharpe=1.0, test_trades=5,
+                      test_win_rate=0.6, test_max_drawdown=dd)
+
+
+def test_bootstrap_ci_behaviour():
+    lo, hi, p = _bootstrap_ci([2.0] * 40)          # eng positiv
+    assert lo > 0 and p < 0.01
+    lo, hi, p = _bootstrap_ci([-1.0, -2.0, -0.5, -1.5, -2.5, -1.0])
+    assert hi < 0 and p > 0.95                       # klar negativ
+    lo, hi, _ = _bootstrap_ci([1.0])                 # n=1 → degeneriert
+    assert lo == hi == 1.0
+    lo, hi, _ = _bootstrap_ci([])                    # leer
+    assert (lo, hi) == (0.0, 0.0)
+
+
+def test_verdict_demotes_positive_but_noisy_to_fragile():
+    """Der Kern von 4.2: im Mittel positiv, hohe %pos und WF-Eff — aber ein
+    Ausreißer macht die Kante insignifikant (CI-Untergrenze ≤ 0). Punkt-Verdikt
+    hätte ROBUST gesagt; Konfidenz-Verdikt sagt korrekt FRAGILE."""
+    windows = [_win(2.0), _win(2.0), _win(2.0), _win(-4.0)]
+    rep = _aggregate_report("noisy", windows)
+    assert rep.avg_test_return > 0 and rep.pct_positive_windows >= 0.6
+    assert rep.wf_efficiency >= 0.5          # alte Bedingungen erfüllt …
+    assert rep.test_return_ci_lo <= 0        # … aber CI berührt/unterschreitet 0
+    assert rep.verdict == "FRAGILE"
+
+
+def test_verdict_stays_robust_when_ci_clears_zero():
+    """Eng gestreute, durchgängig positive OOS-Fenster: CI klar > 0 → ROBUST."""
+    windows = [_win(0.8), _win(0.9), _win(0.7), _win(0.85)]
+    rep = _aggregate_report("tight", windows)
+    assert rep.test_return_ci_lo > 0
+    assert rep.verdict == "ROBUST"
+
+
+def test_ci_and_drawdown_fields_populated():
+    windows = [_win(0.5, dd=-0.1), _win(0.3, dd=-0.2), _win(0.6, dd=-0.15)]
+    rep = _aggregate_report("s", windows)
+    assert rep.test_return_ci_lo <= rep.avg_test_return <= rep.test_return_ci_hi
+    assert rep.max_drawdown_ci_lo <= rep.max_drawdown_ci_hi <= 0
+    assert 0.0 <= rep.test_return_p_le0 <= 1.0
