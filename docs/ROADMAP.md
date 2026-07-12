@@ -394,7 +394,15 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
 ## Block 4 — Meta-Ebene & Robustheit
 
 - [ ] **4.1 Meta-Backtest des Allokators** — weight_plan + Regime-Faktor
-      selbst validieren.
+      selbst validieren. CODE FERTIG 12.7. (5990c3e): komplette
+      Selektions-Pipeline (Walk-Forward je Familie → build_registry →
+      weight_plan) an rollierenden Stichtagen nur mit Vergangenheitsdaten
+      nachgestellt, drei Arme OOS durch den Portfolio-Backtest (Allokator /
+      Allokator+Regime / Gleichgewichtung), Paired-Differenzen mit
+      Bootstrap-90%-CI; CLI scripts/meta_backtest.py, 10 Tests, Suite 548
+      grün. OFFEN: der eigentliche Ergebnis-Lauf auf echten Cache-Daten
+      (Stunden Laufzeit; mit 6.3 --workers jetzt ~3–5× schneller) →
+      Befund hier nachtragen.
 - [x] **4.2 Bootstrap/Monte-Carlo in der Promotion** — FERTIG 12.7. (4d28454).
       _bootstrap_ci() (numpy, fester Seed) zieht ein 90%-CI über die wenigen
       OOS-Fenster; Verdikt konfidenzbewusst: ROBUST verlangt zusätzlich
