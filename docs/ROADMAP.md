@@ -412,16 +412,36 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
 
 ## Block 4 — Meta-Ebene & Robustheit
 
-- [ ] **4.1 Meta-Backtest des Allokators** — weight_plan + Regime-Faktor
+- [x] **4.1 Meta-Backtest des Allokators** — weight_plan + Regime-Faktor
       selbst validieren. CODE FERTIG 12.7. (5990c3e): komplette
       Selektions-Pipeline (Walk-Forward je Familie → build_registry →
       weight_plan) an rollierenden Stichtagen nur mit Vergangenheitsdaten
       nachgestellt, drei Arme OOS durch den Portfolio-Backtest (Allokator /
       Allokator+Regime / Gleichgewichtung), Paired-Differenzen mit
       Bootstrap-90%-CI; CLI scripts/meta_backtest.py, 10 Tests, Suite 548
-      grün. OFFEN: der eigentliche Ergebnis-Lauf auf echten Cache-Daten
-      (Stunden Laufzeit; mit 6.3 --workers jetzt ~3–5× schneller) →
-      Befund hier nachtragen.
+      grün.
+      ✅ ERGEBNIS-LAUF 12.7. Abend (10-Ticker-Watchlist, 20J, 6 rollierende
+      Meta-Fenster à 8J-Selektion/2J-OOS, --workers 3, ~50 Min Laufzeit,
+      parallel zur Code-Arbeit im Hintergrund): EINDEUTIGER, ETWAS
+      ERNÜCHTERNDER BEFUND — Allokator Ø +0,25% (5/6 Fenster FLAT, da
+      Registry meist 0 ACTIVE), Gleichgewichtung Ø +61,66%. Paired-Diff
+      Allokator−Gleichgewichtung: −61,42%, Bootstrap-90%-CI
+      [−79,18%,−40,71%], P(≤0)=100% — der Allokator ist auf dieser
+      Stichprobe SIGNIFIKANT SCHLECHTER als simples Gleichgewichten, nicht
+      nur „nicht besser". Regime-Faktor vs. Allokator: exakt ±0,00%
+      (nur 1 von 6 Fenstern hatte überhaupt eine aktive Strategie, dort
+      griff der Regime-Faktor gar nicht). Ursache: das 6.4-ROBUST-Gate ist
+      auf der kleinen 10-Ticker-Stichprobe zu streng — die Registry bleibt
+      fast immer leer, während der Markt in 5 von 6 Fenstern deutlich
+      steigt; „lieber gar nicht handeln" kostet hier real Rendite.
+      Beantwortet die seit 2.2 offene Allokator-Frage EINDEUTIG: NEIN, der
+      robustheits-gefilterte Allokator hilft (bislang, auf dieser
+      Stichprobe) nicht gegenüber Gleichgewichtung — im Gegenteil. Log:
+      reports/meta_backtest_2026-07-12.log. Konsequenz für 4.1-Folgearbeit:
+      entweder das ROBUST-Gate lockern/differenzieren (Registry zu leer)
+      oder die Registry-Leere selbst als Feature werten (defensiv bei
+      fehlender Evidenz) — beides eine bewusste Design-Entscheidung, kein
+      Bug; nicht Teil dieses Laufs.
 - [x] **4.2 Bootstrap/Monte-Carlo in der Promotion** — FERTIG 12.7. (4d28454).
       _bootstrap_ci() (numpy, fester Seed) zieht ein 90%-CI über die wenigen
       OOS-Fenster; Verdikt konfidenzbewusst: ROBUST verlangt zusätzlich
@@ -447,10 +467,38 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
 
 ## Block 5 — Breite (erst nach 2–4)
 
-- [ ] **5.1 Mehr Familien** — PEAD via pead_tracker-Naht, 52W-Hoch,
-      Gap-MeanRev, Saisonalität.
-- [ ] **5.2 Universum erweitern** — EU/Krypto durchs selbe Lab,
-      Generalitäts-Check.
+- [~] **5.1 Mehr Familien** — 12.7. (parallel zum 4.1-Nachtlauf): 2 neue
+      Familien in strategy_lab/families.py, reine Preis-Signale (kein
+      neuer Datenbedarf): **w52_high** (Nähe zum 52-Wochen-Hoch,
+      George/Hwang-Effekt; Fenster bewusst FEST 252 Tage, kein Suchparameter
+      — das WÄRE Data-Dredging, ist die Definition des Effekts) und
+      **gap_meanrev** (starker Overnight-Gap-down im Aufwärtstrend, anders
+      als rsi_meanrev kein Flanken-Trigger — jeder Gap-Tag ein eigenes
+      Ereignis). 20 neue/erweiterte Tests (test_families_new.py +
+      Familien-Listen in test_strategy_lab.py ergänzt), CLI-Smoke-Test
+      gegen echte Cache-Daten (ehrlich OVERFIT/FRAGILE auf kleiner
+      Stichprobe, kein Overselling). PEAD BEWUSST NICHT gebaut:
+      pead_tracker.py ist ein Live-Event-Tracker ohne punkt-in-Zeit-
+      EPS-Überraschungs-Historie über 20 Jahre — nicht ehrlich backtestbar.
+      Saisonalität BEWUSST zurückgestellt: Kalendereffekte laden zum
+      Data-Dredging geradezu ein (großer, verlockender Parameterraum).
+- [x] **5.2 Universum erweitern** — Generalitäts-Check 12.7. (parallel zum
+      4.1-Nachtlauf): backtesting/data_loader.load() ist bereits
+      universum-agnostisch (reicht den Ticker-String unverändert an
+      yfinance durch) — SAP.DE/SIE.DE/BAS.DE (EU) und BTC-USD/ETH-USD/
+      SOL-USD (Krypto) laden und cachen ohne Codeänderung; Walk-Forward
+      über alle Familien läuft auf beiden Universen crashfrei
+      (ehrlich: kein ROBUST-Verdikt auf der kleinen Stichprobe, erwartet).
+      EINE ECHTE ERKENNTNIS dabei: Krypto handelt 7 Tage/Woche — im
+      10-Jahres-Fenster BTC-USD 3680 Bars vs. SAP.DE 2561 Bars (Faktor
+      ~1,44×). SMA200/RSI14 &c. sind Bar-Zählungen, keine
+      Kalenderzeiträume — dieselbe Parameterzahl deckt bei Krypto einen
+      KÜRZEREN Kalenderzeitraum ab als bei Aktien. Kein Bug, aber beim
+      Parameter-Vergleich zwischen Aktien- und Krypto-Läufen zu beachten.
+      Befund als Regression verankert: 6 neue Tests
+      (test_each_family_runs_on_dense_7day_calendar, freq='D' statt 'B'
+      synthetisch) verhindern künftig, dass Family-Code je einen
+      Business-Day-Kalender voraussetzt.
 - [ ] **5.3 Slippage-Kalibrierung** aus echten IBKR-Paper-Fills.
 
 ## Block 6 — Server-Umzug + Intensiv-Lab (GPU-Server, geplant ~Ende Juli/Aug. 2026)

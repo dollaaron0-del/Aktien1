@@ -1,10 +1,20 @@
 """
-Strategie-Familien (Roadmap Phase 2) – klassische, klar abgegrenzte Archetypen.
+Strategie-Familien (Roadmap Phase 2 + 5.1) – klassische, klar abgegrenzte Archetypen.
 
 Bewusst begrenzter Hypothesenraum (kein Regel-Generator → kein Data-Dredging):
   * donchian_breakout – Trendfolge: Ausbruch über das N-Tage-Hoch
   * rsi_meanrev       – Mean-Reversion: RSI-Oversold IM Aufwärtstrend (>SMA200)
   * ts_momentum       – Zeitreihen-Momentum: positives 6-Monats-Momentum >SMA200
+  * w52_high          – Momentum: Nähe zum 52-Wochen-Hoch (George/Hwang-Effekt)
+  * gap_meanrev       – Mean-Reversion: starker Overnight-Gap-down im Aufwärtstrend
+
+Roadmap 5.1 nannte zusätzlich PEAD (Post-Earnings-Drift) und Saisonalität —
+bewusst NICHT gebaut: PEAD (analyzers/pead_tracker.py) ist ein LIVE-Event-
+Tracker gegen die aktuelle Erde-News-Lage, keine punkt-in-Zeit-Historie von
+EPS-Überraschungen über 20 Jahre vorhanden → nicht ehrlich backtestbar, ohne
+die Daten zu erfinden. Saisonalität (Kalendereffekte) bewusst zurückgestellt:
+der Parameterraum (Monat/Wochentag/Handelstag-im-Monat …) lädt zum Data-
+Dredging geradezu ein — genau das, was dieses Modul vermeiden will.
 
 Wiederverwendung: die getestete Trade-Simulation der Engine (`_simulate`: TP1/TP2/
 SL/Time/Kosten) bleibt identisch – nur die Entry-Signale unterscheiden sich. Das
@@ -131,6 +141,52 @@ def _tsmom_run(df, ticker, params):
     return _generic_run(df, ticker, params, _tsmom_prepare, _tsmom_signal, min_bars=need)
 
 
+# ── Familie 4: 52-Wochen-Hoch-Nähe (Momentum, George/Hwang 2004) ──────────────
+# Bewusst NICHT parametrisierbares Fenster (fest 252 Handelstage = "52 Wochen" –
+# der Suchparameter WÄRE hier schon Data-Dredging, das ist die Definition des
+# Effekts). Anders als donchian_breakout: kein reiner Ausbruchstag, sondern
+# "nah am Hoch" (near_pct) – der akademische Befund ist Nähe, nicht Neuheit.
+def _w52_prepare(df: pd.DataFrame, params: dict) -> pd.DataFrame:
+    df["hi_252"] = df["High"].rolling(252).max().shift(1)
+    df["pct_of_high"] = df["Close"] / df["hi_252"]
+    return df
+
+
+def _w52_signal(df: pd.DataFrame, i: int, params: dict) -> bool:
+    row, prev = df.iloc[i], df.iloc[i - 1]
+    near = float(params.get("near_pct", 0.95))
+    # Steigende Flanke: heute erstmals nah am 52W-Hoch, gestern noch nicht
+    # (verhindert Dauerfeuer, solange der Kurs mehrere Tage dort verharrt).
+    return bool(row["pct_of_high"] >= near) and not bool(prev["pct_of_high"] >= near)
+
+
+def _w52_run(df, ticker, params):
+    return _generic_run(df, ticker, params, _w52_prepare, _w52_signal, min_bars=257)
+
+
+# ── Familie 5: Gap-Mean-Reversion (Overnight-Gap-down im Aufwärtstrend) ───────
+# Anders als rsi_meanrev (Dip IM laufenden Trend über mehrere Tage): hier ein
+# einzelner, plötzlicher Kurssprung zwischen Schlusskurs und Eröffnung. Kein
+# Flanken-Trigger nötig – jeder Gap-Tag ist ein eigenständiges Ereignis.
+def _gap_prepare(df: pd.DataFrame, params: dict) -> pd.DataFrame:
+    df["gap_pct"] = df["Open"] / df["Close"].shift(1) - 1
+    ma = int(params.get("trend_ma", 200))
+    df["trend_ma"] = df["Close"].rolling(ma).mean()
+    return df
+
+
+def _gap_signal(df: pd.DataFrame, i: int, params: dict) -> bool:
+    row = df.iloc[i]
+    thresh = float(params.get("gap_down_pct", -0.04))
+    uptrend = bool(row["Close"] > row["trend_ma"])  # nur gegen den Gap kaufen, wenn der Trend trägt
+    return bool(row["gap_pct"] <= thresh) and uptrend
+
+
+def _gap_run(df, ticker, params):
+    ma = int((params or {}).get("trend_ma", 200))
+    return _generic_run(df, ticker, params, _gap_prepare, _gap_signal, min_bars=ma + 5)
+
+
 # ── Heute-Signal (Phase-5-Naht) ────────────────────────────────────────────────
 class _FiresToday:
     """Heute-Abfrage: feuert die Entry-Flanke auf dem LETZTEN Balken?
@@ -185,4 +241,26 @@ register(Strategy(
                  "sl_pct": [0.07, 0.10], "tp1_pct": [0.15, 0.20], "max_hold_days": [60, 90],
                  **EXIT_PARAM_SPACE},
     signal=_fires_today(_tsmom_prepare, _tsmom_signal, min_bars=205),
+))
+
+register(Strategy(
+    name="w52_high",
+    description="Momentum: Nähe zum 52-Wochen-Hoch (George/Hwang-Effekt)",
+    runner=_w52_run,
+    default_params={"near_pct": 0.95},
+    param_space={"near_pct": [0.92, 0.95, 0.98], "sl_pct": [0.07, 0.10],
+                 "tp1_pct": [0.15, 0.20], "max_hold_days": [45, 60, 90],
+                 **EXIT_PARAM_SPACE},
+    signal=_fires_today(_w52_prepare, _w52_signal, min_bars=257),
+))
+
+register(Strategy(
+    name="gap_meanrev",
+    description="Mean-Reversion: starker Overnight-Gap-down im Aufwärtstrend",
+    runner=_gap_run,
+    default_params={"gap_down_pct": -0.04, "trend_ma": 200},
+    param_space={"gap_down_pct": [-0.03, -0.04, -0.06], "trend_ma": [100, 200],
+                 "sl_pct": [0.05, 0.07], "tp1_pct": [0.08, 0.12], "max_hold_days": [10, 20],
+                 **EXIT_PARAM_SPACE},
+    signal=_fires_today(_gap_prepare, _gap_signal, min_bars=205),
 ))
