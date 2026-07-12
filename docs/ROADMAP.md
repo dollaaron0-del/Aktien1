@@ -446,14 +446,18 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       vor); User-Entscheid Point-in-Time-Daten (Norgate/Sharadar/EODHD) wird
       mit mehr Compute WICHTIGER, nicht optionaler — Survivorship-Bias wächst
       mit dem Suchraum mit.
-- [ ] **6.3 Parallel-Walk-Forward** (größter sicherer CPU-Gewinn, kann
-      TEILWEISE schon auf dem alten Server vorbereitet werden): strategy_lab
-      läuft heute komplett single-core (Meta-Backtest-Lauf 12.7. = 1 Kern
-      100%, Stunden Laufzeit). Naht: run_walk_forward-Aufrufe je Familie ×
-      Meta-Fenster sind unabhängig → multiprocessing.Pool; Loader sind
-      bereits injizierbar/deterministisch (gute Voraussetzung). Ziel: Faktor
-      ~Kernzahl. Vorbereitung jetzt = Funktionen pickle-fähig halten +
-      Pool-Naht bauen; Nutzen sofort auch auf altem Server.
+- [x] **6.3 Parallel-Walk-Forward** — FERTIG 12.7. (4cce16b), vorgezogen auf
+      dem alten Server. ProcessPoolExecutor über die Grid-Search-Kombos je
+      Fenster (unabhängig), deterministisch BIT-IDENTISCH zur seriellen
+      Schleife (pool.map erhält Reihenfolge, Auswahl per striktem >).
+      run_walk_forward(workers=…) + run_meta_backtest(workers=…), CLI-Flag
+      --workers (walk_forward + meta_backtest), ENV STRATEGY_LAB_WORKERS;
+      Default 1 = seriell (exakt altes Verhalten), 0 = Kerne−1. Fail-open:
+      jeder Pool-Fehler degradiert auf seriell. Voraussetzung gelöst:
+      Strategy-Objekte picklebar (families._fires_today-Closure →
+      _FiresToday-Klasse). Benchmark echte Cache-Daten: 3,0× mit 4 Workern
+      (52,6s → 17,3s), identisches Ergebnis. 5 Tests, Suite 552 grün.
+      Auf dem 6-Kern-Server ~4–5× drin, auf dem neuen Server ~Kernzahl.
 - [ ] **6.4 Anti-Overfit-Protokoll für große Suchräume** (PFLICHT vor
       "intensiver"): heutige Gates (Bootstrap-CI 4.2, Promotion-Verdikt)
       reichen für 24 Kombos, nicht für 10.000. Ergänzen: Deflated Sharpe
