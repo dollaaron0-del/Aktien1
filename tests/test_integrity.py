@@ -128,3 +128,36 @@ def test_broker_reconcile_reports_untracked(tmp_path, monkeypatch):
     rep = reconcile_against_broker(p._conn, broker_positions={"NVDA": 5.0})
     assert rep.untracked == {"NVDA": 5.0}
     assert rep.reconciled == {}
+
+
+def test_broker_reconcile_sets_sl_cooldown(tmp_path, monkeypatch):
+    """Phantom-Ausbuchung (broker-seitiger GTC-Stop während Bot-Downtime
+    gefeuert) muss dieselbe SL-Sperre setzen wie ein Clean-SL im Live-Pfad
+    (strategy/executor.py) – sonst kann der nächste Zyklus sofort wieder
+    denselben, gerade gestoppten Titel kaufen."""
+    from analyzers.sl_cooldown import StopLossCooldown
+
+    p = make_portfolio(tmp_path, monkeypatch)
+    p.open_position(make_position("MSFT", 57.91, 417.35))
+    rep = reconcile_against_broker(p._conn, broker_positions={})  # IBKR flach
+    assert "MSFT" in rep.reconciled
+
+    blocked, reason = StopLossCooldown().is_blocked("MSFT")
+    assert blocked, reason
+
+
+def test_broker_reconcile_skips_cooldown_after_partial_tp(tmp_path, monkeypatch):
+    """War bereits ein Partial-TP genommen, gilt der Rest-Exit nicht als
+    'sauberer' Clean-SL (Pendant zur Bedingung in strategy/executor.py) →
+    keine Sperre."""
+    from analyzers.sl_cooldown import StopLossCooldown
+
+    p = make_portfolio(tmp_path, monkeypatch)
+    p.open_position(make_position("MSFT", 57.91, 417.35))
+    p._conn.execute("UPDATE positions SET partial_tp_taken=1 WHERE ticker='MSFT'")
+    p._conn.commit()
+    rep = reconcile_against_broker(p._conn, broker_positions={})
+    assert "MSFT" in rep.reconciled
+
+    blocked, _ = StopLossCooldown().is_blocked("MSFT")
+    assert not blocked

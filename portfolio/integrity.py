@@ -304,7 +304,8 @@ def reconcile_against_broker(
     conn, owns = _connect(db)
     try:
         rows = conn.execute(
-            "SELECT ticker, shares, entry_price, currency, fx_rate_at_entry FROM positions"
+            "SELECT ticker, shares, entry_price, currency, fx_rate_at_entry, "
+            "stop_loss, partial_tp_taken FROM positions"
         ).fetchall()
         book_bases = {_norm(r[0]) for r in rows}
         now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
@@ -328,6 +329,22 @@ def reconcile_against_broker(
                          (r[3] or "USD"), float(r[4] or 1.0)),
                     )
                     rep.reconciled[ticker] = round(shares, 4)
+                    # Verschwindet eine Position komplett aus IBKR, ohne dass der
+                    # Bot sie selbst verkauft hat, ist der broker-seitige
+                    # GTC-Schutz-Stop (analyzers/sl_cooldown.py-Docstring) die
+                    # einzige plausible Erklärung – der Bot bekommt dessen Fill
+                    # sonst nie mit, also lief bislang auch nie record() für die
+                    # SL-Cooldown-Sperre. Ohne vorherigen Partial-TP als
+                    # Exit-Preis konservativ den Stop-Preis annehmen (fail-open,
+                    # wie in strategy/executor.py).
+                    partial_tp_taken = int(r[6] or 0)
+                    if not partial_tp_taken:
+                        try:
+                            from analyzers.sl_cooldown import StopLossCooldown
+                            StopLossCooldown().record(ticker, float(r[5] or 0.0))
+                        except Exception as e:
+                            log.debug("[%s] SL-Cooldown record (Broker-Abgleich) fehlgeschlagen: %s",
+                                      ticker, e)
                 else:
                     # Teil-Deckung → nur melden, Buch unangetastet
                     rep.partial_mismatch[ticker] = (round(held, 4), round(shares, 4))
