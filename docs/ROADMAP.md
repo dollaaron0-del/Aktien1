@@ -186,9 +186,22 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       11 Tests, Suite 385 grün. E2E gegen Paper-Gateway bestätigt (11.7.).
       Bewusst offen: Trailing-Stop-Anhebungen werden nicht live zum Broker
       gesynct.
-- [ ] **1.10 API-Kosten-Hebel** — (a) Prompt-Caching für Makro-Brief-Präfix,
-      (b) Batch-API für Routineanalysen (50% Rabatt), (c) Modell-Tiering
-      (Haiku für Routine-Scans).
+- [~] **1.10 API-Kosten-Hebel** — Roadmap-NACHTRAG 12.7.: (a)+(c) waren
+      bereits seit 18.6. fertig & aktiv (5521e37), hier nur bisher nicht
+      abgehakt: (a) Prompt-Caching AKTIV (claude_analyzer._system_blocks/
+      _cache_control, CLAUDE_CACHE_TTL Default "1h") — System-Prompt + der
+      pro-Zyklus-konstante Makro/Geo-Kontext sind gecachte Blöcke, einmal
+      statt pro Ticker bezahlt, Beta-Header hält den Cache über den ganzen
+      (langsamen CPU-)Zyklus warm. (c) Modell-Tiering AKTIV
+      (_light_model(), CLAUDE_MODEL_LIGHT Default Haiku 4.5) — Thesis-/
+      Exit-Checks offener Positionen laufen auf Haiku (~1/3 Kosten von
+      Sonnet), die finale Katalysator-Analyse bleibt auf dem Hauptmodell;
+      Cost-Tracker rechnet modellspezifisch ab. (b) Batch-API BEWUSST NICHT
+      gebaut: kein Batch-shaped Aufrufer vorhanden — der Live-Zyklus braucht
+      synchrone Ergebnisse (Trading-Entscheidung), keine 24h-Latenz;
+      unbenutzter Client wäre totes Gerüst. Natürlicher künftiger Aufrufer:
+      6.8a-Annotations-Gate (~200 Filings doppelt labeln) — dort erst bauen,
+      wenn dieser Schritt ansteht.
 - [x] **1.11 Trade-Pfad-Fixes (Audit 11.7.)** — fertig & committet 11.7.
       (92938c8, 7463913, bc7a8f6). Hauptpfad via TradeExecutor war sauber,
       Nebenpfade (EarningsStrategy, HedgeStrategy, Rebalancer) buchten ohne
