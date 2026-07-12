@@ -573,8 +573,24 @@ class SwingStrategy:
             if gain_pct >= gain_threshold:
                 new_sl = pos.entry_price * (1 + new_sl_pct)
                 if new_sl > pos.stop_loss:
-                    self.portfolio.update_position_state(ticker, stop_loss=round(new_sl, 4))
+                    new_sl = round(new_sl, 4)
+                    self.portfolio.update_position_state(ticker, stop_loss=new_sl)
+                    self._sync_broker_stop(ticker, pos.shares, new_sl)
                 break
+
+    def _sync_broker_stop(self, ticker: str, shares: float, stop_price: float) -> None:
+        """Broker-seitigen GTC-Schutz-Stop (Roadmap 1.9) auf den frisch
+        angehobenen Trailing-SL nachziehen (Roadmap 1.12) – sonst bliebe der
+        Backstop bei Bot-Ausfall auf dem alten, niedrigeren Niveau stehen statt
+        mit der Bot-eigenen Stufen-Logik mitzuwandern. Nur bei einem Broker mit
+        update_stop()-API (IBKR); PaperBroker hat keine offene Order zu pflegen."""
+        upd = getattr(self.broker, "update_stop", None)
+        if not callable(upd):
+            return
+        try:
+            upd(ticker, shares, stop_price)
+        except Exception as e:
+            log.warning("[%s] Broker-Stop-Nachführung (Trailing) fehlgeschlagen: %s", ticker, e)
 
     # ── Insider-Confluence ────────────────────────────────────────────────────
 

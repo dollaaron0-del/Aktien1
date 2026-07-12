@@ -191,10 +191,16 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Rebalancer-Crash (get_cash()), IBKR-Fill-Buchung, Partial-TP-
       Falschmeldung behoben sowie Tagesverlust-Circuit-Breaker verkabelt
       (griff vorher nie). 9 Regressionstests, Suite 391 grün.
-- [ ] **1.12 Broker-seitige Trailing-Stops (IBKR TRAIL)** — schließt die
-      1.9-Grenze: GTC-Backstop bleibt aktuell auf Einstands-SL, während
-      Bot-Trailing das Buch-SL anhebt. IBKR-TRAIL würde den Broker selbst
-      nachziehen lassen.
+- [x] **1.12 Broker-seitige Trailing-Stops** — fertig 12.7. Schließt die
+      1.9-Grenze, aber via Backstop-Sync statt IBKR-TRAIL-Ordertyp: Bot-
+      Trailing bleibt führend (3 Stufen, Soft-Stop-Extension), jede Ratchet-
+      Anhebung wird per bestehendem update_stop() sofort an den GTC-Backstop
+      durchgereicht (SwingStrategy._sync_broker_stop()). Kein Doppel-
+      Management, kein neuer Ordertyp nötig. Dabei einen scharfen
+      Altbug gefunden: Portfolio.update_position_state() existierte gar
+      nicht — jede Trailing-Ratchet-Anhebung crashte check_exits() für den
+      GANZEN Zyklus (AttributeError, kein try/except). Methode ergänzt
+      (portfolio/portfolio.py). 3 neue Tests, Suite 470 grün.
 - [ ] **1.13 IBKR-Kursdaten via reqHistoricalData** — Kurse/Historie direkt
       vom Broker statt/neben yfinance, entschärft die yfinance-Abhängigkeit.
 - [x] **1.14 whatIf-Margin-Check vor Orders** — fertig 11.7. (Code + Tests).

@@ -324,6 +324,18 @@ class Portfolio:
                 )
         return pnl
 
+    def update_position_state(self, ticker: str, stop_loss: Optional[float] = None) -> None:
+        """Einzelne Positions-Felder außerhalb eines Trades aktualisieren
+        (aktuell nur Trailing-SL-Ratchet)."""
+        if stop_loss is None:
+            return
+        with _db_lock:
+            with self._conn:
+                self._conn.execute(
+                    "UPDATE positions SET stop_loss=? WHERE ticker=?",
+                    (stop_loss, ticker),
+                )
+
     def update_partial_tp(
         self,
         ticker: str,
