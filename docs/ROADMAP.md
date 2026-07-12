@@ -344,10 +344,35 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Metriken, nicht Sharpe. Fazit: Stufung hilft in dieser Stichprobe
       (2 von 3 Fenstern mit Wirkung) klar gegenüber binär und aus — aber nur
       2 Krisenfenster mit echtem Ausschlag, keine große Stichprobe.
-- [ ] **2.4 Quellen-Ablation / Collector-Pruning** — 30+ Collectors, bisher
-      nur hinzugefügt, nie entfernt. Periodisch messen, welche Quelle
-      Entscheidungen messbar verbessert; tote/wertlose Quellen abschalten.
-      Braucht Datenhistorie → nach Reaktivierung.
+- [x] **2.4 Quellen-Ablation / Collector-Pruning** — Werkzeug fertig 12.7.
+      Neu: scripts/source_ablation.py (+ 10 Tests, tests/test_source_ablation.py).
+      Unterschied zu source_health() (1.4e, PRÄSENZ — feuert die Quelle?):
+      hier geht es um WIRKUNG — verknüpft analysis_log.sources_breakdown mit
+      dem gelabelten Trade-Ausgang aus experience.db (Join über
+      (ticker, decided_at==analyzed_at), da experience.db rückwirkend aus
+      analysis_log gelabelt wird) und vergleicht je Quelle Ø-Rendite mit vs.
+      ohne Treffer (Zweigruppen-Bootstrap-CI auf die Differenz, analog
+      track_record.py). Kodiertes Mindest-n je Gruppe (Default 10) als
+      Ehrlichkeits-Gate statt erfundener Aussagen bei zu wenig Daten.
+      REALER LAUF 12.7.: nur 29 gelabelte Entscheidungen haben überhaupt
+      einen Quellen-Breakdown (von 347 in experience.db, größtenteils
+      backfill_hypo/kontrafaktisch) — bestätigt die Roadmap-Annahme
+      "braucht Datenhistorie". 16 von 31 vorkommenden Quellen haben in
+      dieser Stichprobe GAR KEINE Varianz (11 feuern nie: aaii_sentiment,
+      earn_transcripts, econ_calendar, eu_regulation, job_listings, patents,
+      quiver, reddit, short_volume, twitter, web_traffic; 5 feuern immer:
+      chinese_media, crypto_news, german_media, short_interest, yahoo) —
+      strukturell nicht ablierbar. Cross-Check gegen source_health() (1.4e,
+      109 Analysen mit Breakdown, PRÄSENZ-Sicht): 9 von 10 dort als "tot"
+      geführten Quellen sind auch hier ohne Varianz — konsistent. Von den
+      restlichen 15 erreichen nur 5 (sec_8k, analyst_ratings, wire, newsapi,
+      estimate_revisions) das Mindest-n — und bei ALLEN spannt das 95%-CI
+      der Diff die Null (keine Quelle statistisch von 0 unterscheidbar,
+      P(≤0) 32–84 %). Ehrliches Verdikt: bei aktueller Datenmenge NICHT
+      genug Evidenz für ODER gegen irgendeine Quelle — Abschaltungen wären
+      hier reine Vermutung. Werkzeug ist einsatzbereit, braucht aber echte
+      Live-Historie (Bot pausiert, kaum 'live'-gelabelte Entscheidungen) für
+      ein belastbares Verdikt.
 - [ ] **2.5 Ziel-Nachführung aus Neuanalysen (TP-Update)** — target_price aus
       Neuanalysen offener Positionen ins Positions-Buch übernehmen (nur bei
       signifikanter Abweichung + Konfidenz≥MEDIUM). Vorher im Exit-Lab (2.1)
