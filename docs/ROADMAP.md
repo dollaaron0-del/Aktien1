@@ -437,11 +437,16 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Beantwortet die seit 2.2 offene Allokator-Frage EINDEUTIG: NEIN, der
       robustheits-gefilterte Allokator hilft (bislang, auf dieser
       Stichprobe) nicht gegenüber Gleichgewichtung — im Gegenteil. Log:
-      reports/meta_backtest_2026-07-12.log. Konsequenz für 4.1-Folgearbeit:
-      entweder das ROBUST-Gate lockern/differenzieren (Registry zu leer)
-      oder die Registry-Leere selbst als Feature werten (defensiv bei
-      fehlender Evidenz) — beides eine bewusste Design-Entscheidung, kein
-      Bug; nicht Teil dieses Laufs.
+      reports/meta_backtest_2026-07-12.log.
+      ✅ USER-ENTSCHEIDUNG 12.7. Abend: Gate bleibt STRIKT (ACTIVE-only,
+      kein WATCH-Teilgewicht, keine gesenkte Signifikanz-Schwelle). Die
+      Leere der Registry gilt als ehrliches "wir wissen es nicht", nicht
+      als Fehler des Gates — der Fix für die −61%-Unterperformance ist
+      NICHT ein laxeres Gate (das würde genau das Anti-Overfit-Protokoll
+      unterlaufen, das 6.4 aufgebaut hat), sondern mehr echte Evidenz
+      (größeres Universum 5.2, mehr Historie 6.2, echte Live-Trades). Damit
+      bleibt 4.1 als Design-Frage GEKLÄRT — die Konsequenz ist kein
+      Code-Fix, sondern Geduld + Datenausbau.
 - [x] **4.2 Bootstrap/Monte-Carlo in der Promotion** — FERTIG 12.7. (4d28454).
       _bootstrap_ci() (numpy, fester Seed) zieht ein 90%-CI über die wenigen
       OOS-Fenster; Verdikt konfidenzbewusst: ROBUST verlangt zusätzlich
@@ -781,17 +786,27 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       LEITPLANKE: LLM-Annotationen sind verrauscht und alles daraus
       Gelernte läuft durch die 6.4-Gates; (e)/(f) verbessern KALIBRIERUNG
       und KOSTEN, nicht automatisch die Kante.
-- [ ] **6.10 Erfolgs-/Abbruchkriterien definieren** (12.7. ergänzt; ehrlichster
-      offener Punkt). Langfrist-Ziel ist "Kante beweisen statt Rendite jagen" —
-      aber BEWIESEN/WIDERLEGT ist nirgends kodiert. Die Mechanik allein hat
-      nachweislich keine Kante (Paper-Forward-Befund); die Wette liegt auf der
-      KI-/Katalysator-Hälfte, und die ist ungetestet. Festlegen (User + kodieren,
-      Nähte existieren in track_record.py-Gates): pro Strategie-These ein
-      Verdikt-Kriterium à la "nach n Trades (z.B. 100 live/paper): Bootstrap-CI-
-      Untergrenze der Kante > 0 UND schlägt Buy&Hold, sonst These VERWERFEN und
-      nicht wiederbeleben" + ein Zeit-Budget. Ohne das kann das Lab ewig laufen,
-      ohne dass je ein Verdikt fällt — als bewusstes Hobby okay, aber es soll
-      eine Entscheidung sein, kein Versehen.
+- [x] **6.10 Erfolgs-/Abbruchkriterien definieren** — GEBAUT 12.7. Abend.
+      ✅ USER-ENTSCHEIDUNG: n_min=150 Live-Trades ODER 24 Monate Zeit-Budget
+      (was zuerst eintritt, bewusst am oberen Ende der besprochenen
+      18–24-Monats-Spanne). Kodiert in analyzers/thesis_verdict.py: pro
+      benannter These (Thesis-Dataclass in data/thesis_registry.json,
+      gitignored) ein automatisches Verdikt PENDING/PROVEN/ABANDONED —
+      PROVEN nur bei erreichter Stichprobe UND beiden Bootstrap-CI-
+      Untergrenzen > 0 (Kante UND schlägt Buy&Hold, reuse
+      track_record._bootstrap_mean_ci); ABANDONED entweder bei erreichter
+      Stichprobe ohne erfülltes Kriterium ODER bei abgelaufenem Zeit-Budget
+      vor erreichter Stichprobe. „NICHT WIEDERBELEBEN" ist hart kodiert:
+      ein einmal gefälltes Verdikt wird von evaluate() nie neu berechnet,
+      selbst mit überzeugenden neuen Daten (Test dafür). CLI
+      scripts/thesis_verdict.py (--register/--evaluate/--list). Erste
+      These **mechanical_baseline** registriert (seit 12.7.2026,
+      n_min=150, 24 Monate) — CLI-Smoke-Test gegen echte Trade-Historie:
+      56/150 Trades, PENDING (56 deckt sich mit dem bekannten 1.1-Befund).
+      12 Tests (test_thesis_verdict.py, netzfrei), Suite grün. Ohne das
+      hätte das Lab unbegrenzt weiterlaufen können, ohne dass je ein
+      Verdikt fällt — jetzt ist "wann geben wir eine These auf" eine
+      kodierte Entscheidung, kein Versehen.
 - [ ] **6.11 Breite Tages-Analyse + Analyse-Tiefe als A/B** (12.7. ergänzt,
       User-Frage "Schwellen senken und viel mehr Aktien analysieren?").
       KERN-TRENNUNG: Analyse breit, Funnel streng — Entscheidungs-/
@@ -839,7 +854,8 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       lokale Modell läuft (8B ≈ 8–12 GB, 32B ≈ ~24 GB, 70B ≈ 48 GB+/
       quantisiert) und ob Whisper (6.9a) parallel passt. Dazu grobe
       Strom-vs-API-Kosten-Rechnung (6.5a nicht blind glauben).
-- [ ] Erfolgs-/Abbruchkriterien je These festlegen (→ 6.10).
+- [x] Erfolgs-/Abbruchkriterien je These festlegen (→ 6.10) — 150 Trades /
+      24 Monate, 12.7. Abend entschieden & kodiert.
 
 **Vor Live-Relevanz außerdem**: Registry neu generieren (aktuell
 Spielzeug-Lauf; schlank fahren: `--total 12 --max-combos 24`, sonst
