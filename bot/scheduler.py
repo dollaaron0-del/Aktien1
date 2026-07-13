@@ -31,6 +31,7 @@ from bot.runner import run_analysis_cycle, safe_run_analysis_cycle, _print_portf
 from bot import scheduler_maintenance
 from bot import scheduler_risk
 from bot import scheduler_macro
+from bot import scheduler_scanners
 from cli.commands import run_weekend_prep
 
 console = Console()
@@ -801,336 +802,50 @@ def run_bot_loop(
     # das günstige Hauptmodell (Haiku). Nur handelbare Ergebnisse melden sich über
     # den normalen Trade-/Digest-Pfad – kein „Analyse läuft"-Spam.
     def _escalate_ticker(tickers, reason: str = "Signal"):
-        _tk = list(dict.fromkeys(t for t in (tickers or []) if t))
-        if not _tk:
-            return
-        log.info("Eskalation (%s): Fokus-Analyse %s", reason, ", ".join(_tk))
-        console.print(
-            f"  [bold yellow]⚡ {reason}: Fokus-Analyse {', '.join(_tk)}[/bold yellow]"
-        )
-        safe_run_analysis_cycle(
-            portfolio, broker, strategy, tracker, phase_ctrl,
+        """Eskalations-Helfer (ausgelagert nach bot/scheduler_scanners.py,
+        Roadmap 4.4a)."""
+        scheduler_scanners.escalate_ticker(
+            tickers, portfolio, broker, strategy, tracker, phase_ctrl,
             archive, reflection, weekend_prep_inst, hedge_strategy_inst,
-            earnings_strategy, only_tickers=_tk,
-        )
+            earnings_strategy, safe_run_analysis_cycle, reason=reason)
 
     # ── Headline-Signal-Scanner: stündlich ──────────────────────────────────
-    _SIGNAL_TRIGGER_SCORE = 0.90   # Ab hier sofortige Analyse auslösen
-    _HEADLINE_COOLDOWN_HOURS = int(os.getenv("HEADLINE_COOLDOWN_HOURS", "4"))
-    _HEADLINE_COOLDOWN_FILE = os.path.join(
-        os.path.dirname(__file__), "..", "data", "headline_cooldown.json"
-    )
-
-    def _load_headline_cooldown() -> dict:
-        import json as _j
-        try:
-            with open(_HEADLINE_COOLDOWN_FILE) as _f:
-                raw = _j.load(_f)
-            return {k: datetime.fromisoformat(v) for k, v in raw.items()}
-        except Exception:
-            return {}
-
-    def _save_headline_cooldown(cd: dict) -> None:
-        import json as _j
-        try:
-            with open(_HEADLINE_COOLDOWN_FILE, "w") as _f:
-                _j.dump({k: v.isoformat() for k, v in cd.items()}, _f)
-        except Exception:
-            pass
-
-    _headline_last_queued: dict = _load_headline_cooldown()
+    _headline_last_queued: dict = scheduler_scanners.load_headline_cooldown()
 
     def _headline_scan_job():
-        """
-        Scannt allgemeine Börsennachrichten auf starke Signale (M&A, FDA,
-        Earnings-Beats, etc.) und speist entdeckte Ticker in die BenchList.
-        Sehr starke Signale (Score ≥ 0.85) → Telegram + sofortige Analyse (alle Ticker).
-        Follow-Up nach der Analyse: Telegram mit Kauf-/Skip-Ergebnis.
-        """
-        try:
-            from analyzers.headline_signal_detector import HeadlineSignalDetector
-            detector = HeadlineSignalDetector()
-            signals  = detector.scan()
-            if signals:
-                notifier = TelegramNotifier()
-                # Urgent-Signale vorab bestimmen damit ihre Meldung
-                # in einer einzigen kombinierten Nachricht landet
-                import datetime as _dt_hl
-                _hl_cutoff = datetime.now() - _dt_hl.timedelta(hours=_HEADLINE_COOLDOWN_HOURS)
-                urgent = [
-                    sig for sig in signals
-                    if sig.score >= _SIGNAL_TRIGGER_SCORE
-                    and (
-                        _headline_last_queued.get(sig.ticker) is None
-                        or _headline_last_queued[sig.ticker] < _hl_cutoff
-                    )
-                ]
-                _urgent_tickers = {sig.ticker for sig in urgent}
-                # Headline-Scanner-Meldung: urgent-Ticker ausschließen
-                added = detector.process_signals(
-                    signals,
-                    notify_fn=lambda _m: _scanner_notify(notifier, _m),
-                    exclude_tickers=_urgent_tickers,
-                )
-                if added:
-                    console.print(
-                        f"  [magenta]📰 Headline-Scanner: "
-                        f"{len(added)} neue Kandidaten → BenchList: "
-                        f"{', '.join(added[:6])}[/magenta]"
-                    )
-                if urgent:
-                    for sig in urgent:
-                        _headline_last_queued[sig.ticker] = datetime.now()
-                    _save_headline_cooldown(_headline_last_queued)
-                    tickers_str = ", ".join(sig.ticker for sig in urgent)
-                    console.print(
-                        f"  [bold yellow]⚡ Signal-Trigger ({_SIGNAL_TRIGGER_SCORE:.0%}): "
-                        f"Fokus-Analyse: {tickers_str}[/bold yellow]"
-                    )
-                    _in_trading_hours = (
-                        datetime.now().weekday() < 5
-                        and 6 <= datetime.now().hour < 23
-                    )
-                    if _in_trading_hours:
-                        # Nur die getriggerten Aktien analysieren (Fokus-Lauf),
-                        # NICHT mehr den ganzen Watchlist-Zyklus. Frugal-Routing
-                        # entscheidet Ollama-vs-Claude; nur handelbare Ergebnisse
-                        # melden sich über den Trade-/Digest-Pfad.
-                        _escalate_ticker(
-                            [sig.ticker for sig in urgent], reason="Headline-Trigger"
-                        )
-                    else:
-                        # Außerhalb der Handelszeiten: für das nächste geplante
-                        # Fenster vormerken statt nachts zu analysieren.
-                        from analyzers.user_request_queue import add_ticker as _req_ticker_inline
-                        for sig in urgent:
-                            _req_ticker_inline(sig.ticker, meta={
-                                "signal_type":  sig.signal_type,
-                                "score":        sig.score,
-                                "headline":     getattr(sig, "headline", ""),
-                                "from_headline": True,
-                            })
-                        _scanner_notify(
-                            notifier,
-                            f"⚡ <b>Signal-Trigger</b> (außerhalb Handelszeiten)\n\n"
-                            + "\n".join(
-                                f"  • <b>{sig.ticker}</b> – {sig.signal_type} "
-                                f"(Score {sig.score:.2f})"
-                                for sig in urgent
-                            )
-                            + "\n\n📋 In Queue gespeichert – Analyse startet mit dem nächsten Vorbörslichen Fenster.",
-                        )
-                        log.info(
-                            "Signal-Trigger außerhalb Handelszeiten – %d Ticker in Queue für Vorbörsliche Analyse.",
-                            len(urgent),
-                        )
-        except Exception as e:
-            log.warning("Headline-Scan-Job fehlgeschlagen: %s", e)
+        """Headline-Signal-Scanner (ausgelagert nach bot/scheduler_scanners.py,
+        Roadmap 4.4a)."""
+        scheduler_scanners.headline_scan_job(
+            _headline_last_queued, TelegramNotifier, _scanner_notify, _escalate_ticker)
 
     schedule.every(20).minutes.do(_headline_scan_job)
     import threading as _thr_stagger
     _thr_stagger.Timer(30, _headline_scan_job).start()   # 30s nach Start
 
     # ── Momentum/Hype-Scanner: alle 45 Minuten während Handelszeiten ─────────
-    _MOMENTUM_COOLDOWN_HOURS = int(os.getenv("MOMENTUM_COOLDOWN_HOURS", "8"))
-    _MOMENTUM_COOLDOWN_FILE  = os.path.join(
-        os.path.dirname(__file__), "..", "data", "momentum_cooldown.json"
-    )
-
-    def _load_momentum_cooldown() -> dict:
-        import json as _j
-        try:
-            with open(_MOMENTUM_COOLDOWN_FILE) as _f:
-                raw = _j.load(_f)
-            return {k: datetime.fromisoformat(v) for k, v in raw.items()}
-        except Exception:
-            return {}
-
-    def _save_momentum_cooldown(cd: dict) -> None:
-        import json as _j
-        try:
-            with open(_MOMENTUM_COOLDOWN_FILE, "w") as _f:
-                _j.dump({k: v.isoformat() for k, v in cd.items()}, _f)
-        except Exception:
-            pass
-
-    _momentum_last_queued: dict = _load_momentum_cooldown()
+    _momentum_last_queued: dict = scheduler_scanners.load_momentum_cooldown()
 
     def _momentum_scan_job():
-        """
-        Scannt das Universum auf Aktien mit ungewöhnlichem Kaufdruck
-        (Volumen ≥ 2× Schnitt UND Kurs ≥ +2%). Wer gerade gehyped wird,
-        kommt sofort in die Analyse-Queue und löst eine Sofort-Analyse aus.
-        Läuft nur an Handelstagen 08:00–22:00 Lokalzeit.
-        Cooldown: Dieselbe Aktie wird frühestens nach MOMENTUM_COOLDOWN_HOURS (8h)
-        erneut analysiert — effektiv einmal pro Handelstag.
-        """
-        import datetime as _dt
-        try:
-            local_now = datetime.now()
-            if local_now.weekday() >= 5 or not (8 <= local_now.hour < 22):
-                return
-            from analyzers.watchlist_scanner import WatchlistScanner
-            from analyzers.user_request_queue import add_ticker as _req_ticker
-            scanner = WatchlistScanner(
-                min_volume_ratio=2.0,
-                min_price_change_pct=2.0,
-                max_picks=5,
-            )
-            exclude = list(portfolio.all_positions().keys())
-            hits = scanner.scan(exclude=exclude)
-            if not hits:
-                return
-
-            # Cooldown-Filter: Ticker die in den letzten N Stunden bereits analysiert wurden
-            cutoff = local_now - _dt.timedelta(hours=_MOMENTUM_COOLDOWN_HOURS)
-            today_str = local_now.date().isoformat()
-
-            # Zusätzlich: Ticker aus dem Analysis-Cache prüfen (heute bereits analysiert?)
-            _analyzed_today: set = set()
-            try:
-                import json as _json
-                _cache_path = os.path.join(os.path.dirname(__file__), "..", "data", "analysis_cache.json")
-                with open(_cache_path) as _cf:
-                    _cache_data = _json.load(_cf)
-                for _t, _d in _cache_data.items():
-                    if isinstance(_d, dict) and (_d.get("updated_at") or "").startswith(today_str):
-                        _analyzed_today.add(_t.upper())
-            except Exception:
-                pass
-
-            new_hits = [
-                h for h in hits
-                if h["ticker"].upper() not in _analyzed_today
-                and (
-                    _momentum_last_queued.get(h["ticker"]) is None
-                    or _momentum_last_queued[h["ticker"]] < cutoff
-                )
-            ]
-            if not new_hits:
-                skipped = [h["ticker"] for h in hits]
-                log.debug(
-                    "Momentum-Scanner: alle Kandidaten im Cooldown oder heute analysiert: %s",
-                    skipped,
-                )
-                return
-
-            notifier = TelegramNotifier()
-            for h in new_hits:
-                _req_ticker(h["ticker"], meta={
-                    "signal_type":   "MOMENTUM",
-                    "score":         min(0.95, 0.70 + h["volume_ratio"] * 0.05),
-                    "headline":      f"Vol ×{h['volume_ratio']:.1f}, +{h['change_pct']:.1f}%",
-                    "from_headline": False,
-                    "momentum":      True,
-                })
-                _momentum_last_queued[h["ticker"]] = local_now
-            _save_momentum_cooldown(_momentum_last_queued)
-
-            msg = "\n".join(
-                f"  • <b>{h['ticker']}</b> +{h['change_pct']:.1f}% | "
-                f"Vol ×{h['volume_ratio']:.1f} | {h['streak_days']}d↑"
-                for h in new_hits
-            )
-            _scanner_notify(
-                notifier,
-                f"📈 <b>Momentum-Scanner</b>\n\n{msg}\n\n"
-                f"🔍 Sofort-Analyse gestartet."
-            )
-            console.print(
-                f"  [bold green]📈 Momentum-Scanner: "
-                f"{len(new_hits)} Hype-Kandidaten → "
-                f"{', '.join(h['ticker'] for h in new_hits)}[/bold green]"
-            )
-            safe_run_analysis_cycle(
-                portfolio, broker, strategy, tracker, phase_ctrl,
-                archive, reflection, weekend_prep_inst, hedge_strategy_inst,
-                earnings_strategy,
-            )
-        except Exception as e:
-            log.warning("Momentum-Scan-Job fehlgeschlagen: %s", e)
+        """Momentum/Hype-Scanner (ausgelagert nach bot/scheduler_scanners.py,
+        Roadmap 4.4a)."""
+        scheduler_scanners.momentum_scan_job(
+            portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
+            weekend_prep_inst, hedge_strategy_inst, earnings_strategy,
+            _momentum_last_queued, TelegramNotifier, _scanner_notify, safe_run_analysis_cycle)
 
     schedule.every(45).minutes.do(_momentum_scan_job)
     _thr_stagger.Timer(60, _momentum_scan_job).start()   # 60s nach Start
 
     # ── Breakout-Watch-Scanner: alle 30 Minuten ──────────────────────────────
-    _BREAKOUT_COOLDOWN_HOURS = int(os.getenv("BREAKOUT_COOLDOWN_HOURS", "12"))
     _breakout_last_queued: dict = {}   # ticker → datetime
 
     def _breakout_watch_job():
-        """
-        Prädiktiver Scanner: erkennt Breakout-Setups BEVOR der Kurs steigt.
-        Signale: volume_buildup, bb_squeeze, resistance_obv.
-        Läuft an Handelstagen 07:30–21:00 (breiter als Momentum, erfasst Pre-Market).
-        Cooldown: 12h pro Ticker (einmal pro Tag reicht).
-        """
-        import datetime as _dt
-        try:
-            local_now = datetime.now()
-            if local_now.weekday() >= 5 or not (7 <= local_now.hour < 21):
-                return
-            from analyzers.watchlist_scanner import WatchlistScanner
-            from analyzers.user_request_queue import add_ticker as _req_ticker
-
-            scanner = WatchlistScanner(max_picks=6)
-            exclude = list(portfolio.all_positions().keys())
-            hits = scanner.scan(exclude=exclude)
-            if not hits:
-                return
-
-            cutoff = local_now - _dt.timedelta(hours=_BREAKOUT_COOLDOWN_HOURS)
-            new_hits = [
-                h for h in hits
-                if (
-                    _breakout_last_queued.get(h["ticker"]) is None
-                    or _breakout_last_queued[h["ticker"]] < cutoff
-                )
-            ]
-            if not new_hits:
-                return
-
-            _SIGNAL_LABELS = {
-                "volume_buildup": "Vol↑ Akkumulation",
-                "bb_squeeze":     "BB-Squeeze",
-                "resistance_obv": "Widerstand+OBV",
-            }
-
-            notifier = TelegramNotifier()
-            for h in new_hits:
-                sig_label = " + ".join(_SIGNAL_LABELS.get(s, s) for s in h["signals"])
-                _req_ticker(h["ticker"], meta={
-                    "signal_type":   "BREAKOUT_WATCH",
-                    "score":         0.60 + h["setup_score"] * 0.08,
-                    "headline":      sig_label,
-                    "from_headline": False,
-                    "momentum":      False,
-                    "breakout_watch": True,
-                })
-                _breakout_last_queued[h["ticker"]] = local_now
-
-            msg_lines = []
-            for h in new_hits:
-                sig_label = " + ".join(_SIGNAL_LABELS.get(s, s) for s in h["signals"])
-                dist = f" | {h['dist_52w_pct']:.1f}% u. 52W-Hoch" if h.get("dist_52w_pct") is not None else ""
-                msg_lines.append(f"  • <b>{h['ticker']}</b> ${h['price']:.2f} | {sig_label}{dist}")
-
-            _scanner_notify(
-                notifier,
-                f"🎯 <b>Breakout-Watch</b> – Setup erkannt (kein Kursanstieg nötig)\n\n"
-                + "\n".join(msg_lines)
-                + "\n\n🔍 Analyse vorgemerkt."
-            )
-            log.info(
-                "Breakout-Watch: %d Kandidaten → %s",
-                len(new_hits), [h["ticker"] for h in new_hits],
-            )
-            safe_run_analysis_cycle(
-                portfolio, broker, strategy, tracker, phase_ctrl,
-                archive, reflection, weekend_prep_inst, hedge_strategy_inst,
-                earnings_strategy,
-            )
-        except Exception as e:
-            log.warning("Breakout-Watch-Job fehlgeschlagen: %s", e)
+        """Breakout-Watch-Scanner (ausgelagert nach bot/scheduler_scanners.py,
+        Roadmap 4.4a)."""
+        scheduler_scanners.breakout_watch_job(
+            portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
+            weekend_prep_inst, hedge_strategy_inst, earnings_strategy,
+            _breakout_last_queued, TelegramNotifier, _scanner_notify, safe_run_analysis_cycle)
 
     schedule.every(30).minutes.do(_breakout_watch_job)
 
