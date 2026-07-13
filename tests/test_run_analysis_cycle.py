@@ -331,3 +331,128 @@ def test_invalid_price_is_gate_blocked_before_analyze(cycle_env, monkeypatch):
     # Kein Trade, kein Tagesspeicher – der Zyklus lief bis zum Ende durch
     # (sonst wäre analyze() erreicht und hätte AssertionError geworfen).
     assert not env.daily_actions_path.exists()
+
+
+# ── RL-Veto (analyzers/rl_agent.py): rl_agent nur bei config.rl_veto_enabled ─
+# Vor 4.4a-Extraktion der seriellen Kern-Schleife noch ungepinnter Zweig
+# (s. [[monolith-split-4-4a-status]]): runner.py reicht den globalen
+# _rl_agent NUR durch, wenn config.rl_veto_enabled gesetzt ist, sonst None –
+# strategy.evaluate() selbst (swing_strategy.py) entscheidet, was das Veto
+# tatsächlich bewirkt, das ist hier NICHT Gegenstand.
+
+def test_rl_veto_disabled_by_default_passes_no_rl_agent(buy_cycle_env, monkeypatch):
+    env = buy_cycle_env
+    captured = {}
+
+    def _spy_evaluate(ticker, analysis, cur_px, regime, rl_agent=None):
+        captured["rl_agent"] = rl_agent
+        return StrategyResult(action="BUY", ticker=ticker, reason="x", shares=1, price=cur_px,
+                              stop_loss=cur_px * 0.9, take_profit=cur_px * 1.2)
+
+    monkeypatch.setattr(env.strategy, "evaluate", _spy_evaluate, raising=False)
+    monkeypatch.setattr(runner_mod.config, "rl_veto_enabled", False)
+    run_analysis_cycle(
+        env.portfolio, env.broker, env.strategy, env.tracker, env.phase_ctrl,
+        env.archive, only_tickers=["FOCUS"],
+    )
+    assert "rl_agent" in captured
+    assert captured["rl_agent"] is None
+
+
+def test_rl_veto_enabled_passes_the_rl_agent_singleton(buy_cycle_env, monkeypatch):
+    env = buy_cycle_env
+    sentinel = object()
+    monkeypatch.setattr(runner_mod, "_rl_agent", sentinel)
+    monkeypatch.setattr(runner_mod.config, "rl_veto_enabled", True)
+    captured = {}
+
+    def _spy_evaluate(ticker, analysis, cur_px, regime, rl_agent=None):
+        captured["rl_agent"] = rl_agent
+        return StrategyResult(action="BUY", ticker=ticker, reason="x", shares=1, price=cur_px,
+                              stop_loss=cur_px * 0.9, take_profit=cur_px * 1.2)
+
+    monkeypatch.setattr(env.strategy, "evaluate", _spy_evaluate, raising=False)
+    run_analysis_cycle(
+        env.portfolio, env.broker, env.strategy, env.tracker, env.phase_ctrl,
+        env.archive, only_tickers=["FOCUS"],
+    )
+    assert captured["rl_agent"] is sentinel
+
+
+# ── BUY mit related_tickers → Stock-Relations-Netz + BenchList ──────────────
+
+class _FakeStockRelations:
+    calls = []
+    def add_relation(self, from_ticker, related, reason):
+        _FakeStockRelations.calls.append((from_ticker, list(related), reason))
+
+
+class _FakeBenchListForRelations:
+    added = []
+    def add(self, ticker, reason, score=0.5, **kwargs):
+        _FakeBenchListForRelations.added.append((ticker, score, reason))
+
+
+class _FakeBuyWithRelatedAnalyzer:
+    def analyze(self, **kwargs):
+        return AnalysisResult(
+            ticker=kwargs["ticker"], sentiment_score=0.85, direction="BULLISH",
+            confidence="HIGH", recommendation="BUY", entry_rationale="Testthese",
+            related_tickers=["RELATED1", "RELATED2"], entry_trigger_price=None,
+        )
+
+
+def test_buy_with_related_tickers_feeds_stock_relations_and_benchlist(buy_cycle_env, monkeypatch):
+    env = buy_cycle_env
+    _FakeStockRelations.calls = []
+    _FakeBenchListForRelations.added = []
+    monkeypatch.setattr(runner_mod, "ClaudeAnalyzer", _FakeBuyWithRelatedAnalyzer)
+    monkeypatch.setattr("analyzers.stock_relations.StockRelations", _FakeStockRelations)
+    monkeypatch.setattr("analyzers.bench_list.BenchList", _FakeBenchListForRelations)
+
+    run_analysis_cycle(
+        env.portfolio, env.broker, env.strategy, env.tracker, env.phase_ctrl,
+        env.archive, only_tickers=["FOCUS"],
+    )
+    assert _FakeStockRelations.calls == [("FOCUS", ["RELATED1", "RELATED2"], "Testthese")]
+    assert {t for t, _, _ in _FakeBenchListForRelations.added} == {"RELATED1", "RELATED2"}
+
+
+# ── SKIP mit bullischem Potential → Conditional Entry ────────────────────────
+
+class _FakeConditionalEntryWatcher:
+    added = []
+    @staticmethod
+    def build(ticker, trigger_price, cur_price, analysis):
+        return {"ticker": ticker, "trigger_price": trigger_price, "cur_price": cur_price}
+    def add(self, entry):
+        _FakeConditionalEntryWatcher.added.append(entry)
+
+
+class _FakeSkipBullishAnalyzer:
+    def analyze(self, **kwargs):
+        return AnalysisResult(
+            ticker=kwargs["ticker"], sentiment_score=0.65, direction="BULLISH",
+            confidence="MEDIUM", recommendation="SKIP", entry_rationale="Zu teuer für jetzt",
+            entry_trigger_price=90.0,   # unter dem FakeYahoo-Kurs (100.0)
+        )
+
+
+def test_skip_with_bullish_potential_sets_conditional_entry(buy_cycle_env, monkeypatch):
+    env = buy_cycle_env
+    _FakeConditionalEntryWatcher.added = []
+    monkeypatch.setattr(runner_mod, "ClaudeAnalyzer", _FakeSkipBullishAnalyzer)
+    monkeypatch.setattr("analyzers.conditional_entry.ConditionalEntryWatcher",
+                        _FakeConditionalEntryWatcher)
+
+    run_analysis_cycle(
+        env.portfolio, env.broker, env.strategy, env.tracker, env.phase_ctrl,
+        env.archive, only_tickers=["FOCUS"],
+    )
+    # Der Conditional-Entry-Zweig hängt nur an analysis.recommendation=="SKIP",
+    # NICHT an strategy.evaluate() (das liefert in buy_cycle_env immer BUY,
+    # unabhängig von der Analyzer-Empfehlung – das ist hier bewusst kein
+    # Gegenstand des Tests).
+    assert _FakeConditionalEntryWatcher.added == [
+        {"ticker": "FOCUS", "trigger_price": 90.0, "cur_price": 100.0}
+    ]
