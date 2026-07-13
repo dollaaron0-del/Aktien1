@@ -122,14 +122,24 @@ def test_get_related_ranks_shared_themes_first():
 # ── Anti-Drift-Wächter: Dashboard darf keine eigenen Kopien definieren ────────
 
 def test_dashboard_imports_central_and_has_no_local_copies():
-    path = os.path.join(_PROJECT_ROOT, "dashboard", "app.py")
-    with open(path, encoding="utf-8") as f:
-        src = f.read()
+    # Ganzes dashboard/-Paket scannen, nicht nur app.py: seit dem Monolith-
+    # Split (Roadmap 4.4a) lebt der Netzwerk-Tab in dashboard/tabs/network.py,
+    # nicht mehr in app.py selbst. Die Drift-Prüfung soll unabhängig davon
+    # bestehen bleiben, WO im Paket der Code am Ende liegt.
+    dash_dir = os.path.join(_PROJECT_ROOT, "dashboard")
+    src_by_file = {}
+    for root, _dirs, files in os.walk(dash_dir):
+        for fn in files:
+            if fn.endswith(".py"):
+                fp = os.path.join(root, fn)
+                with open(fp, encoding="utf-8") as f:
+                    src_by_file[fp] = f.read()
+    combined = "\n".join(src_by_file.values())
 
     # Muss aus der zentralen Quelle importieren …
-    assert "from analyzers.stock_relations import" in src
+    assert "from analyzers.stock_relations import" in combined
     for name in ("THEMES", "CROSS_LISTINGS", "THEME_COLORS", "THEME_LABELS_DE"):
-        assert name in src, f"Dashboard importiert {name} nicht mehr"
+        assert name in combined, f"Dashboard importiert {name} nicht mehr"
 
     # … und darf die Cluster/Maps/Farben NICHT wieder als Literale hartkodieren.
     # Präzise Marker für genau die drei Kopien, die früher gedriftet sind:
@@ -138,8 +148,9 @@ def test_dashboard_imports_central_and_has_no_local_copies():
         'Cross-Listing-Map':               r'"SHEL\.L"\s*:\s*"',
         'Themen-Farben':                   r'"AI_CHIPS"\s*:\s*"#',
     }
-    for what, pat in forbidden.items():
-        assert not re.search(pat, src), (
-            f"Dashboard hartkodiert wieder eine lokale Kopie ({what}). "
-            f"Stattdessen aus analyzers.stock_relations importieren."
-        )
+    for fp, src in src_by_file.items():
+        for what, pat in forbidden.items():
+            assert not re.search(pat, src), (
+                f"{os.path.relpath(fp, _PROJECT_ROOT)} hartkodiert wieder eine "
+                f"lokale Kopie ({what}). Stattdessen aus analyzers.stock_relations importieren."
+            )
