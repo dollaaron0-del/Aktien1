@@ -456,3 +456,28 @@ def test_skip_with_bullish_potential_sets_conditional_entry(buy_cycle_env, monke
     assert _FakeConditionalEntryWatcher.added == [
         {"ticker": "FOCUS", "trigger_price": 90.0, "cur_price": 100.0}
     ]
+
+
+# ── Earnings-Strategy: pre/post-earnings plays je Ticker, unabhängig vom
+# Swing-Signal (strategy.evaluate()) – separater, additiver Aktionspfad. ────
+
+class _FakeEarningsStrategy:
+    calls = []
+    def evaluate(self, ticker, current_price, portfolio_value):
+        _FakeEarningsStrategy.calls.append((ticker, current_price, portfolio_value))
+        return f"GEKAUFT 1 {ticker} (Earnings-Play) @ ${current_price}"
+    def check_pre_earnings_exits(self):
+        return []
+
+
+def test_earnings_strategy_buy_lands_in_daily_actions(buy_cycle_env):
+    env = buy_cycle_env
+    _FakeEarningsStrategy.calls = []
+    run_analysis_cycle(
+        env.portfolio, env.broker, env.strategy, env.tracker, env.phase_ctrl,
+        env.archive, only_tickers=["FOCUS"], earnings_strategy=_FakeEarningsStrategy(),
+    )
+    assert _FakeEarningsStrategy.calls and _FakeEarningsStrategy.calls[0][0] == "FOCUS"
+    import json
+    actions = json.loads(env.daily_actions_path.read_text())["actions"]
+    assert any("Earnings-Play" in a for a in actions)
