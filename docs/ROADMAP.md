@@ -475,13 +475,28 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Rot ab) + scripts/install_git_hooks.sh (verlinkt nach .git/hooks/,
       das Verzeichnis ist nie Git-getrackt); installiert und live mit dem
       eigenen Commit verifiziert (583 Tests, 83s). Notausgang bewusst nur
-      manuell (`--no-verify`), nicht automatisiert. (a) 500-Zeilen-Regel
-      (CLAUDE.md) weiter verletzt: dashboard/app.py 3215+, bot/scheduler.py
-      2419, bot/runner.py 1698 Zeilen — genau in diesen Monolithen
-      entstanden stille Bugs (Watchdog-Zeitzonen, Headline-Trigger).
-      Schrittweiser Modul-Split bleibt OFFEN — eigener, größerer Task
-      (hohes Regressionsrisiko in Live-kritischem Bot-Code), bewusst NICHT
-      im selben Rutsch mit anderen Roadmap-Punkten gemacht.
+      manuell (`--no-verify`), nicht automatisiert.
+      (a) 500-Zeilen-Regel (CLAUDE.md), Modul-Split — Stand 13.7.:
+      dashboard/app.py FERTIG (3414→516 Zeilen, 11 Tab-Module + ticker_names.py,
+      Golden-Master-AppTest-Diffing).
+      bot/runner.py FERTIG (1745→889 Zeilen, −49 %): 5 Extraktionen —
+      cycle_close.py (Zyklus-Abschluss), cycle_checks.py (Pre-Analyse-
+      Marktkontext), cycle_exits.py (SL/TP + TradingView-SELL),
+      cycle_prefetch.py (paralleles News/Preis-Vorladen +
+      Analyse-Vorberechnung), cycle_analysis.py (die serielle Analyse-
+      Kern-Schleife selbst — größter/riskantester Schnitt, erst nach
+      6 Charakterisierungstests für zuvor ungepinnte Zweige: RL-Veto,
+      BUY-related_tickers, SKIP-Conditional-Entry, Earnings-Strategy,
+      TradingView-SELL, Multi-Agent-Konsens). Funktionskörper bei der
+      Kern-Schleife wortwörtlich verschoben (diff-verifiziert) statt von
+      Hand transkribiert. cycle_analysis.py selbst (661 Zeilen) bleibt
+      ehrlich über der 500-Zeilen-Regel — weitere Aufteilung wäre ein
+      eigener Folge-Task. Suite durchgehend grün (725→740).
+      bot/scheduler.py (2419 Zeilen) NUR Sicherheitsnetz fertig
+      (test_scheduler_helpers.py + test_scheduler_registration.py, 25 Tests) —
+      eigentliche Modul-Extraktion NOCH OFFEN, separater Auftrag (hohes
+      Regressionsrisiko in Live-kritischem Scheduler-Code, bewusst nicht mit
+      runner.py vermischt).
 - [ ] **4.5 Entscheidungs-Replay** — baut auf 1.4d Prompt-Archiv. Vergangenen
       Zyklus deterministisch aus archivierten Eingangsdaten nachspielen.
 
