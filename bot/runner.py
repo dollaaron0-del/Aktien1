@@ -54,7 +54,8 @@ from portfolio.performance_tracker import PerformanceTracker
 from portfolio.phase_controller import PhaseController
 from strategy import SwingStrategy
 from notifier.telegram_notifier import TelegramNotifier
-from collectors.tradingview_webhook import get_pending_sells, get_pending_macro_events
+from collectors.tradingview_webhook import get_pending_sells
+from bot import cycle_checks
 from bot import cycle_close
 from bot.cycle_close import print_portfolio_summary as _print_portfolio_summary
 from bot.cycle_close import progress_bar as _progress_bar
@@ -748,52 +749,10 @@ def run_analysis_cycle(
     from strategy.swing_strategy import StrategyResult
     executor = TradeExecutor(portfolio, broker, getattr(strategy, "journal", None), strategy=strategy)
 
-    # Regime-Default, falls kein Hedge aktiv ist oder der Regime-Check scheitert –
-    # sonst NameError weiter unten (check_exits / evaluate brauchen regime).
-    regime = "NEUTRAL"
-
-    # ── Regime check + hedge evaluation ──────────────────────────────────────
-    if hedge_strategy:
-        macro_news_for_regime = []
-        try:
-            macro_news_for_regime = NewsAPICollector().collect_general("market recession economy", max_results=10)
-        except Exception as e:
-            cycle_log.warning("Hedge-Regime: Macro-News konnten nicht geladen werden – %s", e)
-        try:
-            regime, hedge_actions = hedge_strategy.evaluate_regime(macro_news_for_regime or None)
-            regime_color = {"BULL": "green", "NEUTRAL": "yellow", "BEAR": "red", "CRISIS": "bold red"}.get(regime, "white")
-            latest = hedge_strategy.regime_summary()
-            score_str = f" (Score: {latest['recession_score']:.2f})" if latest else ""
-            console.print(f"  Marktregime: [{regime_color}]{regime}[/{regime_color}]{score_str}")
-            for action in hedge_actions:
-                console.print(f"  [magenta]{action}[/magenta]")
-                cycle_actions.append(action)
-        except Exception as _reg_err:
-            cycle_log.error("Regime-Check fehlgeschlagen – fahre ohne Hedge fort: %s", _reg_err, exc_info=True)
-            console.print(f"  [dim red]⚠ Regime-Check fehlgeschlagen: {_reg_err}[/dim red]")
-
-    # ── Makro-Events aus Webhook anzeigen ────────────────────────────────────
-    if config.tradingview_webhook_enabled:
-        try:
-            macro_events = get_pending_macro_events(since_hours=24)
-            for me in macro_events:
-                surprise_color = "red" if me.get("surprise") == "ABOVE" and me.get("event") in ("CPI", "PPI") \
-                                 else "green" if me.get("surprise") == "BELOW" else "yellow"
-                console.print(
-                    f"  [{surprise_color}]📣 Makro: {me['event']} "
-                    f"(Surprise={me.get('surprise','?')}, Impact={me.get('impact','?')})[/{surprise_color}]"
-                )
-        except Exception:
-            pass
-
-    # Force-exit pre-earnings positions before the report
-    if earnings_strategy:
-        try:
-            for _ea in earnings_strategy.check_pre_earnings_exits():
-                console.print(f"  [bold yellow]{_ea}[/bold yellow]")
-                cycle_actions.append(_ea)
-        except Exception as _ee:
-            log.debug("Earnings pre-exit check failed: %s", _ee)
+    # Pre-Analyse-Marktkontext (Roadmap 4.4a, ausgelagert nach bot/cycle_checks.py):
+    # Regime-Check+Hedge-Eval → Makro-Events-Webhook → Earnings-Pre-Exit. Liefert
+    # das Markt-Regime für den Rest des Zyklus (check_exits/evaluate brauchen es).
+    regime = cycle_checks.run_pre_analysis_checks(hedge_strategy, earnings_strategy, cycle_actions)
 
     # Check stop-loss / take-profit first (no Claude needed)
     _live.set_phase("Exits prüfen")
