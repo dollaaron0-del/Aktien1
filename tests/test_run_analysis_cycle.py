@@ -481,3 +481,55 @@ def test_earnings_strategy_buy_lands_in_daily_actions(buy_cycle_env):
     import json
     actions = json.loads(env.daily_actions_path.read_text())["actions"]
     assert any("Earnings-Play" in a for a in actions)
+
+
+# ── Multi-Agent-Konsens (MULTI_AGENT_ENABLED=true): MultiAgentAnalyzer statt
+# ClaudeAnalyzer, 3× Kosten – Default AUS. Letzter der 6 vor der Kern-Schleifen-
+# Extraktion identifizierten ungepinnten Zweige (s. [[monolith-split-4-4a-status]]).
+
+class _FakeMultiAgentAnalyzer:
+    calls = []
+    def analyze(self, **kwargs):
+        _FakeMultiAgentAnalyzer.calls.append(kwargs["ticker"])
+        return AnalysisResult(
+            ticker=kwargs["ticker"], sentiment_score=0.85, direction="BULLISH",
+            confidence="HIGH", recommendation="BUY", entry_rationale="Konsens-These",
+            related_tickers=[], entry_trigger_price=None,
+        )
+
+
+def test_multi_agent_enabled_uses_multi_agent_analyzer_not_claude(buy_cycle_env, monkeypatch):
+    env = buy_cycle_env
+    _FakeMultiAgentAnalyzer.calls = []
+    monkeypatch.setenv("MULTI_AGENT_ENABLED", "true")
+    monkeypatch.setattr(runner_mod, "MultiAgentAnalyzer", _FakeMultiAgentAnalyzer)
+    # ClaudeAnalyzer bleibt der werfende Fake aus cycle_env (_FakeAnalyzer) – ein
+    # Aufruf hier wäre der Beweis, dass DOCH ClaudeAnalyzer statt MultiAgentAnalyzer
+    # verwendet wurde.
+    monkeypatch.setattr(runner_mod, "ClaudeAnalyzer", _FakeAnalyzer)
+
+    run_analysis_cycle(
+        env.portfolio, env.broker, env.strategy, env.tracker, env.phase_ctrl,
+        env.archive, only_tickers=["FOCUS"],
+    )
+    assert _FakeMultiAgentAnalyzer.calls == ["FOCUS"]
+
+
+def _raise_multi_agent(*a, **k):
+    raise AssertionError("MultiAgentAnalyzer nie erwartet")
+
+
+def test_multi_agent_disabled_by_default_uses_claude_analyzer(buy_cycle_env, monkeypatch):
+    env = buy_cycle_env
+    monkeypatch.delenv("MULTI_AGENT_ENABLED", raising=False)
+    monkeypatch.setattr(runner_mod, "MultiAgentAnalyzer", _raise_multi_agent)
+
+    run_analysis_cycle(
+        env.portfolio, env.broker, env.strategy, env.tracker, env.phase_ctrl,
+        env.archive, only_tickers=["FOCUS"],
+    )
+    # buy_cycle_env's _FakeBuyAnalyzer (= ClaudeAnalyzer) lief durch, kein Crash
+    # durch den werfenden MultiAgentAnalyzer-Fake -> Default nutzt ClaudeAnalyzer.
+    import json
+    actions = json.loads(env.daily_actions_path.read_text())["actions"]
+    assert any("GEKAUFT 3 FOCUS" in a for a in actions)
