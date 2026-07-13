@@ -57,6 +57,7 @@ from notifier.telegram_notifier import TelegramNotifier
 from bot import cycle_checks
 from bot import cycle_close
 from bot import cycle_exits
+from bot import cycle_prefetch
 from bot.cycle_close import print_portfolio_summary as _print_portfolio_summary
 from bot.cycle_close import progress_bar as _progress_bar
 
@@ -812,171 +813,33 @@ def run_analysis_cycle(
         except Exception as e:
             log.debug("EU Marktkontext fehlgeschlagen: %s", e)
 
-    # Analyzer singletons — created once, reused across all tickers in this cycle
-    try:
-        _vel_analyzer   = NewsVelocityAnalyzer()
-        _mtf_sentiment  = MultiTimeframeSentiment()
-        _reentry_tracker = ReEntryTracker()
-        _chart_analyzer = ChartPatternAnalyzer()
-    except Exception:
-        _vel_analyzer = _mtf_sentiment = _reentry_tracker = _chart_analyzer = None
+    # Analyse-Vorladung (Roadmap 4.4a, ausgelagert nach bot/cycle_prefetch.py):
+    # News+Preis für die ganze Watchlist parallel vorladen, danach optional
+    # (mehrere Ticker, PARALLEL_ANALYSIS) die teure Analyse selbst vorab
+    # parallel berechnen. Die serielle Schleife unten greift zuerst auf die
+    # zurückgegebenen Dicts zu (Cache-Hit) und fällt sonst auf ihren eigenen
+    # seriellen Pfad zurück (z.B. wenn PARALLEL_ANALYSIS aus ist).
+    _prefetch = cycle_prefetch.run_prefetch(
+        active_watchlist,
+        broker=broker, strategy=strategy, analyzer=analyzer, archive=archive,
+        collectors=collectors, lessons_memo=lessons_memo, weekly_briefing=weekly_briefing,
+        macro_brief=_macro_brief, eu_market_ctx=_eu_market_ctx,
+        bench_geo_contexts=_bench_geo_contexts, regime=regime,
+        force_claude_tickers=_force_claude_tickers, multi_agent_enabled=_multi_agent_enabled,
+        live=_live, normalize_ticker=_normalize_ticker, is_crypto=_is_crypto,
+        is_eu_stock=_is_eu_stock, collect_news=collect_news,
+        news_velocity_cls=NewsVelocityAnalyzer,
+        multi_timeframe_sentiment_cls=MultiTimeframeSentiment,
+        reentry_tracker_cls=ReEntryTracker,
+        chart_pattern_analyzer_cls=ChartPatternAnalyzer,
+    )
+    _vel_analyzer, _mtf_sentiment   = _prefetch.vel_analyzer, _prefetch.mtf_sentiment
+    _reentry_tracker, _chart_analyzer = _prefetch.reentry_tracker, _prefetch.chart_analyzer
+    _mech_conv, _mech_brief_fn      = _prefetch.mech_conv, _prefetch.mech_brief_fn
+    _prefetch_news, _prefetch_price = _prefetch.news, _prefetch.price
+    _prefetch_analysis              = _prefetch.analysis
 
     _frugal_cache_hours = 8  # Frugal-Modus: Ticker < 8h alt überspringen
-
-    # Pre-fetch news + price data for ALL tickers in parallel before the analysis loop.
-    # This eliminates sequential waiting: all 12 tickers fetch their 30 collectors simultaneously.
-    _normalized_watchlist = [_normalize_ticker(t) for t in active_watchlist]
-    _prefetch_news:  Dict[str, tuple] = {}
-    _prefetch_price: Dict[str, dict]  = {}
-
-    # ── strategy_lab Live-Bridge (Roadmap d) – STANDARD AUS, flaggengeschützt ──
-    # Liefert nur bei gesetztem STRATEGY_LAB_LIVE eine mechanische Konviktion je
-    # Ticker (additiver Analyse-Kontext, kein Auto-Trade). Komplett defensiv:
-    # ein Fehler hier darf den Zyklus nie reißen.
-    _mech_conv: Dict[str, dict] = {}
-    _mech_brief_fn = lambda _t, _m, _r=None: ""   # immer definiert; "" = kein Zusatzkontext
-    try:
-        from strategy_lab import live_bridge as _live_bridge
-        if _live_bridge.is_enabled():
-            _mech_conv = _live_bridge.conviction_map(_normalized_watchlist)
-            _mech_brief_fn = _live_bridge.brief_for
-            if _mech_conv:
-                log.info("strategy_lab Live-Bridge aktiv: mechanische Konviktion für %d Ticker",
-                         len(_mech_conv))
-    except Exception as _lbe:
-        log.debug("Live-Bridge übersprungen: %s", _lbe)
-        _mech_conv = {}
-
-    def _prefetch_ticker(t: str):
-        news_result  = collect_news(t, archive, collectors)
-        if _is_crypto(t):
-            price = {"current_price": broker.get_crypto_price(t), "volume": 0}
-        else:
-            price = collectors["yahoo"].get_price_data(t)
-        return t, news_result, price
-
-    _live.set_phase("Vorladen", total=len(_normalized_watchlist))
-    _pf_workers = min(len(_normalized_watchlist), int(os.getenv("PREFETCH_WORKERS", "8")))  # cap: avoid overwhelming APIs
-    if _pf_workers > 1:
-        with ThreadPoolExecutor(max_workers=_pf_workers) as _pf_pool:
-            _pf_futures = {_pf_pool.submit(_prefetch_ticker, t): t for t in _normalized_watchlist}
-            for _pf_fut in as_completed(_pf_futures):
-                try:
-                    _t, _nr, _pr = _pf_fut.result()
-                    _prefetch_news[_t]  = _nr
-                    _prefetch_price[_t] = _pr
-                except Exception as _pfe:
-                    _t = _pf_futures[_pf_fut]
-                    log.debug("Prefetch fehlgeschlagen für %s: %s", _t, _pfe)
-    else:
-        for _t in _normalized_watchlist:
-            try:
-                _, _nr, _pr = _prefetch_ticker(_t)
-                _prefetch_news[_t]  = _nr
-                _prefetch_price[_t] = _pr
-            except Exception:
-                pass
-
-    # ── Parallele Analyse-Vorberechnung ──────────────────────────────────────
-    # Der teuerste Teil (Claude-Call + Chart + History + FinBERT) ist read-only
-    # und thread-safe → vorab im Pool berechnen. Alle JSON-Schreiber (velocity,
-    # earnings, signal_expander, cache, log) UND Trades bleiben seriell in der
-    # Schleife. Per ENV abschaltbar (PARALLEL_ANALYSIS=false) als Kill-Switch.
-    _prefetch_analysis: Dict[str, dict] = {}
-
-    def _precompute_analysis(t: str) -> Optional[dict]:
-        _pf = _prefetch_news.get(t)
-        if _pf:
-            _news, _sb = _pf
-        else:
-            _news, _sb = collect_news(t, archive, collectors)
-        _price = _prefetch_price.get(t) or (
-            {"current_price": broker.get_crypto_price(t), "volume": 0}
-            if _is_crypto(t) else collectors["yahoo"].get_price_data(t)
-        )
-        if not _is_crypto(t):
-            # Daten-Qualitäts-Gate (Roadmap 1.8): ungültiger/veralteter/
-            # unplausibler Kurs → Claude-Call sparen. Die serielle Schleife
-            # prüft erneut und übernimmt das Logging (SKIP + Event).
-            from analyzers.data_quality import check_price_data
-            if not check_price_data(t, _price).ok:
-                return None
-        # FinBERT-Signal voranstellen (read-only)
-        try:
-            from analyzers.finbert_analyzer import FinBERTAnalyzer
-            _fb_an = FinBERTAnalyzer()
-            if _fb_an.is_available() and _news:
-                _hl = [(it.get("title") or it.get("text") or "")[:120]
-                       for it in _news if it.get("title") or it.get("text")]
-                if _hl:
-                    _fb_item = _fb_an.build_signal_item(t, _fb_an.analyze_headlines(_hl))
-                    if _fb_item:
-                        _news = [_fb_item] + _news
-        except Exception:
-            pass
-        if not _news:
-            return {"news": _news, "sources_breakdown": _sb, "price_data": _price,
-                    "analysis": None, "pattern_result": None, "onchain": None}
-        _cur_titles = {it.get("title") or "" for it in _news}
-        _hist = archive.get_history(t, days=30, exclude_titles=_cur_titles)
-        _opc = strategy.build_open_position_context(t)
-        _pat = None
-        try:
-            _pat = (_chart_analyzer or ChartPatternAnalyzer()).analyze(t)
-        except Exception:
-            pass
-        _oc = None
-        if _is_crypto(t):
-            try:
-                _base = t.split("/")[0].upper().removesuffix("-USD")
-                _oc = OnChainSignalAnalyzer().analyze(OnChainCollector().collect(_base))
-            except Exception:
-                pass
-        try:
-            _an = analyzer.analyze(
-                ticker=t, news_items=_news, price_data=_price,
-                historical_news=_hist if _hist else None, open_position=_opc,
-                lessons_memo=lessons_memo, weekly_briefing=weekly_briefing,
-                pattern_result=_pat, onchain_snapshot=_oc,
-                eu_market_snapshot=_eu_market_ctx if _is_eu_stock(t) else None,
-                geo_context=_bench_geo_contexts.get(t), macro_brief=_macro_brief,
-                mechanical_brief=_mech_brief_fn(t, _mech_conv, regime),
-                force_claude=t in _force_claude_tickers,
-            )
-        except Exception as _ae:
-            log.debug("Analyse-Prefetch analyze(%s) fehlgeschlagen: %s", t, _ae)
-            _an = None
-        return {"news": _news, "sources_breakdown": _sb, "price_data": _price,
-                "analysis": _an, "pattern_result": _pat, "onchain": _oc}
-
-    _parallel_analysis = os.getenv("PARALLEL_ANALYSIS", "true").lower() in ("1", "true", "yes")
-    _an_workers = min(len(_normalized_watchlist), int(os.getenv("ANALYSIS_WORKERS", "4")))
-    # Auf reiner CPU zieht EINE lokale Ollama-Analyse bereits ~4–5 Kerne. Mehrere
-    # parallele Analysen übersubskribieren die Kerne → jede Generierung kriecht in
-    # ihr Timeout → Circuit Breaker schaltet Ollama ab → alles fällt auf das
-    # budgetgedeckelte Claude → leere SKIP-Analysen ohne Kaufsignale (Befund 18.6.,
-    # 0 Trades seit 15.6.). Daher die Analyse-Worker an den Ressourcen-Tier koppeln
-    # (MINIMAL/CPU = 1 Worker), sofern ANALYSIS_WORKERS nicht explizit gesetzt ist.
-    if "ANALYSIS_WORKERS" not in os.environ:
-        try:
-            from system.resource_manager import get_resource_manager
-            _rm_for_workers = get_resource_manager()
-            _rm_for_workers.update()
-            _an_workers = max(1, min(_an_workers, _rm_for_workers.max_workers()))
-        except Exception as _rmw_err:
-            log.debug("Worker-Cap via Resource-Manager übersprungen: %s", _rmw_err)
-    if _parallel_analysis and _an_workers > 1 and not _multi_agent_enabled:
-        log.info("Analyse-Prefetch: %d Titel mit %d Workern", len(_normalized_watchlist), _an_workers)
-        with ThreadPoolExecutor(max_workers=_an_workers) as _an_pool:
-            _an_futs = {_an_pool.submit(_precompute_analysis, t): t for t in _normalized_watchlist}
-            for _an_fut in as_completed(_an_futs):
-                _t = _an_futs[_an_fut]
-                try:
-                    _ctx_r = _an_fut.result()
-                    if _ctx_r:
-                        _prefetch_analysis[_t] = _ctx_r
-                except Exception as _ace:
-                    log.debug("Analyse-Prefetch fehlgeschlagen für %s: %s", _t, _ace)
 
     _wl_total = len(active_watchlist)
     _hb_every = max(0, int(os.getenv("HEARTBEAT_EVERY", "20")))  # 0 = Heartbeat aus
