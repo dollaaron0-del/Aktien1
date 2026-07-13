@@ -420,6 +420,13 @@ def _get_ticker_news(ticker: str) -> list:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TABS
 # ═══════════════════════════════════════════════════════════════════════════════
+# Kontext-Bündel für ausgelagerte Tab-Module (Roadmap 4.4a, Monolith-Split):
+# alles, was bis hierher im Modul-Namensraum steht (broker/portfolio/config/
+# Helper-Funktionen/…), automatisch statt einzeln durchgereicht — siehe
+# dashboard/tabs/__init__.py-Docstring für die Begründung.
+import types as _types
+_ctx = _types.SimpleNamespace(**locals())
+
 tab_portfolio, tab_live, tab_decisions, tab_regime, tab_queue, tab_network, tab_briefing, tab_trades, tab_tech, tab_watchlist, tab_log, tab_settings = st.tabs([
     "📊 Portfolio",
     "📡 Live",
@@ -440,84 +447,8 @@ tab_portfolio, tab_live, tab_decisions, tab_regime, tab_queue, tab_network, tab_
 # TAB "LIVE" – Aktivitätsfeed + Nächste Aktionen (Roadmap 1.5b+c)
 # ══════════════════════════════════════════════════════════
 with tab_live:
-    st.subheader("📡 Live-Aktivität")
-    st.caption(
-        "Strukturierte Bot-Events (Zyklen, Analysen, Trades) statt Log-Dateien. "
-        "Füllt sich, sobald der Bot läuft."
-    )
-
-    _EV_ICON = {
-        "cycle_start":   "🔄",
-        "cycle_end":     "🏁",
-        "analysis_done": "🔍",
-        "trade":         "💼",
-        "gate_blocked":  "⛔",
-    }
-    try:
-        from system.live_status import feed_recent as _feed_recent
-        _ev_rows = _feed_recent(limit=50)
-    except Exception:
-        _ev_rows = []
-
-    if _ev_rows:
-        for _ev in _ev_rows:
-            _ic = _EV_ICON.get(_ev.get("event"), "•")
-            _ts = (_ev.get("ts") or "")[:16].replace("T", " ")
-            _tk = f" **{ticker_label(_ev['ticker'])}**" if _ev.get("ticker") else ""
-            _dt = f" — {_ev['detail']}" if _ev.get("detail") else ""
-            st.markdown(f"{_ic} `{_ts}`{_tk}{_dt}")
-    else:
-        st.info(
-            "Noch keine Events aufgezeichnet — der Aktivitätsfeed füllt sich "
-            "ab dem nächsten Bot-Lauf (Bot ist aktuell pausiert)."
-            if _hdr_paused else
-            "Noch keine Events aufgezeichnet — der Feed füllt sich ab dem "
-            "nächsten Analyse-Zyklus."
-        )
-
-    st.divider()
-
-    # ── Nächste Aktionen (Roadmap 1.5c) ─────────────────────────────────────
-    st.subheader("⏭ Nächste Aktionen")
-    _next_bits = []
-    if _ls and _ls.get("state") == "idle" and _ls.get("next_run"):
-        _next_bits.append("**Nächster Scheduler-Lauf:** "
-                          + _ls["next_run"][:16].replace("T", " ") + " Uhr")
-    if _hdr_paused:
-        _next_bits.append("⏸ Bot pausiert — es sind keine Zyklen geplant, "
-                          "bis er wieder gestartet wird.")
-    for _nb in _next_bits:
-        st.markdown(_nb)
-
-    # systemd-Timer des Projekts (Backup, Pre-Market-Check, Quellen-Report):
-    # letzter/nächster Lauf, ohne SSH + systemctl-Kommandos.
-    try:
-        import subprocess as _sp
-        _lt = _sp.run(
-            ["systemctl", "list-timers", "aktien_*", "--all", "--no-pager",
-             "--output=json"],
-            capture_output=True, text=True, timeout=5,
-        )
-        _timers = json.loads(_lt.stdout) if _lt.returncode == 0 and _lt.stdout else []
-    except Exception:
-        _timers = []
-    if _timers:
-        st.markdown("**systemd-Timer:**")
-        for _t in _timers:
-            _unit = _t.get("unit") or "?"
-            _nxt = _t.get("next")
-            _lst = _t.get("last")
-            def _fmt_us(v):
-                # systemd liefert µs-Epoch (int) oder Klartext, je nach Version
-                try:
-                    return datetime.fromtimestamp(int(v) / 1_000_000).strftime("%d.%m. %H:%M")
-                except (TypeError, ValueError, OSError):
-                    return str(v) if v else "–"
-            st.markdown(f"- `{_unit}` · nächster Lauf: {_fmt_us(_nxt)} · "
-                        f"letzter: {_fmt_us(_lst)}")
-    else:
-        st.caption("Keine aktiven systemd-Timer gefunden (oder Abfrage nicht "
-                   "möglich) — Timer sind bei pausiertem Bot disabled.")
+    from dashboard.tabs import live as _tab_live
+    _tab_live.render(_ctx)
 
 
 # ══════════════════════════════════════════════════════════
@@ -1904,43 +1835,8 @@ with tab_network:
 # TAB 5 – WOCHENBRIEFING
 # ══════════════════════════════════════════════════════════
 with tab_briefing:
-    st.subheader("📰 Wochenbriefing")
-    st.caption(
-        "Claude analysiert jeden Samstag/Sonntag: Earnings-Kalender, Marktlage, "
-        "Makro-News. Das Briefing fließt in alle Analysen der Folgewoche ein."
-    )
-
-    briefings = weekend_prep.get_latest_briefing(limit=3)
-    current   = weekend_prep.get_current_briefing()
-
-    b_col1, b_col2 = st.columns([5, 2])
-    with b_col2:
-        if st.button("🔄 Neues Briefing generieren", width="stretch"):
-            with st.spinner("Claude bereitet Wochenbriefing vor…"):
-                result = weekend_prep.run()
-            if result:
-                st.success("Briefing generiert!")
-                st.rerun()
-            else:
-                st.error("Fehler beim Generieren (API-Key oder Daten fehlen).")
-
-    with b_col1:
-        if briefings:
-            tabs_brief = st.tabs([f"KW {b['week_start']}" for b in briefings])
-            for tab_b, brief in zip(tabs_brief, briefings):
-                with tab_b:
-                    generated = brief.get("generated_at", "")[:16]
-                    is_current = brief.get("week_start") == (current and brief.get("week_start"))
-                    if is_current:
-                        st.success(f"✅ Aktuelles Briefing · Erstellt: {generated}")
-                    else:
-                        st.caption(f"Erstellt: {generated}")
-                    st.markdown(brief["briefing"])
-        else:
-            st.info(
-                "Noch kein Briefing vorhanden.  \n"
-                "Wird automatisch am Wochenende generiert oder jetzt mit dem Button oben starten."
-            )
+    from dashboard.tabs import briefing as _tab_briefing
+    _tab_briefing.render(_ctx)
 
 
 # ══════════════════════════════════════════════════════════
@@ -2202,94 +2098,8 @@ with tab_trades:
 # TAB 7 – TECHNICALS
 # ══════════════════════════════════════════════════════════
 with tab_tech:
-    st.subheader("Technische Indikatoren – Watchlist")
-    st.caption("RSI, MACD, Bollinger Bands, EMAs und ATR für alle beobachteten Aktien.")
-
-    _ti = TechnicalIndicators()
-
-    selected_ticker = st.selectbox(
-        "Ticker auswählen",
-        options=config.watchlist,
-        format_func=ticker_label,
-        key="tech_ticker_select",
-    )
-
-    with st.spinner(f"Berechne Indikatoren für {selected_ticker}…"):
-        snap = _ti.calculate(selected_ticker)
-
-    if snap is None:
-        st.warning(f"Keine Kursdaten für {selected_ticker} verfügbar.")
-    else:
-        # Trend badge
-        trend_color = {"UPTREND": "green", "DOWNTREND": "red"}.get(snap.trend.split()[0], "gray")
-        st.markdown(
-            f"**Trend:** <span style='color:{trend_color};font-weight:700;'>{snap.trend}</span>  "
-            f"&nbsp;&nbsp;**Kurs:** ${snap.price}",
-            unsafe_allow_html=True,
-        )
-        st.divider()
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.markdown("#### Momentum")
-            if snap.rsi_14 is not None:
-                rsi_color = "red" if snap.rsi_14 > 70 else ("green" if snap.rsi_14 < 30 else "white")
-                rsi_label = "Überkauft" if snap.rsi_14 > 70 else ("Überverkauft" if snap.rsi_14 < 30 else "Neutral")
-                st.metric("RSI (14)", f"{snap.rsi_14:.1f}", rsi_label)
-            if snap.macd is not None:
-                hist_delta = f"{snap.macd_hist:+.4f}" if snap.macd_hist is not None else "–"
-                st.metric("MACD", f"{snap.macd:.4f}", f"Hist: {hist_delta}")
-                st.caption(f"Signal: {snap.macd_signal:.4f}")
-
-        with col2:
-            st.markdown("#### Volatilität")
-            if snap.bb_upper is not None:
-                st.metric("BB Oben", f"${snap.bb_upper:.2f}")
-                st.metric("BB Mitte", f"${snap.bb_middle:.2f}")
-                st.metric("BB Unten", f"${snap.bb_lower:.2f}")
-                if snap.bb_pct is not None:
-                    pct_label = "oben" if snap.bb_pct > 0.8 else ("unten" if snap.bb_pct < 0.2 else "mittig")
-                    st.caption(f"%B = {snap.bb_pct:.2f} ({pct_label})")
-            if snap.atr_14 is not None and snap.price:
-                atr_pct = snap.atr_14 / snap.price * 100
-                st.metric("ATR (14)", f"${snap.atr_14:.2f}", f"{atr_pct:.1f}% des Kurses")
-
-        with col3:
-            st.markdown("#### Trend / EMAs")
-            if snap.ema_9:
-                st.metric("EMA 9", f"${snap.ema_9:.2f}")
-            if snap.ema_21:
-                st.metric("EMA 21", f"${snap.ema_21:.2f}")
-            if snap.ema_50:
-                st.metric("EMA 50", f"${snap.ema_50:.2f}")
-            if snap.volume_ratio is not None:
-                vol_label = "hoch" if snap.volume_ratio > 1.5 else ("niedrig" if snap.volume_ratio < 0.5 else "normal")
-                st.metric("Volumen-Ratio", f"{snap.volume_ratio:.2f}×", vol_label)
-
-        st.divider()
-        st.markdown("**Rohdaten (alle Ticker)**")
-        all_snaps = []
-        for t in config.watchlist:
-            try:
-                s = _ti.calculate(t)
-                if s:
-                    all_snaps.append({
-                        "Ticker": t,
-                        "Kurs": s.price,
-                        "RSI": s.rsi_14,
-                        "MACD-Hist": s.macd_hist,
-                        "%B": s.bb_pct,
-                        "EMA9": s.ema_9,
-                        "EMA21": s.ema_21,
-                        "VolRatio": s.volume_ratio,
-                        "Trend": s.trend,
-                    })
-            except Exception:
-                pass
-        if all_snaps:
-            df_tech = pd.DataFrame(all_snaps).set_index("Ticker")
-            st.dataframe(df_tech, width="stretch")
+    from dashboard.tabs import tech as _tab_tech
+    _tab_tech.render(_ctx)
 
 
 # ══════════════════════════════════════════════════════════
