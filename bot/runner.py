@@ -54,9 +54,9 @@ from portfolio.performance_tracker import PerformanceTracker
 from portfolio.phase_controller import PhaseController
 from strategy import SwingStrategy
 from notifier.telegram_notifier import TelegramNotifier
-from collectors.tradingview_webhook import get_pending_sells
 from bot import cycle_checks
 from bot import cycle_close
+from bot import cycle_exits
 from bot.cycle_close import print_portfolio_summary as _print_portfolio_summary
 from bot.cycle_close import progress_bar as _progress_bar
 
@@ -742,11 +742,8 @@ def run_analysis_cycle(
     # Track all material trade actions for the daily summary
     cycle_actions: List[str] = []
 
-    cycle_log = get_logger(__name__)
-
     # Führt die StrategyResult-Entscheidungen der (reinen) SwingStrategy aus.
     from strategy.executor import TradeExecutor
-    from strategy.swing_strategy import StrategyResult
     executor = TradeExecutor(portfolio, broker, getattr(strategy, "journal", None), strategy=strategy)
 
     # Pre-Analyse-Marktkontext (Roadmap 4.4a, ausgelagert nach bot/cycle_checks.py):
@@ -754,55 +751,9 @@ def run_analysis_cycle(
     # das Markt-Regime für den Rest des Zyklus (check_exits/evaluate brauchen es).
     regime = cycle_checks.run_pre_analysis_checks(hedge_strategy, earnings_strategy, cycle_actions)
 
-    # Check stop-loss / take-profit first (no Claude needed)
-    _live.set_phase("Exits prüfen")
-    try:
-        _open_tickers = list(portfolio.all_positions().keys())
-        _exit_prices = broker.get_prices(_open_tickers) if _open_tickers else {}
-        for _res in strategy.check_exits(_exit_prices, regime):
-            _p = portfolio.get_position(_res.ticker)
-            _dh = 0
-            if _p:
-                try:
-                    _dh = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(_p.entry_date)).days
-                except Exception:
-                    _dh = 0
-            action = executor.execute(_res, days_held=_dh)
-            if action:
-                console.print(f"  [yellow]{action}[/yellow]")
-                cycle_actions.append(action)
-    except Exception as _sl_err:
-        cycle_log.error("SL/TP-Check fehlgeschlagen: %s", _sl_err, exc_info=True)
-        console.print(f"  [dim red]⚠ SL/TP-Check fehlgeschlagen: {_sl_err}[/dim red]")
-
-    # TradingView SELL-Signale verarbeiten (Short/Bearish Engulfing)
-    if config.tradingview_webhook_enabled:
-        tv_sells = get_pending_sells()
-        for sig in tv_sells:
-            tv_ticker = sig["ticker"]
-            pos = portfolio.get_position(tv_ticker)
-            if pos:
-                price = broker.get_price(tv_ticker) or pos.entry_price
-                _dh = 0
-                try:
-                    _dh = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(pos.entry_date)).days
-                except Exception:
-                    _dh = 0
-                action = executor.execute(
-                    StrategyResult(
-                        "SELL", tv_ticker,
-                        f"TradingView SELL-Signal ({sig.get('strategy', 'TV')})",
-                        shares=pos.shares, price=price,
-                    ),
-                    days_held=_dh,
-                )
-                console.print(f"  [bold red]{action}[/bold red]")
-                if action:
-                    cycle_actions.append(action)
-            else:
-                console.print(
-                    f"  [dim]TradingView SELL [{tv_ticker}]: keine offene Position[/dim]"
-                )
+    # Exit-Prüfung (Roadmap 4.4a, ausgelagert nach bot/cycle_exits.py): SL/TP-
+    # Check (kein Claude nötig) → TradingView-SELL-Signale.
+    cycle_exits.run_exit_checks(portfolio, broker, strategy, executor, regime, cycle_actions, _live)
 
     # EU Marktbarometer einmal pro Zyklus laden (cached 2h)
     _eu_market_ctx = None
