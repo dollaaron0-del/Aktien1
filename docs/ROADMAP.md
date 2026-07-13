@@ -492,11 +492,22 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Hand transkribiert. cycle_analysis.py selbst (661 Zeilen) bleibt
       ehrlich über der 500-Zeilen-Regel — weitere Aufteilung wäre ein
       eigener Folge-Task. Suite durchgehend grün (725→740).
-      bot/scheduler.py (2419 Zeilen) NUR Sicherheitsnetz fertig
-      (test_scheduler_helpers.py + test_scheduler_registration.py, 25 Tests) —
-      eigentliche Modul-Extraktion NOCH OFFEN, separater Auftrag (hohes
-      Regressionsrisiko in Live-kritischem Scheduler-Code, bewusst nicht mit
-      runner.py vermischt).
+      bot/scheduler.py FERTIG (2419→1008 Zeilen, −58 %): 6 Nähte, alle
+      37 Job-Closures aus run_bot_loop ausgelagert — scheduler_maintenance.py
+      (3 unabhängige Jobs), scheduler_risk.py (5 Jobs, davon 2 gekoppelt
+      über Dependency-Injection statt fester Verdrahtung),
+      scheduler_macro.py (7 Jobs), scheduler_scanners.py + 
+      scheduler_scanners2.py (komplette Scanner-Gruppe, 11 Jobs +
+      geteilter escalate_ticker-Helfer), scheduler_analysis.py (die
+      komplexeste Gruppe — Jobs rufen sich GEGENSEITIG auf, gelöst durch
+      Durchreichen der eigenen gleichnamigen Wrapper-Closures als
+      Parameter statt Neu-Referenzierung, damit `schedule`s Namens-
+      Introspektion und der Pre-Market-vor-Analyse-Reihenfolgevertrag
+      erhalten bleiben). Alle Körper diff-verifiziert wortwörtlich
+      übernommen, kein Verhalten geändert. Verbleibend in scheduler.py:
+      3 State-schwere Einzeljobs (Circuit-Breaker-Monitor, Resource-Check,
+      Regime-Check) + reiner Setup-Code — bewusst nicht mehr angefasst,
+      kein akuter Bedarf. Suite durchgehend grün (740→822).
 - [ ] **4.5 Entscheidungs-Replay** — baut auf 1.4d Prompt-Archiv. Vergangenen
       Zyklus deterministisch aus archivierten Eingangsdaten nachspielen.
 
