@@ -152,7 +152,8 @@ def test_announce_start_sends_pre_market_telegram(cycle_env):
 
 class _FakeExecutor:
     def __init__(self, *a, **k):        pass
-    def execute(self, res, days_held=0): return f"VERKAUFT 5 {res.ticker} @ $100"
+    def execute(self, res, *, days_held=0, analysis=None, sources_breakdown=None):
+        return f"VERKAUFT 5 {res.ticker} @ $100"
 
 
 def test_exit_action_flows_into_daily_actions(cycle_env, monkeypatch):
@@ -170,3 +171,163 @@ def test_exit_action_flows_into_daily_actions(cycle_env, monkeypatch):
     import json
     actions = json.loads(env.daily_actions_path.read_text())["actions"]
     assert any("VERKAUFT 5 FOCUS" in a for a in actions)
+
+
+# ── Echter Analyse-Zweig: analyzer.analyze() → StrategyResult → Executor ────
+#
+# Erreicht den Kern-Pfad hinter `if not news: continue` – Claude-Analyse (gefakt),
+# Cache/Log-Persistenz (gefakte Singletons, s.u. – die echten sind Modul-Singletons
+# OHNE Env-Path-Override und würden sonst in echte data/-Dateien schreiben),
+# strategy.evaluate()/Executor.execute() und decision_log. Netzwerk-lastige
+# Analyzer (ChartPatternAnalyzer→yfinance, EarningsPredictor→requests) werden
+# gefakt statt real aufgerufen – dieselbe "0 echte Netz-/Broker-/Claude-Aufrufe"-
+# Grenze wie beim No-News-Pfad.
+
+from analyzers.claude_analyzer import AnalysisResult
+from strategy.swing_strategy import StrategyResult
+
+
+class _FakeChartPatternAnalyzer:
+    def analyze(self, ticker):          return None
+
+
+class _FakeNewsVelocity:
+    def analyze(self, ticker):
+        return SimpleNamespace(acceleration="NORMAL", articles_24h=0,
+                               baseline_per_day=0, signal_boost=1.0)
+
+
+class _FakeMTFSentiment:
+    def analyze(self, ticker, by_date): return SimpleNamespace(trend="FLAT")
+    def to_text(self, result):          return ""
+
+
+class _FakeReEntryTracker:
+    def get_all_watched(self):          return []
+    def update_prices(self, prices):    pass
+
+
+class _FakeEarningsPredictor:
+    def predict(self, ticker):          return {}
+
+
+class _FakeSignalExpander:
+    def process_news_items(self, news): return []
+
+
+class _FakeAnalysisCache:
+    def __init__(self):                 self.stored = []
+    def get(self, ticker):              return None
+    def store(self, ticker, direction, sentiment_score, confidence, recommendation):
+        self.stored.append((ticker, direction, sentiment_score, confidence, recommendation))
+
+
+class _FakeAnalysisLog:
+    def __init__(self):                 self.stored = []
+    def store(self, analysis, sources_breakdown=None):
+        self.stored.append(analysis)
+        return len(self.stored)
+
+
+class _FakeBuyAnalyzer:
+    """Ersatz für ClaudeAnalyzer: liefert ein festes BUY-Urteil ohne Claude-Call."""
+    def analyze(self, **kwargs):
+        return AnalysisResult(
+            ticker=kwargs["ticker"], sentiment_score=0.85, direction="BULLISH",
+            confidence="HIGH", recommendation="BUY", entry_rationale="Testthese",
+            related_tickers=[], entry_trigger_price=None,
+        )
+
+
+class _FakeBuyExecutor:
+    def __init__(self, *a, **k):        pass
+    def execute(self, res, *, days_held=0, analysis=None, sources_breakdown=None):
+        assert res.action == "BUY"
+        return f"GEKAUFT {res.shares} {res.ticker} @ ${res.price}"
+
+
+@pytest.fixture
+def buy_cycle_env(cycle_env, monkeypatch):
+    """Baut auf cycle_env auf: News vorhanden + BUY-Empfehlung → echter Analyse-
+    Zweig statt No-News-Skip. Alle netzwerk-/disk-lastigen Kollaborateure gefakt."""
+    news_items = [{"title": "FOCUS Nachricht", "source": "TestWire",
+                  "published": "2026-07-13"}]
+    breakdown = {k: 0 for k in _BREAKDOWN_KEYS}
+    breakdown["wire"] = 1
+    monkeypatch.setattr(runner_mod, "collect_news",
+                        lambda t, archive, collectors: (list(news_items), dict(breakdown)))
+    monkeypatch.setattr(runner_mod, "ClaudeAnalyzer", _FakeBuyAnalyzer)
+    monkeypatch.setattr(runner_mod, "ChartPatternAnalyzer", _FakeChartPatternAnalyzer)
+    monkeypatch.setattr(runner_mod, "NewsVelocityAnalyzer", _FakeNewsVelocity)
+    monkeypatch.setattr(runner_mod, "MultiTimeframeSentiment", _FakeMTFSentiment)
+    monkeypatch.setattr(runner_mod, "ReEntryTracker", _FakeReEntryTracker)
+    monkeypatch.setattr(runner_mod, "_earnings_predictor", _FakeEarningsPredictor())
+    monkeypatch.setattr(runner_mod, "_signal_expander", _FakeSignalExpander())
+    monkeypatch.setattr(runner_mod, "_analysis_cache", _FakeAnalysisCache())
+    monkeypatch.setattr(runner_mod, "_analysis_log", _FakeAnalysisLog())
+    monkeypatch.setattr(runner_mod, "_get_experience_store", lambda: None)
+    monkeypatch.setattr("analyzers.macro_context.get_macro_context",
+                        lambda: SimpleNamespace(bias_score=lambda: 0.0), raising=False)
+    monkeypatch.setattr("strategy.executor.TradeExecutor", _FakeBuyExecutor)
+
+    env = cycle_env
+    monkeypatch.setattr(env.strategy, "evaluate",
+                        lambda ticker, analysis, cur_px, regime, rl_agent=None: StrategyResult(
+                            action="BUY", ticker=ticker, reason="Alle Kriterien erfüllt",
+                            shares=3, price=cur_px, stop_loss=cur_px * 0.93,
+                            take_profit=cur_px * 1.20,
+                        ), raising=False)
+    return env
+
+
+def test_buy_signal_flows_to_trade_and_daily_actions(buy_cycle_env):
+    env = buy_cycle_env
+    run_analysis_cycle(
+        env.portfolio, env.broker, env.strategy, env.tracker, env.phase_ctrl,
+        env.archive, only_tickers=["FOCUS"],
+    )
+    import json
+    actions = json.loads(env.daily_actions_path.read_text())["actions"]
+    assert any("GEKAUFT 3 FOCUS" in a for a in actions)
+
+
+def test_buy_signal_stores_analysis_in_cache_and_log(buy_cycle_env, monkeypatch):
+    env = buy_cycle_env
+    cache = runner_mod._analysis_cache
+    log = runner_mod._analysis_log
+    run_analysis_cycle(
+        env.portfolio, env.broker, env.strategy, env.tracker, env.phase_ctrl,
+        env.archive, only_tickers=["FOCUS"],
+    )
+    assert cache.stored and cache.stored[0][0] == "FOCUS"          # ticker
+    assert cache.stored[0][4] == "BUY"                              # recommendation
+    assert log.stored and log.stored[0].ticker == "FOCUS"
+
+
+# ── Daten-Qualitäts-Gate (Roadmap 1.8): ungültiger Kurs → SKIP vor Claude ────
+
+class _FakeBadYahoo:
+    def get_price_data(self, ticker):
+        return {"current_price": None, "volume": 0}   # kein gültiger Kurs
+
+
+def test_invalid_price_is_gate_blocked_before_analyze(cycle_env, monkeypatch):
+    env = cycle_env
+    # News vorhanden (sonst greift der No-News-Skip statt des Daten-Gates),
+    # aber der Kurs ist ungültig – das Gate muss VOR analyze() greifen.
+    news_items = [{"title": "FOCUS Nachricht", "source": "TestWire"}]
+    breakdown = {k: 0 for k in _BREAKDOWN_KEYS}
+    monkeypatch.setattr(runner_mod, "collect_news",
+                        lambda t, archive, collectors: (list(news_items), dict(breakdown)))
+    monkeypatch.setattr(runner_mod, "_make_collectors", lambda: {"yahoo": _FakeBadYahoo()})
+    # ClaudeAnalyzer bleibt der werfende _FakeAnalyzer aus cycle_env – ein Aufruf
+    # hier wäre ein Beweis, dass das Gate NICHT gegriffen hat.
+    monkeypatch.setattr(env.broker, "get_price", lambda ticker: None)  # kein Broker-Fallback
+
+    run_analysis_cycle(
+        env.portfolio, env.broker, env.strategy, env.tracker, env.phase_ctrl,
+        env.archive, only_tickers=["FOCUS"],
+    )
+    # Kein Trade, kein Tagesspeicher – der Zyklus lief bis zum Ende durch
+    # (sonst wäre analyze() erreicht und hätte AssertionError geworfen).
+    assert not env.daily_actions_path.exists()
