@@ -300,6 +300,51 @@ if _ls and not _hdr_paused:
         st.caption(f"💤 Idle · nächster geplanter Lauf: "
                    f"{_ls['next_run'][:16].replace('T', ' ')} Uhr")
 
+# ─── Gesundheits-Ampelleiste (Roadmap 1.5d): IB-Gateway/Claude-Kosten/CB ─────
+# Unabhängig vom Bot-Pause-Zustand (autologin.sh hält Port 4002 stündlich
+# offen, auch während der Bot pausiert ist) – reine Infrastruktur-Signale,
+# fail-open: ein einzelner fehlgeschlagener Check darf die anderen nie
+# verschlucken oder das Dashboard blockieren (Gateway-Check mit kurzem Timeout).
+def _ibkr_gateway_dot() -> str:
+    import socket
+    try:
+        with socket.create_connection((config.ibkr_host, config.ibkr_port), timeout=0.4):
+            return "🟢 IB-Gateway"
+    except Exception:
+        return "🔴 IB-Gateway"
+
+
+def _claude_cost_dot() -> str:
+    try:
+        from analyzers.api_cost_tracker import APICostTracker
+        s = APICostTracker().summary()
+        today = float(s.get("today_cost_eur") or 0.0)
+        limit = float(s.get("daily_limit_eur") or 0.0)
+        pct = (today / limit * 100) if limit > 0 else 0.0
+        dot = "🔴" if pct >= 100 else "🟡" if pct >= 80 else "🟢"
+        return f"{dot} Claude-Kosten {today:.2f}€/{limit:.2f}€"
+    except Exception:
+        return "⚪ Claude-Kosten n/a"
+
+
+def _circuit_breaker_dot(current_value: float) -> str:
+    try:
+        from portfolio.circuit_breaker import CircuitBreaker
+        st_cb = CircuitBreaker().status(current_value)
+        return "🔴 Circuit-Breaker AUSGELÖST" if st_cb.get("triggered") else "🟢 Circuit-Breaker"
+    except Exception:
+        return "⚪ Circuit-Breaker n/a"
+
+
+try:
+    st.caption(" · ".join([
+        _ibkr_gateway_dot(),
+        _claude_cost_dot(),
+        _circuit_breaker_dot(total_value),
+    ]))
+except Exception:
+    pass
+
 # ─── KPI strip ───────────────────────────────────────────────────────────────
 delta_pct  = (total_value - config.initial_capital) / config.initial_capital * 100
 invested   = sum(pos.shares * prices.get(t, pos.entry_price) for t, pos in portfolio.all_positions().items())
