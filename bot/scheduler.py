@@ -31,6 +31,7 @@ from analyzers.weekend_prep import WeekendPrep
 from analyzers.parameter_optimizer import ParameterOptimizer, _MIN_TRADES
 from bot.pre_market_scanner import PreMarketScanner
 from bot.runner import run_analysis_cycle, safe_run_analysis_cycle, _print_portfolio_summary
+from bot import scheduler_maintenance
 from cli.commands import run_weekend_prep
 
 console = Console()
@@ -537,73 +538,11 @@ def run_bot_loop(
             )
 
     def _daily_maintenance_job():
-        """
-        Läuft täglich um 02:00 UTC. Bereinigt alle Datenbanken und verhindert
-        unkontrolliertes Wachstum über Monate und Jahre hinweg.
-        """
-        import sqlite3 as _sqlite3
-        report_lines = []
-
-        # 1. News-Archiv: älter als 32 Tage löschen
-        try:
-            archive.cleanup_old(keep_days=32)
-            report_lines.append("✅ News-Archiv: alte Artikel bereinigt (>32 Tage)")
-        except Exception as e:
-            report_lines.append(f"⚠️ News-Archiv Cleanup: {e}")
-
-        # 2. Regime-Snapshots: älter als 90 Tage löschen
-        try:
-            from analyzers.recession_detector import RecessionDetector
-            n = RecessionDetector().cleanup_old_snapshots(keep_days=90)
-            if n:
-                report_lines.append(f"✅ Regime-Snapshots: {n} alte Einträge gelöscht")
-        except Exception as e:
-            report_lines.append(f"⚠️ Regime-Snapshot Cleanup: {e}")
-
-        # 4. Reflection-Engine: älteste Memos/Reviews löschen
-        try:
-            n = reflection.cleanup_old(keep_memos=30, keep_monthly=24)
-            if n:
-                report_lines.append(f"✅ Reflections: {n} alte Einträge gelöscht")
-        except Exception as e:
-            report_lines.append(f"⚠️ Reflection Cleanup: {e}")
-
-        # 5. Signal-Queue: abgelaufene Signale bereinigen (nutzt bestehende Logik)
-        try:
-            expired = signal_queue.cleanup_expired()
-            if expired:
-                report_lines.append(f"✅ Signal-Queue: {expired} abgelaufene Signale entfernt")
-        except Exception as e:
-            report_lines.append(f"⚠️ Signal-Queue Cleanup: {e}")
-
-        # 6. VACUUM auf allen SQLite-Datenbanken (gibt gelöschte Seiten frei)
-        db_paths = [
-            "data/news_archive.db",
-            "data/trade_journal.db",
-            "data/performance.db",
-            "data/reflections.db",
-            "data/signal_queue.db",
-            "data/portfolio.db",
-        ]
-        vacuumed = 0
-        for db_path in db_paths:
-            try:
-                conn = _sqlite3.connect(db_path)
-                conn.execute("VACUUM")
-                conn.close()
-                vacuumed += 1
-            except Exception:
-                pass
-        if vacuumed:
-            report_lines.append(f"✅ VACUUM: {vacuumed} Datenbanken komprimiert")
-
-        summary = "\n".join(report_lines)
-        log.info("Tägliche Wartung abgeschlossen:\n%s", summary)
-
-        if any("⚠️" in l for l in report_lines):
-            TelegramNotifier().send(
-                f"🔧 <b>Tägliche DB-Wartung</b>\n\n{summary}"
-            )
+        """Läuft täglich um 02:00 UTC (ausgelagert nach
+        bot/scheduler_maintenance.py, Roadmap 4.4a) — Name bleibt hier, weil
+        schedule den Funktionsnamen für die Job-Introspektion braucht."""
+        scheduler_maintenance.daily_maintenance_job(
+            archive, reflection, signal_queue, TelegramNotifier)
 
     # Register today's analysis jobs (weekdays only)
     _register_analysis_jobs()
@@ -893,25 +832,10 @@ def run_bot_loop(
     _DAILY_SUMMARY_AT = os.getenv("DAILY_SUMMARY_AT", "22:15")
 
     def _daily_summary_job():
-        """Sendet einmal täglich (abends, Werktag) die Tages-Zusammenfassung:
-        Portfolio-Stand + gebündelte Aktionen des Tages."""
-        if datetime.now().date().weekday() >= 5:
-            return
-        try:
-            from bot.runner import pop_daily_actions
-            prices = broker.get_prices(list(portfolio.all_positions().keys()))
-            total_value = portfolio.total_value(prices)
-            phase = phase_ctrl.current_phase(total_value)
-            TelegramNotifier().notify_daily_summary(
-                total_value=total_value,
-                cash=portfolio.cash,
-                open_positions=len(portfolio.all_positions()),
-                phase=phase,
-                progress_pct=phase_ctrl.progress_pct(total_value),
-                actions_today=pop_daily_actions(),
-            )
-        except Exception as _ds_err:
-            log.warning("Tages-Zusammenfassung (Abend) fehlgeschlagen: %s", _ds_err)
+        """Tages-Zusammenfassung (ausgelagert nach
+        bot/scheduler_maintenance.py, Roadmap 4.4a)."""
+        scheduler_maintenance.daily_summary_job(
+            broker, portfolio, phase_ctrl, TelegramNotifier)
 
     schedule.every().day.at(_DAILY_SUMMARY_AT).do(_daily_summary_job)
     console.print(f"[dim]Tages-Zusammenfassung geplant: {_DAILY_SUMMARY_AT} (Werktags)[/dim]")
@@ -2207,24 +2131,10 @@ def run_bot_loop(
     _dashboard = DailyDashboard()
 
     def _daily_dashboard_job():
-        if not _dashboard.should_send():
-            return
-        if not _dashboard.try_claim_send():
-            log.debug("Daily Dashboard: anderer Prozess hat bereits gesendet – übersprungen.")
-            return
-        try:
-            msg = _dashboard.generate(
-                portfolio=portfolio,
-                tracker=tracker,
-                scorer=_BotScorer(),
-                broker=broker,
-                initial_capital=config.initial_capital,
-            )
-            TelegramNotifier().send(msg, level="digest")
-            _dashboard.mark_sent()
-            log.info("Tägliches Dashboard gesendet.")
-        except Exception as e:
-            log.warning("Daily Dashboard fehlgeschlagen: %s", e)
+        """Tägliches Dashboard-Digest (ausgelagert nach
+        bot/scheduler_maintenance.py, Roadmap 4.4a)."""
+        scheduler_maintenance.daily_dashboard_job(
+            _dashboard, portfolio, tracker, broker, _BotScorer, TelegramNotifier)
 
     schedule.every().day.at("20:30").do(_daily_dashboard_job)
 
