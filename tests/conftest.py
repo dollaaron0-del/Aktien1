@@ -30,6 +30,19 @@ def _isolate_sl_cooldown(tmp_path, monkeypatch):
     monkeypatch.setattr(slc_mod, "_FILE", str(tmp_path / "sl_cooldown_test.json"))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_order_log(tmp_path, monkeypatch):
+    """Order-Log (broker/order_log.py, Roadmap 1.5f) IMMER in eine Temp-DB
+    umlenken: der log_order()-Decorator sitzt außen um IBKRBroker/PaperBroker
+    buy()/sell()/buy_crypto()/sell_crypto() und würde sonst aus jedem Test,
+    der diese Methoden direkt aufruft (z.B. test_ibkr_whatif.py,
+    test_ibkr_stops.py), in die echte data/order_log.db schreiben."""
+    import broker.order_log as ol_mod
+    monkeypatch.setattr(
+        ol_mod, "_instance", ol_mod.OrderLog(db_path=str(tmp_path / "order_log_test.db"))
+    )
+
+
 @pytest.fixture()
 def tmp_data_dir(tmp_path, monkeypatch):
     """
