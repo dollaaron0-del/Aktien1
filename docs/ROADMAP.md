@@ -121,11 +121,26 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Analyse-Log-Tab aus der bestehenden source_health-Mechanik
       (gesund/schwach/tot, Warnung bei dünner Datenlage). 8 Tests
       (test_provenance_link.py), Suite 408 grün, Dashboard headless
-      durchgerendert (AppTest, keine Exceptions). Offen: (c)
-      Verarbeitungs-Trace (Modell-Route, Makro-Brief-Bausteine, Gates) als
-      provenance-JSON, (d) KI-Prompt-Archiv — beide wirken erst voll bei
-      laufendem Bot. Queue-Drain-Entscheidungen tragen bewusst keine
-      analysis_id (Signal-Analyse lag zeitlich früher).
+      durchgerendert (AppTest, keine Exceptions). (c) FERTIG 14.7.:
+      Verarbeitungs-Trace als provenance_json-Spalte in analysis_log
+      (idempotente Migration). model_route/frugal_reason werden zentral in
+      ClaudeAnalyzer.analyze() gestempelt (_stamp_route(), ein einziger
+      Stempel-Punkt direkt vor jedem return statt in den einzelnen
+      Bau-Methoden) — deckt alle Pfade ab (empty/ollama_frugal_full/
+      ollama_frugal_thesis/ollama_legacy/ollama_fallback/claude/
+      claude_dedup_cache) samt Klartext-Begründung. macro_context.
+      summarize_sources() leitet pro Makro-Quelle True/False rein additiv
+      aus vorhandenen Snapshot-Keys ab (kein neuer Collector-Code).
+      cycle_analysis.py führt beides + das 1.8-Daten-Gate (ok/reason/
+      sanitized_fields) einmal pro Ticker zu einem provenance-dict
+      zusammen und reicht es an analysis_log.store() durch. Alt-Zeilen
+      ohne provenance_json liefern {} statt JSON-Fehler. 9 neue Tests
+      (test_analysis_provenance.py) + Ergänzungen in test_analysis_log_
+      sources.py/test_macro_context.py/test_run_analysis_cycle.py, volle
+      Suite grün. Offen: (d) KI-Prompt-Archiv (voller Prompt+Antwort je
+      Analyse) — wirkt erst voll bei laufendem Bot. Queue-Drain-
+      Entscheidungen tragen bewusst keine analysis_id (Signal-Analyse lag
+      zeitlich früher).
 - [~] **1.5 Live-Sichtbarkeit: "Was macht der Bot gerade?"** — (a)+(b)+(c)
       fertig 11.7.: system/live_status.py (fail-open, wirft nie).
       (a) Runner meldet Phasen (Start/Exits/Vorladen/Analyse je Ticker

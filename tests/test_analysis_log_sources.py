@@ -73,6 +73,41 @@ def test_store_persists_explicit_breakdown(tmp_path, monkeypatch):
     assert contrib["reddit"]["total_hits"] == 0
 
 
+def test_migration_adds_provenance_column(tmp_path, monkeypatch):
+    log = make_log(tmp_path, monkeypatch)
+    cols = [r[1] for r in log._conn.execute("PRAGMA table_info(analyses)").fetchall()]
+    assert "provenance_json" in cols
+
+
+def test_store_persists_provenance(tmp_path, monkeypatch):
+    log = make_log(tmp_path, monkeypatch)
+    a = AnalysisResult(
+        ticker="AAPL", sentiment_score=0.6, direction="BULLISH",
+        confidence="HIGH", recommendation="BUY",
+        model_route="claude", frugal_reason="Katalysator gefunden (SEC 8-K/Earnings)",
+    )
+    prov = {
+        "model_route": a.model_route, "frugal_reason": a.frugal_reason,
+        "macro_sources": {"market_overview": True, "fred": False},
+        "gate_ok": True, "gate_reason": None, "gate_sanitized_fields": [],
+    }
+    row_id = log.store(a, provenance=prov)
+    fetched = log.get_by_id(row_id)
+    assert fetched["provenance"] == prov
+
+
+def test_get_by_id_without_provenance_yields_empty_dict(tmp_path, monkeypatch):
+    """Alt-Zeilen ohne provenance_json (NULL) dürfen den Dashboard-Zugriff
+    nicht mit einem JSON-Fehler abreißen lassen."""
+    log = make_log(tmp_path, monkeypatch)
+    a = AnalysisResult(
+        ticker="MSFT", sentiment_score=0.5, direction="NEUTRAL",
+        confidence="LOW", recommendation="SKIP",
+    )
+    row_id = log.store(a)
+    assert log.get_by_id(row_id)["provenance"] == {}
+
+
 def test_ignores_rows_without_breakdown(tmp_path, monkeypatch):
     """Alt-Zeilen ohne Breakdown (NULL) verfälschen die Auswertung nicht."""
     log = make_log(tmp_path, monkeypatch)

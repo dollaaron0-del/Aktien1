@@ -35,6 +35,12 @@ class AnalysisResult:
     debate_winner: str = ""          # BULL | BEAR | DRAW
     related_tickers: List[str] = field(default_factory=list)
     entry_trigger_price: Optional[float] = None
+    # Verarbeitungs-Trace (Roadmap 1.4c) — von analyze() direkt vor jedem
+    # return gesetzt, NICHT von den Bau-Helfern (_thesis_check etc.): so
+    # bleibt an EINER Stelle nachvollziehbar, welcher Pfad tatsächlich
+    # gewonnen hat, ohne jede Hilfsmethode einzeln anzufassen.
+    model_route: str = ""            # z.B. "ollama_frugal" | "claude" | "claude_dedup_cache"
+    frugal_reason: str = ""          # Klartext-Begründung für die Routing-Entscheidung
 
 
 # ── Prompt templates ──────────────────────────────────────────────────────────
@@ -130,6 +136,16 @@ class NewsTrustFilter:
         return [a for a, _ in scored]
 
 
+def _stamp_route(result: AnalysisResult, route: str, reason: str) -> AnalysisResult:
+    """Setzt den Verarbeitungs-Trace (Roadmap 1.4c) auf ein bereits gebautes
+    AnalysisResult und gibt es unverändert sonst zurück – ein einziger,
+    zentraler Stempel-Punkt in analyze() statt jede Bau-Methode einzeln
+    anzufassen."""
+    result.model_route = route
+    result.frugal_reason = reason
+    return result
+
+
 class ClaudeAnalyzer:
     """Analysiert Aktien-News mittels Claude API."""
 
@@ -188,7 +204,7 @@ class ClaudeAnalyzer:
         if current_price is None and price_data is not None:
             current_price = price_data if isinstance(price_data, (int, float)) else (price_data or {}).get("price") or (price_data or {}).get("close") or 0.0
         if not news:
-            return self._empty_result(ticker)
+            return _stamp_route(self._empty_result(ticker), "empty", "keine News-Artikel")
 
         # Filter news
         filtered = self._trust_filter.filter_and_rank(news, min_score=0.3)
@@ -207,19 +223,25 @@ class ClaudeAnalyzer:
         # pauschaler Reuters/Bloomberg-Fallback – das war der Grund, warum der
         # Modus „schnell auf Claude zurückfiel".
         from config import config as _cfg
-        if _cfg.frugal_mode and not force_claude and not self._has_catalyst_source(news):
+        _has_catalyst = self._has_catalyst_source(news)
+        if _cfg.frugal_mode and not force_claude and not _has_catalyst:
             if existing_position is not None:
                 local = self._frugal_thesis_check(
                     ticker, news_text, current_price, existing_position, context_block
                 )
+                _frugal_route = "ollama_frugal_thesis"
             else:
                 local = self._frugal_local_analysis(
                     ticker, news, price_data, current_price, is_crypto
                 )
+                _frugal_route = "ollama_frugal_full"
             if local is not None:
                 if self._cost_tracker is not None:
                     self._cost_tracker.record(claude_called=False, ollama_used=True)
-                return local
+                return _stamp_route(
+                    local, _frugal_route,
+                    "frugal_mode: kein Katalysator, lokale Engine übernimmt",
+                )
             # Lokale Engine offline/Parsing-Fehler → Claude als Sicherheitsnetz.
 
         import random
@@ -240,7 +262,10 @@ class ClaudeAnalyzer:
                     not self.api_key
                     or not self._has_hard_priority_sources(filtered)
                 ):
-                    return ollama_result
+                    return _stamp_route(
+                        ollama_result, "ollama_legacy",
+                        "kein API-Key" if not self.api_key else "Zufalls-Gate (Legacy-Pfad)",
+                    )
 
         # Claude verfügbar? Drei harte Sperren – greift EINE, übernimmt Ollama
         # ausnahmslos alles (auch Katalysatoren & force_claude):
@@ -248,16 +273,25 @@ class ClaudeAnalyzer:
         #   2. Guthaben-/Auth-Fehler heute schon erkannt (_claude_blocked)
         #   3. Tages-Budget MAX_DAILY_COST_USD erreicht
         claude_ok = bool(self.api_key) and not self._claude_blocked
+        _claude_block_reason = (
+            "kein API-Key" if not self.api_key
+            else "Claude zuvor gesperrt (Guthaben/Auth)" if self._claude_blocked
+            else ""
+        )
         if claude_ok and self._cost_tracker is not None:
             allowed, reason = self._cost_tracker.check_daily_limit()
             if not allowed:
                 log.warning("[%s] Claude-Budget: %s", ticker, reason)
                 claude_ok = False
+                _claude_block_reason = f"Tagesbudget erschöpft: {reason}"
 
         if not claude_ok:
-            return self._local_fallback(
-                ticker, news, news_text, price_data, current_price,
-                is_crypto, existing_position, context_block,
+            return _stamp_route(
+                self._local_fallback(
+                    ticker, news, news_text, price_data, current_price,
+                    is_crypto, existing_position, context_block,
+                ),
+                "ollama_fallback", _claude_block_reason or "Claude nicht verfügbar",
             )
 
         # Dedup: bei Neueinstiegen identische News (gleicher Fingerprint) für
@@ -270,7 +304,10 @@ class ClaudeAnalyzer:
                 log.info("[%s] Dedup-Treffer: identische News < Cache-TTL → Claude übersprungen", ticker)
                 if self._cost_tracker is not None:
                     self._cost_tracker.record(claude_called=False, ollama_used=False)
-                return cached
+                return _stamp_route(
+                    cached, "claude_dedup_cache",
+                    "identische News < Cache-TTL, letztes Claude-Ergebnis wiederverwendet",
+                )
 
         # Claude übernimmt jetzt die finale Analyse. Im Frugal-Modus lässt Ollama
         # die News vorher lokal zu einem kompakten Briefing eindampfen → weniger
@@ -287,9 +324,12 @@ class ClaudeAnalyzer:
         if result is None:
             self._claude_blocked = True
             log.warning("[%s] Claude nicht verfügbar (Guthaben/Auth) – Ollama übernimmt ab jetzt alles", ticker)
-            return self._local_fallback(
-                ticker, news, news_text, price_data, current_price,
-                is_crypto, existing_position, context_block,
+            return _stamp_route(
+                self._local_fallback(
+                    ticker, news, news_text, price_data, current_price,
+                    is_crypto, existing_position, context_block,
+                ),
+                "ollama_fallback", "Claude Guthaben-/Auth-Fehler während des Calls",
             )
 
         if self._cost_tracker is not None:
@@ -308,6 +348,14 @@ class ClaudeAnalyzer:
         # Neueinstiegs-Ergebnis für identische News cachen (Dedup-Skip oben).
         if existing_position is None:
             self._result_cache_store(ticker, news, result)
+
+        _route_reason = (
+            "force_claude gesetzt" if force_claude
+            else "Katalysator gefunden (SEC 8-K/Earnings)" if _cfg.frugal_mode and _has_catalyst
+            else "frugal_mode aus" if not _cfg.frugal_mode
+            else "Claude (Default-Pfad)"
+        )
+        result = _stamp_route(result, "claude", _route_reason)
         return result
 
     def _local_fallback(

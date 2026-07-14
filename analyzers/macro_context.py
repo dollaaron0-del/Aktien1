@@ -31,6 +31,31 @@ _CACHE: Dict = {}
 _CACHED_AT: Optional[datetime] = None
 _CACHE_TTL_MIN = 30
 
+# Roadmap 1.4c (Verarbeitungs-Trace): welcher Snapshot-Key belegt, dass eine
+# Quelle in snapshot() tatsächlich erfolgreich war (statt in ihr try/except
+# fehlgeschlagen zu sein). Rein additiv aus den vorhandenen Keys abgeleitet,
+# damit die fehler-isolierten Blöcke oben unangetastet bleiben.
+_SOURCE_KEYS = {
+    "market_overview": "regime",
+    "macro_calendar": "cal_size_mod",
+    "recession_detector": "recession_score",
+    "sector_rotation": "sector_risk_mode",
+    "fred": "macro_stress",
+    "eia": "oil_stocks_label",
+    "entsoe": "eu_activity",
+    "weather": "weather_demand",
+    "dbnomics": "global_momentum",
+    "tanker_flow": "tanker_signal",
+    "eonet": "hazard_label",
+}
+
+
+def summarize_sources(snapshot: Dict) -> Dict[str, bool]:
+    """Für jede Makro-Quelle: True, wenn sie im gegebenen Snapshot beigetragen
+    hat. Für den Verarbeitungs-Trace (Roadmap 1.4c) – zeigt, welche Bausteine
+    tatsächlich in den Makro-Brief eingeflossen sind."""
+    return {name: snapshot.get(key) is not None for name, key in _SOURCE_KEYS.items()}
+
 
 class MacroContext:
     """Aggregiert alle Makro-Signale zu einem konsumierbaren Gesamtbild."""

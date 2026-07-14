@@ -117,6 +117,23 @@ def test_empty_snapshot_yields_empty_block(all_failing_patches):
     assert ctx.size_modifier("AAPL") == 1.0
 
 
+# ── summarize_sources (Roadmap 1.4c: Verarbeitungs-Trace) ────────────────────
+
+def test_summarize_sources_all_true_when_snapshot_full(risk_off_patches):
+    snap = mc.MacroContext().snapshot(force=True)
+    sources = mc.summarize_sources(snap)
+    assert sources["market_overview"] is True
+    assert sources["macro_calendar"] is True
+    assert sources["recession_detector"] is True
+    assert sources["sector_rotation"] is True
+
+
+def test_summarize_sources_all_false_when_all_sources_failed(all_failing_patches):
+    snap = mc.MacroContext().snapshot(force=True)
+    sources = mc.summarize_sources(snap)
+    assert all(ok is False for ok in sources.values())
+
+
 def test_get_macro_brief_never_raises(all_failing_patches):
     # Komfort-Funktion ist zusätzlich gekapselt → liefert immer einen String
     assert mc.get_macro_brief() == ""

@@ -90,6 +90,14 @@ def run_ticker_loop(
     # damit der Schleifenkörper unten wortwörtlich übernommen werden kann. ──
     _live = live
     _macro_brief = macro_brief
+    # Verarbeitungs-Trace (Roadmap 1.4c): welche Makro-Bausteine tatsächlich in
+    # _macro_brief eingeflossen sind. Einmal pro Zyklus (nicht pro Ticker) –
+    # snapshot() ist ohnehin 30min gecacht, macro_brief ist zyklusweit gleich.
+    try:
+        from analyzers.macro_context import get_macro_context, summarize_sources
+        _macro_sources = summarize_sources(get_macro_context().snapshot())
+    except Exception:
+        _macro_sources = {}
     _eu_market_ctx = eu_market_ctx
     _bench_geo_contexts = bench_geo_contexts
     _force_claude_tickers = force_claude_tickers
@@ -128,6 +136,7 @@ def run_ticker_loop(
     for _wl_idx, ticker in enumerate(active_watchlist, start=1):
         ticker = _normalize_ticker(ticker)
         _live.set_phase("Analyse", ticker=ticker, idx=_wl_idx, total=_wl_total)
+        _gate = None   # Daten-Qualitäts-Gate: bleibt None für Krypto (kein Gate-Lauf)
 
         # Heartbeat: periodisches Lebenszeichen während des langen Zyklus. Nur bei
         # der angekündigten Hauptanalyse (announce_start) – intraday/getriggerte
@@ -423,10 +432,21 @@ def run_ticker_loop(
             # Persistenz-Fehler eines einzelnen Tickers darf den gesamten
             # Analyse-Zyklus nicht abreißen (vgl. sources_used-dict-Crash).
             try:
+                # Verarbeitungs-Trace (Roadmap 1.4c): Modell-Route/Grund kommen
+                # direkt vom AnalysisResult (dort zentral gestempelt), Makro-
+                # Bausteine/Daten-Gate werden hier je Ticker zusammengeführt.
+                _provenance = {
+                    "model_route": analysis.model_route,
+                    "frugal_reason": analysis.frugal_reason,
+                    "macro_sources": _macro_sources,
+                    "gate_ok": _gate.ok if _gate is not None else None,
+                    "gate_reason": _gate.reason if _gate is not None else None,
+                    "gate_sanitized_fields": _gate.sanitized_fields if _gate is not None else [],
+                }
                 # Zeilen-ID einfangen: verkettet die Entscheidung unten mit
                 # ihrer Analyse samt Quellen-Breakdown (Roadmap 1.4b).
                 _analysis_row_id = _analysis_log.store(
-                    analysis, sources_breakdown=sources_breakdown)
+                    analysis, sources_breakdown=sources_breakdown, provenance=_provenance)
             except Exception as _store_err:
                 log.warning("Analysis-Log store(%s) fehlgeschlagen: %s", ticker, _store_err)
             _live.feed_emit(

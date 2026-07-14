@@ -223,9 +223,12 @@ class _FakeAnalysisCache:
 
 
 class _FakeAnalysisLog:
-    def __init__(self):                 self.stored = []
-    def store(self, analysis, sources_breakdown=None):
+    def __init__(self):
+        self.stored = []
+        self.provenance_stored = []
+    def store(self, analysis, sources_breakdown=None, provenance=None):
         self.stored.append(analysis)
+        self.provenance_stored.append(provenance)
         return len(self.stored)
 
 
@@ -302,6 +305,22 @@ def test_buy_signal_stores_analysis_in_cache_and_log(buy_cycle_env, monkeypatch)
     assert cache.stored and cache.stored[0][0] == "FOCUS"          # ticker
     assert cache.stored[0][4] == "BUY"                              # recommendation
     assert log.stored and log.stored[0].ticker == "FOCUS"
+
+
+def test_buy_signal_logs_provenance(buy_cycle_env):
+    """Roadmap 1.4c: der Verarbeitungs-Trace (Route/Grund/Makro-Quellen/Gate)
+    muss bei jeder gespeicherten Analyse mitgeschickt werden."""
+    env = buy_cycle_env
+    run_analysis_cycle(
+        env.portfolio, env.broker, env.strategy, env.tracker, env.phase_ctrl,
+        env.archive, only_tickers=["FOCUS"],
+    )
+    log = runner_mod._analysis_log
+    assert log.provenance_stored and log.provenance_stored[0] is not None
+    prov = log.provenance_stored[0]
+    assert set(prov) == {"model_route", "frugal_reason", "macro_sources",
+                          "gate_ok", "gate_reason", "gate_sanitized_fields"}
+    assert prov["gate_ok"] is True   # gültiger Kurs (100.0) von _FakeYahoo
 
 
 # ── Daten-Qualitäts-Gate (Roadmap 1.8): ungültiger Kurs → SKIP vor Claude ────

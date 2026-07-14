@@ -28,7 +28,8 @@ class AnalysisLog:
         have = {r["name"] for r in self._conn.execute("PRAGMA table_info(analyses)")}
         for col, decl in (("sources_breakdown", "TEXT"),
                           ("git_hash", "TEXT"),          # Roadmap 1.6
-                          ("config_json", "TEXT")):      # Roadmap 1.6
+                          ("config_json", "TEXT"),       # Roadmap 1.6
+                          ("provenance_json", "TEXT")):  # Roadmap 1.4c
             if col not in have:
                 self._conn.execute(f"ALTER TABLE analyses ADD COLUMN {col} {decl}")
         self._conn.commit()
@@ -60,7 +61,8 @@ class AnalysisLog:
         self._conn.commit()
 
     def store(self, analysis, exchange: str = "",
-              sources_breakdown: Optional[dict] = None) -> Optional[int]:
+              sources_breakdown: Optional[dict] = None,
+              provenance: Optional[dict] = None) -> Optional[int]:
         """Speichert eine Analyse; gibt die Zeilen-ID zurück (Roadmap 1.4b:
         der Runner reicht sie ans decision_log weiter → Entscheidung und
         zugehörige Analyse samt Quellen sind verkettet)."""
@@ -99,13 +101,15 @@ class AnalysisLog:
             _git_hash, _config_json = stamp()
         except Exception:
             _git_hash, _config_json = None, None
+        _provenance_json = json.dumps(provenance) if provenance else None
         cur = self._conn.execute(
             """INSERT INTO analyses
                (analyzed_at, ticker, recommendation, direction, sentiment_score,
                 confidence, entry_rationale, bull_case, bear_case, debate_winner,
                 key_catalysts, risk_factors, target_price, suggested_hold,
-                sources_used, sources_breakdown, exchange, git_hash, config_json)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                sources_used, sources_breakdown, exchange, git_hash, config_json,
+                provenance_json)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 analysis.ticker,
@@ -126,6 +130,7 @@ class AnalysisLog:
                 exchange,
                 _git_hash,
                 _config_json,
+                _provenance_json,
             ),
         )
         self._conn.commit()
@@ -142,6 +147,7 @@ class AnalysisLog:
         d = dict(row)
         d["key_catalysts"] = json.loads(d.get("key_catalysts") or "[]")
         d["risk_factors"]  = json.loads(d.get("risk_factors")  or "[]")
+        d["provenance"]    = json.loads(d.get("provenance_json") or "{}")
         return d
 
     def get_source_contributions(self, days: int = 30) -> List[Dict]:
@@ -231,6 +237,7 @@ class AnalysisLog:
             d = dict(r)
             d["key_catalysts"] = json.loads(d.get("key_catalysts") or "[]")
             d["risk_factors"]  = json.loads(d.get("risk_factors")  or "[]")
+            d["provenance"]    = json.loads(d.get("provenance_json") or "{}")
             result.append(d)
         return result
 
@@ -284,6 +291,7 @@ class AnalysisLog:
             d = dict(r)
             d["key_catalysts"] = json.loads(d.get("key_catalysts") or "[]")
             d["risk_factors"]  = json.loads(d.get("risk_factors")  or "[]")
+            d["provenance"]    = json.loads(d.get("provenance_json") or "{}")
             result.append(d)
         return result
 
