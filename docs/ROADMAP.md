@@ -489,8 +489,32 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
 
 ## Block 3 — Alpha-These prüfen (braucht laufenden Bot + Zeit)
 
-- [ ] **3.1 Sentiment-Forward-Study** — Event-Study aus ExperienceStore
-      (Edge/IC je Sentiment-Bucket) → zweite Advisory-Quelle in live_bridge.
+- [~] **3.1 Sentiment-Forward-Study** — Werkzeug fertig + Erstlauf 14.7.:
+      analyzers/sentiment_forward_study.py (+ CLI scripts/sentiment_forward_
+      study.py). Feste, an buy_threshold orientierte Score-Buckets (kein
+      datenabhängiges Quantil — Anti-Data-Dredging wie beim w52_high-Fenster,
+      5.1); Edge je Bucket per Bootstrap-CI (reuse
+      scripts.track_record._bootstrap_mean_ci statt Kopie); Information
+      Coefficient (Spearman sentiment_score↔pnl_pct, Paar-Bootstrap-CI,
+      eigene vektorisierte Rang-Funktion statt scipy-Abhängigkeit — dieselbe
+      Begründung wie in track_record.py). label_source getrennt ausgewiesen
+      (backfill_hypo/backfill/live) — nicht dieselbe Evidenzqualität, exakt
+      wie track_record.py es bereits für seine Meilensteine hält. 21 Tests
+      (test_sentiment_forward_study.py, u.a. Kunst-Daten mit erzwungener
+      perfekter bzw. Null-Korrelation als Positiv-/Negativkontrolle), netzfrei.
+      EHRLICHER ERSTLAUF (347 gelabelte Entscheidungen, 291 backfill_hypo +
+      56 backfill, **0 live**): Information Coefficient −0,018, 90%-CI
+      [−0,123, +0,091] (spannt die Null — kein belegtes Signal). Auffällig:
+      der 0,65–0,80-Bucket zeigt sogar eine LEICHT NEGATIVE Kante
+      (−1,37 %, P(≤0)=99 %) statt der erwarteten positiven Beziehung —
+      deckt sich mit dem bereits bekannten Kalibrierungs-Befund (1.2: AUC
+      0,61 aber überkonfident, BSS −0,02) und der Beobachtung "Sentiment
+      nicht monoton kalibriert" aus dem Selbstlern-Fundament. Ehrliches
+      Verdikt: bei aktueller Datenlage KEINE Evidenz für sentiment_score als
+      eigenständige Advisory-Quelle — Verdrahtung in live_bridge bewusst
+      NICHT gebaut (würde eine nicht belegte Kante verdrahten). Bleibt [~]
+      offen, bis echte Live-Trades (label_source='live') eine belastbare
+      Neubewertung erlauben (Block-3-Voraussetzung: laufender Bot + Zeit).
 - [ ] **3.2 Skip-Kontrafaktik** — decision_log-SKIPs mit simulate_outcome
       nachrechnen → EntryFilter-Schwellen mit Gegenproben validieren.
 
