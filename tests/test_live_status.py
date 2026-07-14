@@ -63,6 +63,68 @@ def test_status_age_seconds():
     assert age is not None and 0 <= age < 10
 
 
+# ── Zyklus-Zeitleiste (Roadmap 1.5e) ─────────────────────────────────────────
+
+def test_set_phase_same_name_does_not_duplicate_history():
+    """Wiederholte set_phase-Rufe mit demselben Namen (ein Aufruf je Ticker
+    innerhalb 'Analyse') dürfen die Zeitleiste nicht fluten."""
+    ls.set_phase("Analyse", ticker="AAA", idx=1, total=10)
+    ls.set_phase("Analyse", ticker="BBB", idx=2, total=10)
+    ls.set_phase("Analyse", ticker="CCC", idx=3, total=10)
+    history = ls.read_status()["phase_history"]
+    assert [h["phase"] for h in history] == ["Analyse"]
+
+
+def test_set_phase_new_name_appends_and_closes_previous():
+    ls.set_phase("Start")
+    ls.set_phase("Exits prüfen")
+    ls.set_phase("Vorladen")
+    history = ls.read_status()["phase_history"]
+    assert [h["phase"] for h in history] == ["Start", "Exits prüfen", "Vorladen"]
+    assert history[0]["ended_at"] is not None
+    assert history[1]["ended_at"] is not None
+    assert history[2]["ended_at"] is None   # aktuelle Phase noch offen
+
+
+def test_phase_durations_open_phase_counts_until_now():
+    ls.set_phase("Start")
+    durations = ls.phase_durations()
+    assert len(durations) == 1
+    assert durations[0]["phase"] == "Start"
+    assert durations[0]["ended_at"] is None
+    assert 0 <= durations[0]["duration_seconds"] < 10
+
+
+def test_phase_durations_closed_phase_has_fixed_duration():
+    ls.set_phase("Start")
+    ls.set_phase("Exits prüfen")
+    durations = ls.phase_durations()
+    assert durations[0]["phase"] == "Start"
+    assert durations[0]["ended_at"] is not None
+    assert durations[0]["duration_seconds"] >= 0
+
+
+def test_set_idle_closes_last_phase_but_keeps_history():
+    ls.set_phase("Start")
+    ls.set_phase("Analyse", ticker="NVDA")
+    ls.set_idle(next_run="2026-07-12T07:30:00", note="Zyklus beendet")
+    s = ls.read_status()
+    history = s["phase_history"]
+    assert [h["phase"] for h in history] == ["Start", "Analyse"]
+    assert history[-1]["ended_at"] is not None   # von set_idle geschlossen
+    durations = ls.phase_durations(s)
+    assert len(durations) == 2
+
+
+def test_phase_durations_empty_without_history():
+    assert ls.phase_durations({}) == []
+    assert ls.phase_durations(None) == []
+
+
+def test_phase_durations_never_raises_on_malformed_entry():
+    assert ls.phase_durations({"phase_history": [{"phase": "X"}]}) == []
+
+
 def test_status_write_never_raises(monkeypatch):
     # Unschreibbarer Pfad → Funktionen schlucken den Fehler (fail-open)
     monkeypatch.setattr(ls, "STATUS_PATH", "/proc/unmöglich/bot_status.json")

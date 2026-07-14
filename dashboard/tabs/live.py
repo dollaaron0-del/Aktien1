@@ -43,6 +43,28 @@ def render(ctx) -> None:
 
     st.divider()
 
+    # ── Zyklus-Zeitleiste (Roadmap 1.5e) ────────────────────────────────────
+    st.subheader("🕒 Zyklus-Zeitleiste")
+    try:
+        from system.live_status import phase_durations as _phase_durations
+        _phases = _phase_durations(ctx._ls)
+    except Exception:
+        _phases = []
+    if _phases:
+        for _p in _phases:
+            _mins = _p["duration_seconds"] / 60
+            _dur_str = f"{_mins:.1f} min" if _mins >= 1 else f"{_p['duration_seconds']:.0f} s"
+            _running = " ⏳ läuft noch" if _p.get("ended_at") is None else ""
+            st.markdown(f"- **{_p['phase']}**: {_dur_str}{_running}")
+    else:
+        st.caption(
+            "Noch keine Zeitleiste — füllt sich mit dem nächsten Analyse-Zyklus."
+            if not ctx._hdr_paused else
+            "Noch keine Zeitleiste — der Bot ist aktuell pausiert."
+        )
+
+    st.divider()
+
     # ── Nächste Aktionen (Roadmap 1.5c) ─────────────────────────────────────
     st.subheader("⏭ Nächste Aktionen")
     _next_bits = []

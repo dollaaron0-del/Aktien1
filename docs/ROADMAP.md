@@ -156,8 +156,8 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Suite 848 grün. Basis für Entscheidungs-Replay (Roadmap 4.5). Queue-
       Drain-Entscheidungen tragen bewusst keine analysis_id (Signal-Analyse
       lag zeitlich früher) — damit auch kein Prompt-Archiv-Eintrag.
-- [~] **1.5 Live-Sichtbarkeit: "Was macht der Bot gerade?"** — (a)+(b)+(c)
-      fertig 11.7.: system/live_status.py (fail-open, wirft nie).
+- [~] **1.5 Live-Sichtbarkeit: "Was macht der Bot gerade?"** — (a)+(b)+(c)+(d)+(e)
+      fertig: system/live_status.py (fail-open, wirft nie).
       (a) Runner meldet Phasen (Start/Exits/Vorladen/Analyse je Ticker
       i/n/Abschluss) → data/bot_status.json (atomar); Scheduler schreibt
       zwischen Jobs Idle + nächsten geplanten Lauf (heilt Crash-Reste);
@@ -167,9 +167,25 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       "Live" zeigt die letzten 50. (c) Nächste-Aktionen-Panel im Live-Tab:
       nächster Scheduler-Lauf + systemd-Timer (list-timers, JSON) mit
       letztem/nächstem Lauf. 10 Tests, Suite 418 grün, Dashboard headless
-      gerendert. Wirkt live erst bei laufendem Bot. Offen: (d) Gesundheits-
-      Ampelleiste im Header, (e) Zyklus-Zeitleiste, (f) Order-Lifecycle-
-      Ansicht, (g) Telegram /status-Befehl.
+      gerendert. Wirkt live erst bei laufendem Bot. (d) FERTIG 13.7.
+      (3f2fc86): Gesundheits-Ampelleiste im Header — IB-Gateway (TCP-Connect,
+      0.4s Timeout), Claude-Tageskosten vs. Limit, Circuit-Breaker-Status;
+      fail-open pro Check, bewusst unabhängig vom Bot-Pause-Zustand gerendert
+      (autologin.sh hält Port 4002 auch pausiert offen). (e) FERTIG 14.7.:
+      Zyklus-Zeitleiste — set_phase() führt jetzt phase_history in
+      bot_status.json, ein Eintrag PRO PHASENNAME (Start/Exits prüfen/
+      Vorladen/Analyse) statt pro Aufruf (sonst würde jeder Ticker innerhalb
+      "Analyse" die Zeitleiste fluten — nur Namenswechsel schließt die
+      vorherige Phase und öffnet die nächste). set_idle() schließt die letzte
+      Phase, behält die Historie aber bis zum nächsten set_phase()-Aufruf
+      (Zeitleiste bleibt auch im Idle-Zustand sichtbar). Neue Funktion
+      phase_durations() rechnet Dauer je Phase in Sekunden (offene letzte
+      Phase eines laufenden Zyklus: bis jetzt). Dashboard-Tab "Live" zeigt
+      sie als kleine Liste unter dem Aktivitätsfeed. 7 neue Tests
+      (test_live_status.py), Suite 855 grün, Dashboard headless
+      durchgerendert (AppTest, keine Exceptions, Zeitleiste im Baum
+      gefunden). Wirkt live erst bei laufendem Bot. Offen: (f) Order-
+      Lifecycle-Ansicht, (g) Telegram /status-Befehl.
 - [x] **1.6 Versions-Stempel in Entscheidungslogs** — fertig 11.7.
       `analyzers/version_stamp.py`: Git-Hash (kurz) + kuratierter
       Config-Schnappschuss (Whitelist entscheidungsrelevanter Werte +

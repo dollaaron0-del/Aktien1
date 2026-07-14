@@ -1,7 +1,7 @@
 """
-Live-Sichtbarkeit: "Was macht der Bot gerade?" (Roadmap 1.5a+b).
+Live-Sichtbarkeit: "Was macht der Bot gerade?" (Roadmap 1.5a+b+e).
 
-Zwei Nähte, eine Datei:
+Drei Nähte, eine Datei:
 
 - **Status-Zeile** (1.5a): der Runner meldet Phasenwechsel über set_phase()/
   set_idle() → data/bot_status.json (atomar via tmp+rename). Das Dashboard
@@ -13,6 +13,11 @@ Zwei Nähte, eine Datei:
 - **Aktivitätsfeed** (1.5b): strukturierte Events (cycle_start, analysis_done,
   trade, cycle_end, …) in data/activity_feed.db (SQLite, WAL) statt nur
   Fließtext im bot.log. Dashboard-Tab "Live" zeigt die letzten ~50.
+
+- **Zyklus-Zeitleiste** (1.5e): phase_history in bot_status.json — ein
+  Eintrag je Phasenname (Start/Exits prüfen/Vorladen/Analyse), mit
+  started_at/ended_at. phase_durations() rechnet daraus Dauer je Phase in
+  Sekunden; Dashboard-Tab "Live" zeigt sie als kleine Tabelle.
 
 Fail-open by design: KEINE der öffentlichen Funktionen wirft — ein Fehler in
 der Sichtbarkeits-Schicht darf nie den Handelszyklus reißen. Env-Overrides
@@ -60,11 +65,22 @@ def set_phase(phase: str, ticker: Optional[str] = None,
               idx: Optional[int] = None, total: Optional[int] = None,
               detail: Optional[str] = None) -> None:
     """Phasenwechsel im laufenden Zyklus melden. Behält cycle_started_at des
-    laufenden Zyklus bei; beim ersten Aufruf (state≠cycle) beginnt ein neuer."""
+    laufenden Zyklus bei; beim ersten Aufruf (state≠cycle) beginnt ein neuer.
+
+    Roadmap 1.5e (Zyklus-Zeitleiste): führt zusätzlich phase_history — ein
+    Eintrag PRO PHASENNAME (nicht pro Aufruf), damit die vielen set_phase-
+    Rufe innerhalb von "Analyse" (einer je Ticker, nur idx/total ändert sich)
+    die Zeitleiste nicht mit hunderten Einträgen fluten."""
     try:
         prev = read_status() or {}
-        started = (prev.get("cycle_started_at")
-                   if prev.get("state") == "cycle" else None)
+        same_cycle = prev.get("state") == "cycle"
+        started = prev.get("cycle_started_at") if same_cycle else None
+        history = list(prev.get("phase_history") or []) if same_cycle else []
+        if not history or history[-1].get("phase") != phase:
+            now = _now_iso()
+            if history:
+                history[-1]["ended_at"] = now
+            history.append({"phase": phase, "started_at": now, "ended_at": None})
         _write_status({
             "state": "cycle",
             "phase": phase,
@@ -73,14 +89,23 @@ def set_phase(phase: str, ticker: Optional[str] = None,
             "idx": idx,
             "total": total,
             "detail": detail,
+            "phase_history": history,
         })
     except Exception:
         pass
 
 
 def set_idle(next_run: Optional[str] = None, note: Optional[str] = None) -> None:
-    """Zyklus beendet / Bot wartet. next_run: ISO-Zeitpunkt des nächsten Jobs."""
+    """Zyklus beendet / Bot wartet. next_run: ISO-Zeitpunkt des nächsten Jobs.
+
+    phase_history bleibt erhalten (letzte Phase wird geschlossen) – so zeigt
+    die Zeitleiste (Roadmap 1.5e) auch im Idle-Zustand noch den zuletzt
+    abgeschlossenen Zyklus, bis der nächste set_phase()-Aufruf sie ersetzt."""
     try:
+        prev = read_status() or {}
+        history = list(prev.get("phase_history") or []) if prev.get("state") == "cycle" else []
+        if history and history[-1].get("ended_at") is None:
+            history[-1]["ended_at"] = _now_iso()
         _write_status({
             "state": "idle",
             "phase": None,
@@ -88,9 +113,34 @@ def set_idle(next_run: Optional[str] = None, note: Optional[str] = None) -> None
             "ticker": None, "idx": None, "total": None,
             "next_run": next_run,
             "detail": note,
+            "phase_history": history,
         })
     except Exception:
         pass
+
+
+def phase_durations(status: Optional[Dict] = None) -> List[Dict]:
+    """Zeitleiste des aktuellen/letzten Zyklus mit Dauer je Phase in Sekunden
+    (Roadmap 1.5e). Die letzte Phase eines LAUFENDEN Zyklus hat kein ended_at
+    → Dauer bis jetzt. Wirft nie, leere Liste im Fehlerfall/ohne Historie."""
+    try:
+        s = status if status is not None else read_status()
+        history = (s or {}).get("phase_history") or []
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        out = []
+        for entry in history:
+            started = datetime.fromisoformat(entry["started_at"])
+            ended_raw = entry.get("ended_at")
+            ended = datetime.fromisoformat(ended_raw) if ended_raw else now
+            out.append({
+                "phase": entry.get("phase"),
+                "started_at": entry.get("started_at"),
+                "ended_at": ended_raw,
+                "duration_seconds": max(0.0, (ended - started).total_seconds()),
+            })
+        return out
+    except Exception:
+        return []
 
 
 def read_status() -> Optional[Dict]:
