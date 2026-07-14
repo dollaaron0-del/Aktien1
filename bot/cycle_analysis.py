@@ -82,6 +82,7 @@ def run_ticker_loop(
     telegram_notifier_cls,
     analysis_cache, analysis_log, earnings_predictor, signal_expander,
     rl_agent, get_experience_store: Callable,
+    prompt_archive=None,
 ) -> None:
     """Serielle Analyse-Schleife über `active_watchlist`. Mutiert cycle_actions
     und headline_results in place, gibt sonst nichts zurück (lessons_memo wird
@@ -123,6 +124,7 @@ def run_ticker_loop(
     _print_analysis = print_analysis
     _analysis_cache = analysis_cache
     _analysis_log = analysis_log
+    _prompt_archive = prompt_archive
     _earnings_predictor = earnings_predictor
     _signal_expander = signal_expander
     _rl_agent = rl_agent
@@ -449,6 +451,22 @@ def run_ticker_loop(
                     analysis, sources_breakdown=sources_breakdown, provenance=_provenance)
             except Exception as _store_err:
                 log.warning("Analysis-Log store(%s) fehlgeschlagen: %s", ticker, _store_err)
+            # KI-Prompt-Archiv (Roadmap 1.4d): nur bei einem ECHTEN Claude-Aufruf
+            # gesetzt (raw_response leer bei Ollama/Frugal/Cache-Hit-Routen,
+            # siehe claude_analyzer._result_cache_store) und nur wenn die
+            # Analyse überhaupt eine Zeilen-ID bekommen hat (sonst nichts zum
+            # Verketten). Basis für Entscheidungs-Replay (Roadmap 4.5).
+            if _prompt_archive is not None and _analysis_row_id is not None and analysis.raw_response:
+                try:
+                    _prompt_archive.store(
+                        analysis_id=_analysis_row_id, ticker=ticker,
+                        model=analysis.raw_model,
+                        system_prompt=analysis.raw_system_prompt,
+                        user_prompt=analysis.raw_user_prompt,
+                        response_text=analysis.raw_response,
+                    )
+                except Exception as _archive_err:
+                    log.warning("Prompt-Archiv store(%s) fehlgeschlagen: %s", ticker, _archive_err)
             _live.feed_emit(
                 "analysis_done", ticker=ticker,
                 detail=f"{analysis.recommendation} · Score "

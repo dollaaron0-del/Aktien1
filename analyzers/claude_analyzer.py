@@ -41,6 +41,16 @@ class AnalysisResult:
     # gewonnen hat, ohne jede Hilfsmethode einzeln anzufassen.
     model_route: str = ""            # z.B. "ollama_frugal" | "claude" | "claude_dedup_cache"
     frugal_reason: str = ""          # Klartext-Begründung für die Routing-Entscheidung
+    # KI-Prompt-Archiv (Roadmap 1.4d) — nur bei einem ECHTEN Claude-Aufruf
+    # gesetzt (_claude_analysis/_thesis_check), sonst leer. Basis für
+    # Entscheidungs-Replay (Roadmap 4.5). Bewusst NICHT im Dedup-Cache
+    # persistiert (_result_cache_store entfernt diese Felder vor dem
+    # Schreiben) — ein Cache-Hit ist kein neuer Aufruf und würde sonst den
+    # alten Prompt fälschlich unter einer neuen analysis_id archivieren.
+    raw_model: str = ""
+    raw_system_prompt: str = ""
+    raw_user_prompt: str = ""
+    raw_response: str = ""
 
 
 # ── Prompt templates ──────────────────────────────────────────────────────────
@@ -569,6 +579,12 @@ class ClaudeAnalyzer:
                            "cache_control": cc})
         return blocks
 
+    def _system_prompt_text(self, context_block: str) -> str:
+        """Reine Text-Fassung von _system_blocks() ohne cache_control – fürs
+        KI-Prompt-Archiv (Roadmap 1.4d), spiegelt exakt das, was tatsächlich
+        an Claude ging."""
+        return "\n\n".join(b["text"] for b in self._system_blocks(context_block))
+
     def _call_claude(self, user_prompt: str, context_block: str, model: str,
                      max_tokens: int) -> str:
         """Einziger Pfad zu client.messages.create – setzt Caching/TTL, das
@@ -607,7 +623,12 @@ class ClaudeAnalyzer:
         )
         try:
             text = self._call_claude(prompt, context_block, self.model, max_tokens=1000)
-            return self._parse_response(ticker, text)
+            result = self._parse_response(ticker, text)
+            result.raw_model = self.model
+            result.raw_system_prompt = self._system_prompt_text(context_block)
+            result.raw_user_prompt = prompt
+            result.raw_response = text
+            return result
         except Exception as e:
             log.warning("Claude-Analyse fehlgeschlagen für %s: %s", ticker, e)
             # Guthaben-/Auth-Fehler → None signalisieren (Aufrufer sperrt Claude
@@ -641,6 +662,10 @@ class ClaudeAnalyzer:
             result.thesis_break_reason = data.get("thesis_break_reason", "")
             result.sentiment_score = float(data.get("sentiment_score", 0.5))
             result.recommendation = data.get("recommendation", "HOLD")
+            result.raw_model = self._light_model()
+            result.raw_system_prompt = self._system_prompt_text(context_block)
+            result.raw_user_prompt = prompt
+            result.raw_response = text
             return result
         except Exception as e:
             log.warning("Thesis-Check fehlgeschlagen für %s: %s", ticker, e)
@@ -855,7 +880,14 @@ class ClaudeAnalyzer:
                 store = json.load(f)
         except Exception:
             store = {}
-        store[key] = {"stored_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), "result": asdict(result)}
+        # raw_*-Felder (Roadmap 1.4d) NICHT in den Dedup-Cache übernehmen: ein
+        # späterer Cache-Hit ist kein neuer Claude-Aufruf und würde sonst den
+        # alten Prompt fälschlich unter einer neuen analysis_id archivieren
+        # (siehe model_route "claude_dedup_cache" in cycle_analysis.py).
+        _cached_result = asdict(result)
+        for _f in ("raw_model", "raw_system_prompt", "raw_user_prompt", "raw_response"):
+            _cached_result.pop(_f, None)
+        store[key] = {"stored_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), "result": _cached_result}
         # Abgelaufene Einträge beim Schreiben aufräumen (Datei klein halten).
         cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=max(ttl, 1.0))
         for k in [k for k, v in store.items()

@@ -323,6 +323,66 @@ def test_buy_signal_logs_provenance(buy_cycle_env):
     assert prov["gate_ok"] is True   # gültiger Kurs (100.0) von _FakeYahoo
 
 
+class _FakePromptArchive:
+    def __init__(self):
+        self.stored = []
+
+    def store(self, analysis_id, ticker, model, system_prompt, user_prompt, response_text):
+        self.stored.append(dict(
+            analysis_id=analysis_id, ticker=ticker, model=model,
+            system_prompt=system_prompt, user_prompt=user_prompt,
+            response_text=response_text,
+        ))
+        return len(self.stored)
+
+
+class _FakeBuyAnalyzerWithClaudeCall:
+    """Wie _FakeBuyAnalyzer, aber mit gesetztem raw_* – simuliert einen
+    ECHTEN Claude-Aufruf (Roadmap 1.4d), statt einer Ollama-/Frugal-Route."""
+    def analyze(self, **kwargs):
+        return AnalysisResult(
+            ticker=kwargs["ticker"], sentiment_score=0.85, direction="BULLISH",
+            confidence="HIGH", recommendation="BUY", entry_rationale="Testthese",
+            related_tickers=[], entry_trigger_price=None,
+            raw_model="claude-sonnet-test", raw_system_prompt="SYS-PROMPT",
+            raw_user_prompt="USER-PROMPT", raw_response='{"recommendation": "BUY"}',
+        )
+
+
+def test_buy_signal_with_claude_call_archives_prompt(buy_cycle_env, monkeypatch):
+    """Roadmap 1.4d: ein ECHTER Claude-Aufruf (raw_response gesetzt) landet im
+    Prompt-Archiv, verkettet über dieselbe analysis_id wie im analysis_log."""
+    env = buy_cycle_env
+    monkeypatch.setattr(runner_mod, "ClaudeAnalyzer", _FakeBuyAnalyzerWithClaudeCall)
+    archive = _FakePromptArchive()
+    monkeypatch.setattr(runner_mod, "_prompt_archive", archive)
+    run_analysis_cycle(
+        env.portfolio, env.broker, env.strategy, env.tracker, env.phase_ctrl,
+        env.archive, only_tickers=["FOCUS"],
+    )
+    assert len(archive.stored) == 1
+    entry = archive.stored[0]
+    assert entry["ticker"] == "FOCUS"
+    assert entry["analysis_id"] == len(runner_mod._analysis_log.stored)
+    assert entry["model"] == "claude-sonnet-test"
+    assert entry["system_prompt"] == "SYS-PROMPT"
+    assert entry["user_prompt"] == "USER-PROMPT"
+    assert entry["response_text"] == '{"recommendation": "BUY"}'
+
+
+def test_buy_signal_without_claude_call_skips_prompt_archive(buy_cycle_env, monkeypatch):
+    """Ollama-/Frugal-Routen (raw_response leer) duerfen keinen Archiv-Eintrag
+    erzeugen – nur echte Claude-Aufrufe sind teuer genug fuers Archiv."""
+    env = buy_cycle_env
+    archive = _FakePromptArchive()
+    monkeypatch.setattr(runner_mod, "_prompt_archive", archive)
+    run_analysis_cycle(
+        env.portfolio, env.broker, env.strategy, env.tracker, env.phase_ctrl,
+        env.archive, only_tickers=["FOCUS"],
+    )
+    assert archive.stored == []
+
+
 # ── Daten-Qualitäts-Gate (Roadmap 1.8): ungültiger Kurs → SKIP vor Claude ────
 
 class _FakeBadYahoo:

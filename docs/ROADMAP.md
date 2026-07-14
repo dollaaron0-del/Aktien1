@@ -111,7 +111,7 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Break-even-Positionsgröße + Selbsttragend-Gate. Befund: API-Kosten
       0,12 €/Trade vernachlässigbar — das Problem ist die Kante, nicht die
       Kosten.
-- [~] **1.4 Transparenz: Quellen-Provenienz & Pipeline-Trace im Dashboard** —
+- [x] **1.4 Transparenz: Quellen-Provenienz & Pipeline-Trace im Dashboard** —
       (a)+(b)+(e) fertig 11.7.: (a) sources_breakdown wird im Analyse-Log-Tab
       pro Eintrag gerendert (sprechende Collector-Namen, Treffer absteigend,
       leere Quellen als Caption); (b) analysis_log.store() liefert die
@@ -137,10 +137,25 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       ohne provenance_json liefern {} statt JSON-Fehler. 9 neue Tests
       (test_analysis_provenance.py) + Ergänzungen in test_analysis_log_
       sources.py/test_macro_context.py/test_run_analysis_cycle.py, volle
-      Suite grün. Offen: (d) KI-Prompt-Archiv (voller Prompt+Antwort je
-      Analyse) — wirkt erst voll bei laufendem Bot. Queue-Drain-
-      Entscheidungen tragen bewusst keine analysis_id (Signal-Analyse lag
-      zeitlich früher).
+      Suite grün. (d) FERTIG 14.7.: KI-Prompt-Archiv — neues
+      analyzers/prompt_archive.py (eigene data/prompt_archive.db, Tabelle
+      prompts, analysis_id/ticker/model/system_prompt/user_prompt/
+      response_text), verkettet über dieselbe analysis_id wie 1.4b.
+      AnalysisResult trägt jetzt raw_model/raw_system_prompt/raw_user_prompt/
+      raw_response, gesetzt an GENAU den zwei Stellen mit einem echten
+      Claude-Aufruf (_claude_analysis, _thesis_check) — bewusst NUR Claude
+      (teuerste Stufe), Ollama-/Frugal-Routen bleiben leer. Cache-Hits
+      (claude_dedup_cache) dürfen NICHT erneut archivieren: der Dedup-Cache
+      (data/claude_result_cache.json) entfernt die raw_*-Felder vor dem
+      Schreiben, ein Cache-Hit liefert sie deshalb leer zurück. Verkabelung:
+      runner.py instanziiert _prompt_archive einmal (wie _analysis_log),
+      cycle_analysis.py archiviert direkt nach dem analysis_log.store()-
+      Aufruf, nur wenn analysis_id vorhanden UND raw_response gesetzt ist.
+      15 neue Tests (test_prompt_archive.py + Ergänzungen in
+      test_analysis_provenance.py/test_run_analysis_cycle.py), volle
+      Suite 848 grün. Basis für Entscheidungs-Replay (Roadmap 4.5). Queue-
+      Drain-Entscheidungen tragen bewusst keine analysis_id (Signal-Analyse
+      lag zeitlich früher) — damit auch kein Prompt-Archiv-Eintrag.
 - [~] **1.5 Live-Sichtbarkeit: "Was macht der Bot gerade?"** — (a)+(b)+(c)
       fertig 11.7.: system/live_status.py (fail-open, wirft nie).
       (a) Runner meldet Phasen (Start/Exits/Vorladen/Analyse je Ticker

@@ -41,6 +41,7 @@ from analyzers.multi_timeframe_sentiment import MultiTimeframeSentiment
 from analyzers.reentry_tracker import ReEntryTracker
 from analyzers.analysis_cache import AnalysisCache
 from analyzers.analysis_log import AnalysisLog
+from analyzers.prompt_archive import PromptArchive
 import analyzers.user_request_queue as _urq
 from analyzers.rl_agent import RLAgent
 from analyzers.earnings_predictor import EarningsPredictor
@@ -132,6 +133,7 @@ _earnings_predictor = EarningsPredictor()
 _signal_expander    = SignalDrivenExpander()
 _analysis_cache     = AnalysisCache()
 _analysis_log       = AnalysisLog()
+_prompt_archive     = PromptArchive()  # Roadmap 1.4d: KI-Prompt-Archiv
 
 # Semantic dedup – einmal laden, alle Ticker eines Zyklus nutzen dieselbe Instanz
 try:
@@ -875,6 +877,7 @@ def run_analysis_cycle(
         chart_pattern_analyzer_cls=ChartPatternAnalyzer,
         telegram_notifier_cls=TelegramNotifier,
         analysis_cache=_analysis_cache, analysis_log=_analysis_log,
+        prompt_archive=_prompt_archive,
         earnings_predictor=_earnings_predictor, signal_expander=_signal_expander,
         rl_agent=_rl_agent, get_experience_store=_get_experience_store,
     )
