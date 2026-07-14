@@ -8,6 +8,11 @@ eine bewusste Entscheidung. Stand: 11.7.2026 (Roadmap 0.7).
 Abgrenzung: `docs/SERVER_RUNBOOK.md` = Server von Null wiederherstellen.
 Dieses Dokument = vorhandenen, pausierten Bot auf diesem Server reaktivieren.
 
+Ist-Stand-Check 14.7.2026 (per systemctl/crontab/Dateidaten verifiziert):
+Schritte 1, 2, 4, 5 sind noch offen (Demo-Swap aktiv, SEC_CONTACT_EMAIL/
+BACKUP_REMOTE unset, Registry vom 27.6., Backup-Timer noch nicht installiert).
+Schritt 3 ist erledigt. Bot-Services + Crontab-Zeile sind wie gewollt aus.
+
 ## Vorab-Check: Was gerade Sache ist
 
 ```bash
@@ -56,13 +61,11 @@ Anschließend Memory `demo-data-swap-aktiv` löschen (erledigt).
 - Optional, empfohlen: `BACKUP_REMOTE` (rsync-Ziel) setzen, damit Backups
   nicht nur lokal liegen (Roadmap 0.1, Off-Server-Lücke).
 
-## Schritt 3 — Versions-Stempel (Roadmap 1.6) — VOR dem Start einbauen
+## Schritt 3 — Versions-Stempel (Roadmap 1.6) ✅ ERLEDIGT (11.7.)
 
-Noch **offen** (Stand 11.7.): `decision_log`/`analysis_log` speichern weder
-Git-Hash noch Config-Schnappschuss. Ohne das messen die Evidenz-Gates (1.1)
-ein bewegliches Ziel — Track-Record über still wechselnde Code-Stände beweist
-nichts. Wirkt nur ab Einbau, rückwirkend nie → **vor** der Reaktivierung
-umsetzen, nicht danach. Erst wenn 1.6 committet ist, hier abhaken.
+`decision_log`/`analysis_log` stempeln jeden neuen Eintrag automatisch mit
+Git-Hash + Config-Schnappschuss (`analyzers/version_stamp.py`). Nichts mehr
+zu tun hier — Schritt bleibt nur als Dokumentation der Reihenfolge stehen.
 
 ## Schritt 4 — Strategy-Registry neu generieren (schlank)
 
