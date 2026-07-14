@@ -8,10 +8,19 @@ eine bewusste Entscheidung. Stand: 11.7.2026 (Roadmap 0.7).
 Abgrenzung: `docs/SERVER_RUNBOOK.md` = Server von Null wiederherstellen.
 Dieses Dokument = vorhandenen, pausierten Bot auf diesem Server reaktivieren.
 
-Ist-Stand-Check 14.7.2026 (per systemctl/crontab/Dateidaten verifiziert):
-Schritte 1, 2, 4, 5 sind noch offen (Demo-Swap aktiv, SEC_CONTACT_EMAIL/
-BACKUP_REMOTE unset, Registry vom 27.6., Backup-Timer noch nicht installiert).
-Schritt 3 ist erledigt. Bot-Services + Crontab-Zeile sind wie gewollt aus.
+✅ Ist-Stand 14.7.2026 Nachmittag: Schritte 1, 3, 4, 5 sind erledigt (Demo-
+Daten selektiv zurückgemerged, Registry frisch, Backup-Timer installiert +
+aktiv). **Nur noch Schritt 2 (.env) ist offen** — dafür fehlt dieser Sitzung
+der Datei-Zugriff (Bash auf `.env` ist hart gesperrt), das muss der User selbst
+ergänzen:
+
+```
+SEC_CONTACT_EMAIL=<echte Kontakt-Mail>
+BACKUP_REMOTE=<optional: rsync-Ziel, z.B. user@host:/pfad>
+```
+
+Danach ist **Schritt 6 der einzige verbleibende Schritt** — bewusst NICHT
+ausgeführt, das ist der "Startbefehl", den sich der User vorbehält.
 
 ## Vorab-Check: Was gerade Sache ist
 
@@ -22,37 +31,18 @@ crontab -l | grep aktien_bot        # 06:00-Zeile sollte auskommentiert sein
 ss -tlnp | grep 4002                # IB Gateway muss laufen
 ```
 
-## Schritt 1 — Demo-Daten-Rücktausch (Roadmap 0.3) ⚠ NICHT trivial
+## Schritt 1 — Demo-Daten-Rücktausch (Roadmap 0.3) ✅ ERLEDIGT (14.7.)
 
-`data/` ist seit 27.6. eine Demo-Kopie für eine Präsentation; die echten Daten
-liegen in `data_REAL_BACKUP_demo/`. **Achtung, seit 2.7. divergiert:** die
-Lern-Stack-Arbeit hat direkt in `data/` geschrieben (z.B. `experience.db`
-neuer als das Backup). Ein naiver Komplett-Rücktausch (`rm -rf data && mv …`)
-würde diese neueren Lerndaten **vernichten**.
-
-Stattdessen selektiv mergen — vorher Ist-Stand je Datei klären:
-
-- **Demo (aus `data_REAL_BACKUP_demo/` zurückholen)**: Portfolio/Trades —
-  `portfolio.db`, `trade_journal.db`, `performance.db`, `bot_score.json`
-  (Demo zeigt 4 Positionen NVDA/MSFT/ASML/LLY, 22 Trades, 68% Win-Rate —
-  daran erkennbar).
-- **Echt & neuer in `data/` (behalten!)**: Lern-DBs — `experience.db`,
-  `decision_log.db`, `calibration.json`, `analysis_log.db`, `rl_weights.json`,
-  `paper_forward.json`, `strategy_registry.json`.
-- Bei Unklarheit pro Datei: mtime + Inhalt vergleichen (`sqlite3 <db>
-  "select count(*) from …"`), im Zweifel beide Stände sichern.
-
-Vorher komplettes Backup ziehen: `bash scripts/backup.sh` (sichert den
-Ist-Zustand inkl. der zu überschreibenden Dateien).
-
-Danach Regime-Labels auf der echten DB nachziehen:
-
-```bash
-venv/bin/python -m scripts.backfill_regime --dry-run   # erst ansehen
-venv/bin/python -m scripts.backfill_regime             # dann schreiben
-```
-
-Anschließend Memory `demo-data-swap-aktiv` löschen (erledigt).
+Vorher komplettes Backup gezogen (`backups/aktien_backup_20260714_130525.tar.gz`).
+Content-Vergleich (nicht nur mtime) ergab: nur `portfolio.db`, `trade_journal.db`,
+`performance.db`, `bot_score.json` trugen Demo-Werte (4 Fake-Positionen
+NVDA/MSFT/ASML/LLY, aufgeblähte Trade-/Snapshot-/Prediction-Zahlen) — alle
+Lern-DBs (`experience.db`, `decision_log.db`, `analysis_log.db`,
+`calibration.json`, …) waren vom Swap unberührt. Die 4 betroffenen Dateien
+gezielt aus `data_REAL_BACKUP_demo/` zurückkopiert (keine Komplett-Aktion).
+Verifiziert: Portfolio zeigt jetzt 0 Positionen, 24 Trades, echtes Cash.
+`backfill_regime --dry-run` meldete "nichts zu tun" (Regime-Labels bereits
+aktuell). `data_REAL_BACKUP_demo/` bewusst nicht gelöscht.
 
 ## Schritt 2 — .env vervollständigen
 
@@ -67,27 +57,20 @@ Anschließend Memory `demo-data-swap-aktiv` löschen (erledigt).
 Git-Hash + Config-Schnappschuss (`analyzers/version_stamp.py`). Nichts mehr
 zu tun hier — Schritt bleibt nur als Dokumentation der Reihenfolge stehen.
 
-## Schritt 4 — Strategy-Registry neu generieren (schlank)
-
-Die aktuelle Registry ist ein Spielzeug-Lauf. Neu erzeugen, bewusst klein
-(sonst >18 min CPU auf diesem Server):
+## Schritt 4 — Strategy-Registry neu generieren (schlank) ✅ ERLEDIGT (14.7.)
 
 ```bash
-venv/bin/python -m scripts.walk_forward --total 12 --max-combos 24
+venv/bin/python -m scripts.walk_forward --total 12 --max-combos 24 --workers 0
 ```
 
-Schreibt `data/strategy_registry.json`. Hinweis: baseline_swing hat laut
-Paper-Forward keine Kante (verliert gegen Buy&Hold) — die Registry steuert
-nur das mechanische Gerüst, Erwartungen entsprechend niedrig halten.
+Neu erzeugt (6 Kerne, `--workers 0`). Ergebnis: 0 ACTIVE, alle Familien
+WATCH/FRAGILE/REJECTED — deckt sich mit dem bekannten Meta-Backtest-Befund,
+keine Überraschung. baseline_swing hat laut Paper-Forward weiterhin keine
+Kante gegen Buy&Hold; die Registry steuert nur das mechanische Gerüst.
 
-## Schritt 5 — Backup-Timer enablen (Roadmap 0.1)
+## Schritt 5 — Backup-Timer enablen (Roadmap 0.1) ✅ ERLEDIGT (14.7.)
 
-```bash
-cp scripts/aktien_backup.{service,timer} /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now aktien_backup.timer
-systemctl list-timers | grep aktien_backup   # nächster Lauf 03:00?
-```
+Installiert + aktiv, nächster Lauf: siehe `systemctl list-timers aktien_backup.timer`.
 
 ## Schritt 6 — Bot-Services + Crontab enablen
 
