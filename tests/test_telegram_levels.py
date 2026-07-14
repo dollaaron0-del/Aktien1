@@ -38,6 +38,15 @@ def test_important_mode_passes_trade_critical_digest(sent, monkeypatch):
     assert [c["text"] for c in sent] == ["Kauf!", "Fehler!", "Tagesbericht"]
 
 
+def test_important_mode_passes_command_level(sent, monkeypatch):
+    """/status-Antworten (Roadmap 1.5g) sind direkte Antworten auf einen
+    Nutzer-Befehl und dürfen im important-Modus nie unterdrückt werden."""
+    monkeypatch.setattr(config, "telegram_mode", "important")
+    n = tn.TelegramNotifier()
+    n.send("Status-Report", level="command")
+    assert [c["text"] for c in sent] == ["Status-Report"]
+
+
 def test_all_mode_sends_everything(sent, monkeypatch):
     monkeypatch.setattr(config, "telegram_mode", "all")
     n = tn.TelegramNotifier()

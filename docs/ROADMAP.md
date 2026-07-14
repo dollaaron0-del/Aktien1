@@ -156,7 +156,7 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Suite 848 grün. Basis für Entscheidungs-Replay (Roadmap 4.5). Queue-
       Drain-Entscheidungen tragen bewusst keine analysis_id (Signal-Analyse
       lag zeitlich früher) — damit auch kein Prompt-Archiv-Eintrag.
-- [~] **1.5 Live-Sichtbarkeit: "Was macht der Bot gerade?"** — (a)+(b)+(c)+(d)+(e)
+- [x] **1.5 Live-Sichtbarkeit: "Was macht der Bot gerade?"** — (a)+(b)+(c)+(d)+(e)+(f)+(g)
       fertig: system/live_status.py (fail-open, wirft nie).
       (a) Runner meldet Phasen (Start/Exits/Vorladen/Analyse je Ticker
       i/n/Abschluss) → data/bot_status.json (atomar); Scheduler schreibt
@@ -202,7 +202,28 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       kaputtem Log-Backend; PaperBroker-Verkabelung real getestet), Suite
       weiterhin grün. Dashboard headless verifiziert (AppTest gegen isolierte
       Temp-DB: gefüllte + Fehler-/Teilausführungs-Fälle rendern ohne
-      Exception). Offen: (g) Telegram /status-Befehl.
+      Exception). (g) FERTIG 14.7.: Telegram /status-Befehl —
+      system/telegram_commands.py. Kein Webhook (kein öffentlicher HTTPS-
+      Endpunkt vorhanden), stattdessen getUpdates-Short-Polling
+      (`timeout=0`, kein blockierendes Long-Polling) an derselben Stelle der
+      Scheduler-Hauptschleife wie der Dead-Man-Switch-Ping (1.7) — die
+      Schleife tickt ohnehin ~1×/Minute, ein zusätzlicher schneller HTTP-Call
+      fällt nicht ins Gewicht. Nur Nachrichten aus dem konfigurierten
+      TELEGRAM_CHAT_ID werden akzeptiert (kein offener Befehlskanal); der
+      zuletzt verarbeitete update_id wird in data/telegram_offset.json
+      gemerkt (kein Reprocessing alter Befehle nach Neustart).
+      build_status_text() liefert dieselben Signale wie die Dashboard-
+      Gesundheits-Ampelleiste (1.5d: Pause-Zustand, Zyklus-Phase/nächster
+      Lauf, IB-Gateway, Claude-Tageskosten, Circuit-Breaker) + Portfolio-Wert/
+      Cash/Positionen — jeder Baustein einzeln fail-open, ein kaputter Check
+      verschluckt nie die übrigen Zeilen. Neue Wichtigkeitsstufe "command" in
+      notifier/telegram_notifier.py (_IMPORTANT_LEVELS): eine direkte Antwort
+      auf einen Nutzer-Befehl darf im TELEGRAM_MODE=important nie unterdrückt
+      werden, anders als automatisierte info-Meldungen. 24 neue Tests
+      (test_telegram_commands.py + 1 Ergänzung in test_telegram_levels.py),
+      Suite weiterhin grün. Bewusst nur /status (wie in der Roadmap benannt) —
+      kein generisches Befehls-Framework, kein Trade-Eingriff per Telegram
+      (Human-in-the-Loop wurde 11.7. bereits verworfen).
 - [x] **1.6 Versions-Stempel in Entscheidungslogs** — fertig 11.7.
       `analyzers/version_stamp.py`: Git-Hash (kurz) + kuratierter
       Config-Schnappschuss (Whitelist entscheidungsrelevanter Werte +

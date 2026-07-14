@@ -982,6 +982,15 @@ def run_bot_loop(
                     _dms.ping()
                 except Exception:
                     pass
+                # Telegram /status-Befehl (Roadmap 1.5g): kein Webhook (kein
+                # öffentlicher Endpunkt) – Short-Polling an derselben Stelle
+                # wie der Dead-Man-Switch-Ping, die Schleife tickt ohnehin
+                # ~1×/Minute. No-Op ohne konfigurierten Token.
+                try:
+                    from system import telegram_commands as _tgc
+                    _tgc.poll()
+                except Exception:
+                    pass
             except KeyboardInterrupt:
                 raise
             except Exception as _job_err:

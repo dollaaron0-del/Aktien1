@@ -8,11 +8,12 @@ Sendet sofortige Benachrichtigungen bei:
 
 Wichtigkeits-Stufen (TELEGRAM_MODE, Default "important"):
   Jede Nachricht trägt ein level — "trade" (Käufe/Verkäufe/These), "critical"
-  (Fehler, die manuelles Eingreifen brauchen), "digest" (1×-täglich-Berichte)
-  oder "info" (alles andere). Im Modus "important" erreichen NUR trade/
-  critical/digest Telegram; info landet im Log. TELEGRAM_MODE=all stellt das
-  alte Verhalten wieder her. Detailtiefe gehört ins Dashboard, nicht in den
-  Chat (Tab "Entscheidungen").
+  (Fehler, die manuelles Eingreifen brauchen), "digest" (1×-täglich-Berichte),
+  "command" (direkte Antwort auf einen Nutzer-Befehl wie /status, Roadmap
+  1.5g) oder "info" (alles andere). Im Modus "important" erreichen NUR
+  trade/critical/digest/command Telegram; info landet im Log. TELEGRAM_MODE=all
+  stellt das alte Verhalten wieder her. Detailtiefe gehört ins Dashboard, nicht
+  in den Chat (Tab "Entscheidungen").
 
 Einrichtung:
   1. BotFather auf Telegram anschreiben → /newbot → API-Token erhalten
@@ -31,7 +32,7 @@ _API_BASE = "https://api.telegram.org/bot{token}/sendMessage"
 _TIMEOUT = 10
 
 # Stufen, die im Modus "important" durchkommen.
-_IMPORTANT_LEVELS = {"trade", "critical", "digest"}
+_IMPORTANT_LEVELS = {"trade", "critical", "digest", "command"}
 
 log = logging.getLogger(__name__)
 
