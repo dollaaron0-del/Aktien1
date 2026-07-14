@@ -52,6 +52,7 @@ class OrderLog:
 
     def record(self, order_result: Dict, action: str) -> Optional[int]:
         try:
+            d = order_result or {}
             cur = self._conn.execute(
                 """INSERT INTO orders
                    (ts, ticker, action, mode, status, shares, fill_price,
@@ -59,15 +60,15 @@ class OrderLog:
                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (
                     datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
-                    (order_result or {}).get("ticker"),
+                    d.get("ticker"),
                     action,
-                    (order_result or {}).get("mode"),
-                    (order_result or {}).get("status"),
-                    (order_result or {}).get("shares"),
-                    (order_result or {}).get("fill_price"),
-                    (order_result or {}).get("order_id"),
-                    1 if (order_result or {}).get("partial") else 0,
-                    (order_result or {}).get("reason"),
+                    d.get("mode"),
+                    d.get("status"),
+                    d.get("shares"),
+                    d.get("fill_price"),
+                    d.get("order_id"),
+                    1 if d.get("partial") else 0,
+                    d.get("reason"),
                 ),
             )
             self._conn.commit()

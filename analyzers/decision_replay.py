@@ -32,15 +32,18 @@ def is_thesis_check_prompt(user_prompt: str) -> bool:
     return _THESIS_CHECK_MARKER in (user_prompt or "")
 
 
-def replay_response(ticker: str, user_prompt: str, response_text: str) -> Dict:
+def replay_response(ticker: str, user_prompt: str, response_text: str,
+                    analyzer=None) -> Dict:
     """Parst einen archivierten Antworttext mit der AKTUELLEN Parsing-Logik.
 
     Rein funktional (kein API-Call, kein DB-Zugriff) – deterministisch bei
-    gleichem Code-Stand.
-    """
-    from analyzers.claude_analyzer import ClaudeAnalyzer
-
-    analyzer = ClaudeAnalyzer()
+    gleichem Code-Stand. `analyzer` ist injizierbar (Batch-Aufrufer wie
+    replay_recent teilen sich EINE ClaudeAnalyzer-Instanz statt pro Zeile
+    neu zu konstruieren – der Konstruktor liest u.a. den API-Kosten-Stand
+    von der Platte)."""
+    if analyzer is None:
+        from analyzers.claude_analyzer import ClaudeAnalyzer
+        analyzer = ClaudeAnalyzer()
     if is_thesis_check_prompt(user_prompt):
         data = analyzer._safe_json(response_text)
         return {
@@ -67,33 +70,55 @@ def diff_fields(original: Dict, replayed: Dict) -> List[str]:
     return [f for f in fields if (original or {}).get(f) != replayed.get(f)]
 
 
+def _resolve_prompt_archive(prompt_archive):
+    if prompt_archive is None:
+        from analyzers.prompt_archive import PromptArchive
+        prompt_archive = PromptArchive()
+    return prompt_archive
+
+
+def _resolve_analysis_log(analysis_log):
+    if analysis_log is None:
+        from analyzers.analysis_log import AnalysisLog
+        analysis_log = AnalysisLog()
+    return analysis_log
+
+
 def replay_analysis(
-    analysis_id: int, analysis_log=None, prompt_archive=None
+    analysis_id: int, analysis_log=None, prompt_archive=None,
+    analyzer=None, _entry: Optional[Dict] = None, _original: Optional[Dict] = None,
 ) -> Optional[Dict]:
     """Repliziert EINE archivierte Analyse gegen die damals geloggte Empfehlung.
 
     Liefert None, wenn kein Prompt archiviert ist (Ollama-/Frugal-Route – 1.4d
     archiviert bewusst nur echte Claude-Aufrufe) oder die analysis_id im
-    Analyse-Log nicht (mehr) existiert. `analysis_log`/`prompt_archive` sind
-    injizierbar (Tests, Batch-Aufrufer teilen sich eine Instanz statt pro
-    Zeile neu zu verbinden).
+    Analyse-Log nicht (mehr) existiert. `analysis_log`/`prompt_archive`/
+    `analyzer` sind injizierbar (Tests, Batch-Aufrufer teilen sich eine
+    Instanz statt pro Zeile neu zu verbinden/konstruieren). `_entry`/
+    `_original`: interne Parameter für Aufrufer, die den Archiv- bzw.
+    Analyse-Log-Eintrag bereits gelesen haben (replay_recent über
+    prompt_archive.recent(); das Dashboard über AnalysisLog().get_by_id() für
+    die "Zugehörige Analyse"-Anzeige) und ihn nicht doppelt nachschlagen
+    müssen.
     """
-    if prompt_archive is None:
-        from analyzers.prompt_archive import PromptArchive
-        prompt_archive = PromptArchive()
-    if analysis_log is None:
-        from analyzers.analysis_log import AnalysisLog
-        analysis_log = AnalysisLog()
-
-    entry = prompt_archive.get_by_analysis_id(analysis_id)
+    if _entry is not None:
+        entry = _entry
+    else:
+        prompt_archive = _resolve_prompt_archive(prompt_archive)
+        entry = prompt_archive.get_by_analysis_id(analysis_id)
     if not entry or not entry.get("response_text"):
         return None
-    original = analysis_log.get_by_id(analysis_id)
+
+    if _original is not None:
+        original = _original
+    else:
+        original = _resolve_analysis_log(analysis_log).get_by_id(analysis_id)
     if not original:
         return None
 
     replayed = replay_response(
-        entry.get("ticker", ""), entry.get("user_prompt", ""), entry["response_text"]
+        entry.get("ticker", ""), entry.get("user_prompt", ""), entry["response_text"],
+        analyzer=analyzer,
     )
     changed = diff_fields(original, replayed)
     return {
@@ -113,20 +138,22 @@ def replay_recent(
     limit: int = 200, analysis_log=None, prompt_archive=None
 ) -> List[Dict]:
     """Batch-Audit über die letzten `limit` archivierten Prompts – Basis für
-    einen Drift-Report nach Code-/Schwellen-Änderungen (z.B. buy_threshold)."""
-    if prompt_archive is None:
-        from analyzers.prompt_archive import PromptArchive
-        prompt_archive = PromptArchive()
-    if analysis_log is None:
-        from analyzers.analysis_log import AnalysisLog
-        analysis_log = AnalysisLog()
+    einen Drift-Report nach Code-/Schwellen-Änderungen (z.B. buy_threshold).
+    Teilt sich EINE ClaudeAnalyzer-Instanz über den ganzen Batch (statt pro
+    Zeile neu zu konstruieren) und reicht den bereits gelesenen Archiv-Eintrag
+    direkt durch (kein zweites get_by_analysis_id() je Zeile)."""
+    prompt_archive = _resolve_prompt_archive(prompt_archive)
+    analysis_log = _resolve_analysis_log(analysis_log)
+    from analyzers.claude_analyzer import ClaudeAnalyzer
+    analyzer = ClaudeAnalyzer()
 
     out = []
     for entry in prompt_archive.recent(limit=limit):
         aid = entry.get("analysis_id")
         if aid is None:
             continue
-        r = replay_analysis(aid, analysis_log=analysis_log, prompt_archive=prompt_archive)
+        r = replay_analysis(aid, analysis_log=analysis_log, prompt_archive=prompt_archive,
+                            analyzer=analyzer, _entry=entry)
         if r is not None:
             out.append(r)
     return out

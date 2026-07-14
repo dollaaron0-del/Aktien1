@@ -7,7 +7,6 @@ import pytest
 from analyzers.experience_store import ExperienceStore
 from analyzers.sentiment_forward_study import (
     _bucket_label,
-    _rank_avg,
     bucket_edges,
     information_coefficient,
     load_labeled_scores,
@@ -95,18 +94,6 @@ def test_bucket_edges_empty_bucket_has_nan_ci():
     out = bucket_edges(rows, rng, iters=50)
     assert out["<0.30"]["n"] == 0
     assert np.isnan(out["<0.30"]["mean"])
-
-
-# ── _rank_avg ─────────────────────────────────────────────────────────────────
-
-def test_rank_avg_no_ties():
-    ranks = _rank_avg(np.array([30.0, 10.0, 20.0]))
-    assert list(ranks) == [3.0, 1.0, 2.0]
-
-
-def test_rank_avg_averages_ties():
-    ranks = _rank_avg(np.array([10.0, 10.0, 20.0]))
-    assert list(ranks) == [1.5, 1.5, 3.0]
 
 
 # ── information_coefficient ───────────────────────────────────────────────────

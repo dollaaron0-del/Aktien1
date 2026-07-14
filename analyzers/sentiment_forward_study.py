@@ -94,21 +94,13 @@ def bucket_edges(rows: List[Dict], rng: np.random.Generator,
     return out
 
 
-def _rank_avg(a: np.ndarray) -> np.ndarray:
-    """Rang mit Mittelwert bei Ties (wie scipy.stats.rankdata(method='average')),
-    ohne scipy-Abhängigkeit — dieselbe Begründung wie in track_record.py: numpy
-    reicht. Vollständig vektorisiert (kein Python-Loop je Bootstrap-Iteration)."""
-    order = np.argsort(a, kind="mergesort")
-    raw = np.empty(len(a))
-    raw[order] = np.arange(1, len(a) + 1)
-    _, inv, counts = np.unique(a, return_inverse=True, return_counts=True)
-    sums = np.zeros(len(counts))
-    np.add.at(sums, inv, raw)
-    return (sums / counts)[inv]
-
-
 def _spearman(a: np.ndarray, b: np.ndarray) -> float:
-    ra, rb = _rank_avg(a), _rank_avg(b)
+    """Rangkorrelation über scripts.calibration_monitor._rankdata (reuse statt
+    Duplikat — dieselbe vektorisierte Durchschnittsrang-Funktion, die dort
+    schon für die AUC-Berechnung existiert)."""
+    from scripts.calibration_monitor import _rankdata
+
+    ra, rb = _rankdata(a), _rankdata(b)
     if ra.std() == 0 or rb.std() == 0:
         return float("nan")
     return float(np.corrcoef(ra, rb)[0, 1])

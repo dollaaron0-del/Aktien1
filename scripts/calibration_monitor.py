@@ -79,22 +79,18 @@ def brier_skill_score(ps: Sequence[float], ys: Sequence[int]) -> float:
 
 
 def _rankdata(a: np.ndarray) -> np.ndarray:
-    """Durchschnittsränge (Ties gemittelt) — ersetzt scipy.stats.rankdata."""
-    order = a.argsort(kind="mergesort")
-    ranks = np.empty(a.size, dtype=float)
-    ranks[order] = np.arange(1, a.size + 1)
-    # Ties auf Mittelwert setzen
-    sa = a[order]
-    i = 0
-    while i < sa.size:
-        j = i
-        while j + 1 < sa.size and sa[j + 1] == sa[i]:
-            j += 1
-        if j > i:
-            avg = (i + 1 + j + 1) / 2.0
-            ranks[order[i:j + 1]] = avg
-        i = j + 1
-    return ranks
+    """Durchschnittsränge (Ties gemittelt) — ersetzt scipy.stats.rankdata.
+
+    Vollständig vektorisiert (kein Python-Loop über Ties) — wichtig für
+    analyzers/sentiment_forward_study.py, das dies pro Bootstrap-Iteration
+    (Größenordnung 10.000+) aufruft; hier reuse statt Duplikat."""
+    order = np.argsort(a, kind="mergesort")
+    raw = np.empty(a.size, dtype=float)
+    raw[order] = np.arange(1, a.size + 1)
+    _, inv, counts = np.unique(a, return_inverse=True, return_counts=True)
+    sums = np.zeros(len(counts))
+    np.add.at(sums, inv, raw)
+    return (sums / counts)[inv]
 
 
 def auc(ps: Sequence[float], ys: Sequence[int]) -> float:

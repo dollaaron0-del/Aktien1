@@ -73,6 +73,16 @@ def render(ctx) -> None:
         _dec_entries = [e for e in _dlog_dash.get_day(_sel_day)
                         if (e.get("action") or "").upper() in _dec_filter]
         st.caption(f"{len(_dec_entries)} Entscheidungen am {_sel_day}")
+        # Geteilte Instanzen statt pro Zeile neu zu verbinden/konstruieren —
+        # st.expander-Bodies laufen bei JEDEM Rerun, auch eingeklappt.
+        _alog_shared = AnalysisLog()
+        try:
+            from analyzers.prompt_archive import PromptArchive
+            from analyzers.claude_analyzer import ClaudeAnalyzer
+            _parch_shared = PromptArchive()
+            _analyzer_shared = ClaudeAnalyzer()
+        except Exception:
+            _parch_shared = _analyzer_shared = None
         for _e in _dec_entries[:100]:
             _a = (_e.get("action") or "?").upper()
             _icon = _ACTION_ICON.get(_a, "•")
@@ -101,7 +111,7 @@ def render(ctx) -> None:
                 # Einträgen ab Einbau gefüllt (Alt-Zeilen: analysis_id NULL).
                 if _e.get("analysis_id"):
                     try:
-                        _lk = AnalysisLog().get_by_id(int(_e["analysis_id"]))
+                        _lk = _alog_shared.get_by_id(int(_e["analysis_id"]))
                     except Exception:
                         _lk = None
                     if _lk:
@@ -120,7 +130,11 @@ def render(ctx) -> None:
                         # Schwellen-Logik. Kein API-Call, kein Kostenrisiko.
                         try:
                             from analyzers.decision_replay import replay_analysis
-                            _replay = replay_analysis(int(_e["analysis_id"]))
+                            _replay = replay_analysis(int(_e["analysis_id"]),
+                                                      analysis_log=_alog_shared,
+                                                      prompt_archive=_parch_shared,
+                                                      analyzer=_analyzer_shared,
+                                                      _original=_lk)
                         except Exception:
                             _replay = None
                         if _replay:
