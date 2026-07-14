@@ -27,6 +27,7 @@ from typing import Dict, List, Optional, Tuple
 from collectors.price_cache import get_price as _cached_price, get_prices as _cached_prices
 from logger import get_logger
 from broker.order_result import OrderResult
+from broker.order_log import log_order
 
 log = get_logger(__name__)
 
@@ -146,6 +147,7 @@ class PaperBroker:
 
     # ── Aktien-Orders ──────────────────────────────────────────────────────────
 
+    @log_order("BUY")
     def buy(self, ticker: str, shares: float, price: float,
             stop_loss: Optional[float] = None, take_profit: Optional[float] = None) -> Dict:
         # stop_loss/take_profit: Signatur-Kompatibilität zum IBKR-Broker
@@ -161,6 +163,7 @@ class PaperBroker:
             },
         )
 
+    @log_order("SELL")
     def sell(self, ticker: str, shares: float, price: float) -> Dict:
         fill_price, slippage, commission = self._calc_slippage(ticker, price, shares, "SELL")
         self._track_costs(slippage, commission)
@@ -183,6 +186,7 @@ class PaperBroker:
             price = _cached_price(symbol)
         return price
 
+    @log_order("BUY")
     def buy_crypto(self, symbol: str, usd_amount: float) -> Dict:
         price = self.get_crypto_price(symbol) or 1.0
         qty   = round(usd_amount / price, 6)
@@ -201,6 +205,7 @@ class PaperBroker:
             },
         )
 
+    @log_order("SELL")
     def sell_crypto(self, symbol: str, qty: float) -> Dict:
         price = self.get_crypto_price(symbol) or 1.0
         fill_price = price * (1.0 - _SPREAD_STANDARD * 2 - _COMMISSION_PCT)

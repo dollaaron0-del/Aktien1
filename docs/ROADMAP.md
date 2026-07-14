@@ -184,8 +184,25 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       sie als kleine Liste unter dem Aktivitätsfeed. 7 neue Tests
       (test_live_status.py), Suite 855 grün, Dashboard headless
       durchgerendert (AppTest, keine Exceptions, Zeitleiste im Baum
-      gefunden). Wirkt live erst bei laufendem Bot. Offen: (f) Order-
-      Lifecycle-Ansicht, (g) Telegram /status-Befehl.
+      gefunden). Wirkt live erst bei laufendem Bot. (f) FERTIG 14.7.:
+      Order-Lifecycle-Ansicht — broker/order_log.py (data/order_log.db):
+      log_order()-Decorator liegt EINMAL außen um buy()/sell()/buy_crypto()/
+      sell_crypto() in PaperBroker UND IBKRBroker, statt an jedem Aufrufer
+      (TradeExecutor, HedgeStrategy, ShortStrategy, EarningsStrategy) oder
+      jedem einzelnen internen return-Pfad (IBKR hat mehrere Fehler-Returns
+      pro Methode) anzusetzen — sieht dadurch jedes Ergebnis unabhängig vom
+      intern gewählten Pfad, ohne die Methodenkörper selbst anzufassen
+      (geringeres Risiko in echtem Handelscode). Fail-open: ein Logging-Fehler
+      darf eine Order nie verhindern oder verändern (Decorator fängt
+      Log-Exceptions separat vom eigentlichen Order-Ergebnis ab). Dashboard-
+      Tab "Live" zeigt die letzten 30 Orders (Aktion/Status-Icons, Titel,
+      Modus, Fill-Menge/-Preis bzw. Fehlergrund, Teilausführungs-Hinweis).
+      11 Tests (test_order_log.py, u.a. Decorator bewahrt Signatur-
+      Introspektion für executor._broker_accepts_stop() UND ist fail-open bei
+      kaputtem Log-Backend; PaperBroker-Verkabelung real getestet), Suite
+      weiterhin grün. Dashboard headless verifiziert (AppTest gegen isolierte
+      Temp-DB: gefüllte + Fehler-/Teilausführungs-Fälle rendern ohne
+      Exception). Offen: (g) Telegram /status-Befehl.
 - [x] **1.6 Versions-Stempel in Entscheidungslogs** — fertig 11.7.
       `analyzers/version_stamp.py`: Git-Hash (kurz) + kuratierter
       Config-Schnappschuss (Whitelist entscheidungsrelevanter Werte +

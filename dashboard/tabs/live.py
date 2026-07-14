@@ -107,3 +107,42 @@ def render(ctx) -> None:
     else:
         st.caption("Keine aktiven systemd-Timer gefunden (oder Abfrage nicht "
                    "möglich) — Timer sind bei pausiertem Bot disabled.")
+
+    st.divider()
+
+    # ── Order-Historie (Roadmap 1.5f) ───────────────────────────────────────
+    st.subheader("📋 Order-Historie")
+    st.caption(
+        "Jede BUY/SELL-Order von Paper-/IBKR-Broker, protokolliert direkt am "
+        "Rückgabewert (unabhängig vom internen Return-Pfad)."
+    )
+    _ORDER_ACTION_ICON = {"BUY": "🟢", "SELL": "🔴"}
+    _ORDER_STATUS_ICON = {"filled": "✅", "error": "⚠️", "cancelled": "🚫"}
+    try:
+        from broker.order_log import get_order_log
+        _orders = get_order_log().recent(limit=30)
+    except Exception:
+        _orders = []
+    if _orders:
+        for _o in _orders:
+            _aicon = _ORDER_ACTION_ICON.get(_o.get("action"), "•")
+            _sicon = _ORDER_STATUS_ICON.get(_o.get("status"), "")
+            _ts = (_o.get("ts") or "")[:16].replace("T", " ")
+            _tk = ctx.ticker_label(_o["ticker"]) if _o.get("ticker") else "?"
+            _shares, _price = _o.get("shares"), _o.get("fill_price")
+            if _o.get("status") == "filled" and isinstance(_shares, (int, float)) \
+                    and isinstance(_price, (int, float)):
+                _detail = f"{_shares:g} Stk. @ {_price:.2f}"
+                if _o.get("partial"):
+                    _detail += " (Teilausführung)"
+            else:
+                _detail = _o.get("reason") or ""
+            st.markdown(
+                f"{_aicon}{_sicon} `{_ts}` **{_tk}** {_o.get('action')} "
+                f"· {_o.get('mode') or '?'} — {_detail}"
+            )
+    else:
+        st.caption(
+            "Noch keine Orders protokolliert — füllt sich mit dem nächsten "
+            "Trade."
+        )

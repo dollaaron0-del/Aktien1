@@ -33,6 +33,7 @@ from typing import Dict, List, Optional
 
 from logger import get_logger
 from broker.order_result import OrderResult
+from broker.order_log import log_order
 
 
 def _synchronized(method):
@@ -535,6 +536,7 @@ class IBKRBroker:
             reason=f"Fill-Timeout nach {_ORDER_TIMEOUT}s – Order gecancelt",
         )
 
+    @log_order("BUY")
     @_synchronized
     def buy(self, ticker: str, shares: float, price: float,
             limit: bool = False, stop_loss: Optional[float] = None,
@@ -565,6 +567,7 @@ class IBKRBroker:
             log.exception("IBKR buy %s: %s", ticker, e)
             return OrderResult.error(reason=str(e), mode="ibkr")
 
+    @log_order("SELL")
     @_synchronized
     def sell(self, ticker: str, shares: float, price: float) -> Dict:
         if not self._ensure_connected():
@@ -705,6 +708,7 @@ class IBKRBroker:
                 result[ticker] = False
         return result
 
+    @log_order("BUY")
     @_synchronized
     def buy_crypto(self, symbol: str, usd_amount: float) -> Dict:
         if not self._ensure_connected():
@@ -725,6 +729,7 @@ class IBKRBroker:
             log.exception("IBKR buy_crypto %s: %s", symbol, e)
             return OrderResult.error(reason=str(e), mode="ibkr")
 
+    @log_order("SELL")
     @_synchronized
     def sell_crypto(self, symbol: str, qty: float) -> Dict:
         if not self._ensure_connected():
