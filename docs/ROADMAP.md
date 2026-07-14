@@ -554,8 +554,32 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       3 State-schwere Einzeljobs (Circuit-Breaker-Monitor, Resource-Check,
       Regime-Check) + reiner Setup-Code — bewusst nicht mehr angefasst,
       kein akuter Bedarf. Suite durchgehend grün (740→822).
-- [ ] **4.5 Entscheidungs-Replay** — baut auf 1.4d Prompt-Archiv. Vergangenen
-      Zyklus deterministisch aus archivierten Eingangsdaten nachspielen.
+- [x] **4.5 Entscheidungs-Replay** — FERTIG 14.7. `analyzers/decision_replay.py`.
+      Bewusst NICHT der Claude-Aufruf selbst (nicht deterministisch, würde
+      erneut kosten), sondern der archivierte ECHTE Antworttext (1.4d) durch
+      die AKTUELLE Parsing-/Schwellen-Logik (ClaudeAnalyzer._parse_response/
+      _enforce_buy_floor) gejagt und mit der damals tatsächlich geloggten
+      Empfehlung verglichen — beantwortet "würde der heutige Code aus
+      derselben KI-Antwort dieselbe Entscheidung ableiten?", z.B. um eine
+      buy_threshold- oder Buy-Boden-Änderung gegen echte historische
+      KI-Antworten zu prüfen, ohne die API erneut zu bezahlen. Zwei archivierte
+      Antwort-Schemata (Standard-Analyse vs. These-Check offener Positionen)
+      werden am charakteristischen Prompt-Text erkannt statt am Modellnamen
+      (robuster). `replay_analysis(analysis_id)` für einen Einzelfall,
+      `replay_recent(limit)` für einen Batch-Drift-Report; beide injizierbar
+      (Tests/Batch-Aufrufer teilen sich eine DB-Verbindung). CLI
+      `scripts/decision_replay.py --analysis-id/--recent`. Dashboard-Tab
+      "Entscheidungen" zeigt bei verketteter Analyse jetzt live, ob ein Replay
+      mit aktuellem Code abweicht (Warnung) oder identisch bleibt (Caption) —
+      headless per AppTest gegen isolierte Temp-DBs verifiziert (Drift-Fall
+      + identischer Fall, keine Exceptions). `PromptArchive.recent()` neu
+      ergänzt als Basis fürs Batch-Replay. 16 neue Tests
+      (test_decision_replay.py), Suite 882 grün. Bewusst nicht angegangen:
+      Replay der VOLLEN Strategie-Entscheidung (swing_strategy.evaluate())
+      bräuchte zusätzlich den live-Marktpreis/Portfolio-Zustand zum
+      Entscheidungszeitpunkt, der nicht archiviert ist — Scope bleibt ehrlich
+      auf der KI-Analyse-Schicht, die vollständig archiviert und damit
+      wirklich deterministisch reproduzierbar ist.
 
 ## Block 5 — Breite (erst nach 2–4)
 

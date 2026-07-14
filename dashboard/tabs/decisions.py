@@ -114,6 +114,27 @@ def render(ctx) -> None:
                             st.caption(_lk["entry_rationale"])
                         ctx.render_sources_breakdown(_lk.get("sources_breakdown"),
                                                      total=_lk.get("sources_used"))
+                        # Entscheidungs-Replay (Roadmap 4.5): spielt die
+                        # archivierte KI-Antwort (falls vorhanden – nur echte
+                        # Claude-Aufrufe, 1.4d) durch die AKTUELLE Parsing-/
+                        # Schwellen-Logik. Kein API-Call, kein Kostenrisiko.
+                        try:
+                            from analyzers.decision_replay import replay_analysis
+                            _replay = replay_analysis(int(_e["analysis_id"]))
+                        except Exception:
+                            _replay = None
+                        if _replay:
+                            if _replay["changed"]:
+                                st.warning(
+                                    f"🔁 Replay mit aktuellem Code weicht ab: "
+                                    f"damals **{_replay['original'].get('recommendation')}**, "
+                                    f"heute **{_replay['replayed'].get('recommendation')}** "
+                                    f"({', '.join(_replay['changed_fields'])})"
+                                )
+                            else:
+                                st.caption(
+                                    "🔁 Replay mit aktuellem Code: identisches Ergebnis"
+                                )
                     else:
                         st.caption(f"Zugehörige Analyse #{_e['analysis_id']} "
                                    "nicht (mehr) im Analyse-Log gefunden.")

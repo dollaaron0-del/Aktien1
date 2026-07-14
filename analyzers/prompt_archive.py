@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "prompt_archive.db")
 
@@ -74,3 +74,15 @@ class PromptArchive:
             return dict(row) if row else None
         except Exception:
             return None
+
+    def recent(self, limit: int = 200) -> List[Dict]:
+        """Jüngste archivierte Prompts (id absteigend) – Basis für das
+        Batch-Replay (Roadmap 4.5), das den Drift über viele vergangene
+        Entscheidungen statt nur einer einzelnen prüft."""
+        try:
+            rows = self._conn.execute(
+                "SELECT * FROM prompts ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
