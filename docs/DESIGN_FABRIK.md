@@ -101,35 +101,32 @@ Fokus-Navigation über `st.query_params["factory"]`.
 
 ## W1 — Hallen-Skelett
 
-- [ ] **W1.1 Paket + Datenmodell** — `dashboard/factory/` mit `state.py`:
-      Dataclasses wie oben, `read_state()` mit ALLEN elf Lesern (jeder
-      try/except → `MachineState(..., status="off", tooltip=["keine Daten"])`),
-      `paused` aus `system.bot_control.is_paused()`. NEU
-      `tests/test_dashboard_factory.py`: (a) `read_state()` liefert alle elf
-      IDs, (b) mit kaputtgepatchten Lesern (monkeypatch wirft) kommt trotzdem
-      ein vollständiger State (alles off, keine Exception), (c) zwei
-      Leser-Detailtests gegen Temp-DBs (conveyor über DECISION_LOG_PATH-ENV,
-      warehouse über gepatchtes PORTFOLIO_DB — Muster: `tests/conftest.py`).
-      Fertig wenn: Tests grün. (Noch keine UI — Verifikation optional.)
-- [ ] **W1.2 SVG-Bausteine** — `machines.py`: `machine_box(m: MachineState,
-      x, y, w, h) -> str` (Skelett-Form, Label escaped, LED-Farbe nach
-      Status) + `scene.py`: `build_scene_svg(state)` setzt alle Maschinen
-      nach LAYOUT, Hallen-Rahmen + Boden, `<style>`-Block im SVG (Klassen
-      `fx-led`, `fx-label`). Tests: SVG enthält alle elf Labels, `<script>`
-      in einem Label kommt escaped raus, leerer State (alles off) rendert.
-      Fertig wenn: Tests grün.
-- [ ] **W1.3 Tab einbauen** — `dashboard/tabs/factory.py` (`def render(ctx)`:
-      Überschrift, `st.markdown(build_scene_svg(read_state()),
-      unsafe_allow_html=True)` im `@st.fragment(run_every="60s")`);
-      `app.py`: Tab „🏭 Fabrik" ans Ende der Liste + `with tab_factory:`-Block
-      nach Muster der anderen Tabs. Fertig wenn: beide Verifikations-Läufe
-      OK (pixel+plain — die Fabrik rendert in BEIDEN Modi, sie hängt nur an
-      PALETTE-Konstanten, nicht an `is_enabled()`).
-- [ ] **W1.4 Legende + Pausiert-Banner** — unter der Szene: Legende
-      (LED-Farben→Bedeutung) als Caption; wenn `state.paused`: deutliches
-      `.px-panel`-Banner „⏸ Werk pausiert — Anzeige zeigt letzten bekannten
-      Zustand". Fertig wenn: Verifikation OK; AppTest findet das Banner
-      (Bot ist aktuell pausiert → deterministisch sichtbar).
+- [x] **W1.1 Paket + Datenmodell** — `dashboard/factory/state.py`:
+      `MachineState`/`FactoryState`, `read_state()` mit allen elf Lesern
+      (jeder einzeln fail-open zu `status="off"`, plus ein äußeres try/except
+      in `read_state()` selbst als zweite Sicherheitsnetz-Schicht),
+      `paused` aus `system.bot_control.is_paused()`. Detail-Leser gegen
+      echte (isolierte) Datenquellen getestet: `conveyor` über den echten
+      `DecisionLog()`-Pfad, `warehouse` über die bestehende
+      `fresh_portfolio`-Fixture, `weather` über einen patchbaren
+      `_REGIME_FILE`-Modulkonstante (Analog zu `_BACKUPS_DIR`), `gate` gegen
+      einen echten unerreichbaren Port.
+- [x] **W1.2 SVG-Bausteine** — `machines.py::machine_box()` (Skelett-Box,
+      Status-LED, `<title>`-Tooltip aus `MachineState.tooltip`, alles
+      escaped) + `scene.py::build_scene_svg()` (festes `LAYOUT`-Dict,
+      Hallen-Rahmen + Boden). `dashboard/factory/__init__.py` exportiert
+      `render_scene()` als Bequemlichkeits-Helfer.
+- [x] **W1.3 Tab einbauen** — `dashboard/tabs/factory.py` (Tab „🏭 Fabrik"
+      ans Ende von `app.py`s `st.tabs()`-Liste), Szene in einem
+      `@st.fragment(run_every="60s")`-Block. Rendert bewusst in BEIDEN
+      Theme-Modi (hängt nur an `theme.PALETTE`, nicht an `is_enabled()` —
+      die Fabrik ist Teil des Pixel-Zielbilds selbst, kein optionaler
+      Zusatz). Verifikation pixel+plain OK.
+- [x] **W1.4 Legende + Pausiert-Banner** — Farb-Legende als Caption unter
+      der Szene, `.px-panel`-Banner bei `state.paused` (Bot ist aktuell
+      pausiert → im Test deterministisch sichtbar UND live im Dashboard
+      sichtbar). 25 neue Tests (`test_dashboard_factory.py` +
+      `test_dashboard_factory_tab.py`), Verifikation pixel+plain OK.
 
 ## W2 — Leben (zustandsgetriebene Animation)
 
