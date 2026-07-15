@@ -204,8 +204,27 @@ h1 {{
 .px-belt-anim {{
     animation: px-belt-scroll 0.8s linear infinite;
 }}
+
+/* Vision W2.1: Fabrik-Szene (dashboard/factory/) — zustandsgetriebene
+   Aktivitäts-Animationen. fx-belt-run teilt sich das Keyframe mit
+   .px-belt-anim (dieselbe Optik, andere Stelle); fx-blink teilt sich
+   px-blink mit den bestehenden LED-Punkten. */
+.fx-belt-run {{
+    animation: px-belt-scroll 0.8s linear infinite;
+}}
+.fx-blink {{
+    animation: px-blink 1.2s infinite;
+}}
+@keyframes fx-smoke-rise {{
+    0%   {{ transform: translateY(0);    opacity: 0.5; }}
+    100% {{ transform: translateY(-20px); opacity: 0; }}
+}}
+.fx-smoke {{
+    animation: fx-smoke-rise 2s ease-out infinite;
+}}
+
 @media (prefers-reduced-motion: reduce) {{
-    .px-belt-anim {{ animation: none; }}
+    .px-belt-anim, .fx-belt-run, .fx-blink, .fx-smoke {{ animation: none; }}
     .px-led--warn::before, .px-led--err::before {{ animation: none; }}
 }}
 

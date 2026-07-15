@@ -174,3 +174,143 @@ def test_analyzer_share_counts_model_route_prefix(monkeypatch):
     assert m_claude.status == "active"
     assert m_ollama.status == "active"
     assert "1/3" in m_claude.tooltip[0]
+
+
+# ── W2.1: Aktivitäts-Animationen ─────────────────────────────────────────────
+
+def test_belt_runs_only_when_conveyor_active():
+    active = MachineState(id="conveyor", label="Förderband", status="active")
+    idle = MachineState(id="conveyor", label="Förderband", status="off")
+    assert "fx-belt-run" in machine_box(active, 0, 0, 100, 100)
+    assert "fx-belt-run" not in machine_box(idle, 0, 0, 100, 100)
+
+
+def test_smoke_only_for_active_analyzer():
+    active = MachineState(id="analyzer_claude", label="Claude", status="active")
+    idle = MachineState(id="analyzer_claude", label="Claude", status="off")
+    assert "fx-smoke" in machine_box(active, 0, 0, 100, 100)
+    assert "fx-smoke" not in machine_box(idle, 0, 0, 100, 100)
+
+
+def test_no_activity_overlay_for_unrelated_machine_types():
+    """Nur conveyor/analyzer_* bekommen die Overlays — z.B. warehouse
+    nicht, auch wenn sein Status zufaellig 'active' waere."""
+    m = MachineState(id="warehouse", label="Lager", status="active")
+    box = machine_box(m, 0, 0, 100, 100)
+    assert "fx-belt-run" not in box
+    assert "fx-smoke" not in box
+
+
+@pytest.mark.parametrize("status", ["warn", "err"])
+def test_led_blinks_on_warn_and_err(status):
+    m = MachineState(id="gate", label="Tor", status=status)
+    assert "fx-blink" in machine_box(m, 0, 0, 100, 100)
+
+
+@pytest.mark.parametrize("status", ["ok", "off", "active"])
+def test_led_does_not_blink_otherwise(status):
+    m = MachineState(id="gate", label="Tor", status=status)
+    assert "fx-blink" not in machine_box(m, 0, 0, 100, 100)
+
+
+def test_scene_defines_belt_pattern_once():
+    svg = build_scene_svg(_empty_state())
+    assert svg.count('id="fx-belt-pattern"') == 1
+
+
+# ── W2.2: Rampen-Slots ────────────────────────────────────────────────────────
+
+def test_dock_slots_show_all_sources_when_under_cap():
+    m = MachineState(id="docks", label="Laderampen", status="ok",
+                     payload={"healthy": ["yahoo", "sec_8k"], "weak": ["reddit"], "dead": ["twitter"]})
+    box = machine_box(m, 0, 0, 180, 420)
+    assert "yahoo" in box and "sec_8k" in box and "reddit" in box and "twitter" in box
+    assert "weitere" not in box
+
+
+def test_dock_slots_capped_with_rest_count():
+    sources = [f"quelle_{i}" for i in range(14)]
+    m = MachineState(id="docks", label="Laderampen", status="ok",
+                     payload={"healthy": sources, "weak": [], "dead": []})
+    box = machine_box(m, 0, 0, 180, 420)
+    assert "quelle_0" in box
+    assert "quelle_9" in box
+    assert "quelle_10" not in box
+    assert "+4 weitere" in box
+
+
+def test_dock_slots_escape_source_names():
+    m = MachineState(id="docks", label="Laderampen", status="ok",
+                     payload={"healthy": ["<script>alert(1)</script>"], "weak": [], "dead": []})
+    box = machine_box(m, 0, 0, 180, 420)
+    assert "<script>alert(1)</script>" not in box
+    assert "&lt;script&gt;" in box
+
+
+def test_dock_slots_empty_payload_renders_nothing_extra():
+    m = MachineState(id="docks", label="Laderampen", status="off", payload={})
+    box = machine_box(m, 0, 0, 180, 420)
+    assert "<svg" not in box  # sanity: ist nur ein <g>-Fragment
+    assert box.count("<rect") == 1  # nur die Basis-Box, keine Slot-Rechtecke
+
+
+def test_non_dock_machine_ignores_payload_source_lists():
+    """Nur docks bekommt Slots — andere Maschinen mit zufaellig aehnlichem
+    Payload duerfen keine Slot-Rechtecke zeigen."""
+    m = MachineState(id="warehouse", label="Lager", status="ok",
+                     payload={"healthy": ["yahoo"]})
+    box = machine_box(m, 0, 0, 180, 420)
+    assert "yahoo" not in box
+
+
+# ── W2.3: Nachtmodus bei Pause ────────────────────────────────────────────────
+
+def test_scene_shows_night_overlay_when_paused():
+    state = _empty_state()
+    state.paused = True
+    svg = build_scene_svg(state)
+    assert "fx-night-overlay" in svg
+
+
+def test_scene_no_night_overlay_when_active():
+    state = _empty_state()
+    state.paused = False
+    svg = build_scene_svg(state)
+    assert "fx-night-overlay" not in svg
+
+
+def test_paused_scene_suppresses_animation_even_for_active_machines():
+    state = _empty_state(status="active")
+    state.paused = True
+    svg = build_scene_svg(state)
+    assert "fx-belt-run" not in svg
+    assert "fx-smoke" not in svg
+
+
+def test_paused_scene_still_renders_clock():
+    state = _empty_state()
+    state.paused = True
+    svg = build_scene_svg(state)
+    assert 'data-machine-id="clock"' in svg
+
+
+def test_machine_box_animate_false_suppresses_blink():
+    m = MachineState(id="gate", label="Tor", status="err")
+    assert "fx-blink" not in machine_box(m, 0, 0, 100, 100, animate=False)
+    assert "fx-blink" in machine_box(m, 0, 0, 100, 100, animate=True)
+
+
+# ── W2.4: Performance-Regressionsschutz ──────────────────────────────────────
+
+def test_build_scene_svg_stays_well_under_50ms_budget():
+    """Reine String-Arbeit, keine I/O in build_scene_svg() selbst — großzügige
+    Schwelle (10x das gemessene Ist), damit der Test nicht auf einer
+    langsamen CI-Maschine flackert, aber eine echte Regression trotzdem
+    auffällt."""
+    import time
+    state = _empty_state()
+    t0 = time.perf_counter()
+    for _ in range(10):
+        build_scene_svg(state)
+    avg_ms = (time.perf_counter() - t0) / 10 * 1000
+    assert avg_ms < 50

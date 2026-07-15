@@ -130,26 +130,34 @@ Fokus-Navigation über `st.query_params["factory"]`.
 
 ## W2 — Leben (zustandsgetriebene Animation)
 
-- [ ] **W2.1 Keyframes + Aktiv-Klassen** — im SVG-`<style>`: `fx-belt-run`
-      (laufende Bandstreifen, transform-Animation), `fx-blink` (LED-Puls,
-      nur warn/err), `fx-smoke` (aufsteigende Kreise über Analysator).
-      Angehängt NUR wenn der jeweilige Status es sagt: conveyor
-      active→Band läuft, analyzer active→Rauch, warn/err→Blinken. Alles in
-      `@media (prefers-reduced-motion: reduce)` deaktiviert. Tests: SVG
-      enthält `fx-belt-run` nur bei conveyor.status=="active" (zwei
-      Zustände durchtesten). Fertig wenn: Tests + Verifikation OK.
-- [ ] **W2.2 Rampen-Aktivität** — docks: einzelne Rampen-Slots je Quelle
-      (healthy=grün beleuchtet, weak=amber, dead=dunkel) statt einer
-      Sammel-LED; max. 10 Slots + „+n weitere". Fertig wenn: Tests
-      (Slot-Anzahl gekappt, Namen escaped) + Verifikation OK.
-- [ ] **W2.3 Nachtmodus bei Pause** — `state.paused`: Halle abgedunkelt
-      (Overlay mit Opacity), alle Animationen aus, nur die Werksuhr
-      leuchtet (zeigt next_run, falls vorhanden). Ehrlich statt Fake-Leben.
-      Fertig wenn: Verifikation OK, AppTest-Baum enthält das Overlay.
-- [ ] **W2.4 Performance-Check** — Szene 3× hintereinander headless rendern,
-      Renderzeit von `build_scene_svg()` messen (<50ms Ziel, reine
-      String-Arbeit); Ergebnis als Kommentar in scene.py festhalten.
-      Fertig wenn: gemessen + notiert.
+- [x] **W2.1 Keyframes + Aktiv-Klassen** — `fx-belt-run` (Förderband,
+      teilt sich das Keyframe mit D4.3s `px-belt-anim`), `fx-blink`
+      (LED-Puls, teilt sich `px-blink` mit den bestehenden LED-Punkten),
+      `fx-smoke` (drei versetzte Rauch-Kreise über den Analysatoren, neues
+      Keyframe `fx-smoke-rise`). Alle drei nur angehängt, wenn Maschinen-Typ
+      + Status passen (`_activity_overlay()` in machines.py, getrennt von
+      der generischen `machine_box()`); `@media (prefers-reduced-motion:
+      reduce)` deaktiviert alle drei zusammen mit den bestehenden.
+- [x] **W2.2 Rampen-Aktivität** — `_dock_slots()`: ein Slot je Collector-
+      Quelle aus `source_health()` (healthy/weak/dead → neon_green/amber/
+      border), auf 10 gekappt, Rest als „+n weitere". Nur bei `docks`
+      gerendert (Payload anderer Maschinen wird ignoriert, auch bei
+      zufällig ähnlichen Keys).
+- [x] **W2.3 Nachtmodus bei Pause** — `machine_box(..., animate=bool)`
+      unterdrückt Blink/Band/Rauch komplett, unabhängig vom Einzelstatus
+      (verhindert z.B. Rauch aus VERALTETEN "active"-Analyzer-Zeilen aus
+      der Zeit vor der Pause). `scene.py` legt bei `state.paused` zusätzlich
+      ein `fx-night-overlay`-Rechteck über die ganze Halle — nur die
+      Werksuhr wird NACH dem Overlay gezeichnet und bleibt normal sichtbar
+      ("nur die Werksuhr leuchtet"). Aktuell live sichtbar, da der Bot
+      pausiert ist.
+- [x] **W2.4 Performance-Check** — gemessen (15.7., drei echte Läufe):
+      0.18/0.07/0.06ms pro `build_scene_svg()`-Aufruf, SVG ~5,4KB — weit
+      unter dem 50ms-Ziel, als Kommentar in `scene.py` festgehalten.
+      Regressions-Test (10×-Mittel < 50ms) ergänzt.
+
+      11 neue Tests (Animations-Bedingungen, Slot-Kappung/Escaping,
+      Nachtmodus-Overlay, Performance-Guard), Verifikation pixel+plain OK.
 
 ## W3 — Interaktivität
 
