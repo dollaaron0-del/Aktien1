@@ -236,6 +236,32 @@ def _render_archive() -> None:
         _render_replay_terminal(day.isoformat(), chosen_ts)
 
 
+def _render_logbook() -> None:
+    """H7.3: Schichtbuch — auf Wunsch (Button-Klick, kein automatisches
+    Schreiben beim bloßen Rendern) fasst `dashboard.logbook.write_entry()`
+    die echten Feed-Ereignisse eines Tages zusammen. Fail-open: ein
+    Lesefehler zeigt nur den Leerzustand statt zu crashen."""
+    with st.expander("📖 Schichtbuch"):
+        from dashboard.logbook import read_entry, write_entry
+        day = st.date_input("Tag", value=date.today(), key="logbook_day")
+        day_str = day.isoformat()
+        try:
+            entry = read_entry(day_str)
+        except Exception:
+            entry = None
+
+        if entry is not None:
+            st.markdown(entry.get("text") or "")
+        else:
+            st.caption("Noch kein Schichtbuch-Eintrag für diesen Tag.")
+            if st.button("Eintrag erzeugen", key="logbook_generate"):
+                try:
+                    write_entry(day_str)
+                except Exception:
+                    pass
+                st.rerun()
+
+
 def render(ctx) -> None:
     st.subheader("🏭 Fabrik")
     st.caption(
@@ -274,3 +300,4 @@ def render(ctx) -> None:
 
     _scene()
     _render_archive()
+    _render_logbook()

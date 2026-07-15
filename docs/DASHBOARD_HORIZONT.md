@@ -645,22 +645,41 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
          fail-open offen statt Crash.
       5. [ ] → SA
 
-- [ ] **H7.3 Schichtbuch** (M) 🟡
-      1. [ ] `dashboard/logbook.py`: `def write_entry(day: str) -> str` —
+- [x] **H7.3 Schichtbuch** (M) 🟡
+      1. [x] `dashboard/logbook.py`: `def write_entry(day: str) -> str` —
          Feed-Events des Tages zusammenfassen. Erst der ehrliche
          Fallback OHNE LLM: aus den Events einen 3-Satz-Text nach festen
          Regeln bauen („{n} Analysen, {m} Trades. {Besonderheit}.").
          Ablage `data/logbook.jsonl` (einmal je Tag).
-      2. [ ] OPTIONAL dahinter (🟡): wenn der lokale Ollama erreichbar
+      2. [x] OPTIONAL dahinter (🟡): wenn der lokale Ollama erreichbar
          ist (bestehenden Client aus dem Projekt verwenden, NIEMALS
          Claude-API — Kostenregel!), den Regel-Text durch eine schönere
          3-Satz-Prosa ersetzen; Ollama down → Regel-Text bleibt. Timeout
          kurz (5s), fail-open.
-      3. [ ] Anzeige: „📖 Schichtbuch" als blätterbarer Expander
+      3. [x] Anzeige: „📖 Schichtbuch" als blätterbarer Expander
          (Datums-Selectbox) im Fabrik- oder Live-Tab.
-      4. [ ] Tests: Regel-Text aus präparierten Events; Einmal-je-Tag-
+      4. [x] Tests: Regel-Text aus präparierten Events; Einmal-je-Tag-
          Logik; Ollama-Zweig gemockt (down → Fallback).
-      5. [ ] → SA
+      5. [x] → SA
+
+      Umgesetzt 15.7.2026: `write_entry()` liest die Feed-Ereignisse des
+      Tages über dieselbe H2.3-Lesefunktion (`read_feed_events_until`),
+      baut den Regel-Text („N Analysen, M Trade(s). Bewegt: … / Ruhiger
+      Tag ohne Trades. K× durch ein Gate blockiert."), und ersetzt ihn
+      optional durch eine Ollama-Prosa-Version (`config.ollama_model`
+      wiederverwendet statt hartkodiert, roher `requests.post` gegen
+      `localhost:11434/api/generate` nach dem Muster aus
+      `analyzers/ollama_prescreener.py` — NIE Claude, 5s-Timeout,
+      fail-open). Persistenz als JSONL, ein Eintrag je Tag (überschreibt
+      statt zu duplizieren). Einbau im Fabrik-Tab als „📖 Schichtbuch"-
+      Expander mit Datums-Auswahl + „Eintrag erzeugen"-Knopf — bewusst
+      KEIN automatisches Schreiben beim bloßen Öffnen/Rendern, nur auf
+      expliziten Klick (schont auch versehentliche Doppel-Aufrufe beim
+      60s-Auto-Refresh der Fabrik-Szene). Vorsorglich (nicht erst nach
+      einem Datenleck) neue autouse-Fixture `_isolate_logbook` in
+      `conftest.py`. 16 neue Tests; Verifikation in allen Kombinationen
+      (pixel/plain/blueprint × normal/kiosk) je 0 Exceptions, bestätigt
+      keine Datei in `data/` ohne expliziten Klick.
 
 ---
 

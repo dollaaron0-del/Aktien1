@@ -66,6 +66,18 @@ def _isolate_position_notes(tmp_path, monkeypatch):
     monkeypatch.setattr(pn_mod, "_DB_PATH", str(tmp_path / "position_notes_test.db"))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_logbook(tmp_path, monkeypatch):
+    """Schichtbuch (H7.3, dashboard/logbook.py) IMMER in eine Temp-Datei
+    umlenken — vorsorglich (Muster: _isolate_factory_history/
+    _isolate_position_notes, jeweils erst nach einem echten Daten-Leak
+    gefunden). write_entry() wird zwar nur per Button-Klick ausgelöst,
+    nicht beim bloßen Rendern, aber ein AppTest-Klick in einem künftigen
+    Test soll trotzdem nie in die echte data/logbook.jsonl schreiben."""
+    import dashboard.logbook as lb_mod
+    monkeypatch.setattr(lb_mod, "LOGBOOK_FILE", str(tmp_path / "logbook_test.jsonl"))
+
+
 @pytest.fixture()
 def tmp_data_dir(tmp_path, monkeypatch):
     """
