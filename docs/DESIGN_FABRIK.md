@@ -233,11 +233,25 @@ Fokus-Navigation über `st.query_params["factory"]`.
 
 ## W5 — Pixel-Art-Ausbau (parallel zu W4 möglich)
 
-- [ ] **W5.1 Asset-Slots** — `machines.py`: liegt
+- [x] **W5.1 Asset-Slots** — `machines.py`: liegt
       `dashboard/assets/img/factory_<id>.png` vor (via `theme.image_b64`),
       wird das PNG statt der Skelett-Form gerendert (SVG `<image>`,
       LED/Tooltip/Link bleiben identisch drumherum). Fallback = Skelett.
       Test: mit und ohne Datei. Fertig wenn: Tests + Verifikation OK.
+
+      Umgesetzt 15.7.2026: `machine_box()` prüft vor dem Skelett-Rechteck
+      `theme.image_b64(f"factory_{m.id}.png")` — liefert das einen
+      Data-URI, wird ein `<image href="..." preserveAspectRatio="xMidYMid
+      slice">` an derselben Position/Größe gerendert; ist die Datei
+      abwesend (`image_b64` liefert `""`), bleibt exakt das bisherige
+      Skelett-Rechteck. LED, Tooltip, Klick-Link (`?factory=<id>`) und
+      Activity-Overlay hängen unverändert am `<g>`-Wrapper drumherum, pro
+      Maschine unabhängig (ein Asset für z.B. `gate` ersetzt nur dessen
+      eigene Box, alle anderen bleiben Skelett bis ihr PNG kommt). 3 neue
+      Tests (`test_machine_box_uses_skeleton_rect_without_asset_file`,
+      `test_machine_box_uses_image_when_asset_file_present`,
+      `test_machine_box_only_uses_asset_for_matching_machine_id`),
+      Verifikation pixel+plain OK.
 - [ ] **W5.2 [USER] Assets je Maschine** — mit dem Stil-Prompt vom 13.7.,
       eine Maschine pro Etappe generieren/auswählen, Ablage als
       `factory_<id>.png`. > Kann NICHT vom Modell erledigt werden.

@@ -1,9 +1,13 @@
 """
 dashboard/factory/machines.py — SVG-Bausteine je Maschine (Vision W1.2).
 
-Skelett-Formen (Rechteck + Status-LED + Label) — W5 ersetzt diese später
-Stück für Stück durch echte Pixel-Art-Assets (`theme.image_b64`), ohne dass
-sich am Aufrufer (scene.py) oder der LED/Tooltip-Logik etwas ändert.
+Skelett-Formen (Rechteck + Status-LED + Label) — seit W5.1 rendert
+`machine_box()` statt des Skelett-Rechtecks automatisch ein echtes
+Pixel-Art-Asset (`dashboard/assets/img/factory_<id>.png` via
+`theme.image_b64()`), sobald die Datei für eine Maschine existiert. Ohne
+Datei bleibt das Rechteck der Fallback — am Aufrufer (scene.py) oder der
+LED/Tooltip-Logik ändert sich dabei nichts, das Asset wird pro Maschine
+unabhängig eingesetzt (W5.2: Bilder je Maschine liefern).
 
 WACHSTUMS-REGEL (W4.5), zwei Fälle:
 
@@ -27,7 +31,7 @@ from __future__ import annotations
 import html
 
 from dashboard.factory.state import MachineState
-from dashboard.theme import PALETTE
+from dashboard.theme import PALETTE, image_b64
 
 _STATUS_COLOR = {
     "ok":     PALETTE["neon_green"],
@@ -124,10 +128,25 @@ def machine_box(m: MachineState, x: float, y: float, w: float, h: float,
     led_cls = "fx-led fx-blink" if blinking else "fx-led"
     machine_id = html.escape(m.id)
 
+    # W5.1: liegt ein echtes Pixel-Art-Asset vor (dashboard/assets/img/
+    # factory_<id>.png), wird es statt der Skelett-Form gerendert — LED/
+    # Tooltip/Klick-Link drumherum bleiben identisch. Fehlt die Datei
+    # (image_b64 liefert dann ""), bleibt das Skelett-Rechteck der Fallback.
+    asset_uri = image_b64(f"factory_{m.id}.png")
+    if asset_uri:
+        base_shape = (
+            f'<image href="{asset_uri}" x="{x}" y="{y}" width="{w}" height="{h}" '
+            f'preserveAspectRatio="xMidYMid slice" />'
+        )
+    else:
+        base_shape = (
+            f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="4" '
+            f'fill="{PALETTE["bg_panel"]}" stroke="{PALETTE["border"]}" stroke-width="1.5" />'
+        )
+
     inner = (
         f'<title>{label}&#10;{tooltip_text}</title>'
-        f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="4" '
-        f'fill="{PALETTE["bg_panel"]}" stroke="{PALETTE["border"]}" stroke-width="1.5" />'
+        f'{base_shape}'
         f'{_activity_overlay(m, x, y, w, h) if animate else ""}'
         f'{_dock_slots(m, x, y, w, h) if m.id == "docks" else ""}'
         f'<circle class="{led_cls}" cx="{led_cx}" cy="{led_cy}" r="{led_r}" fill="{color}" '

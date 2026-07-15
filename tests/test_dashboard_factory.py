@@ -541,3 +541,43 @@ def test_build_scene_svg_stays_well_under_50ms_budget():
         build_scene_svg(state)
     avg_ms = (time.perf_counter() - t0) / 10 * 1000
     assert avg_ms < 50
+
+
+# ── W5.1: Asset-Slots (echtes PNG statt Skelett-Form) ────────────────────────
+
+def test_machine_box_uses_skeleton_rect_without_asset_file():
+    m = MachineState(id="gate", label="Tor", status="ok")
+    box = machine_box(m, 0, 0, 100, 100)
+    assert "<rect" in box
+    assert "<image" not in box
+
+
+def test_machine_box_uses_image_when_asset_file_present(tmp_path, monkeypatch):
+    import dashboard.theme as theme_mod
+    img_dir = tmp_path / "img"
+    img_dir.mkdir()
+    (img_dir / "factory_gate.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    monkeypatch.setattr(theme_mod, "_IMG_DIR", str(img_dir))
+
+    m = MachineState(id="gate", label="Tor", status="ok")
+    box = machine_box(m, 0, 0, 100, 100)
+    assert '<image href="data:image/png;base64,' in box
+    # Basis-Skelett-Rechteck weicht dem Bild, LED/Label/Link bleiben:
+    assert "fx-led" in box
+    assert "fx-label" in box
+    assert '<a href="?factory=gate"' in box
+
+
+def test_machine_box_only_uses_asset_for_matching_machine_id(tmp_path, monkeypatch):
+    """Ein Asset für 'gate' darf nicht versehentlich bei einer anderen
+    Maschine einspringen."""
+    import dashboard.theme as theme_mod
+    img_dir = tmp_path / "img"
+    img_dir.mkdir()
+    (img_dir / "factory_gate.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    monkeypatch.setattr(theme_mod, "_IMG_DIR", str(img_dir))
+
+    m = MachineState(id="warehouse", label="Lager", status="ok")
+    box = machine_box(m, 0, 0, 100, 100)
+    assert "<rect" in box
+    assert "<image" not in box
