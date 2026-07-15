@@ -337,22 +337,36 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
 
 ## H6 — Plattform
 
-- [ ] **H6.1 Kiosk-Modus** (S) 🟢 ← **empfohlener Einstiegspunkt**
-      1. [ ] In `dashboard/app.py` GANZ OBEN nach `require_login()`:
+- [x] **H6.1 Kiosk-Modus** (S) 🟢 ← **empfohlener Einstiegspunkt**
+      1. [x] In `dashboard/app.py` GANZ OBEN nach `require_login()`:
          `if st.query_params.get("kiosk") == "1":` → nur
          `dashboard.tabs.factory.render(_ctx)` + minimale Kopfzeile
          (Uhrzeit, `theme.led`-Ampel), dann `st.stop()`. KEINE Tabs,
          keine KPI-Leiste. (Das Fragment im Fabrik-Tab refresht schon
          alle 60s — nichts extra bauen.)
-      2. [ ] CSS-Feinschliff in theme.py: unter `?kiosk=1` Streamlit-
+      2. [x] CSS-Feinschliff in theme.py: unter `?kiosk=1` Streamlit-
          Header/Toolbar ausblenden — eigene Klasse `.px-kiosk` am
          Wrapper-Div + `[data-testid="stHeader"] {display:none}` NUR in
          einem zusätzlichen Style-Block, den app.py im Kiosk-Zweig
          injiziert (NICHT global in _base_css()).
-      3. [ ] Tests `tests/test_dashboard_kiosk.py`: AppTest mit
+      3. [x] Tests `tests/test_dashboard_kiosk.py`: AppTest mit
          `at.query_params["kiosk"]="1"` → Fabrik-SVG da, `len(at.tabs)
          == 0`, 0 Exceptions; ohne Param → Tabs wie bisher (Anzahl >10).
-      4. [ ] → SA
+      4. [x] → SA
+
+      Umgesetzt 15.7.2026: Kiosk-Check sitzt bewusst NICHT ganz oben,
+      sondern direkt nach dem bereits vorhandenen Ampel-Block (Zeile
+      ~367) — Logo/Titel/Pause-Banner/Live-Status/Ampel sind zu diesem
+      Zeitpunkt schon gerendert (kein Doppel-Code für die Ampel-Logik
+      nötig, `_ibkr_gateway_dot()`/`_claude_cost_dot()`/
+      `_circuit_breaker_dot()` existieren erst ab dort). Direkt danach
+      `st.stop()` — KPI-Leiste, Instrumente, Ticker und alle Tabs werden
+      nie erreicht. `factory.render(None)` funktioniert, weil
+      `tabs/factory.py`s `render(ctx)` den `ctx`-Parameter gar nicht
+      liest. Streamlit-Chrome-CSS (`stHeader`/`stToolbar`/`MainMenu`/
+      `footer`) wird unabhängig vom Theme-Modus ausgeblendet (Kiosk ist
+      kein Theme-Zustand). 3 neue Tests; Verifikation lief in allen
+      vier Kombinationen (normal/kiosk × pixel/plain) — je 0 Exceptions.
 
 - [ ] **H6.2 Handy-Kompaktansicht** (M) 🟢
       Wie H6.1, zweiter Zweig `?mobile=1`: Depotwert + Tages-P&L

@@ -366,6 +366,23 @@ try:
 except Exception:
     pass
 
+# ─── Kiosk-Modus (Ausbau-Roadmap H6.1) ───────────────────────────────────────
+# ?kiosk=1: nur die Fabrik als Dauer-Wandbild auf einem Zweitmonitor — keine
+# KPI-Leiste, keine Instrumente/Ticker, keine Tabs. Kopfzeile bleibt minimal
+# (Logo/Titel/Status-Ampel oben sind bereits gerendert); Streamlit-eigene
+# Kopfzeile/Toolbar wird per CSS ausgeblendet (nur hier, nicht global in
+# theme.py — Kiosk ist ein eigener Anzeigemodus, kein Theme-Zustand).
+if st.query_params.get("kiosk") == "1":
+    st.markdown(
+        '<style>[data-testid="stHeader"], [data-testid="stToolbar"], '
+        '#MainMenu, footer {display:none;}</style>'
+        '<div class="px-kiosk"></div>',
+        unsafe_allow_html=True,
+    )
+    from dashboard.tabs import factory as _kiosk_factory
+    _kiosk_factory.render(None)
+    st.stop()
+
 # ─── Leitstand-Instrumente (Design D7.1) ─────────────────────────────────────
 # Dieselben Risiko-/Kostenzahlen wie in der Ampel-Zeile, aber als ablesbare
 # Industrie-Instrumente: Manometer (Tagesverlust vs. Circuit-Breaker-Limit),
