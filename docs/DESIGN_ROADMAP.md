@@ -311,32 +311,14 @@ Entdeckungs-Ebene: seltene ECHTE Zustände = seltene Szenen-Ereignisse
 (Earnings-Sperre, SL-Cooldown, EONET-Hazards, erster Live-Trade, These
 PROVEN), Tag/Nacht nach echter Uhrzeit. Kein Zufalls-Deko-Generator.
 
-- [ ] **W1 Hallen-Skelett** — eigener Tab mit EINEM isometrischen SVG-Layout
-      (Halle + Maschinen-Plätze als schlichte Formen, noch keine Pixel-Art);
-      jede Maschine bekommt ihren echten Zustand als Farbe/LED (reuse
-      `theme.led`-Logik, Datenleser existieren). Statisch, kein Klick.
-- [ ] **W2 Leben** — zustandsgetriebene CSS/SMIL-Animation: Band läuft nur
-      bei aktivem Zyklus (`bot_status.json`-Phase), Rampen blinken bei
-      Collector-Aktivität (`activity_feed.db`), Schornstein raucht während
-      Analyse. Szene als eigenständig refreshendes Embed, entkoppelt vom
-      Streamlit-Rerun.
-- [ ] **W3 Interaktivität** — Hover-Tooltips (SVG `<title>`, billig) mit den
-      echten Zahlen; Klick auf Maschine → Detail-Panel (Iframe-Grenze:
-      Query-Params oder postMessage — der technisch härteste Teil, bewusst
-      eigener Block).
-- [ ] **W4 Entdeckungs-Ebene** — Requisiten für seltene echte Ereignisse
-      (s.o.), Tag/Nacht-Zyklus, Wetter aus dem echten Wetter-Collector,
-      dezente Easter Eggs. Erweiterbar: jede neue Bot-Funktion bekommt
-      künftig „ihre Maschine".
-- [ ] **W5 Pixel-Art-Ausbau** — Skelett-Formen nach und nach durch echte
-      isometrische Pixel-Assets ersetzen (eine Maschine pro Etappe;
-      User-Auswahl wie D5.2). Nur falls SVG an Grenzen stößt: Canvas-Engine
-      evaluieren — nicht vorauseilend.
-
-Ehrliche Grenzen: größter Aufwand ist Asset-Arbeit, nicht Code; volle
-Klick-Interaktivität durch die Iframe-Grenze ist der schwerste Teil (W3);
-Performance-Regel: Animationen rein im Browser (CSS/SMIL), nie pro Rerun
-rechnen.
+Etappen W1 (Hallen-Skelett) → W2 (zustandsgetriebenes Leben) → W3
+(Tooltips + Klick-Fokus) → W4 (Entdeckungs-Ebene/Easter Eggs) → W5
+(Pixel-Art-Ausbau je Maschine). **Die feingranularen Einzel-Tasks samt
+festgelegter Bau-Entscheidungen (Paketstruktur, Maschinen-IDs, Datenmodell,
+LAYOUT, Datenquellen-Tabelle) stehen in `docs/DESIGN_FABRIK.md`** — dort
+gilt dasselbe Arbeitsprotokoll wie hier. Ehrliche Grenzen: größter Aufwand
+ist Asset-Arbeit, nicht Code; Performance-Regel: Animationen rein im
+Browser (CSS/SMIL), nie pro Rerun rechnen.
 
 ## Bewusst NICHT geplant
 
