@@ -4,6 +4,54 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
+from dashboard import theme as _theme
+
+_THESIS_STATUS_LED = {"PROVEN": "ok", "ABANDONED": "err", "PENDING": "warn"}
+_THESIS_STATUS_LABEL = {"PROVEN": "Bewiesen", "ABANDONED": "Verworfen", "PENDING": "Läuft"}
+
+
+def _render_thesis_board() -> None:
+    """H4.1: Thesen-Board — verbindet das Dashboard mit dem Nordstern
+    (docs/VISION.md: Kante beweisen statt Rendite jagen). Fail-open: ein
+    Lesefehler zeigt nur den Leerzustand statt zu crashen."""
+    st.subheader("🎯 Thesen-Board")
+    st.caption(
+        "Erfolgs-/Abbruchkriterien je Strategie-These (Roadmap 6.10) — "
+        "beweist die Kante, statt Rendite zu jagen."
+    )
+    from dashboard.thesis_board import default_criteria, thesis_rows
+    try:
+        rows = thesis_rows()
+    except Exception:
+        rows = []
+
+    if not rows:
+        crit = default_criteria()
+        st.info(
+            f"Noch keine These aktiv — Kriterien: {crit['n_min']} Trades / "
+            f"{crit['time_budget_months']} Monate."
+        )
+        return
+
+    for row in rows:
+        status_label = _THESIS_STATUS_LABEL.get(row["status"], row["status"])
+        if _theme.is_enabled():
+            led = _theme.led(_THESIS_STATUS_LED.get(row["status"], "off"), status_label)
+            st.markdown(f"**{row['name']}** — {led}", unsafe_allow_html=True)
+        else:
+            st.markdown(f"**{row['name']}** — {status_label}")
+        if row["description"]:
+            st.caption(row["description"])
+        st.progress(
+            row["time_progress"],
+            text=(
+                f"Zeit-Fortschritt: {row['months_elapsed']:.1f}/"
+                f"{row['time_budget_months']} Monate (Ziel: {row['n_min']} Trades)"
+            ),
+        )
+        if row["verdict_reason"]:
+            st.caption(f"Verdikt: {row['verdict_reason']}")
+
 
 def render(ctx) -> None:
     acc = ctx.acc
@@ -234,6 +282,8 @@ def render(ctx) -> None:
                             f"{(ev.get('rationale') or ev.get('reason') or '')[:100]}"
                         )
 
+    st.divider()
+    _render_thesis_board()
     st.divider()
 
     # Monthly self-assessment

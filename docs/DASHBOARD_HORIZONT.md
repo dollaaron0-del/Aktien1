@@ -326,19 +326,39 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
 
 ## H4 — Lern-Fortschritt sichtbar
 
-- [ ] **H4.1 Thesen-Board** (M) 🟢
-      1. [ ] Datenquelle ansehen: `analyzers/thesis_verdict.py` bzw. die
+- [x] **H4.1 Thesen-Board** (M) 🟢
+      1. [x] Datenquelle ansehen: `analyzers/thesis_verdict.py` bzw. die
          Registry-Datei, die es liest (read-only!). Je These:
          Name, Status, Trades gesammelt / nötig.
-      2. [ ] Neues Panel im Lern-/Strategie-Tab: je These eine Zeile —
+      2. [x] Neues Panel im Lern-/Strategie-Tab: je These eine Zeile —
          `st.progress(min(1.0, n/nötig))` + Status-Plakette
          (`theme.led`: PROVEN=ok, PENDING=warn, FALSIFIED=err).
-      3. [ ] Leerzustand ehrlich: „Noch keine These aktiv — Kriterien:
+      3. [x] Leerzustand ehrlich: „Noch keine These aktiv — Kriterien:
          150 Trades / 24 Monate" (Zahlen aus dem Modul ziehen, nicht
          hartkodieren).
-      4. [ ] Tests: präparierte Registry-Datei → Balken/Plaketten;
+      4. [x] Tests: präparierte Registry-Datei → Balken/Plaketten;
          fehlende Datei → Leerzustand ohne Exception.
-      5. [ ] → SA
+      5. [x] → SA
+
+      Umgesetzt 15.7.2026 mit zwei dokumentierten Korrekturen: (a) die
+      Registry kennt nur PENDING/PROVEN/ABANDONED — kein „FALSIFIED",
+      wie der ursprüngliche Entwurf annahm; (b) die Registry speichert
+      KEINEN laufenden Trade-Zähler — `n_trades` entsteht erst
+      transient in `evaluate()` (braucht echte ExperienceStore-Trades +
+      Bootstrap-Statistik aus scripts/track_record.py, außerhalb des
+      Dashboard-Scopes). Neues Modul `dashboard/thesis_board.py` zeigt
+      darum bis zum ersten Verdikt den ZEIT-Fortschritt
+      (`started_at` vs. `time_budget_months`, allein aus der Registry
+      berechenbar) statt eines erfundenen Trade-Fortschritts; sobald
+      ein Verdikt gefallen ist, erscheint die reale Trade-Zahl aus dem
+      persistierten `verdict_reason`-Text. Einbau im Tab „Trades &
+      Lernen" (`tabs/trades.py`), direkt nach den Performance-
+      Kennzahlen. **Echter Fund beim Verifizieren:** die Produktions-
+      Registry enthält bereits eine reale These
+      (`mechanical_baseline`, seit 12.7.2026, PENDING) — das Board
+      zeigt sie im echten Voll-Render sofort live an. 10 neue Tests (7
+      Modul-Tests, 3 Tab-Tests); Verifikation normal/kiosk × pixel/
+      plain je 0 Exceptions.
 
 - [ ] **H4.2 Regime-Landkarte** (M) 🟡
       1. [ ] Datenquelle: per-Regime-Kalibrierung (Lern-Stack 2.7.) —
