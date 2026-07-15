@@ -252,3 +252,59 @@ def test_boot_lines_css_reduced_motion_safe(monkeypatch):
     assert "opacity: 1;" in css.split(".px-boot-line", 1)[1][:200]
     rm_blocks = [b[:300] for b in css.split("prefers-reduced-motion")[1:]]
     assert any(".px-boot-line" in b for b in rm_blocks)
+
+
+# ── H6.4: Zweit-Theme "Blaupause" ─────────────────────────────────────────────
+
+def test_blueprint_palette_has_same_keys_as_pixel():
+    """Strukturelle Parität ist Pflicht — sonst crasht jede bestehende
+    PALETTE["..."]-Zugriffsstelle im dashboard/-Baum unter blueprint."""
+    assert set(theme.PALETTE_BLUEPRINT.keys()) == set(theme._PALETTE_PIXEL.keys())
+
+
+def test_palette_resolves_to_blueprint_when_active(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_THEME", "blueprint")
+    assert theme.PALETTE["bg"] == theme.PALETTE_BLUEPRINT["bg"]
+    assert theme.PALETTE["bg"] != theme._PALETTE_PIXEL["bg"]
+
+
+def test_palette_resolves_to_pixel_by_default(monkeypatch):
+    monkeypatch.delenv("DASHBOARD_THEME", raising=False)
+    assert theme.PALETTE["bg"] == theme._PALETTE_PIXEL["bg"]
+
+
+def test_palette_supports_full_mapping_protocol(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_THEME", "blueprint")
+    assert dict(theme.PALETTE.items()) == theme.PALETTE_BLUEPRINT
+    assert len(theme.PALETTE) == len(theme.PALETTE_BLUEPRINT)
+    assert "bg" in theme.PALETTE
+    assert theme.PALETTE.get("bg") == theme.PALETTE_BLUEPRINT["bg"]
+
+
+def test_blueprint_is_enabled_stays_true_not_plain(monkeypatch):
+    """blueprint ist ein drittes AKTIVES Theme, kein Alias für plain."""
+    monkeypatch.setenv("DASHBOARD_THEME", "blueprint")
+    assert theme.is_enabled() is True
+
+
+def test_base_css_reflects_blueprint_hex_values(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_THEME", "blueprint")
+    css = theme._base_css()
+    assert theme.PALETTE_BLUEPRINT["bg"] in css
+    assert theme._PALETTE_PIXEL["bg"] not in css
+
+
+def test_base_css_unchanged_for_pixel_regression(monkeypatch):
+    """Regression: pixel-Modus darf durch H6.4 nicht verändert werden."""
+    monkeypatch.setenv("DASHBOARD_THEME", "pixel")
+    css = theme._base_css()
+    assert theme._PALETTE_PIXEL["bg"] in css
+    assert theme.PALETTE_BLUEPRINT["bg"] not in css
+
+
+def test_machine_status_color_reflects_blueprint(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_THEME", "blueprint")
+    from dashboard.factory.machines import _status_color
+    assert _status_color("ok") == theme.PALETTE_BLUEPRINT["neon_green"]
+    monkeypatch.setenv("DASHBOARD_THEME", "pixel")
+    assert _status_color("ok") == theme._PALETTE_PIXEL["neon_green"]

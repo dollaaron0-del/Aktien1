@@ -33,13 +33,22 @@ import html
 from dashboard.factory.state import MachineState
 from dashboard.theme import PALETTE, image_b64
 
-_STATUS_COLOR = {
-    "ok":     PALETTE["neon_green"],
-    "warn":   PALETTE["amber"],
-    "err":    PALETTE["red"],
-    "off":    PALETTE["border"],
-    "active": PALETTE["cobalt"],
+_STATUS_COLOR_KEY = {
+    "ok":     "neon_green",
+    "warn":   "amber",
+    "err":    "red",
+    "off":    "border",
+    "active": "cobalt",
 }
+
+
+def _status_color(status: str) -> str:
+    """H6.4: bewusst eine Funktion statt eines Modul-level-Dicts —
+    `PALETTE[...]` live bei jedem Aufruf ausgewertet (die einzige Stelle
+    im dashboard/-Baum, die PALETTE-Werte sonst beim Import eingefroren
+    hätte; siehe theme.py._PaletteProxy)."""
+    return PALETTE[_STATUS_COLOR_KEY.get(status, "border")]
+
 
 _MAX_DOCK_SLOTS = 10
 
@@ -182,7 +191,7 @@ def _backup_battery(m: MachineState, x: float, y: float, w: float, h: float) -> 
     if age_h is None:
         return ""
     charge = max(0.0, min(1.0, 1.0 - float(age_h) / 48.0))
-    color = _STATUS_COLOR.get(m.status, PALETTE["border"])
+    color = _status_color(m.status)
     bx, by, bw, bh = x + 10, y + 8, 34, 14
     return (
         f'<rect x="{bx}" y="{by}" width="{bw}" height="{bh}" rx="2" '
@@ -215,7 +224,7 @@ def machine_box(m: MachineState, x: float, y: float, w: float, h: float,
     prefers-reduced-motion-Abschaltung. `animate=False` (Vision W2.3,
     Nachtmodus bei Pause) unterdrückt Blink/Band/Rauch komplett, unabhängig
     vom Status — die Halle steht dann wirklich still statt nur optisch."""
-    color = _STATUS_COLOR.get(m.status, PALETTE["border"])
+    color = _status_color(m.status)
     label = html.escape(m.label)
     # W3.1: jede Tooltip-Zeile einzeln escaped, dann mit dem literalen
     # &#10;-Entity gejoint (NICHT durch html.escape() laufen lassen — das

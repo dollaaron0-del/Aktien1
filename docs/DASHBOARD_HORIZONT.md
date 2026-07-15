@@ -556,8 +556,8 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
       *Nur falls SVG nach W5-Assets + Replay messbar ruckelt (Kriterium
       in DESIGN_FABRIK W5.4). Evaluation + Architektur = stark.*
 
-- [ ] **H6.4 Zweit-Theme „Blaupause"** (S) 🟡
-      1. [ ] `theme.py`: `PALETTE_BLUEPRINT` (weiß/hellblau auf
+- [x] **H6.4 Zweit-Theme „Blaupause"** (S) 🟡
+      1. [x] `theme.py`: `PALETTE_BLUEPRINT` (weiß/hellblau auf
          Blaupausen-Blau, z.B. bg #0B2A4A, Linien #E8F1FF) und
          `DASHBOARD_THEME=blueprint` als dritter Modus:
          `is_enabled()` bleibt True, aber `PALETTE`-Auflösung wird eine
@@ -565,9 +565,38 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
          dashboard/-Module auf `palette()[` umstellen — mechanisch, aber
          viele Stellen; grep-Liste zuerst erstellen und im Commit-Text
          dokumentieren).
-      2. [ ] Tests: blueprint aktiv → andere Hex-Werte im CSS; pixel
+      2. [x] Tests: blueprint aktiv → andere Hex-Werte im CSS; pixel
          unverändert (Regression: bestehende Tests bleiben grün).
-      3. [ ] → SA
+      3. [x] → SA
+
+      **Bewusste Abweichung vom Entwurf, dokumentiert statt blind
+      umgesetzt:** Schritt 1 wollte `PALETTE` durch eine `palette()`-
+      Funktion ersetzen und ALLE Zugriffsstellen im dashboard/-Baum
+      mechanisch umschreiben. Grep-Liste zuerst erstellt (wie
+      vorgeschrieben): 8 Dateien importieren `PALETTE`
+      (`conveyor.py`, `genealogy.py`, `instruments.py`, `report.py`,
+      `why_not.py`, `tabs/factory.py`, `factory/scene.py`,
+      `factory/machines.py`), 35+ `PALETTE[...]`-Indexierungen. Statt
+      diese alle umzuschreiben (hohes Risiko, eine Stelle zu übersehen):
+      `PALETTE` bleibt ein Name, ist aber jetzt eine
+      `_PaletteProxy(Mapping)`-Instanz, die bei JEDEM Zugriff
+      (`__getitem__`) live gegen `DASHBOARD_THEME` auflöst — `PALETTE[
+      "bg"]`, `p = PALETTE; p["bg"]`, `.items()` funktionieren an ALLEN
+      bestehenden Stellen unverändert, keine einzige musste angefasst
+      werden. Per AST-Analyse (nicht nur grep, um Mehrzeiler sicher zu
+      erfassen) EINE echte Ausnahme gefunden: `factory/machines.py`s
+      `_STATUS_COLOR` fror PALETTE-Werte in einem Modul-level-Dict beim
+      Import ein — zu einer Funktion `_status_color()` gemacht, die bei
+      jedem Aufruf neu auflöst. **Bekannte, nicht behobene
+      Einschränkung:** Plotly-Chart-Templates werden weiterhin einmalig
+      beim ersten `register_chart_themes()`-Aufruf eingefroren (anders
+      als Altair, das eine Funktion statt eines fertigen Objekts
+      registriert) — in der Praxis unkritisch, da `DASHBOARD_THEME`
+      eine Server-ENV-Variable ohne Laufzeit-Umschalter ist, aber im
+      Code dokumentiert. 8 neue Tests; Verifikation in ALLEN VIER
+      Kombinationen (pixel/plain/blueprint × normal/kiosk) je
+      0 Exceptions — Blueprint-Farbe `#0B2A4A` im echten Voll-Render
+      bestätigt durchgängig sichtbar, keine Pixel-Farbreste.
 
 ## H7 — Charakter weiter
 

@@ -15,12 +15,13 @@ from __future__ import annotations
 import base64
 import html
 import os
+from collections.abc import Mapping
 from functools import lru_cache
 from typing import Optional
 
 import streamlit as st
 
-PALETTE: dict[str, str] = {
+_PALETTE_PIXEL: dict[str, str] = {
     "bg":          "#14171C",  # Seiten-Hintergrund (Stahl, fast schwarz)
     "bg_panel":    "#1E232B",  # Panel-/Karten-Hintergrund
     "border":      "#3A4250",  # Panel-Rahmen (Stahl)
@@ -36,11 +37,66 @@ PALETTE: dict[str, str] = {
     "neon_cyan":   "#33E0FF",  # sparsam: Glow/Scanline/Sonder-Highlights
 }
 
+# H6.4: drittes Theme "Blaupause" — technische Zeichnung, weiß auf Blau.
+# Gleiche Schlüssel wie _PALETTE_PIXEL (Pflicht, sonst brechen alle
+# bestehenden PALETTE["..."]-Zugriffe im ganzen dashboard/-Baum).
+PALETTE_BLUEPRINT: dict[str, str] = {
+    "bg":          "#0B2A4A",
+    "bg_panel":    "#123A61",
+    "border":      "#3D6A96",
+    "text":        "#E8F1FF",
+    "text_muted":  "#9FC2E8",
+    "cobalt":      "#66AEFF",
+    "cobalt_hi":   "#9CCBFF",
+    "copper":      "#E8C170",
+    "copper_hi":   "#F4D999",
+    "neon_green":  "#7CFFC4",
+    "amber":       "#FFD98A",
+    "red":         "#FF8A8A",
+    "neon_cyan":   "#8EEBFF",
+}
+
+
+def _current_palette_name() -> str:
+    """Einzige Stelle, die DASHBOARD_THEME auf einen Palette-Namen
+    abbildet — "blueprint" ist ein drittes, aktives (nicht-plain) Theme."""
+    raw = os.getenv("DASHBOARD_THEME", "pixel").strip().lower()
+    return "blueprint" if raw == "blueprint" else "pixel"
+
+
+def _current_palette() -> dict[str, str]:
+    return PALETTE_BLUEPRINT if _current_palette_name() == "blueprint" else _PALETTE_PIXEL
+
+
+class _PaletteProxy(Mapping):
+    """H6.4: PALETTE bleibt nach außen ein ganz normales Dict-artiges
+    Objekt (`PALETTE["bg"]`, `p = PALETTE; p["bg"]`, `.items()`, …) —
+    aber löst bei JEDEM Zugriff live gegen `_current_palette()` auf,
+    statt einmalig beim Modul-Import eingefroren zu werden. Dadurch
+    brauchte der Wechsel auf ein drittes Theme KEINE Änderung an den
+    ~35 bestehenden `PALETTE[...]`-Zugriffsstellen im ganzen
+    dashboard/-Baum (grep-Liste vorher erstellt, siehe Commit-Text) —
+    einzige Ausnahme war `factory/machines.py`s `_STATUS_COLOR`, das
+    PALETTE-Werte in einem MODUL-level-Dict eingefroren hatte (dort zu
+    einer Funktion gemacht)."""
+
+    def __getitem__(self, key):
+        return _current_palette()[key]
+
+    def __iter__(self):
+        return iter(_current_palette())
+
+    def __len__(self):
+        return len(_current_palette())
+
+
+PALETTE = _PaletteProxy()
+
 _LED_COLOR = {
-    "ok":   PALETTE["neon_green"],
-    "warn": PALETTE["amber"],
-    "err":  PALETTE["red"],
-    "off":  PALETTE["text_muted"],
+    "ok":   "neon_green",
+    "warn": "amber",
+    "err":  "red",
+    "off":  "text_muted",
 }
 
 _ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
@@ -456,6 +512,17 @@ def register_chart_themes() -> None:
     try:
         import plotly.io as pio
         import plotly.graph_objects as go
+        # H6.4-Einschränkung (bewusst nicht behoben): anders als das
+        # Altair-Theme oben (registriert eine FUNKTION, die Plotly bei
+        # jedem Chart-Aufbau neu aufruft) baut Plotly hier ein STATISCHES
+        # Template-Objekt — die PALETTE-Werte werden einmalig zum
+        # Registrierungszeitpunkt eingefroren (`_charts_registered`-Guard
+        # verhindert Re-Registrierung pro Rerun). In der Praxis
+        # unkritisch: DASHBOARD_THEME ist eine Server-ENV-Variable ohne
+        # Laufzeit-Umschalter im UI, ändert sich also nie innerhalb eines
+        # laufenden Prozesses. Für Tests, die pixel/blueprint im selben
+        # Prozess vergleichen wollen, müsste `_charts_registered` vorher
+        # zurückgesetzt werden.
         p = PALETTE
         pio.templates["pixel"] = go.layout.Template(
             layout=go.Layout(
