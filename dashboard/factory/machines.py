@@ -102,13 +102,17 @@ def machine_box(m: MachineState, x: float, y: float, w: float, h: float,
     vom Status — die Halle steht dann wirklich still statt nur optisch."""
     color = _STATUS_COLOR.get(m.status, PALETTE["border"])
     label = html.escape(m.label)
-    tooltip_text = html.escape("\n".join(m.tooltip)) if m.tooltip else label
+    # W3.1: jede Tooltip-Zeile einzeln escaped, dann mit dem literalen
+    # &#10;-Entity gejoint (NICHT durch html.escape() laufen lassen — das
+    # würde das "&" zu "&amp;" verstümmeln und die Entity zerstören).
+    tooltip_lines = [html.escape(str(line)) for line in m.tooltip] if m.tooltip else [label]
+    tooltip_text = "&#10;".join(tooltip_lines)
     led_cx, led_cy, led_r = x + w - 14, y + 14, 6
     blinking = animate and m.status in ("warn", "err")
     led_cls = "fx-led fx-blink" if blinking else "fx-led"
+    machine_id = html.escape(m.id)
 
-    return (
-        f'<g class="fx-machine" data-machine-id="{html.escape(m.id)}">'
+    inner = (
         f'<title>{label}&#10;{tooltip_text}</title>'
         f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="4" '
         f'fill="{PALETTE["bg_panel"]}" stroke="{PALETTE["border"]}" stroke-width="1.5" />'
@@ -119,5 +123,13 @@ def machine_box(m: MachineState, x: float, y: float, w: float, h: float,
         f'<text class="fx-label" x="{x + w / 2}" y="{y + h - 10}" text-anchor="middle" '
         f'font-family="VT323, monospace" font-size="15" fill="{PALETTE["text_muted"]}">'
         f'{label}</text>'
+    )
+    # W3.2: Klick-Fokus per Query-Param — die ganze Box ist ein Link auf
+    # sich selbst mit ?factory=<id>, target="_self" verhindert einen neuen
+    # Tab/Popup (Streamlit läuft im selben Frame). tabs/factory.py liest den
+    # Parameter und rendert darunter ein Detail-Panel.
+    return (
+        f'<g class="fx-machine" data-machine-id="{machine_id}">'
+        f'<a href="?factory={machine_id}" target="_self">{inner}</a>'
         f'</g>'
     )

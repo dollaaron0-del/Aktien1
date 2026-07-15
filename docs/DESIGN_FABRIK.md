@@ -161,24 +161,29 @@ Fokus-Navigation über `st.query_params["factory"]`.
 
 ## W3 — Interaktivität
 
-- [ ] **W3.1 Tooltips** — jede Maschine bekommt `<title>` aus
-      `MachineState.tooltip` (Zeilen mit `&#10;` gejoint, escaped) —
-      native Browser-Tooltips, kein JS. Tooltips mit ECHTEN Zahlen füllen
-      (Leser in state.py ergänzen, z.B. warehouse: „NVDA: 13.5 Stk."). Tests:
-      Tooltip-Text im SVG. Fertig wenn: Tests + Verifikation OK.
-- [ ] **W3.2 Klick-Fokus per Query-Param** — Maschinen-Boxen in
-      `<a href="?factory=<id>" target="_self">` wrappen; `tabs/factory.py`
-      liest `st.query_params.get("factory")` und rendert unter der Szene
-      ein Detail-Panel der fokussierten Maschine (erstmal: Label, Status,
-      Tooltip-Zeilen als Liste, payload als `st.json`). Unbekannte IDs
-      ignorieren. Fertig wenn: Verifikation OK + AppTest mit gesetztem
-      Query-Param zeigt das Panel.
-- [ ] **W3.3 Detail-Panels ausbauen** — je Maschine ein sinnvoller
-      Detail-Block statt `st.json`: conveyor→Funnel-Zahlen (reuse
-      decisions-Tab-Bausteine), warehouse→Positions-Tabelle,
-      docks→source_health-Listen, lab→ExperienceStore-Stats, clock→Phasen.
-      Ein Task PRO Maschine ist erlaubt (W3.3a, W3.3b, … hier ergänzen),
-      wenn es sonst zu groß wird. Fertig wenn: Verifikation OK.
+- [x] **W3.1 Tooltips** — Tooltips waren technisch schon seit W1.1/W1.2
+      mit echten Zahlen gefüllt (`<title>`-Element in `machine_box()`).
+      Feinschliff jetzt: jede Tooltip-Zeile wird EINZELN escaped und dann
+      erst mit dem literalen `&#10;`-Entity gejoint (statt `html.escape()`
+      über den ganzen gejointen String laufen zu lassen — das hätte das
+      `&` der Entity selbst zu `&amp;#10;` verstümmelt).
+- [x] **W3.2 Klick-Fokus per Query-Param** — jede Maschinen-Box steckt in
+      `<a href="?factory=<id>" target="_self">`; `tabs/factory.py` liest
+      `st.query_params.get("factory")`, ignoriert unbekannte/fehlende IDs
+      still. `_render_detail_panel()` als gemeinsamer Einstieg für W3.2+W3.3.
+- [x] **W3.3 Detail-Panels ausgebaut** — fünf Maschinen mit eigenem Block:
+      conveyor (Funnel-Metriken + SKIP-Gründe), warehouse (Positions-Tabelle),
+      docks (Gesund/Schwach/Tot-Listen), lab (Labeled/Gewinne/Verluste/
+      Win-Rate), clock (Zustand/Phase/nächster Lauf). Alle anderen sechs
+      Maschinen behalten den generischen Fallback (Label/Status/Tooltip-
+      Zeilen/Rohdaten als `st.json`) — bewusst kein Task pro restlicher
+      Maschine, der generische Pfad ist bereits vollständig nützlich.
+      Detail-Renderer sind fail-open (ein kaputter Spezial-Block fällt auf
+      den generischen zurück statt die Seite zu crashen).
+
+      9 neue Tests (Tooltip-Join/-Escaping, Klick-Fokus mit bekannter/
+      unbekannter ID, zwei Detail-Panels gegen echte isolierte
+      Datenquellen), Verifikation pixel+plain OK.
 
 ## W4 — Entdeckungs-Ebene
 

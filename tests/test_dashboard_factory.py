@@ -302,6 +302,31 @@ def test_machine_box_animate_false_suppresses_blink():
 
 # ── W2.4: Performance-Regressionsschutz ──────────────────────────────────────
 
+# ── W3.1: Tooltip-Join ────────────────────────────────────────────────────────
+
+def test_tooltip_lines_joined_with_literal_entity():
+    m = MachineState(id="lab", label="Labor", status="ok",
+                     tooltip=["gelabelt: 42", "Gewinne: 20"])
+    box = machine_box(m, 0, 0, 100, 100)
+    assert "gelabelt: 42&#10;Gewinne: 20" in box
+
+
+def test_tooltip_lines_escaped_individually_not_the_join_entity():
+    m = MachineState(id="lab", label="Labor", status="ok",
+                     tooltip=["<b>42</b>", "normal"])
+    box = machine_box(m, 0, 0, 100, 100)
+    assert "&lt;b&gt;42&lt;/b&gt;" in box
+    assert "&amp;#10;" not in box  # die Trenn-Entity selbst bleibt unversehrt
+
+
+# ── W3.2: Klick-Fokus per Query-Param ─────────────────────────────────────────
+
+def test_machine_box_wrapped_in_self_link():
+    m = MachineState(id="gate", label="Tor", status="ok")
+    box = machine_box(m, 0, 0, 100, 100)
+    assert '<a href="?factory=gate" target="_self">' in box
+
+
 def test_build_scene_svg_stays_well_under_50ms_budget():
     """Reine String-Arbeit, keine I/O in build_scene_svg() selbst — großzügige
     Schwelle (10x das gemessene Ist), damit der Test nicht auf einer
