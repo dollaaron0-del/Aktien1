@@ -69,6 +69,19 @@ def test_inject_renders_style_block_when_pixel(monkeypatch):
     assert any("px-panel" in str(w.value) for w in at.get("markdown"))
 
 
+def test_inject_includes_belt_animation_keyframe_and_reduced_motion_guard(monkeypatch):
+    """D4.3: die Foerderband-Animation muss abschaltbar sein
+    (prefers-reduced-motion), sonst waere sie eine UX-Falle."""
+    monkeypatch.delenv("DASHBOARD_THEME", raising=False)
+    at = AppTest.from_string(
+        "import dashboard.theme as theme\ntheme.inject()\nimport streamlit as st\nst.write('x')"
+    )
+    at.run()
+    css = "".join(str(w.value) for w in at.get("markdown"))
+    assert "px-belt-scroll" in css
+    assert "prefers-reduced-motion" in css
+
+
 def test_inject_does_not_raise_without_font_files(monkeypatch, tmp_path):
     """Fehlen die woff2-Dateien (Download-Fehlschlag, D0.4-Fallback), darf
     inject() trotzdem nicht werfen — die CSS-Fallback-Kette greift."""

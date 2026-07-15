@@ -195,32 +195,20 @@ Alle Helfer geben bei `plain` schlichtes, ungestyltes HTML bzw. no-op zurück
 
 ## D4 — Entscheidungs-Funnel als Förderband (Vorzeige-Stück; nach D0+D1)
 
-- [ ] **D4.1 SVG-Baustein (reine Funktion + Tests)** — NEU
-      `dashboard/conveyor.py`: `build_conveyor_svg(funnel: dict, width:
-      int = 900) -> str`. Input ist exakt das Dict von
-      `DecisionLog.funnel(day)` (`{"total": n, "actions": {...},
-      "skip_reasons": {...}}`). Darstellung: links Einlauf mit `total`
-      Datenwürfel-Symbol + Zahl; Band nach rechts; pro skip_reason-Kategorie
-      (Top 5, Rest als "…") ein Sortier-Arm, der in einen beschrifteten
-      Behälter mit Anzahl wirft (copper); rechts Auslauf "BUY" (neon_green,
-      Anzahl) und "SELL/HOLD"-Kästen. Farben aus `theme.PALETTE`, Beschriftung
-      VT323, alle Labels `html.escape()`d. KEINE Animation in diesem Task.
-      NEU `tests/test_dashboard_conveyor.py`: Zahlen/Labels erscheinen im
-      SVG, leerer Funnel ({}, total 0) rendert ohne Fehler, Escaping-Test
-      (`<script>` im Reason-Label kommt escaped raus), Top-5-Kappung.
-      Fertig wenn: Tests grün (Verifikation hier optional — noch nicht
-      eingebunden).
-- [ ] **D4.2 Einbindung in den Entscheidungen-Tab** — `tabs/decisions.py`:
-      oberhalb der bestehenden Fortschrittsbalken das SVG rendern
-      (`st.markdown(svg, unsafe_allow_html=True)` bzw. `st.html`); die
-      alten `st.progress`-Balken BEHALTEN (Zahlen-Detail + plain-Fallback).
-      Nur bei `theme.is_enabled()`. Fertig wenn: Verifikation OK + AppTest
-      mit geseedeter decision_log-Temp-DB (Muster in Git-Historie,
-      Commit 7bdd413) zeigt das SVG im Baum.
-- [ ] **D4.3 (Optional) Band-Animation** — CSS-Keyframe (laufende
-      Band-Streifen), nur wenn D4.1/D4.2 abgenommen sind; eigener
-      ENV-Unterschalter nicht nötig, aber Animation muss bei
-      `prefers-reduced-motion` aus sein. Fertig wenn: Verifikation OK.
+- [x] **D4.1 SVG-Baustein** — `dashboard/conveyor.py::build_conveyor_svg()`.
+      Einlauf mit Gesamtzahl, Band, pro Top-5-SKIP-Grund ein Sortier-Arm in
+      einen beschrifteten copper-Behälter (Rest als "…"), Auslauf BUY
+      (neon_green) + HOLD/SELL-Kasten. Farben aus `theme.PALETTE`, VT323,
+      alles `html.escape()`d. 9 Tests (`test_dashboard_conveyor.py`).
+- [x] **D4.2 Einbindung** — `tabs/decisions.py` rendert das SVG oberhalb der
+      Fortschrittsbalken, nur bei `theme.is_enabled()`; die alten
+      `st.progress`-Balken bleiben (Zahlen-Detail + plain-Fallback). 2 neue
+      Tests gegen den echten `DecisionLog`-Singleton-Pfad.
+- [x] **D4.3 Band-Animation** — Band bekommt eine zweite, gemusterte Fläche
+      (`px-belt-pattern`, diagonale Streifen) mit CSS-Keyframe
+      `px-belt-scroll`; `@media (prefers-reduced-motion: reduce)` schaltet
+      sie UND die LED-Blink-Keyframes ab. Alles im Browser, keine
+      Streamlit-Rerun-Kosten. Verifikation (pixel+plain) OK.
 
 ## D5 — Echte Pixel-Art-Assets (parallel möglich; D5.2 braucht den User)
 

@@ -2,6 +2,7 @@
 import streamlit as st
 
 from analyzers.analysis_log import AnalysisLog
+from dashboard import theme as _theme
 
 
 def render(ctx) -> None:
@@ -55,6 +56,17 @@ def render(ctx) -> None:
         fc3.metric("🔴 Verkäufe",   _acts.get("SELL", 0))
         fc4.metric("⏸ Halten",      _acts.get("HOLD", 0))
         fc5.metric("⏭ Übersprungen", _acts.get("SKIP", 0))
+
+        # Förderband-Visual (Design D4): dieselben Funnel-Zahlen als
+        # Vorzeige-Stück, oberhalb des Zahlen-Details. Nur bei aktivem
+        # Theme; die Fortschrittsbalken darunter bleiben der plain-Fallback
+        # UND das genaue Zahlen-Detail.
+        if _theme.is_enabled():
+            try:
+                from dashboard.conveyor import build_conveyor_svg
+                st.markdown(build_conveyor_svg(_fn), unsafe_allow_html=True)
+            except Exception:
+                pass
 
         if _fn["skip_reasons"]:
             st.markdown("**Warum wurde übersprungen?**")

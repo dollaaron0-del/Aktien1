@@ -195,6 +195,20 @@ h1 {{
     50%      {{ opacity: 0.25; }}
 }}
 
+/* D4.3: laufendes Förderband (dashboard/conveyor.py) — reine CSS-Animation
+   im Browser, keine Streamlit-Rerun-Kosten. */
+@keyframes px-belt-scroll {{
+    from {{ transform: translateX(0); }}
+    to   {{ transform: translateX(-24px); }}
+}}
+.px-belt-anim {{
+    animation: px-belt-scroll 0.8s linear infinite;
+}}
+@media (prefers-reduced-motion: reduce) {{
+    .px-belt-anim {{ animation: none; }}
+    .px-led--warn::before, .px-led--err::before {{ animation: none; }}
+}}
+
 /* ── D1.4 KPI-Leiste als Industriepanel ─────────────────────────────── */
 [data-testid="stMetric"], [data-testid="metric-container"] {{
     background: var(--px-bg-panel);
