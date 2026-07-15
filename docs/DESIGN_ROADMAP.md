@@ -110,17 +110,8 @@ Alle Helfer geben bei `plain` schlichtes, ungestyltes HTML bzw. no-op zurück
 
 ## D0 — Fundament
 
-- [ ] **D0.1 `.streamlit/config.toml` anlegen** (Datei existiert noch nicht).
-      Exakter Inhalt:
-      ```toml
-      [theme]
-      base = "dark"
-      primaryColor = "#2E6BE6"
-      backgroundColor = "#14171C"
-      secondaryBackgroundColor = "#1E232B"
-      textColor = "#E8ECF2"
-      ```
-      Fertig wenn: Datei committet, beide Verifikations-Läufe OK.
+- [x] **D0.1 `.streamlit/config.toml` anlegen** — Datei mit dem fixen
+      dark-Theme-Block angelegt. Beide Verifikations-Läufe OK.
 - [ ] **D0.2 `dashboard/theme.py` anlegen** — `PALETTE`, `is_enabled()`,
       `inject()` (vorerst nur CSS-Variablen `--px-*` aus PALETTE + Body-
       Hintergrund), Stubs `led()`/`panel()` (funktionsfähig, schlicht),
