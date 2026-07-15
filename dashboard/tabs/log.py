@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 
 import streamlit as st
 
+from dashboard import theme as _theme
+
 
 def render(ctx) -> None:
     _ALL_NAMES = ctx._ALL_NAMES
@@ -61,12 +63,21 @@ def render(ctx) -> None:
                 def _src_names(keys):
                     return ", ".join(_SOURCE_NAMES.get(k, k) for k in keys)
                 if _sh["healthy"]:
-                    st.markdown(f"🟢 **Gesund:** {_src_names(_sh['healthy'])}")
+                    st.markdown(
+                        f"{_theme.led('ok', '')} **Gesund:** {_src_names(_sh['healthy'])}",
+                        unsafe_allow_html=_theme.is_enabled(),
+                    )
                 if _sh["weak"]:
-                    st.markdown(f"🟡 **Schwach** (<10 % der Analysen): "
-                                f"{_src_names(_sh['weak'])}")
+                    st.markdown(
+                        f"{_theme.led('warn', '')} **Schwach** (<10 % der Analysen): "
+                        f"{_src_names(_sh['weak'])}",
+                        unsafe_allow_html=_theme.is_enabled(),
+                    )
                 if _sh["dead"]:
-                    st.markdown(f"🔴 **Tot** (0 Treffer): {_src_names(_sh['dead'])}")
+                    st.markdown(
+                        f"{_theme.led('err', '')} **Tot** (0 Treffer): {_src_names(_sh['dead'])}",
+                        unsafe_allow_html=_theme.is_enabled(),
+                    )
                     st.caption("Tote Quellen: API-Key fehlt, Quelle defekt — "
                                "oder Abschalt-Kandidat (Roadmap 2.4).")
         st.divider()
@@ -152,8 +163,12 @@ def render(ctx) -> None:
                     _pub_ts    = _n.get("providerPublishTime") or _n.get("pubTime") or 0
                     _pub_str   = datetime.utcfromtimestamp(_pub_ts).strftime("%d.%m.%Y") if _pub_ts else ""
                     _sentiment = _n.get("overallSentiment", "")
-                    _s_icon    = {"POSITIVE": "🟢", "NEGATIVE": "🔴", "NEUTRAL": "🟡"}.get(_sentiment, "")
-                    st.markdown(f"{_s_icon} **{_title}**  \n_{_publisher}_ · {_pub_str}")
+                    _sent_status = {"POSITIVE": "ok", "NEGATIVE": "err", "NEUTRAL": "warn"}.get(_sentiment)
+                    _s_led = _theme.led(_sent_status, "") if _sent_status else ""
+                    st.markdown(
+                        f"{_s_led} **{_title}**  \n_{_publisher}_ · {_pub_str}",
+                        unsafe_allow_html=_theme.is_enabled(),
+                    )
 
     # Dedupliziert (Standard) oder volle Historie
     if _active_ticker or show_all_history:
@@ -230,13 +245,22 @@ def render(ctx) -> None:
                     st.info(entry.get("entry_rationale") or "–")
 
                     if entry.get("bull_case"):
-                        st.markdown(f"🟢 **Bull-Case:** {entry['bull_case']}")
+                        st.markdown(
+                            f"{_theme.led('ok', '')} **Bull-Case:** {entry['bull_case']}",
+                            unsafe_allow_html=_theme.is_enabled(),
+                        )
                     if entry.get("bear_case"):
-                        st.markdown(f"🔴 **Bear-Case:** {entry['bear_case']}")
+                        st.markdown(
+                            f"{_theme.led('err', '')} **Bear-Case:** {entry['bear_case']}",
+                            unsafe_allow_html=_theme.is_enabled(),
+                        )
                     if entry.get("debate_winner"):
                         winner = entry["debate_winner"]
-                        w_icon = "🟢" if winner == "BULL" else ("🔴" if winner == "BEAR" else "🟡")
-                        st.markdown(f"**Debatte-Gewinner:** {w_icon} {winner}")
+                        w_status = "ok" if winner == "BULL" else ("err" if winner == "BEAR" else "warn")
+                        st.markdown(
+                            f"**Debatte-Gewinner:** {_theme.led(w_status, '')} {winner}",
+                            unsafe_allow_html=_theme.is_enabled(),
+                        )
 
                 with col_r:
                     st.metric("Empfehlung",    f"{icon} {rec}")

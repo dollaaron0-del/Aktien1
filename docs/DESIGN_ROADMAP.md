@@ -244,6 +244,27 @@ Alle Helfer geben bei `plain` schlichtes, ungestyltes HTML bzw. no-op zurück
       „D6.1-Nachzug: LED-Migration Restliche Tabs", falls Kapazität bleibt.
       Kein Blocker für die Vorstellung (D0+D1+D2+D4 tragen das Zielbild
       bereits durchgängig).
+
+      **Nachzug 15.7.2026 (nicht beauftragt, auf Nachfrage bestätigt):**
+      Durchsuche aller 5 Dateien ergab, dass die meisten der ~25
+      Emoji-Stellen sich NICHT sauber auf `theme.led()` ummünzen lassen —
+      Streamlit rendert in `st.metric()`-Labels, `st.expander()`-Titeln,
+      `st.dataframe()`-Zellen und `st.text()` grundsätzlich kein HTML
+      (`led()` liefert im pixel-Modus einen `<span>`). Ein Zwang dorthin
+      hätte entweder kaputtes rohes Markup gezeigt oder eine Layout-Änderung
+      erfordert (Badge aus dem Titel raus in eine eigene Zeile) — beides
+      über den Rahmen einer reinen Stil-Angleichung hinaus. Echte
+      LED-Kandidaten waren nur Stellen mit einem plain `st.markdown()`/
+      Spalten-`.markdown()`-Aufruf: `tabs/log.py` (Quellen-Health
+      Gesund/Schwach/Tot, News-Sentiment-Icon, Bull-/Bear-Case,
+      Debatte-Gewinner — 7 Stellen) und `tabs/watchlist.py` (Bench-Score in
+      der Warteliste-Tabelle — 1 Stelle). Umgesetzt als `led(status, "")`
+      (nur der farbige Punkt per CSS-`::before`, bestehender Text/Label
+      bleibt unverändert) statt `led(status, label)`, um die sichtbare
+      Information 1:1 zu erhalten. `portfolio.py`, `queue.py`, `trades.py`
+      bleiben unverändert — dort stecken alle Emoji in genau den oben
+      genannten nicht-HTML-Kontexten. 3 neue Tests
+      (`tests/test_dashboard_led_migration.py`), Verifikation pixel+plain OK.
 - [x] **D6.2 Plain-Generalprobe** — Voll-Render mit `DASHBOARD_THEME=plain`:
       0 Exceptions, 574 Markdown-Elemente (mehr als pixel, da dort mehrere
       Einzeiler statt EINEM Panel-Block gerendert werden — strukturell

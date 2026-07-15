@@ -6,6 +6,7 @@ import streamlit as st
 
 from analyzers.dynamic_watchlist import DynamicWatchlist
 from analyzers.signal_expander import SignalDrivenExpander
+from dashboard import theme as _theme
 
 
 def render(ctx) -> None:
@@ -308,8 +309,11 @@ def render(ctx) -> None:
                 _bc = st.columns([1, 3, 1, 1])
                 _bc[0].markdown(f"`{_be['ticker']}`")
                 _bc[1].caption(_be["reason"][:60])
-                _score_color = "🟢" if _be["score"] >= 0.6 else "🟡" if _be["score"] >= 0.4 else "🔴"
-                _bc[2].markdown(f"{_score_color} {_be['score']:.2f}")
+                _score_status = "ok" if _be["score"] >= 0.6 else "warn" if _be["score"] >= 0.4 else "err"
+                _bc[2].markdown(
+                    f"{_theme.led(_score_status, '')} {_be['score']:.2f}",
+                    unsafe_allow_html=_theme.is_enabled(),
+                )
                 _bc[3].markdown(str(_be["signal_count"]))
 
             # Ticker manuell zur Warteliste hinzufügen
