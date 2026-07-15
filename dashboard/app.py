@@ -360,7 +360,27 @@ try:
         _circuit_breaker_dot(total_value),
     ])
     if _theme.is_enabled():
-        st.markdown(_theme.panel(_ampel_line), unsafe_allow_html=True)
+        # Ausbau H7.1: Werksleiter-Stimmung neben der Ampel — ein Blick
+        # aufs Gesicht statt drei Panels lesen zu müssen. Eigener
+        # try/except je Schritt (Score-Abruf, Render), damit ein
+        # Fehler hier nie die Ampel selbst verschluckt.
+        _ampel_col, _face_col = st.columns([5, 1])
+        with _ampel_col:
+            st.markdown(_theme.panel(_ampel_line), unsafe_allow_html=True)
+        with _face_col:
+            try:
+                from analyzers.bot_scorer import BotScorer
+                _face_score = BotScorer().get().current
+            except Exception:
+                _face_score = None
+            try:
+                from dashboard import instruments as _face_instr
+                st.markdown(
+                    _face_instr.face_svg(_face_score, "Werksleiter"),
+                    unsafe_allow_html=True,
+                )
+            except Exception:
+                pass
     else:
         st.caption(_ampel_line)
 except Exception:

@@ -10,6 +10,7 @@ import pytest
 from dashboard.instruments import (
     _SEG_MAP,
     _clamp_pct,
+    face_svg,
     gauge_svg,
     seven_segment_svg,
     tank_svg,
@@ -117,3 +118,61 @@ def test_seven_segment_width_grows_with_digits():
     def _w(s):
         return float(s.split('viewBox="0 0 ')[1].split(" ")[0])
     assert _w(long) > _w(short)
+
+
+# ── Werksleiter-Gesicht (H7.1) ────────────────────────────────────────────────
+
+def test_face_happy_above_75_has_smile_path_and_green_eyes():
+    svg = face_svg(80, "Stimmung")
+    assert f'fill="{PALETTE["neon_green"]}"' in svg
+    assert "<path" in svg  # gebogener Mund
+    assert "Zzz" not in svg
+
+
+def test_face_neutral_between_40_and_75_has_straight_mouth():
+    svg = face_svg(60, "Stimmung")
+    # kein <path> (weder Lächeln noch Sorgenfalte-Mund), nur eine gerade
+    # Mund-Linie plus die zwei Kreis-Augen:
+    assert "<path" not in svg
+    assert svg.count("<line") >= 1
+    assert f'fill="{PALETTE["text"]}"' in svg
+
+
+def test_face_worried_below_40_has_frown_path_and_eyebrows():
+    svg = face_svg(20, "Stimmung")
+    assert f'stroke="{PALETTE["amber"]}"' in svg
+    assert "<path" in svg  # gebogener Sorgen-Mund
+    # Sorgenfalte = zwei zusätzliche <line>-Segmente über den Augen:
+    assert svg.count("<line") >= 2
+
+
+def test_face_none_score_shows_sleeping_state():
+    svg = face_svg(None, "Stimmung")
+    assert "Zzz" in svg
+    assert "<path" not in svg
+    assert f'stroke="{PALETTE["text_muted"]}"' in svg
+
+
+def test_face_non_numeric_score_treated_like_none():
+    assert "Zzz" in face_svg("kaputt", "Stimmung")
+    assert "Zzz" in face_svg(object(), "Stimmung")
+
+
+def test_face_all_four_states_are_visually_distinct():
+    variants = {face_svg(None), face_svg(20), face_svg(60), face_svg(90)}
+    assert len(variants) == 4
+
+
+def test_face_escapes_label():
+    svg = face_svg(80, "<script>alert(1)</script>")
+    assert "<script>alert(1)</script>" not in svg
+    assert "&lt;script&gt;" in svg
+
+
+@pytest.mark.parametrize("boundary,expected_marker", [
+    (75, PALETTE["neon_green"]),  # Grenze zählt schon als "zufrieden"
+    (40, PALETTE["text"]),        # Grenze zählt schon als "neutral"
+])
+def test_face_boundaries_are_inclusive_upward(boundary, expected_marker):
+    svg = face_svg(boundary)
+    assert f'fill="{expected_marker}"' in svg or f'stroke="{expected_marker}"' in svg

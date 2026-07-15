@@ -1,5 +1,5 @@
 """
-dashboard/instruments.py — Leitstand-Instrumente (Design D7.1).
+dashboard/instruments.py — Leitstand-Instrumente (Design D7.1, H7.1).
 
 Reine SVG-String-Funktionen (Muster: conveyor.py) — Zahlen, die als
 nüchterne Metrics untergehen würden, werden zu Industrie-Instrumenten:
@@ -7,6 +7,7 @@ nüchterne Metrics untergehen würden, werden zu Industrie-Instrumenten:
 - Manometer  = Circuit-Breaker-„Kesseldruck" (Tagesverlust vs. Limit)
 - Tank       = Claude-Tagesbudget (Füllstand = Rest-Treibstoff)
 - 7-Segment  = Depotwert wie an einer alten Maschinensteuerung
+- Gesicht    = Werksleiter-Stimmung nach echtem Bot-Score (Ausbau H7.1)
 
 Hier ist NUR Darstellung — die echten Werte liefert der Aufrufer (app.py),
 jedes Instrument hängt damit an einer echten Datenquelle. Alle dynamischen
@@ -177,5 +178,99 @@ def seven_segment_svg(text: str, label: str = "") -> str:
         f'{"".join(parts)}'
         f'<text x="6" y="42" font-family="VT323, monospace" font-size="11" '
         f'fill="{p["text_muted"]}">{html.escape(label)}</text>'
+        f'</svg>'
+    )
+
+
+# ── Werksleiter-Gesicht (Ausbau-Roadmap H7.1) ────────────────────────────────
+
+def face_svg(score, label: str = "") -> str:
+    """Pixel-Gesicht als Stimmungs-Indikator — echter Bot-Score
+    (`BotScorer().get().current`) statt drei separater Panels. Vier
+    Zustände: >75 zufrieden (Lächeln + grüne LED-Augen), 40–75 neutral
+    (gerader Mund), <40 besorgt (Sorgenfalte + amber, Mund nach oben
+    gebogen), `score=None` (Score nicht verfügbar) → graues
+    Schlaf-Gesicht mit "Zzz". Nicht-numerische Eingaben werden wie
+    `None` behandelt (fail-open, kein Crash bei kaputten Upstream-Daten)."""
+    p = PALETTE
+    safe_label = html.escape(str(label))
+    cx, cy = 60, 55
+
+    if score is not None:
+        try:
+            score = float(score)
+        except (TypeError, ValueError):
+            score = None
+
+    if score is None:
+        color = p["text_muted"]
+        eyes = (
+            f'<line x1="{cx - 20}" y1="{cy - 5}" x2="{cx - 10}" y2="{cy - 5}" '
+            f'stroke="{color}" stroke-width="3" stroke-linecap="round" />'
+            f'<line x1="{cx + 10}" y1="{cy - 5}" x2="{cx + 20}" y2="{cy - 5}" '
+            f'stroke="{color}" stroke-width="3" stroke-linecap="round" />'
+        )
+        mouth = (
+            f'<line x1="{cx - 12}" y1="{cy + 18}" x2="{cx + 12}" y2="{cy + 18}" '
+            f'stroke="{color}" stroke-width="3" stroke-linecap="round" />'
+        )
+        extra = (
+            f'<text x="{cx + 30}" y="{cy - 22}" font-family="VT323, monospace" '
+            f'font-size="18" fill="{color}">Zzz</text>'
+        )
+    elif score >= 75:
+        color = p["neon_green"]
+        eyes = (
+            f'<circle cx="{cx - 15}" cy="{cy - 5}" r="4" fill="{color}" />'
+            f'<circle cx="{cx + 15}" cy="{cy - 5}" r="4" fill="{color}" />'
+        )
+        # Lächeln: Kontrollpunkt UNTER den Endpunkten (curve nach unten).
+        mouth = (
+            f'<path d="M {cx - 15} {cy + 15} Q {cx} {cy + 28} {cx + 15} {cy + 15}" '
+            f'fill="none" stroke="{color}" stroke-width="3" stroke-linecap="round" />'
+        )
+        extra = ""
+    elif score >= 40:
+        color = p["text"]
+        eyes = (
+            f'<circle cx="{cx - 15}" cy="{cy - 5}" r="4" fill="{color}" />'
+            f'<circle cx="{cx + 15}" cy="{cy - 5}" r="4" fill="{color}" />'
+        )
+        mouth = (
+            f'<line x1="{cx - 14}" y1="{cy + 18}" x2="{cx + 14}" y2="{cy + 18}" '
+            f'stroke="{color}" stroke-width="3" stroke-linecap="round" />'
+        )
+        extra = ""
+    else:
+        color = p["amber"]
+        eyes = (
+            f'<circle cx="{cx - 15}" cy="{cy - 5}" r="4" fill="{color}" />'
+            f'<circle cx="{cx + 15}" cy="{cy - 5}" r="4" fill="{color}" />'
+        )
+        # Sorgenfalte über den Augen:
+        extra = (
+            f'<line x1="{cx - 22}" y1="{cy - 16}" x2="{cx - 8}" y2="{cy - 11}" '
+            f'stroke="{color}" stroke-width="2" stroke-linecap="round" />'
+            f'<line x1="{cx + 8}" y1="{cy - 11}" x2="{cx + 22}" y2="{cy - 16}" '
+            f'stroke="{color}" stroke-width="2" stroke-linecap="round" />'
+        )
+        # Sorge: Kontrollpunkt ÜBER den Endpunkten (curve nach oben).
+        mouth = (
+            f'<path d="M {cx - 15} {cy + 22} Q {cx} {cy + 10} {cx + 15} {cy + 22}" '
+            f'fill="none" stroke="{color}" stroke-width="3" stroke-linecap="round" />'
+        )
+
+    return (
+        f'<svg class="px-instrument" viewBox="0 0 160 110" '
+        f'xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;" '
+        f'role="img" aria-label="{safe_label or "Werksleiter-Stimmung"}">'
+        f'<rect x="2" y="2" width="156" height="106" rx="6" '
+        f'fill="{p["bg_panel"]}" stroke="{p["border"]}" stroke-width="1.5" />'
+        f'<circle cx="{cx}" cy="{cy}" r="40" fill="none" stroke="{color}" '
+        f'stroke-width="2.5" />'
+        f'{eyes}{extra}{mouth}'
+        f'<text x="{cx}" y="102" text-anchor="middle" '
+        f'font-family="VT323, monospace" font-size="13" fill="{p["text_muted"]}">'
+        f'{safe_label}</text>'
         f'</svg>'
     )

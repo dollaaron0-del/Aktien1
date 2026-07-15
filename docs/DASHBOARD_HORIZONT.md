@@ -446,17 +446,30 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
 
 ## H7 — Charakter weiter
 
-- [ ] **H7.1 Werksleiter-Stimmung** (S) 🟢
-      1. [ ] `dashboard/instruments.py`: `def face_svg(score: float,
+- [x] **H7.1 Werksleiter-Stimmung** (S) 🟢
+      1. [x] `dashboard/instruments.py`: `def face_svg(score: float,
          label: str = "") -> str` — Pixel-Gesicht 3 Zustände (>75
          Lächeln + grüne LED-Augen, 40–75 neutral, <40 Sorgenfalte +
          amber), Score None → graues Schlaf-Gesicht („Zzz").
-      2. [ ] Einbau Header-Zeile app.py (neben Ampel): Score aus
+      2. [x] Einbau Header-Zeile app.py (neben Ampel): Score aus
          `BotScorer().get()` (Muster: `tabs/portfolio.py` um Zeile 147),
          fail-open.
-      3. [ ] Tests: 4 Zustände liefern unterscheidbares SVG; Label
+      3. [x] Tests: 4 Zustände liefern unterscheidbares SVG; Label
          escaped.
-      4. [ ] → SA
+      4. [x] → SA
+
+      Umgesetzt 15.7.2026: `face_svg()` unterscheidet die vier Zustände
+      über Mund-Form (Linie neutral, `<path>` gebogen für
+      Lächeln/Sorge — Kontrollpunkt unter bzw. über den Endpunkten) und
+      Augenfarbe (neon_green/text/amber/text_muted); `score=None` UND
+      nicht-numerische Eingaben (fail-open) zeigen das Schlaf-Gesicht
+      mit „Zzz". Einbau in `app.py` direkt neben der Gesundheits-Ampel
+      (eigene Spalte, `st.columns([5, 1])`), Score-Abruf und Render
+      jeweils in eigenem try/except, damit ein Fehler hier nie die
+      Ampel selbst verschluckt — nur pixel, plain unverändert. 8 neue
+      Tests (`tests/test_dashboard_instruments.py`); Verifikation
+      normal/kiosk × pixel/plain je 0 Exceptions, Gesicht im echten
+      Voll-Render bestätigt sichtbar.
 
 - [ ] **H7.2 Plaketten-Wand** (M) 🟢
       1. [ ] `dashboard/achievements.py`: `CATALOG` fester Plaketten
