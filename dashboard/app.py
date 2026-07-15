@@ -46,6 +46,9 @@ st.set_page_config(
     initial_sidebar_state="auto",
 )
 
+from dashboard import theme as _theme  # noqa: E402
+_theme.inject()
+
 from dashboard.auth import require_login  # noqa: E402
 require_login()
 

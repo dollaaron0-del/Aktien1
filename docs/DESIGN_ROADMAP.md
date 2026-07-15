@@ -112,33 +112,20 @@ Alle Helfer geben bei `plain` schlichtes, ungestyltes HTML bzw. no-op zurück
 
 - [x] **D0.1 `.streamlit/config.toml` anlegen** — Datei mit dem fixen
       dark-Theme-Block angelegt. Beide Verifikations-Läufe OK.
-- [ ] **D0.2 `dashboard/theme.py` anlegen** — `PALETTE`, `is_enabled()`,
-      `inject()` (vorerst nur CSS-Variablen `--px-*` aus PALETTE + Body-
-      Hintergrund), Stubs `led()`/`panel()` (funktionsfähig, schlicht),
-      `register_chart_themes()` als no-op-Stub. Docstring: Verweis auf dieses
-      Dokument + Regel "neue Styles NUR hier". Dazu NEU
-      `tests/test_dashboard_theme.py`: (a) `is_enabled()` reagiert auf ENV,
-      (b) `inject()` wirft bei plain nicht und rendert nichts (AppTest auf
-      Mini-Skript, Muster siehe `tests/test_dashboard_auth.py`), (c) alle
-      PALETTE-Werte sind 7-stellige Hex-Strings, (d) `led("ok","x")` enthält
-      das Label escaped. Fertig wenn: Tests grün + Verifikation OK.
-- [ ] **D0.3 `inject()` verdrahten** — in `dashboard/app.py` direkt nach
-      `st.set_page_config(...)` (Zeile ~46) und VOR `require_login()`
-      aufrufen, damit auch die Login-Seite gestylt ist. Den bestehenden
-      Inline-CSS-Block (`st.markdown("""<style>…`, ab Zeile ~52) NICHT
-      löschen — erst in D1 konsolidieren. Fertig wenn: Verifikation OK.
-- [ ] **D0.4 Fonts bundlen** — `dashboard/assets/fonts/` anlegen,
-      PressStart2P + VT323 als woff2 herunterladen (Google Fonts, OFL —
-      Lizenzdatei mit ablegen), `@font-face` in `inject()` per
-      Base64-data-URI einbetten (kein Laufzeit-Netzzugriff). `.px-head`/
-      `.px-terminal`-Fontfamilien definieren. Fertig wenn: Verifikation OK;
-      bei Download-Problem: Fallback-Kette, `> OFFEN:`-Notiz, weiter.
-- [ ] **D0.5 CSS-Basisklassen** — in `inject()`: `.px-panel` (bg_panel,
-      1px border, 4px Radius — eckig-industriell, kein Rund), `.px-led*`
-      (10px-Punkt + Label, Keyframe `px-blink` 1.2s nur für warn/err),
-      `.px-head`, `.px-terminal` (VT323, bg #0E1116, neon_green Text,
-      dezenter innerer Glow). Tests ergänzen: gerendertes CSS enthält die
-      vier Klassennamen. Fertig wenn: Tests + Verifikation OK.
+- [x] **D0.2 `dashboard/theme.py` anlegen** — PALETTE, `is_enabled()`,
+      `inject()`, `led()`, `panel()`, `image_b64()`, `register_chart_themes()`
+      (Stub). 17 Tests in `tests/test_dashboard_theme.py`, alle grün.
+- [x] **D0.3 `inject()` verdrahten** — in `app.py` nach `set_page_config()`,
+      vor `require_login()`. Alt-CSS-Block bewusst noch nicht angefasst
+      (D1.1). Verifikation OK.
+- [x] **D0.4 Fonts bundlen** — Press Start 2P + VT323 (latin-Subset, woff2)
+      erfolgreich von Google Fonts geladen, OFL.txt mit abgelegt,
+      Base64-Einbettung in `theme.py::_font_face_css()` (lru_cache, liest
+      lokale Dateien — kein Laufzeit-Netzzugriff). Fallback getestet
+      (fehlende Dateien crashen `inject()` nicht).
+- [x] **D0.5 CSS-Basisklassen** — direkt in D0.2 mitgebaut (`.px-panel`,
+      `.px-led` + `--ok/--warn/--err/--off`, `.px-head`, `.px-terminal`,
+      Keyframe `px-blink`). Verifikation OK.
 
 ## D1 — Sichtbare Quick-Wins (Header, KPIs, Ampel, Tabs)
 
