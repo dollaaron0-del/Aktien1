@@ -53,6 +53,56 @@ def _render_thesis_board() -> None:
             st.caption(f"Verdikt: {row['verdict_reason']}")
 
 
+def _render_genealogy() -> None:
+    """H3.2: Entscheidungs-Genealogie — jede Order zurückverfolgt zu
+    ihrer Analyse und deren Quellen. Fail-open: ein Lesefehler zeigt nur
+    den Leerzustand statt zu crashen."""
+    st.subheader("🧬 Entscheidungs-Genealogie")
+    st.caption(
+        "Jede Order rückwärts verfolgt: Order → Analyse → Quellen. Die "
+        "Zuordnung Order→Analyse ist eine Heuristik (zeitlich "
+        "nächstliegende Analyse desselben Tickers vor der Order)."
+    )
+    try:
+        from broker.order_log import get_order_log
+        _order_log = get_order_log()
+        orders = _order_log.recent(limit=10)
+    except Exception:
+        orders, _order_log = [], None
+    if not orders:
+        st.caption("Noch keine Orders protokolliert.")
+        return
+
+    from dashboard.genealogy import lineage_svg, order_lineage
+    for order in orders:
+        label = f"{order.get('action', '?')} {order.get('ticker', '?')} · {str(order.get('ts', ''))[:16]}"
+        with st.expander(label):
+            try:
+                # Denselben DB-Pfad wie der gerade genutzte OrderLog
+                # verwenden (wichtig in Tests: get_order_log() ist
+                # per Fixture auf eine Temp-DB isoliert, order_lineage()
+                # muss dieselbe Datei lesen, nicht die echte data/).
+                lineage = order_lineage(order["id"], order_db_path=_order_log._db_path)
+            except Exception:
+                lineage = {"order": None, "analysis": None, "sources": None}
+            if _theme.is_enabled():
+                st.markdown(lineage_svg(lineage), unsafe_allow_html=True)
+            else:
+                _analysis = lineage.get("analysis")
+                st.caption(
+                    f"Analyse: {_analysis.get('recommendation')} "
+                    f"(Score {_analysis.get('sentiment_score')})"
+                    if _analysis else "Analyse: (keine Analyse gefunden)"
+                )
+                _sources = lineage.get("sources") or {}
+                if _sources:
+                    st.caption("Quellen: " + ", ".join(
+                        f"{s}×{n}" for s, n in _sources.items()
+                    ))
+                else:
+                    st.caption("Quellen: (kein Breakdown gespeichert)")
+
+
 def render(ctx) -> None:
     acc = ctx.acc
     portfolio = ctx.portfolio
@@ -227,6 +277,8 @@ def render(ctx) -> None:
                     width="stretch",
                 )
 
+    st.divider()
+    _render_genealogy()
     st.divider()
 
     # Trade Journal

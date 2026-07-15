@@ -337,21 +337,42 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
       Produktions-DB aktuell nicht, weil `decision_log.db` leer ist —
       Bot pausiert, fail-open korrekt).
 
-- [ ] **H3.2 Entscheidungs-Genealogie** (M) 🟡
-      1. [ ] Daten-Funktion `dashboard/genealogy.py`:
+- [x] **H3.2 Entscheidungs-Genealogie** (M) 🟡
+      1. [x] Daten-Funktion `dashboard/genealogy.py`:
          `def order_lineage(order_id) -> dict` — Order (order_log) →
          zeitlich passender analysis_log-Eintrag desselben Tickers →
          dessen `sources_breakdown`/`provenance`. Alles read-only,
          fail-open; fehlende Stufe = None (🟡: Zuordnung Order→Analyse
          über Ticker + nächstliegender Zeitstempel davor — dokumentieren,
          dass das eine Heuristik ist).
-      2. [ ] Darstellung: dreistufiger Stammbaum als SVG (Order-Kasten →
+      2. [x] Darstellung: dreistufiger Stammbaum als SVG (Order-Kasten →
          Analyse-Kasten → Quellen-Kästen), Klick nicht nötig — Tooltips
          (`<title>`, Muster machines.py) reichen in v1.
-      3. [ ] Einbau im Trades-Tab als Expander je Order (nur pixel).
-      4. [ ] Tests: lineage mit präparierten DBs; None-Stufen rendern
+      3. [x] Einbau im Trades-Tab als Expander je Order (nur pixel).
+      4. [x] Tests: lineage mit präparierten DBs; None-Stufen rendern
          als „(keine Analyse gefunden)".
-      5. [ ] → SA
+      5. [x] → SA
+
+      Umgesetzt 15.7.2026: `order_lineage()`/`lineage_svg()` in
+      `dashboard/genealogy.py`, mit eigenen read-only sqlite3-Connections
+      auf `broker.order_log.DB_PATH`/`analyzers.analysis_log.DB_PATH`
+      (kein Eingriff in die beiden Module). Einbau als
+      „🧬 Entscheidungs-Genealogie" im Tab „Trades & Lernen" (nicht in
+      `tabs/live.py`, wo Orders technisch auch schon sichtbar sind —
+      der Roadmap-Wortlaut wollte es explizit im Trades-Tab, thematisch
+      näher an „verstehen" statt „live überwachen"). **Zwei Nachzüge
+      beim Testen:** (a) `_render_genealogy()` musste denselben
+      DB-Pfad wie der bereits geladene `OrderLog` an `order_lineage()`
+      weiterreichen (`_order_log._db_path`) — sonst hätte die
+      Genealogie-Funktion in Tests gegen die ISOLIERTE Order-Test-DB,
+      aber trotzdem gegen die ECHTE `analysis_log.db` verglichen (Fund
+      beim ersten Testlauf, nicht vorher offensichtlich). (b) ein
+      Plain-Modus-Test mit Ticker "NVDA" fand tatsächlich eine reale
+      Analyse in der echten Produktions-DB (bewusst NICHT
+      pfad-isoliert, da die Funktion genau das in Produktion tun soll)
+      — Test auf einen garantiert synthetischen Ticker umgestellt.
+      10 Modul-Tests + 3 Tab-Tests; Verifikation normal/kiosk ×
+      pixel/plain je 0 Exceptions.
 
 - [ ] **H3.3 Kalibrier-Kurve live** (S) 🟢
       1. [ ] Daten: `ExperienceStore` (Muster `_read_lab()` in
