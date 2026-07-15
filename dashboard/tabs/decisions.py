@@ -126,6 +126,33 @@ def render(ctx) -> None:
                 _pct = _n / _sr_total
                 st.progress(_pct, text=f"{_BUCKET_LABELS.get(_b, _b)} — {_n}× ({_pct:.0%})")
 
+        # H3.1: "Warum nicht?"-Explorer — beantwortet "warum hat der Bot X
+        # nicht gekauft?" als Weichenstrecke statt Prosa-Text. Fail-open:
+        # ein Lesefehler zeigt nur den Hinweis, nie eine Exception.
+        try:
+            _wn_tickers = sorted({e["ticker"] for e in _dlog_dash.get_day(_sel_day)})
+        except Exception:
+            _wn_tickers = []
+        if _wn_tickers:
+            with st.expander("🔎 Warum nicht? Explorer"):
+                _wn_ticker = st.selectbox("Ticker", _wn_tickers, key="why_not_ticker")
+                from dashboard.why_not import gate_trail, gate_trail_svg
+                try:
+                    _trail = gate_trail(_wn_ticker, _sel_day)
+                except Exception:
+                    _trail = []
+                if not _trail:
+                    st.caption("Keine Entscheidung für diesen Ticker an diesem Tag gefunden.")
+                elif _theme.is_enabled():
+                    st.markdown(gate_trail_svg(_trail), unsafe_allow_html=True)
+                else:
+                    _wn_icon = {"passed": "🟢", "blocked": "🔴", "unreached": "⚪", "result": "🔵"}
+                    for _step in _trail:
+                        _line = f"{_wn_icon.get(_step['status'], '•')} {_step['label']}"
+                        if _step.get("reason"):
+                            _line += f" — {_step['reason']}"
+                        st.caption(_line)
+
         st.divider()
 
         # ── Einzel-Entscheidungen ───────────────────────────────────────────

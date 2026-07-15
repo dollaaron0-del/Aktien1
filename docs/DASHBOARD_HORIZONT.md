@@ -289,9 +289,9 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
 
 ## H3 — Erklärbarkeit
 
-- [ ] **H3.1 „Warum nicht?"-Explorer** (M) 🟡
+- [x] **H3.1 „Warum nicht?"-Explorer** (M) 🟡
       Ziel: Ticker wählen → Gate-Strecke grün/rot mit echten Gründen.
-      1. [ ] Daten-Funktion in `dashboard/why_not.py`:
+      1. [x] Daten-Funktion in `dashboard/why_not.py`:
          `def gate_trail(ticker: str, day: str | None = None) ->
          list[dict]` — liest die DecisionLog-Einträge des Tickers
          (neuester Tag), extrahiert `skip_reasons`/`action`/`reason` und
@@ -301,14 +301,41 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
          reason-Strings im decision_log VORHER per SQL anschauen und das
          Mapping daran ausrichten, nicht raten; unbekannte Gründe in
          einen „Sonstiges"-Eintrag).
-      2. [ ] SVG-Weichenstrecke (Muster conveyor.py): je Gate ein Kasten
+      2. [x] SVG-Weichenstrecke (Muster conveyor.py): je Gate ein Kasten
          grün (passiert) / rot (geblockt, mit Grund-Text) / grau (nicht
          erreicht).
-      3. [ ] Einbau als Expander im Entscheidungen-Tab mit
+      3. [x] Einbau als Expander im Entscheidungen-Tab mit
          Ticker-Selectbox (Werte = heutige Funnel-Ticker).
-      4. [ ] Tests: gate_trail mit präparierten Log-Einträgen (geblockt
+      4. [x] Tests: gate_trail mit präparierten Log-Einträgen (geblockt
          auf Stufe 2 → Stufe 3+ grau); SVG escaped Grund-Texte.
-      5. [ ] → SA
+      5. [x] → SA
+
+      Umgesetzt 15.7.2026, Investigations-Schritt bestätigt eine andere
+      Realität als der ursprüngliche Entwurf: `_GATES` existiert nicht —
+      die reale, bereits bestehende Kategorisierung ist
+      `analyzers.decision_log._REASON_BUCKETS` (12 Buckets: daten_gate,
+      kein_kaufsignal, unter_schwelle, zu_wenige_quellen,
+      max_positionen, earnings_sperre, korrelation, liquiditaet,
+      lernfilter_avoid, positionsgroesse, tagesverlust, kein_kurs) —
+      exakt dieselbe, die der Förderband-Funnel (D4) schon nutzt.
+      `gate_trail()` importiert diese Bucket-Reihenfolge und die Labels
+      aus `dashboard.conveyor._reason_label` statt sie zu duplizieren.
+      Dokumentierte Einschränkung: die Bucket-Reihenfolge ist die
+      Regex-Prüfreihenfolge, nicht zwingend die exakte Gate-Ausführungs-
+      Reihenfolge der echten Strategie (liegt in `bot/`, außerhalb des
+      Dashboard-Scopes) — für BUY/HOLD/SELL gilt die komplette Strecke
+      als "passiert". Einbau im Entscheidungen-Tab direkt unter den
+      Skip-Grund-Balken. **Nachzug beim Testen:** Test-Ticker AAPL/
+      MSFT/NVDA/TSLA kollidierten mit `_seed()`-Daten aus
+      `test_dashboard_decisions_conveyor.py` (geteilte Test-Decision-Log-
+      DB über die ganze Session) — `gate_trail()` nimmt den NEUESTEN
+      Eintrag, ein gleichnamiger Ticker aus einer anderen Testdatei ohne
+      explizites `decided_at` (= "jetzt") gewann daher gegen den eigens
+      gesetzten Test-Zeitstempel; behoben durch eigene Test-Ticker
+      (ZWN1–5). 8 Modul-Tests + 3 Tab-Tests; Verifikation normal/kiosk ×
+      pixel/plain je 0 Exceptions (Explorer selbst rendert in der echten
+      Produktions-DB aktuell nicht, weil `decision_log.db` leer ist —
+      Bot pausiert, fail-open korrekt).
 
 - [ ] **H3.2 Entscheidungs-Genealogie** (M) 🟡
       1. [ ] Daten-Funktion `dashboard/genealogy.py`:
