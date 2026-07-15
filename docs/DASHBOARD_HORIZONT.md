@@ -423,8 +423,8 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
       Modul-Tests, 3 Tab-Tests); Verifikation normal/kiosk × pixel/
       plain je 0 Exceptions.
 
-- [ ] **H4.2 Regime-Landkarte** (M) 🟡
-      1. [ ] Datenquelle: per-Regime-Kalibrierung (Lern-Stack 2.7.) —
+- [x] **H4.2 Regime-Landkarte** (M) 🟡 — **BLOCKIERT, siehe Befund**
+      1. [x] Datenquelle: per-Regime-Kalibrierung (Lern-Stack 2.7.) —
          zuerst die Speicherform finden (`grep -rn "regime"
          analyzers/calibration*` / `data/calibration.json` ansehen).
          🟡: Wenn die Struktur nicht eindeutig je (Regime × Stufe) eine
@@ -433,6 +433,32 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
          Spalten, Zellwert = Trefferquote, n klein → Zelle grau).
       3. [ ] Tests: Aggregat aus präpariertem JSON; Grau-Regel.
       4. [ ] → SA
+
+      > BLOCKIERT 15.7.2026: `analyzers/calibration.py` speichert
+      > Regime und Konfidenz als ZWEI GETRENNTE, unabhängige
+      > Dimensionen (`data/calibration.json`: `tables.regime`,
+      > `tables.confidence` — je ein flaches Dict, KEINE gemeinsame
+      > (Regime × Konfidenz)-Kreuztabelle existiert). Geprüft an der
+      > echten Produktionsdatei: `tables.regime` hat sogar nur EINEN
+      > Eintrag (`BULL`, n=347) — alle 347 gelabelten Trades stammen
+      > aus dem einen Bullenjahr im Datensatz (deckt sich mit dem
+      > bereits bekannten Befund „mechanischer baseline_swing schlägt
+      > Buy&Hold NICHT" aus dem Paper-Forward-Erstbefund). Eine
+      > Regime×Konfidenz-Matrix zu bauen hieße, zwei unabhängig
+      > berechnete Verteilungen als gemeinsame vorzutäuschen —
+      > statistisch irreführend, kein Software-Bug zum Beheben.
+      > Eine ECHTE gemeinsame Kalibrierung bräuchte eine neue,
+      > zweidimensionale Bucket-Dimension in `analyzers/calibration.py`
+      > selbst (`_DIMENSIONS` um z.B. `"regime_confidence"` erweitern)
+      > — das ist ein Analyzer-Change, außerhalb des für diese
+      > Ausbau-Session erlaubten Pfads (nur `dashboard/`). Alternative,
+      > ehrliche Mini-Version wäre zwei GETRENNTE Balkendiagramme
+      > (Regime-Trefferquote, Konfidenz-Trefferquote nebeneinander,
+      > nicht verschränkt) — das wäre kein „H4.2" mehr, sondern ein
+      > neuer, kleinerer Punkt. Nicht umgesetzt; auf Rückmeldung
+      > wartend, ob (a) die echte Erweiterung in `analyzers/`
+      > gewünscht ist, oder (b) die ehrliche Zwei-Balken-Mini-Version
+      > reicht.
 
 - [ ] **H4.3 Paper-Forward-Fieberkurve** (S) 🟢
       1. [ ] Datenquelle: `data/paper_forward.json` (existiert; Struktur
