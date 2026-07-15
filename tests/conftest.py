@@ -43,6 +43,17 @@ def _isolate_order_log(tmp_path, monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_factory_history(tmp_path, monkeypatch):
+    """Fabrik-Zustands-Schnappschüsse (H2.1, dashboard/factory/state.py)
+    IMMER in eine Temp-Datei umlenken: das Fabrik-Tab-Fragment
+    (tabs/factory.py, _maybe_snapshot) schreibt sonst aus jedem Test, der
+    factory.render()/read_state() end-to-end aufruft, in die echte
+    data/factory_history.jsonl."""
+    import dashboard.factory.state as fstate_mod
+    monkeypatch.setattr(fstate_mod, "HISTORY_FILE", str(tmp_path / "factory_history_test.jsonl"))
+
+
 @pytest.fixture()
 def tmp_data_dir(tmp_path, monkeypatch):
     """

@@ -32,6 +32,13 @@ _EONET_FILE = os.path.join(_DATA_DIR, "eonet_hazards.json")
 _THESIS_REGISTRY_FILE = os.path.join(_DATA_DIR, "thesis_registry.json")
 _WEATHER_MACRO_FILE = os.path.join(_DATA_DIR, "weather_macro.json")
 
+# H2.1: Grundlage für Zeitreise/Replay (H2.2/H2.3) — regelmäßige, schlanke
+# Schnappschüsse des Fabrik-Zustands (ohne payload, um die Datei klein zu
+# halten). Modul-Konstante statt in einer Funktion gebunden, damit Tests
+# sie per monkeypatch umbiegen können (Muster _REGIME_FILE).
+HISTORY_FILE = os.path.join(_DATA_DIR, "factory_history.jsonl")
+_HISTORY_MAX_BYTES = 5 * 1024 * 1024
+
 # Vision W4.4: "Backup heute Nacht gelaufen" gilt bis zu dieser Alters-
 # schwelle (Stunden) als frisch — großzügig genug, um den 03:00-Timer
 # tagsüber noch als "letzte Nacht" zu zählen.
@@ -390,3 +397,66 @@ def read_state() -> FactoryState:
         events=_read_events(),
         weather_demand_label=_read_weather_demand_label(),
     )
+
+
+def _cap_history_file(path: str) -> None:
+    """Wirft die ältere Hälfte der Zeilen weg, sobald die Datei
+    `_HISTORY_MAX_BYTES` überschreitet — hält die Historie unbegrenzt
+    lange nutzbar statt unbegrenzt zu wachsen. Fail-open."""
+    try:
+        if os.path.getsize(path) <= _HISTORY_MAX_BYTES:
+            return
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.readlines()
+        keep = lines[len(lines) // 2:]
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.writelines(keep)
+    except Exception:
+        pass
+
+
+def snapshot(state: FactoryState, path: str | None = None) -> None:
+    """H2.1: hängt eine schlanke JSON-Zeile des Fabrik-Zustands an
+    `HISTORY_FILE` an — Grundlage für Zeitreise/Replay (H2.2/H2.3).
+    Bewusst OHNE payload (nur status+tooltip je Maschine), damit die
+    Datei klein bleibt. Fail-open: ein Schreibfehler darf die Fabrik-
+    Anzeige nie stören."""
+    target = path or HISTORY_FILE
+    try:
+        row = {
+            "ts": state.generated_at,
+            "paused": state.paused,
+            "machines": {
+                mid: {"status": m.status, "tooltip": list(m.tooltip)}
+                for mid, m in state.machines.items()
+            },
+        }
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        _cap_history_file(target)
+    except Exception:
+        pass
+
+
+def read_history(day: str, path: str | None = None) -> List[dict]:
+    """H2.1: alle Schnappschüsse eines Tages (`day` = "YYYY-MM-DD"),
+    älteste zuerst. Kaputte/unlesbare Zeilen werden übersprungen statt
+    die ganze Historie zu verwerfen. Fehlt die Datei: leere Liste."""
+    target = path or HISTORY_FILE
+    rows: List[dict] = []
+    try:
+        with open(target, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if str(row.get("ts") or "").startswith(day):
+                    rows.append(row)
+    except Exception:
+        return []
+    return rows

@@ -5,11 +5,35 @@ Darstellungsform neben Tabellen und Charts, kein Deko-Bild. Rendert in
 BEIDEN Theme-Modi (hängt nur an PALETTE-Konstanten, nicht an
 theme.is_enabled() — die Fabrik IST das Pixel-Theme, kein optionaler Zusatz
 darauf)."""
+import time
+
 import streamlit as st
 
 from dashboard.factory.scene import build_scene_svg
-from dashboard.factory.state import MACHINE_IDS, MachineState, read_state
+from dashboard.factory.state import MACHINE_IDS, MachineState, read_state, snapshot
 from dashboard.theme import PALETTE
+
+# H2.1: Grundlage für Zeitreise/Replay — Schnappschuss max. 1×/10 Min,
+# sonst würde der 60s-Auto-Refresh die Historie-Datei vollschreiben.
+# Modul-Variable (kein st.session_state): der Fragment-Rerun läuft
+# serverseitig, ein Prozess-globaler Takt ist hier das Richtige.
+_SNAPSHOT_INTERVAL_S = 600
+_last_snapshot_ts = 0.0
+
+
+def _maybe_snapshot(state) -> bool:
+    """Schreibt einen Schnappschuss nur, wenn seit dem letzten
+    mindestens `_SNAPSHOT_INTERVAL_S` vergangen ist. Eigene Funktion
+    (statt Inline-Code im Fragment), damit die Drossel ohne
+    Streamlit-Fragment-Mechanik testbar ist. Gibt zurück, ob
+    geschrieben wurde."""
+    global _last_snapshot_ts
+    now = time.time()
+    if now - _last_snapshot_ts < _SNAPSHOT_INTERVAL_S:
+        return False
+    snapshot(state)
+    _last_snapshot_ts = now
+    return True
 
 _LEGEND = (
     ("neon_green", "aktiv/gesund"),
@@ -123,6 +147,7 @@ def render(ctx) -> None:
     def _scene() -> None:
         state = read_state()
         st.markdown(build_scene_svg(state), unsafe_allow_html=True)
+        _maybe_snapshot(state)
 
         if state.paused:
             st.markdown(

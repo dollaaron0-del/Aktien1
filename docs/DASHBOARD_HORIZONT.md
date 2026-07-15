@@ -146,10 +146,10 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
 
 ## H2 — Zeitreise & Replay
 
-- [ ] **H2.1 Zustands-Schnappschüsse** (M) 🟢
+- [x] **H2.1 Zustands-Schnappschüsse** (M) 🟢
       Ziel: `read_state()` regelmäßig als JSON-Zeile sichern — Grundlage
       für H2.2/H2.3.
-      1. [ ] In `dashboard/factory/state.py`:
+      1. [x] In `dashboard/factory/state.py`:
          `HISTORY_FILE = os.path.join(_DATA_DIR, "factory_history.jsonl")`
          (Modul-Konstante, damit Tests sie monkeypatchen können — Muster
          `_REGIME_FILE`) und
@@ -157,21 +157,35 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
          None`: hängt eine Zeile `{"ts": state.generated_at, "paused":
          state.paused, "machines": {id: {"status": m.status, "tooltip":
          m.tooltip}}}` an (OHNE payload — klein halten). Fail-open.
-      2. [ ] Deckelung in `snapshot()`: überschreitet die Datei 5 MB,
+      2. [x] Deckelung in `snapshot()`: überschreitet die Datei 5 MB,
          älteste Hälfte der Zeilen verwerfen (einfach: Zeilen lesen,
          hintere Hälfte zurückschreiben).
-      3. [ ] `def read_history(day: str, path: str | None = None) ->
+      3. [x] `def read_history(day: str, path: str | None = None) ->
          list[dict]`: alle Zeilen deren `ts` mit `day` (YYYY-MM-DD)
          beginnt; kaputte Zeilen überspringen.
-      4. [ ] Aufruf: im Fabrik-Tab-Fragment (`tabs/factory.py`) nach
+      4. [x] Aufruf: im Fabrik-Tab-Fragment (`tabs/factory.py`) nach
          `read_state()` — aber MAX 1×/10 Min (Modul-Variable
          `_last_snapshot_ts` vergleichen), sonst schreibt der
          60s-Auto-Refresh die Datei voll.
-      5. [ ] Tests: snapshot+read Roundtrip auf tmp-Datei; Deckelung
+      5. [x] Tests: snapshot+read Roundtrip auf tmp-Datei; Deckelung
          (Datei künstlich >5 MB → schrumpft); kaputte Zeile wird
          übersprungen; Drossel (zwei snapshot-Aufrufe direkt
          nacheinander → nur 1 Zeile).
-      6. [ ] → SA
+      6. [x] → SA
+
+      Umgesetzt 15.7.2026: Drossel-Logik als eigene, testbare Funktion
+      `_maybe_snapshot(state)` in `tabs/factory.py` (statt Inline-Code im
+      `@st.fragment`) — so ist die 10-Minuten-Sperre ohne
+      Streamlit-Fragment-Mechanik direkt testbar. `read_history()` gibt
+      älteste zuerst zurück. **Wichtiger Nachzug:** neue autouse-Fixture
+      `_isolate_factory_history` in `tests/conftest.py` (Muster
+      `_isolate_sl_cooldown`/`_isolate_order_log`) — ohne sie hätte JEDER
+      Test, der `factory.render()`/`read_state()` end-to-end aufruft
+      (z.B. die bestehenden W1.3-Tab-Tests), in die echte
+      `data/factory_history.jsonl` geschrieben; beim ersten Suite-Lauf
+      genau so aufgefallen und sofort isoliert. 7 neue Tests
+      (`tests/test_dashboard_history.py`); Verifikation in allen vier
+      Kombinationen (normal/kiosk × pixel/plain) je 0 Exceptions.
 
 - [ ] **H2.2 Zeitreise-Regler im Fabrik-Tab** (M, braucht H2.1) 🟡
       1. [ ] In `tabs/factory.py` Expander „🕰 Archiv": `st.date_input` +
