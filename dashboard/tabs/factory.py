@@ -6,11 +6,19 @@ BEIDEN Theme-Modi (hängt nur an PALETTE-Konstanten, nicht an
 theme.is_enabled() — die Fabrik IST das Pixel-Theme, kein optionaler Zusatz
 darauf)."""
 import time
+from datetime import date
 
 import streamlit as st
 
 from dashboard.factory.scene import build_scene_svg
-from dashboard.factory.state import MACHINE_IDS, MachineState, read_state, snapshot
+from dashboard.factory.state import (
+    MACHINE_IDS,
+    MachineState,
+    read_history,
+    read_state,
+    reconstruct_from_snapshot,
+    snapshot,
+)
 from dashboard.theme import PALETTE
 
 # H2.1: Grundlage für Zeitreise/Replay — Schnappschuss max. 1×/10 Min,
@@ -135,6 +143,37 @@ def _render_detail_panel(m: MachineState) -> None:
         st.json(m.payload)
 
 
+def _render_archive() -> None:
+    """H2.2: Zeitreise-Regler — Grundlage H2.1 (read_history). Bewusst
+    AUSSERHALB des 60s-@st.fragment: der Regler-Zustand darf nicht vom
+    unabhängigen Live-Refresh der Szene mitgerissen/zurückgesetzt
+    werden. Fail-open: kaputte/fehlende Historie zeigt nur einen
+    Hinweis, nie eine Exception."""
+    with st.expander("🕰 Archiv"):
+        day = st.date_input("Datum", value=date.today(), key="factory_archive_day")
+        try:
+            rows = read_history(day.isoformat())
+        except Exception:
+            rows = []
+
+        if not rows:
+            st.caption("Keine Aufzeichnung für diesen Tag.")
+            return
+
+        options = [r.get("ts", "") for r in rows]
+        chosen_ts = st.select_slider(
+            "Uhrzeit", options=options,
+            value=options[-1],
+            format_func=lambda ts: ts[11:16] if len(ts) >= 16 else ts,
+            key="factory_archive_slider",
+        )
+        row = next((r for r in rows if r.get("ts") == chosen_ts), rows[-1])
+
+        st.warning("ARCHIV-ANSICHT — nicht der Live-Zustand")
+        archived_state = reconstruct_from_snapshot(row)
+        st.markdown(build_scene_svg(archived_state), unsafe_allow_html=True)
+
+
 def render(ctx) -> None:
     st.subheader("🏭 Fabrik")
     st.caption(
@@ -172,3 +211,4 @@ def render(ctx) -> None:
                 _render_detail_panel(machine)
 
     _scene()
+    _render_archive()

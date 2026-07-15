@@ -25,6 +25,24 @@ MACHINE_IDS = (
     "breaker", "gate", "weather", "lab", "backup_bot", "clock",
 )
 
+# H2.2: History-Zeilen (snapshot()) speichern bewusst KEIN Label (klein
+# halten) — für die Zeitreise-Rekonstruktion (reconstruct_from_snapshot)
+# ist das hier die einzige Quelle. MUSS mit den Labels in den _read_*()-
+# Funktionen unten übereinstimmen.
+MACHINE_LABELS: Dict[str, str] = {
+    "docks": "Laderampen",
+    "analyzer_claude": "Claude-Analysator",
+    "analyzer_ollama": "Ollama-Werkbank",
+    "conveyor": "Förderband",
+    "warehouse": "Hochregallager",
+    "breaker": "Not-Aus",
+    "gate": "Verladetor",
+    "weather": "Wetterstation",
+    "lab": "Qualitätslabor",
+    "backup_bot": "Nachtschicht-Roboter",
+    "clock": "Werksuhr",
+}
+
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")
 _BACKUPS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "backups")
 _REGIME_FILE = os.path.join(_DATA_DIR, "current_regime.json")
@@ -437,6 +455,29 @@ def snapshot(state: FactoryState, path: str | None = None) -> None:
         _cap_history_file(target)
     except Exception:
         pass
+
+
+def reconstruct_from_snapshot(row: dict) -> FactoryState:
+    """H2.2: baut aus einer history-Zeile (snapshot()) einen renderbaren
+    FactoryState. Payload-lose Maschinen sind by design in Ordnung —
+    machines.py/scene.py rendern Extras/Events fail-open, eine Archiv-
+    Ansicht ohne Zähler/Kisten ist also korrekt, kein Bug. `events`/
+    `weather_demand_label` bleiben Default (leer) — die history speichert
+    bewusst nur Status+Tooltip je Maschine."""
+    machines: Dict[str, MachineState] = {}
+    for mid, info in (row.get("machines") or {}).items():
+        info = info or {}
+        machines[mid] = MachineState(
+            id=mid,
+            label=MACHINE_LABELS.get(mid, mid),
+            status=str(info.get("status") or "off"),
+            tooltip=list(info.get("tooltip") or []),
+        )
+    return FactoryState(
+        machines=machines,
+        paused=bool(row.get("paused")),
+        generated_at=str(row.get("ts") or ""),
+    )
 
 
 def read_history(day: str, path: str | None = None) -> List[dict]:

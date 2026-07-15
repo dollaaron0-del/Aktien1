@@ -103,3 +103,62 @@ def test_warehouse_detail_panel_shows_positions_table(fresh_portfolio):
     at.run()
     assert not at.exception
     assert len(at.get("table")) == 1
+
+
+# ── H2.2: Zeitreise-Regler ────────────────────────────────────────────────────
+
+def test_archive_shows_hint_when_no_history_for_today():
+    """Ohne vorherige snapshot()-Aufrufe für heute muss der Archiv-
+    Expander einen Hinweis zeigen statt zu crashen."""
+    at = AppTest.from_string(_SCRIPT)
+    at.run()
+    assert not at.exception
+    caption_out = "".join(str(c.value) for c in at.get("caption"))
+    assert "Keine Aufzeichnung" in caption_out
+
+
+def test_archive_renders_archived_scene_with_warning():
+    from datetime import date, datetime, timezone
+
+    import dashboard.factory.state as st_mod
+
+    today = date.today().isoformat()
+    ts = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    state = st_mod.FactoryState(
+        machines={"gate": st_mod.MachineState(
+            id="gate", label="Verladetor", status="err",
+            tooltip=["IB-Gateway nicht erreichbar"],
+        )},
+        paused=True, generated_at=ts,
+    )
+    st_mod.snapshot(state)
+
+    at = AppTest.from_string(_SCRIPT)
+    at.run()
+    assert not at.exception
+
+    warnings = [str(w.value) for w in at.get("warning")]
+    assert any("ARCHIV-ANSICHT" in w for w in warnings)
+    html_out = "".join(str(m.value) for m in at.get("markdown"))
+    assert html_out.count("<svg") >= 2  # Live-Szene + Archiv-Szene
+    assert "Verladetor" in html_out
+
+
+def test_archive_reconstructed_machine_has_no_extras_but_no_crash():
+    """Payload-lose Rekonstruktion darf keine Fabrik-Detailtiefe-Extras
+    (Kisten/Zähler/Batterie) crashen lassen — die sind fail-open."""
+    import dashboard.factory.state as st_mod
+    from datetime import datetime, timezone
+
+    ts = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    state = st_mod.FactoryState(
+        machines={"warehouse": st_mod.MachineState(
+            id="warehouse", label="Hochregallager", status="ok", tooltip=["x"],
+        )},
+        paused=False, generated_at=ts,
+    )
+    st_mod.snapshot(state)
+
+    at = AppTest.from_string(_SCRIPT)
+    at.run()
+    assert not at.exception

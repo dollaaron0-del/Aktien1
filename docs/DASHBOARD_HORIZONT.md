@@ -187,21 +187,32 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
       (`tests/test_dashboard_history.py`); Verifikation in allen vier
       Kombinationen (normal/kiosk × pixel/plain) je 0 Exceptions.
 
-- [ ] **H2.2 Zeitreise-Regler im Fabrik-Tab** (M, braucht H2.1) 🟡
-      1. [ ] In `tabs/factory.py` Expander „🕰 Archiv": `st.date_input` +
+- [x] **H2.2 Zeitreise-Regler im Fabrik-Tab** (M, braucht H2.1) 🟡
+      1. [x] In `tabs/factory.py` Expander „🕰 Archiv": `st.date_input` +
          `st.select_slider` über die Zeitstempel aus
          `read_history(day)` (leer → Hinweis „keine Aufzeichnung").
-      2. [ ] Gewählter Eintrag → `FactoryState` rekonstruieren (Status +
+      2. [x] Gewählter Eintrag → `FactoryState` rekonstruieren (Status +
          Tooltip reichen; payload-lose Maschinen rendern ohne Extras —
          genau dafür sind die Extras fail-open). `build_scene_svg()`
          damit rendern, DARÜBER unübersehbar
          `st.warning("ARCHIV-ANSICHT — nicht der Live-Zustand")`.
-      3. [ ] 🟡-Stelle: Live-Szene und Archiv-Szene sauber trennen
+      3. [x] 🟡-Stelle: Live-Szene und Archiv-Szene sauber trennen
          (Archiv NICHT ins 60s-Fragment legen, sonst springt der Regler).
          Im Zweifel: Archiv außerhalb `_scene()` rendern.
-      4. [ ] Tests: Archiv-Expander rendert mit präparierter
+      4. [x] Tests: Archiv-Expander rendert mit präparierter
          History-Datei; Warning erscheint; unbekannter Tag → Hinweis.
-      5. [ ] → SA
+      5. [x] → SA
+
+      Umgesetzt 15.7.2026: `_render_archive()` in `tabs/factory.py`,
+      direkt nach `_scene()` in `render()` aufgerufen (also außerhalb
+      des `@st.fragment(run_every="60s")` — der Regler bleibt beim
+      Live-Refresh stabil). Neue `state.py`-Bausteine:
+      `MACHINE_LABELS` (Zuordnung id→Label, da die history-Zeile
+      bewusst kein Label speichert) und
+      `reconstruct_from_snapshot(row) -> FactoryState`. 5 neue Tests
+      (2 in `test_dashboard_factory_tab.py`, 2 in
+      `test_dashboard_history.py` für die Rekonstruktion selbst);
+      Verifikation normal/kiosk × pixel/plain je 0 Exceptions.
 
 - [ ] **H2.3 Tages-Replay** (M, braucht H2.1) 🟡
       *Hinweis: KEINE Echtzeit-Animation über st.rerun-Schleifen bauen

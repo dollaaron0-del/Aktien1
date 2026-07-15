@@ -109,3 +109,30 @@ def test_maybe_snapshot_writes_again_after_interval(monkeypatch):
     )
     assert factory_tab._maybe_snapshot(state) is True
     assert len(calls) == 2
+
+
+# ── reconstruct_from_snapshot() (H2.2) ───────────────────────────────────────
+
+def test_reconstruct_from_snapshot_rebuilds_machine_state(tmp_path):
+    from dashboard.factory.state import reconstruct_from_snapshot
+
+    path = str(tmp_path / "history.jsonl")
+    snapshot(_state("2026-07-15T10:00:00", paused=True), path=path)
+    row = read_history("2026-07-15", path=path)[0]
+
+    rebuilt = reconstruct_from_snapshot(row)
+    assert rebuilt.paused is True
+    assert rebuilt.generated_at == "2026-07-15T10:00:00"
+    m = rebuilt.machines["gate"]
+    assert m.status == "ok"
+    assert m.tooltip == ["IB-Gateway erreichbar"]
+    assert m.label == "Verladetor"  # aus MACHINE_LABELS, nicht in der Zeile gespeichert
+    assert m.payload == {}  # bewusst payload-los
+
+
+def test_reconstruct_from_snapshot_handles_empty_row():
+    from dashboard.factory.state import reconstruct_from_snapshot
+
+    rebuilt = reconstruct_from_snapshot({})
+    assert rebuilt.machines == {}
+    assert rebuilt.paused is False
