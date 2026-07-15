@@ -176,27 +176,22 @@ Alle Helfer geben bei `plain` schlichtes, ungestyltes HTML bzw. no-op zurück
 
 ## D3 — Live-Tab als „Leitstand" (nach D0+D1)
 
-- [ ] **D3.1 Aktivitätsfeed als Terminal-Log** — `tabs/live.py`: die
-      Event-Zeilen (bisher `st.markdown` je Event) als EIN
-      `.px-terminal`-Block; Farbcodierung per span: trade→neon_green,
-      gate_blocked→copper, cycle_start/end→cobalt, analysis_done→text.
-      Alle Feld-Inhalte durch `html.escape()`. Plain: alter Pfad bleibt
-      (if not theme.is_enabled(): bisheriger Code). Fertig wenn:
-      Verifikation OK + gezielter AppTest mit geseedeter Temp-Feed-DB
-      (Muster: bestehende live-Tab-Verifikation in der Git-Historie,
-      Commit 8fb561b).
-- [ ] **D3.2 Zyklus-Zeitleiste als Fertigungsstraße** — `tabs/live.py`:
-      Phasen (Start→Exits→Vorladen→Analyse) als horizontale Stationen-Leiste
-      (HTML/CSS: Punkte + Verbindungslinie, abgeschlossene Station
-      neon_green, laufende pulsierend cobalt, ausstehende border-Farbe),
-      Dauer-Angaben in VT323 darunter. Datenquelle unverändert
-      `phase_durations()`. Fertig wenn: Verifikation OK.
-- [ ] **D3.3 Order-Historie** — `tabs/live.py`: Order-Zeilen mit
-      `theme.led()` statt Emoji (filled→ok, error→err, cancelled→off),
-      Teilausführung als copper-Badge. Fertig wenn: Verifikation OK.
-- [ ] **D3.4 Nächste-Aktionen/Timer-Panel** — Restliche Abschnitte des
-      Live-Tabs in `.px-panel`-Optik, systemd-Timer-Zeilen in VT323.
-      Fertig wenn: Verifikation OK.
+- [x] **D3.1 Aktivitätsfeed als Terminal-Log** — Event-Zeilen als EIN
+      `.px-terminal`-Block, Farbcodierung per CSS-Var (trade neon_green,
+      gate_blocked copper, cycle_start/end cobalt, analysis_done text-Farbe),
+      alles `html.escape()`d. Plain nutzt weiter die alte Zeilen-für-Zeile-
+      Darstellung. 5 neue Tests (`test_dashboard_live_tab.py`, geseedete
+      Temp-`ActivityFeed`), Verifikation OK.
+- [x] **D3.2 Zyklus-Zeitleiste als Fertigungsstraße** — feste Stationen-
+      Reihenfolge (Start/Exits prüfen/Vorladen/Analyse), Punkte + Verbindungs-
+      linie, laufende Station pulsiert (cobalt, `px-blink`-Klasse
+      wiederverwendet), abgeschlossen neon_green, Dauer in VT323. Unbekannte
+      Phasennamen werden hinten angehängt statt verschluckt. Verifikation OK.
+- [x] **D3.3 Order-Historie** — `theme.led()` statt Emoji-Icon fürs
+      Fill-/Fehler-/Storno-Symbol, Teilausführung als copper-Badge, Rest
+      escaped. Verifikation OK.
+- [x] **D3.4 Nächste-Aktionen/Timer-Panel** — Timer-Zeilen in `.px-panel` +
+      VT323. Verifikation OK.
 
 ## D4 — Entscheidungs-Funnel als Förderband (Vorzeige-Stück; nach D0+D1)
 
