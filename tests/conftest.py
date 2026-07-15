@@ -78,6 +78,18 @@ def _isolate_logbook(tmp_path, monkeypatch):
     monkeypatch.setattr(lb_mod, "LOGBOOK_FILE", str(tmp_path / "logbook_test.jsonl"))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_achievements(tmp_path, monkeypatch):
+    """Plaketten-Wand (H7.2, dashboard/achievements.py) IMMER in eine
+    Temp-Datei umlenken — vorsorglich (Muster: _isolate_logbook).
+    unlocked() schreibt bei jeder neu erreichten Plakette in
+    ACHIEVEMENTS_FILE, auch beim bloßen Rendern des Fabrik-Tabs (kein
+    Klick nötig, anders als beim Schichtbuch) — ohne Isolation würde
+    das in die echte data/achievements.json schreiben."""
+    import dashboard.achievements as ach_mod
+    monkeypatch.setattr(ach_mod, "ACHIEVEMENTS_FILE", str(tmp_path / "achievements_test.json"))
+
+
 @pytest.fixture()
 def tmp_data_dir(tmp_path, monkeypatch):
     """

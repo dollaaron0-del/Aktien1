@@ -11,6 +11,7 @@ from datetime import date
 
 import streamlit as st
 
+from dashboard import theme as _theme
 from dashboard.factory.scene import build_scene_svg
 from dashboard.factory.state import (
     MACHINE_IDS,
@@ -290,6 +291,31 @@ def _render_ticker_form() -> None:
             pass
 
 
+def _render_achievements() -> None:
+    """H7.2: Plaketten-Wand — echte Meilensteine, einmal erreicht bleiben
+    sie erreicht (dashboard.achievements.unlocked() merkt das dauerhaft).
+    Fail-open: ein Lesefehler zeigt den Katalog einfach leer statt zu
+    crashen."""
+    with st.expander("🏅 Plaketten-Wand"):
+        from dashboard.achievements import unlocked
+        try:
+            rows = unlocked()
+        except Exception:
+            rows = []
+        for row in rows:
+            if row["unlocked"]:
+                body = (
+                    f"🏅 <b>{html.escape(row['title'])}</b> — erreicht am "
+                    f"{html.escape(str(row['unlocked_at']))}"
+                )
+                if _theme.is_enabled():
+                    st.markdown(_theme.panel(body), unsafe_allow_html=True)
+                else:
+                    st.success(f"🏅 {row['title']} — erreicht am {row['unlocked_at']}")
+            else:
+                st.caption(f"🔒 {row['title']} — {row['condition_text']}")
+
+
 def render(ctx) -> None:
     st.subheader("🏭 Fabrik")
     st.caption(
@@ -330,3 +356,4 @@ def render(ctx) -> None:
     _render_ticker_form()
     _render_archive()
     _render_logbook()
+    _render_achievements()

@@ -639,25 +639,46 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
       normal/kiosk × pixel/plain je 0 Exceptions, Gesicht im echten
       Voll-Render bestätigt sichtbar.
 
-- [ ] **H7.2 Plaketten-Wand** (M) 🟢
-      1. [ ] `dashboard/achievements.py`: `CATALOG` fester Plaketten
+- [x] **H7.2 Plaketten-Wand** (M) 🟢
+      1. [x] `dashboard/achievements.py`: `CATALOG` fester Plaketten
          (id, Titel, Prüf-Funktion) — alle Prüfungen read-only auf
          bestehende Daten: „Erster Live-Trade" (`ExperienceStore.stats()
          ['live'] > 0`), „100 gelabelte Trades" (labeled ≥ 100),
          „Erste PROVEN-These" (Registry), „30 Tage ohne Not-Aus"
          (CircuitBreaker-State), „1 Jahr Betrieb" (ältester
          analysis_log-Eintrag).
-      2. [ ] `def unlocked() -> list[dict]`: prüft alle, MERKT sich
+      2. [x] `def unlocked() -> list[dict]`: prüft alle, MERKT sich
          einmal Erreichtes in `data/achievements.json` (einmal erreicht
          = bleibt, auch wenn die Bedingung später wieder kippt — das ist
          der Sinn einer Plakette).
-      3. [ ] Anzeige: Expander „🏅 Plaketten-Wand" im Fabrik-Tab —
+      3. [x] Anzeige: Expander „🏅 Plaketten-Wand" im Fabrik-Tab —
          erreichte als `theme.panel` mit Datum, offene ausgegraut mit
          Bedingung.
-      4. [ ] Tests: Prüf-Funktionen mit präparierten Quellen; Merk-Logik
+      4. [x] Tests: Prüf-Funktionen mit präparierten Quellen; Merk-Logik
          (Bedingung kippt zurück → Plakette bleibt); fehlende Quellen →
          fail-open offen statt Crash.
-      5. [ ] → SA
+      5. [x] → SA
+
+      Umgesetzt 15.7.2026 mit einer dokumentierten Abweichung bei
+      „30 Tage ohne Not-Aus": `CircuitBreaker` (`data/
+      circuit_breaker.json`) persistiert nur den AKTUELLEN Tag (day/
+      open_value/peak_value), KEINE Trigger-Historie — geprüft an der
+      echten Datei. Die Prüfung nutzt darum ersatzweise die Fabrik-
+      Zustands-Schnappschüsse (H2.1, `data/factory_history.jsonl`) und
+      verlangt mindestens 30 Tage ECHTE Aufzeichnung, bevor sie
+      überhaupt unlocken kann (kein Kurzschluss „keine Daten =
+      erreicht"). Alle 5 Prüfungen read-only, eigene Fail-open-Hülle je
+      Prüfung. **Bestätigt bei der Verifikation:** die echten
+      Produktionsdaten haben bereits 2 Meilensteine real erreicht
+      („Erster Live-Trade", „100 gelabelte Trades" — real 348 gelabelt,
+      1 Live-Trade) — die Plaketten-Wand hat das beim ersten echten
+      Rendern sofort erkannt und in `data/achievements.json`
+      festgeschrieben. 15 Modul-Tests (inkl. Nachzug: der erste
+      „alles gesperrt"-Test lief zunächst unisoliert gegen die echten
+      Produktionsdaten und schlug fehl, weil dort bereits 2 Plaketten
+      real erreicht sind — auf saubere Quellen-Isolation je Prüfung
+      umgestellt) + 3 Tab-Tests; Verifikation pixel/plain/blueprint ×
+      normal/kiosk je 0 Exceptions.
 
 - [x] **H7.3 Schichtbuch** (M) 🟡
       1. [x] `dashboard/logbook.py`: `def write_entry(day: str) -> str` —
