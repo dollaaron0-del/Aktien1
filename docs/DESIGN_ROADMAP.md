@@ -1,151 +1,304 @@
 # Design-Roadmap — Dashboard im 16-Bit-Industrieautomations-Stil
 
-Stand: 15.7.2026. Zielbild ist der vom User am 13.7. benannte Stil
-("Industrial automation pixel art", 16-Bit, isometrisch: Förderbänder mit
-Datenwürfeln, Sortier-Roboterarme, Terminal mit blinkenden Lichtern;
-Game-Dev-Asset-Kit-Optik). Umsetzung **schrittweise, wenn Kapazität frei
-ist** — jeder Block ist einzeln shippbar und lässt das Dashboard jederzeit in
-einem vorzeigbaren Zustand. **Deadline: fertig zur Programm-Vorstellung.**
+Stand: 15.7.2026 (v2, feingranular). Zielbild (User, 13.7.): "Industrial
+automation pixel art" — 16-Bit, isometrisch, Förderbänder mit Datenwürfeln,
+Sortier-Roboterarme, Terminal mit blinkenden Lichtern; Kobaltblau/Kupfer/
+Stahlgrau/Neon. **Deadline: fertig zur Programm-Vorstellung.**
 
-Legende: `[x]` fertig · `[~]` teilweise · `[ ]` offen
+Dieses Dokument ist als Arbeitsvorrat für ein günstigeres Modell geschnitten:
+jeder Task ist in einer Sitzung schaffbar, trifft keine offenen
+Design-Entscheidungen (alle Werte stehen unten fest) und endet mit
+Verifikation + Commit. Legende: `[x]` fertig · `[ ]` offen.
 
-## Leitplanken (gelten für JEDEN Block)
+## Arbeitsprotokoll für das ausführende Modell (vor JEDEM Task lesen)
 
-- **Lesbarkeit vor Stil.** Das ist ein datendichtes Finanz-Werkzeug: Zahlen,
-  Tabellen und Log-Texte bleiben in gut lesbarer Schrift mit hohem Kontrast.
-  Pixel-Fonts (z.B. "Press Start 2P") NUR für Überschriften/Akzente — nie
-  für Kennzahlen, Tabellen oder Fließtext (dort allenfalls ein gut lesbarer
-  Terminal-Mono wie VT323/IBM Plex Mono).
-- **Reine Präsentationsschicht.** Kein Trading-/Daten-Code wird angefasst;
-  alle Änderungen leben in `dashboard/` + `.streamlit/`. Kein Risiko für
-  Bot-Logik oder Testsuite.
-- **Eine Quelle für den Stil.** Farben/Fonts/CSS zentral in einem neuen
-  `dashboard/theme.py` (+ `.streamlit/config.toml`) — Tabs importieren von
-  dort, nichts wird pro Tab hart kodiert (dieselbe Disziplin wie
-  [[stock-relations-single-source]]).
-- **Abschaltbar.** Ein zentraler Schalter (ENV `DASHBOARD_THEME=pixel|plain`,
-  Default pixel nach D0) — falls etwas bei der Vorstellung klemmt, ist das
-  alte neutrale Aussehen einen Neustart entfernt.
-- **Performance.** Nur CSS/Statik — keine Animationen, die pro
-  Streamlit-Rerun neu rechnen; blinkende LEDs &c. laufen als reine
-  CSS-Keyframes im Browser.
+1. **Ein Task pro Durchgang, Reihenfolge einhalten** (D0.1 → D0.2 → …).
+   Innerhalb eines Blocks nicht springen; Blöcke D2/D3/D4 sind untereinander
+   unabhängig, brauchen aber alle D0+D1.
+2. **Nur diese Pfade anfassen:** `dashboard/`, `.streamlit/`,
+   `tests/test_dashboard_*`, dieses Dokument. NIEMALS Bot-/Trading-Code
+   (`bot/`, `strategy/`, `broker/`, `analyzers/`, …), nie `.env`, nie
+   systemd/crontab. Der Bot ist bewusst pausiert — nichts starten/enablen.
+3. **Verifikation nach jedem Task** (Pflicht, beide Läufe müssen `OK` drucken):
+   ```bash
+   timeout 180 venv/bin/python - <<'EOF'
+   from streamlit.testing.v1 import AppTest
+   at = AppTest.from_file("dashboard/app.py", default_timeout=120)
+   at.run()
+   assert not at.exception, list(at.exception)
+   print("OK pixel")
+   EOF
+   DASHBOARD_THEME=plain timeout 180 venv/bin/python - <<'EOF'
+   from streamlit.testing.v1 import AppTest
+   at = AppTest.from_file("dashboard/app.py", default_timeout=120)
+   at.run()
+   assert not at.exception, list(at.exception)
+   print("OK plain")
+   EOF
+   ```
+   Zusätzlich die Task-eigenen Tests: `venv/bin/python -m pytest
+   tests/test_dashboard_theme.py -q` (sobald die Datei existiert).
+4. **Commit pro Task**: nur die eigenen Dateien stagen, Message-Format
+   `feat(dashboard): <was> (Design D0.3)`. Der pre-commit-Hook fährt die
+   volle Suite (~5–8 min) — abwarten; bei Rot Fehler beheben, nie
+   `--no-verify`.
+5. **Nach Erledigung hier abhaken** (`[x]` + Einzeiler, was gemacht wurde).
+6. **Bei Unklarheit nicht raten:** Task offen lassen, direkt unter dem Task
+   eine `> OFFEN:`-Zeile mit der konkreten Frage hinterlassen, mit dem
+   nächsten unabhängigen Task weitermachen.
+7. Das Live-Dashboard (systemd `aktien_dashboard`, Port 8503, runOnSave)
+   lädt Code-Änderungen sofort — kaputte Zwischenstände nicht liegen lassen.
+8. **HTML-Sicherheit:** Jeder dynamische Wert (Ticker, Gründe, Log-Texte),
+   der in ein `unsafe_allow_html`/SVG-Snippet wandert, läuft vorher durch
+   `html.escape()`. Keine Ausnahmen.
 
-## D0 — Design-Fundament (Voraussetzung für alles Weitere)
+## Festgelegte Design-Werte (nicht neu entscheiden — nur verwenden)
 
-- [ ] **D0.1 Farbpalette fixieren** — exakte Hex-Werte für Kobaltblau
-      (Primär/Akzente), Kupfer (Warn-/Sekundärakzent), Stahlgrau-Stufen
-      (Hintergründe, dunkles Theme) und Neon (Erfolg/Alarm, sparsam) als
-      Konstanten in `dashboard/theme.py`. Ampel-Semantik bleibt erhalten:
-      grün/gelb/rot müssen auch im neuen Schema eindeutig unterscheidbar
-      sein (Farbenblind-Check: nicht nur über Farbe codieren, Icons behalten).
-- [ ] **D0.2 `.streamlit/config.toml`** — Streamlit-Theme (base dark,
-      primaryColor, backgroundColor, secondaryBackgroundColor, textColor,
-      font) aus D0.1 ableiten. Datei existiert noch nicht — Greenfield.
-- [ ] **D0.3 Zentrale CSS-Injektion** — `theme.py::inject()` einmal in
-      `app.py` direkt nach `st.set_page_config()` aufrufen; lädt Fonts
-      (lokal gebundelt, KEIN CDN — Dashboard läuft auch ohne Internet),
-      definiert CSS-Klassen für Panels/LEDs/Terminal-Look, die spätere
-      Blocks nutzen.
-- [ ] **D0.4 Verifikation** — headless AppTest-Durchlauf aller Tabs (keine
-      Exceptions), Vorher/Nachher-Screenshot als Abnahme-Basis.
+**ENV-Schalter:** `DASHBOARD_THEME` — `pixel` (Default) | `plain` (alles aus,
+Verhalten wie heute). Auswertung ausschließlich in `dashboard/theme.py`.
 
-## D1 — Sichtbare Quick-Wins (Header, KPIs, Ampel)
+**Palette** (Konstante `PALETTE` in `dashboard/theme.py`):
 
-Wirkt auf jeder Seite, kleinster Aufwand pro Sichtbarkeit:
+```python
+PALETTE = {
+    "bg":          "#14171C",  # Seiten-Hintergrund (Stahl, fast schwarz)
+    "bg_panel":    "#1E232B",  # Panel-/Karten-Hintergrund
+    "border":      "#3A4250",  # Panel-Rahmen (Stahl)
+    "text":        "#E8ECF2",  # Primärtext
+    "text_muted":  "#9AA4B2",  # gedämpfter Text
+    "cobalt":      "#2E6BE6",  # Primär-Akzent (aktive Tabs, Zyklus-Events)
+    "cobalt_hi":   "#4D8DFF",  # Hover/Highlight
+    "copper":      "#C87533",  # Kupfer (Gate-Blocks, Warn-Sekundär, Deltas)
+    "copper_hi":   "#E09A5A",
+    "neon_green":  "#39FF88",  # OK-LED, Gewinne, Trades
+    "amber":       "#FFC857",  # Warn-LED
+    "red":         "#FF4D4D",  # Fehler-LED, Verluste
+    "neon_cyan":   "#33E0FF",  # sparsam: Glow/Scanline/Sonder-Highlights
+}
+```
 
-- [ ] **D1.1 Header/Titelzeile** — Pixel-Font-Titel + kleines Logo-Placeholder
-      (bis D5 echte Pixel-Art liefert), Stahlgrau-Panel-Optik.
-- [ ] **D1.2 Gesundheits-Ampel → Terminal-LEDs** — die bestehende
-      Ampelleiste (IB-Gateway/Claude-Kosten/Circuit-Breaker, 1.5d) als
-      blinkende Status-LEDs im Leitstand-Look (CSS-Keyframe-Puls nur bei
-      Warn-/Fehlzustand; grün leuchtet statisch — Dauerblinken nervt).
-- [ ] **D1.3 KPI-Leiste** — `st.metric`-Karten als Industriepanel gestylt
-      (Rahmen, Nieten-/Schrauben-Ecken per CSS, Kupfer-Akzent bei Deltas).
-- [ ] **D1.4 Tab-Leiste** — Icons/Beschriftung konsistent, aktive
-      Tab-Markierung in Kobaltblau.
+**Fonts:** Überschriften/Logo = "Press Start 2P"; Terminal-/Log-Akzente =
+"VT323"; **Zahlen, Tabellen, Fließtext bleiben Streamlit-Default** (Lesbarkeit
+vor Stil — Pixel-Font dort ist verboten). Fonts als woff2 lokal nach
+`dashboard/assets/fonts/` (kein CDN zur Laufzeit); Fallback-Ketten:
+`"Press Start 2P", monospace` bzw. `"VT323", "Courier New", monospace`.
+Scheitert der Font-Download, Task trotzdem abschließen (Fallback reicht,
+im Commit vermerken).
 
-## D2 — Chart-Theming (einheitliche Datenvisualisierung)
+**CSS-Namensraum:** alle eigenen Klassen mit Präfix `px-`:
+`.px-head` (Pixel-Überschrift), `.px-panel` (Industriepanel),
+`.px-led .px-led--ok/--warn/--err/--off` (Status-LEDs; nur `--warn`/`--err`
+pulsieren per CSS-Keyframe `px-blink`, `--ok` leuchtet statisch),
+`.px-terminal` (Terminal-Log-Block), `.px-belt` (Förderband, D4).
 
-- [ ] **D2.1 Altair-Theme** — zentrales Theme (dunkler Hintergrund,
-      Palette aus D0.1, Mono-Achsenbeschriftung) via
-      `alt.themes.register()` in `theme.py`; betrifft `tabs/regime.py`,
-      `tabs/portfolio.py`.
-- [ ] **D2.2 Plotly-Template** — dito als `plotly.io.templates`-Eintrag;
-      betrifft `tabs/network.py`.
-- [ ] **D2.3 Konsistenz-Regel** — neue Charts müssen das zentrale Theme
-      nutzen (kurzer Hinweis in `theme.py`-Doku), damit nichts
-      zurückdriftet.
+**API von `dashboard/theme.py`** (Signaturen fix, damit spätere Tasks
+dagegen bauen können):
 
-## D3 — Live-Tab als „Leitstand" (thematisches Herzstück Nr. 1)
+```python
+PALETTE: dict[str, str]
+def is_enabled() -> bool                    # DASHBOARD_THEME != "plain"
+def inject() -> None                        # CSS/Fonts einmalig; no-op bei plain
+def led(status: str, label: str) -> str     # status: ok|warn|err|off → HTML-Span
+def panel(html_body: str) -> str            # umschließt Body mit .px-panel-Div
+def register_chart_themes() -> None         # Altair-Theme + Plotly-Template (D2)
+```
 
-Der Tab, der das Terminal-Motiv am natürlichsten trägt:
+Alle Helfer geben bei `plain` schlichtes, ungestyltes HTML bzw. no-op zurück
+— Aufrufer brauchen keine eigene Fallunterscheidung.
 
-- [ ] **D3.1 Aktivitätsfeed als Terminal-Log** — Mono-Font, dunkles
-      Panel, dezenter CRT-Look (Scanline/Glow per CSS, subtil), Events
-      farbcodiert (Trade neon, Gate-Block kupfer, Zyklus kobalt).
-- [ ] **D3.2 Zyklus-Zeitleiste als Fertigungsstraße** — die Phasen
-      (Start → Exits → Vorladen → Analyse) als Stationen einer Linie mit
-      Fortschritts-Markern statt nackter Liste.
-- [ ] **D3.3 Order-Historie als Ausgabeschacht** — gefüllte Orders als
-      „gestanzte" Einträge, Fehler-Orders mit Warn-LED.
+---
 
-## D4 — Entscheidungs-Funnel als Förderband (Vorzeige-Stück Nr. 2)
+## D0 — Fundament
 
-Das Motiv „Förderband mit Datenwürfeln + Sortier-Arme" passt EXAKT auf den
-bestehenden Entscheidungs-Funnel (analysiert → Gates → Kauf/Skip):
+- [ ] **D0.1 `.streamlit/config.toml` anlegen** (Datei existiert noch nicht).
+      Exakter Inhalt:
+      ```toml
+      [theme]
+      base = "dark"
+      primaryColor = "#2E6BE6"
+      backgroundColor = "#14171C"
+      secondaryBackgroundColor = "#1E232B"
+      textColor = "#E8ECF2"
+      ```
+      Fertig wenn: Datei committet, beide Verifikations-Läufe OK.
+- [ ] **D0.2 `dashboard/theme.py` anlegen** — `PALETTE`, `is_enabled()`,
+      `inject()` (vorerst nur CSS-Variablen `--px-*` aus PALETTE + Body-
+      Hintergrund), Stubs `led()`/`panel()` (funktionsfähig, schlicht),
+      `register_chart_themes()` als no-op-Stub. Docstring: Verweis auf dieses
+      Dokument + Regel "neue Styles NUR hier". Dazu NEU
+      `tests/test_dashboard_theme.py`: (a) `is_enabled()` reagiert auf ENV,
+      (b) `inject()` wirft bei plain nicht und rendert nichts (AppTest auf
+      Mini-Skript, Muster siehe `tests/test_dashboard_auth.py`), (c) alle
+      PALETTE-Werte sind 7-stellige Hex-Strings, (d) `led("ok","x")` enthält
+      das Label escaped. Fertig wenn: Tests grün + Verifikation OK.
+- [ ] **D0.3 `inject()` verdrahten** — in `dashboard/app.py` direkt nach
+      `st.set_page_config(...)` (Zeile ~46) und VOR `require_login()`
+      aufrufen, damit auch die Login-Seite gestylt ist. Den bestehenden
+      Inline-CSS-Block (`st.markdown("""<style>…`, ab Zeile ~52) NICHT
+      löschen — erst in D1 konsolidieren. Fertig wenn: Verifikation OK.
+- [ ] **D0.4 Fonts bundlen** — `dashboard/assets/fonts/` anlegen,
+      PressStart2P + VT323 als woff2 herunterladen (Google Fonts, OFL —
+      Lizenzdatei mit ablegen), `@font-face` in `inject()` per
+      Base64-data-URI einbetten (kein Laufzeit-Netzzugriff). `.px-head`/
+      `.px-terminal`-Fontfamilien definieren. Fertig wenn: Verifikation OK;
+      bei Download-Problem: Fallback-Kette, `> OFFEN:`-Notiz, weiter.
+- [ ] **D0.5 CSS-Basisklassen** — in `inject()`: `.px-panel` (bg_panel,
+      1px border, 4px Radius — eckig-industriell, kein Rund), `.px-led*`
+      (10px-Punkt + Label, Keyframe `px-blink` 1.2s nur für warn/err),
+      `.px-head`, `.px-terminal` (VT323, bg #0E1116, neon_green Text,
+      dezenter innerer Glow). Tests ergänzen: gerendertes CSS enthält die
+      vier Klassennamen. Fertig wenn: Tests + Verifikation OK.
 
-- [ ] **D4.1 Statisches Förderband-SVG** — Eigenbau-Komponente
-      (`st.html`/SVG, kein externes JS): Datenwürfel = analysierte Titel
-      laufen über ein Band, Sortier-Arme = die Gate-Kategorien
-      (Schwelle/Quellen/Korrelation/…) werfen SKIPs in beschriftete
-      Behälter, durchgelaufene Würfel = Käufe. Zahlen aus dem echten
-      `decision_log`-Funnel des gewählten Tages — das Visual IST die
-      Funnel-Statistik, kein Deko-Bild daneben.
-- [ ] **D4.2 (optional, nur wenn D4.1 trägt)** — dezente CSS-Animation
-      (laufendes Band). Abschalten, falls es vom Inhalt ablenkt.
+## D1 — Sichtbare Quick-Wins (Header, KPIs, Ampel, Tabs)
 
-## D5 — Echte Pixel-Art-Assets (braucht Bild-Generierung)
+- [ ] **D1.1 Alt-CSS konsolidieren** — den Inline-`<style>`-Block aus
+      `app.py` (~Zeile 52–70, Metric-Container/Tab-Font/Regime-Badges) nach
+      `theme.py::inject()` umziehen (bei plain: exakt den alten Block
+      ausgeben — heutiges Aussehen ist der plain-Zustand). `app.py` ruft nur
+      noch `inject()`. Fertig wenn: optisch unverändert bei plain,
+      Verifikation OK.
+- [ ] **D1.2 Header** — in `app.py` (~Zeile 197–210): Titel als
+      `.px-head`-Markup (Pixel-Font, cobalt), Stand/Broker-Zeile in
+      text_muted, Header-Zeile als `.px-panel`. Emoji-Logo 📈 bleibt
+      Platzhalter bis D5. Fertig wenn: Verifikation OK.
+- [ ] **D1.3 Gesundheits-Ampel → LEDs** — in `app.py` (~Zeile 303–346):
+      `_ibkr_gateway_dot`/`_claude_cost_dot`/`_circuit_breaker_dot` geben
+      statt Emoji-Text `theme.led(status, label)` zurück; Zeile rendert als
+      `.px-panel` mit `unsafe_allow_html=True`. Status-Mapping: 🟢→ok,
+      🟡→warn, 🔴→err, ⚪→off. Plain-Modus liefert weiter den alten
+      Emoji-Text (macht `led()` selbst). Fertig wenn: Verifikation OK und
+      im plain-Lauf der alte Text erscheint (AppTest: Caption/Markdown
+      enthält "IB-Gateway").
+- [ ] **D1.4 KPI-Leiste** — Metric-Karten (CSS `[data-testid=
+      "stMetricValue"]` etc.) auf Panel-Optik: bg_panel, border, positive
+      Deltas neon_green, negative red, Label text_muted in VT323.
+      Fertig wenn: Verifikation OK.
+- [ ] **D1.5 Tab-Leiste** — aktive Tab-Unterstreichung cobalt, inaktive
+      text_muted, Hover cobalt_hi (CSS auf `button[data-baseweb="tab"]`).
+      Fertig wenn: Verifikation OK.
+- [ ] **D1.6 Login-Seite** — `dashboard/auth.py`: Titel als `.px-head`,
+      Formular in `.px-panel` (nur Markup/Klassen — die Passwort-Logik,
+      `secrets.compare_digest` und `st.stop()` bleiben UNVERÄNDERT).
+      Fertig wenn: `tests/test_dashboard_auth.py` weiter grün + Verifikation.
 
-- [ ] **D5.1 Asset-Liste + Generierung** — Logo/Banner (Header), Splash
-      fürs Login-Gate (`dashboard/auth.py` — großer Effekt, null Risiko),
-      evtl. 12 Tab-Icons. Generierung mit dem User-Prompt vom 13.7. als
-      Basis (isometrisch, Kobalt/Kupfer/Stahl/Neon); **User wählt die
-      finalen Bilder aus** (Geschmacksfrage).
-- [ ] **D5.2 Einbindung** — Assets nach `dashboard/assets/` (Repo, damit
-      Restore/Umzug sie mitnimmt), Base64-eingebettet oder via
-      `st.image` — kein externer Host.
+## D2 — Chart-Theming (nach D0, unabhängig von D1.2–D1.6)
 
-## D6 — Konsistenz-Pass + Generalprobe (vor der Vorstellung)
+- [ ] **D2.1 Altair-Theme** — in `theme.py::register_chart_themes()`:
+      `alt.themes.register("pixel", …)` + enable (nur wenn `is_enabled()`);
+      Werte: Hintergrund transparent, Achsen/Grid border-Farbe, Labels
+      text_muted, kategoriale Range `[cobalt, copper, neon_green, amber,
+      red, neon_cyan]`. Aufruf in `app.py` nach `inject()`. Kein Chart-Code
+      in den Tabs anfassen (Theme wirkt global). Fertig wenn: Verifikation
+      OK + Mini-Test (Theme registriert, plain lässt Default aktiv).
+- [ ] **D2.2 Plotly-Template** — dito: `plotly.io.templates["pixel"]`,
+      `templates.default = "pixel"` nur bei `is_enabled()`; gleiche Farben,
+      `paper_bgcolor`/`plot_bgcolor` transparent. Betroffen ist nur
+      `tabs/network.py` — prüfen, dass der dortige Graph das Template erbt
+      (kein explizites `template=`-Argument nötig). Fertig wenn: Verifikation.
+- [ ] **D2.3 Drift-Schutz** — Kommentarblock in `theme.py` ("neue Charts:
+      kein eigenes Farb-Hardcoding, Theme kommt von hier") + Test, dass
+      `register_chart_themes()` idempotent ist (zweifacher Aufruf wirft
+      nicht — Streamlit reruns!). Fertig wenn: Tests grün.
 
-- [ ] **D6.1 Alle 13 Tabs durchgehen** — Reste-Suche: ungestylte Panels,
-      Kontrast-Probleme, überlange Texte, Chart-Ausreißer.
-- [ ] **D6.2 Präsentations-Durchlauf** — Dashboard im Vollbild wie bei der
-      Vorstellung durchklicken (per SSH-Tunnel), Screenshot-Satz als
-      Fallback-Foliensatz exportieren.
-- [ ] **D6.3 Plain-Fallback testen** — `DASHBOARD_THEME=plain` einmal
-      durchrendern (Notausstieg funktioniert wirklich).
+## D3 — Live-Tab als „Leitstand" (nach D0+D1)
+
+- [ ] **D3.1 Aktivitätsfeed als Terminal-Log** — `tabs/live.py`: die
+      Event-Zeilen (bisher `st.markdown` je Event) als EIN
+      `.px-terminal`-Block; Farbcodierung per span: trade→neon_green,
+      gate_blocked→copper, cycle_start/end→cobalt, analysis_done→text.
+      Alle Feld-Inhalte durch `html.escape()`. Plain: alter Pfad bleibt
+      (if not theme.is_enabled(): bisheriger Code). Fertig wenn:
+      Verifikation OK + gezielter AppTest mit geseedeter Temp-Feed-DB
+      (Muster: bestehende live-Tab-Verifikation in der Git-Historie,
+      Commit 8fb561b).
+- [ ] **D3.2 Zyklus-Zeitleiste als Fertigungsstraße** — `tabs/live.py`:
+      Phasen (Start→Exits→Vorladen→Analyse) als horizontale Stationen-Leiste
+      (HTML/CSS: Punkte + Verbindungslinie, abgeschlossene Station
+      neon_green, laufende pulsierend cobalt, ausstehende border-Farbe),
+      Dauer-Angaben in VT323 darunter. Datenquelle unverändert
+      `phase_durations()`. Fertig wenn: Verifikation OK.
+- [ ] **D3.3 Order-Historie** — `tabs/live.py`: Order-Zeilen mit
+      `theme.led()` statt Emoji (filled→ok, error→err, cancelled→off),
+      Teilausführung als copper-Badge. Fertig wenn: Verifikation OK.
+- [ ] **D3.4 Nächste-Aktionen/Timer-Panel** — Restliche Abschnitte des
+      Live-Tabs in `.px-panel`-Optik, systemd-Timer-Zeilen in VT323.
+      Fertig wenn: Verifikation OK.
+
+## D4 — Entscheidungs-Funnel als Förderband (Vorzeige-Stück; nach D0+D1)
+
+- [ ] **D4.1 SVG-Baustein (reine Funktion + Tests)** — NEU
+      `dashboard/conveyor.py`: `build_conveyor_svg(funnel: dict, width:
+      int = 900) -> str`. Input ist exakt das Dict von
+      `DecisionLog.funnel(day)` (`{"total": n, "actions": {...},
+      "skip_reasons": {...}}`). Darstellung: links Einlauf mit `total`
+      Datenwürfel-Symbol + Zahl; Band nach rechts; pro skip_reason-Kategorie
+      (Top 5, Rest als "…") ein Sortier-Arm, der in einen beschrifteten
+      Behälter mit Anzahl wirft (copper); rechts Auslauf "BUY" (neon_green,
+      Anzahl) und "SELL/HOLD"-Kästen. Farben aus `theme.PALETTE`, Beschriftung
+      VT323, alle Labels `html.escape()`d. KEINE Animation in diesem Task.
+      NEU `tests/test_dashboard_conveyor.py`: Zahlen/Labels erscheinen im
+      SVG, leerer Funnel ({}, total 0) rendert ohne Fehler, Escaping-Test
+      (`<script>` im Reason-Label kommt escaped raus), Top-5-Kappung.
+      Fertig wenn: Tests grün (Verifikation hier optional — noch nicht
+      eingebunden).
+- [ ] **D4.2 Einbindung in den Entscheidungen-Tab** — `tabs/decisions.py`:
+      oberhalb der bestehenden Fortschrittsbalken das SVG rendern
+      (`st.markdown(svg, unsafe_allow_html=True)` bzw. `st.html`); die
+      alten `st.progress`-Balken BEHALTEN (Zahlen-Detail + plain-Fallback).
+      Nur bei `theme.is_enabled()`. Fertig wenn: Verifikation OK + AppTest
+      mit geseedeter decision_log-Temp-DB (Muster in Git-Historie,
+      Commit 7bdd413) zeigt das SVG im Baum.
+- [ ] **D4.3 (Optional) Band-Animation** — CSS-Keyframe (laufende
+      Band-Streifen), nur wenn D4.1/D4.2 abgenommen sind; eigener
+      ENV-Unterschalter nicht nötig, aber Animation muss bei
+      `prefers-reduced-motion` aus sein. Fertig wenn: Verifikation OK.
+
+## D5 — Echte Pixel-Art-Assets (parallel möglich; D5.2 braucht den User)
+
+- [ ] **D5.1 Asset-Infrastruktur** — `dashboard/assets/img/` anlegen;
+      Helfer `theme.image_b64(name) -> str` (liest PNG, gibt data-URI;
+      fehlt die Datei → leerer String, Aufrufer lässt Platzhalter stehen).
+      Test: fehlende Datei crasht nicht. Fertig wenn: Tests grün.
+- [ ] **D5.2 [USER] Bilder generieren + auswählen** — mit dem Prompt vom
+      13.7.: (a) Header-Logo/Banner ~600×120, (b) Login-Splash ~800×400,
+      (c) optional 12 Tab-Icons 32×32. Ablage als PNG in
+      `dashboard/assets/img/` (`logo.png`, `splash.png`, `tab_<name>.png`).
+      > Dieser Task kann NICHT vom Modell erledigt werden — User-Auswahl.
+- [ ] **D5.3 Logo + Splash einbinden** — Header (D1.2-Stelle): `logo.png`
+      statt 📈, wenn vorhanden; Login-Seite (D1.6): `splash.png` über dem
+      Formular. Beide über `image_b64()` mit Platzhalter-Fallback — Task ist
+      auch OHNE vorhandene Bilder abschließbar (Fallback-Pfad testbar).
+      Fertig wenn: Verifikation OK (mit und ohne Dateien).
+- [ ] **D5.4 (Optional) Tab-Icons** — nur falls D5.2 Icons liefert.
+
+## D6 — Konsistenz-Pass + Generalprobe (zuletzt, vor der Vorstellung)
+
+- [ ] **D6.1 Tab-für-Tab-Restesuche** — alle 13 Tabs headless rendern und
+      eine Checkliste hier eintragen (pro Tab: ungestylte Panels?
+      Kontrast? Chart im Theme? Emoji-Reste, die durch LEDs ersetzt
+      gehören?). Funde als Mini-Tasks D6.1a, D6.1b, … direkt hier anfügen.
+- [ ] **D6.2 Plain-Generalprobe** — kompletter Klick-Durchlauf mit
+      `DASHBOARD_THEME=plain` (Notausstieg funktioniert wirklich, altes
+      Aussehen intakt).
+- [ ] **D6.3 Screenshot-Foliensatz** — pro Tab ein Screenshot (SSH-Tunnel,
+      Browser) nach `scratchpad/screenshots_design/` als Präsentations-
+      Fallback, falls live etwas klemmt.
+- [ ] **D6.4 Generalprobe** — Vorstellung einmal komplett durchspielen
+      (Vollbild, Demo-Reihenfolge: Header/KPIs → Live-Leitstand →
+      Förderband-Funnel → Portfolio); Stolperer als Task notieren.
 
 ## Bewusst NICHT geplant
 
-- ✗ **Streamlit ersetzen** (eigenes Frontend/React): unverhältnismäßig —
-  das Dashboard ist ein internes Betriebs-Werkzeug, kein Produkt-Frontend.
-- ✗ **Isometrische 3D-Spielszene als UI**: Deko-Vollbild würde die
-  Datendichte zerstören; das Zielbild wird über Palette, Panels, LEDs,
-  Terminal-Look und die zwei Motiv-Visuals (D3/D4) transportiert.
-- ✗ **Sound-Effekte**: bei einer Live-Vorstellung eher peinlich als cool.
+- ✗ Streamlit ersetzen (eigenes Frontend): unverhältnismäßig für ein
+  internes Betriebs-Werkzeug.
+- ✗ Isometrische Vollbild-Spielszene als UI: zerstört die Datendichte;
+  das Zielbild wird über Palette, Panels, LEDs, Terminal-Look und die
+  zwei Motiv-Visuals (D3/D4) transportiert.
+- ✗ Sound-Effekte.
 
-## Reihenfolge & Aufwand (grob)
+## Reihenfolge & Minimal-Paket
 
-| Block | Aufwand | Sichtbarkeit | Wann |
-|-------|---------|--------------|------|
-| D0    | klein   | indirekt     | zuerst (Fundament) |
-| D1    | klein   | hoch         | direkt nach D0 |
-| D2    | klein   | mittel       | nach D1, unabhängig von D3/D4 |
-| D3    | mittel  | hoch         | wenn Kapazität frei |
-| D4    | mittel–groß | sehr hoch (Vorzeige-Stück) | vor der Vorstellung fest einplanen |
-| D5    | klein (Arbeit) + User-Auswahl | hoch | parallel möglich, braucht User |
-| D6    | klein   | —            | letzter Schritt vor der Vorstellung |
-
-Minimal-Paket, falls die Vorstellung früher kommt als gedacht:
-**D0 + D1 + D2** ergibt bereits ein durchgängig kohärentes Industrie-Theme;
-D4 ist das Sahnestück, D5/D6 der Feinschliff.
+D0 → D1 → dann D2/D3/D4 in beliebiger Reihenfolge (D4 fest vor der
+Vorstellung einplanen), D5 parallel sobald User Bilder liefert, D6 zuletzt.
+**Minimal-Paket bei Zeitdruck: D0 + D1 + D2** — ergibt bereits ein
+durchgängig kohärentes Industrie-Theme.
