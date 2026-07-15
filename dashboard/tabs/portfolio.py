@@ -32,6 +32,25 @@ def _render_position_notes(ticker_label, tickers) -> None:
         pass
 
 
+def _render_weekly_report_button() -> None:
+    """H5.1: Wochen-Report als eigenständige HTML-Datei — archivierbar/
+    teilbar auch ohne laufendes Dashboard. Fail-open: ein Baufehler
+    blendet den Knopf einfach aus."""
+    try:
+        from dashboard.report import build_weekly_html
+        from datetime import date
+        today = date.today()
+        html_report = build_weekly_html(today.isoformat())
+        st.download_button(
+            "📄 Wochen-Report (HTML)",
+            data=html_report.encode("utf-8"),
+            file_name=f"wochen_report_{today.isoformat()}.html",
+            mime="text/html",
+        )
+    except Exception:
+        pass
+
+
 def render(ctx) -> None:
     phase_info = ctx.phase_info
     config = ctx.config
@@ -39,6 +58,8 @@ def render(ctx) -> None:
     acc = ctx.acc
     portfolio = ctx.portfolio
     prices = ctx.prices
+
+    _render_weekly_report_button()
 
     # Phase progress
     col_prog, col_phase_kpi = st.columns([3, 1])

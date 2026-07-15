@@ -472,21 +472,37 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
 
 ## H5 — Fernblick & Weitergabe
 
-- [ ] **H5.1 Wochen-Report-Export** (M) 🟡
-      1. [ ] Neues Modul `dashboard/report.py`:
+- [x] **H5.1 Wochen-Report-Export** (M) 🟡
+      1. [x] Neues Modul `dashboard/report.py`:
          `def build_weekly_html(end_day: str | None = None) -> str` —
          in sich geschlossenes HTML (Inline-CSS aus PALETTE, KEINE
          externen Ressourcen): KPI-Zahlen, Funnel-Summen der Woche
          (H2.4-Funktion wiederverwenden, falls schon gebaut — sonst
          Mini-Aggregat inline), Fabrik-SVG (`render_scene()`), letzte
          10 Entscheidungen. ALLES escaped.
-      2. [ ] Einbau: `st.download_button("Wochen-Report (HTML)",
+      2. [x] Einbau: `st.download_button("Wochen-Report (HTML)",
          data=..., file_name=f"report_{end_day}.html",
          mime="text/html")` im Portfolio-Tab.
-      3. [ ] Tests: build_weekly_html liefert `<html`-Dokument ohne
+      3. [x] Tests: build_weekly_html liefert `<html`-Dokument ohne
          `http://`/`https://`-Referenzen (Selbstständigkeits-Check per
          assert), escaped Beispiel-Injection.
-      4. [ ] → SA
+      4. [x] → SA
+
+      Umgesetzt 15.7.2026: `build_weekly_html()` nutzt `week_stats()`
+      (H2.4, wie vorgeschlagen wiederverwendet statt neu gebaut),
+      `dashboard.factory.render_scene()` für die Fabrik-Momentaufnahme
+      und die letzten 10 Entscheidungen aus `DecisionLog.get_recent()`
+      — alles in einem einzigen, eigenständigen HTML-String mit
+      Inline-CSS aus der PALETTE. **Test-Nachzug:** der ursprüngliche
+      Selbstständigkeits-Check „kein `http://` im Dokument" war zu
+      strikt — die SVG-`xmlns="http://www.w3.org/2000/svg"`-Deklaration
+      enthält legitim „http://", löst aber nie einen Netzwerk-Request
+      aus (reiner XML-Namensraum-Bezeichner). Test umgestellt auf einen
+      gezielten Check (kein `<link>`/`<script src>`/`@import`/`url(http`,
+      keine `src=`/`href=`-Attribute mit `http(s)://`). Download-Knopf
+      „📄 Wochen-Report (HTML)" im Portfolio-Tab ganz oben. 9 neue
+      Tests; Verifikation normal/kiosk × pixel/plain je 0 Exceptions,
+      Knopf im echten Voll-Render bestätigt sichtbar.
 
 - [ ] **H5.2 [USER] Zuschauer-Modus** (M) 🔴
       *Grund für 🔴: Auth/Sicherheit (Settings-Tab kann .env-Keys lesen
