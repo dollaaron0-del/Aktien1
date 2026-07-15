@@ -5,10 +5,22 @@ Skelett-Formen (Rechteck + Status-LED + Label) — W5 ersetzt diese später
 Stück für Stück durch echte Pixel-Art-Assets (`theme.image_b64`), ohne dass
 sich am Aufrufer (scene.py) oder der LED/Tooltip-Logik etwas ändert.
 
-WACHSTUMS-REGEL (W4.5): eine neue Bot-Funktion bekommt künftig "ihre
-Maschine" — MachineState-Leser in state.py, Platz in scene.LAYOUT, Box hier
-(reicht automatisch über machine_box(), keine neue Funktion nötig), Tooltip,
-Test.
+WACHSTUMS-REGEL (W4.5), zwei Fälle:
+
+1. Neue MASCHINE (eigenes Subsystem, braucht einen eigenen Kasten in der
+   Halle): `MachineState`-Leser in `state.py` (Muster: `_read_<id>()`,
+   fail-open, in `_READERS` eintragen), Platz in `scene.LAYOUT`, Tooltip
+   mit echten Zahlen, Test gegen eine echte (isolierte) Datenquelle wie die
+   bestehenden. Die Box selbst braucht KEINEN neuen Code — `machine_box()`
+   ist generisch, reicht automatisch über jede neue ID.
+2. Neues EREIGNIS/Requisit (kein eigenes Subsystem, nur ein seltener
+   Zustand): boolescher Flag in `state._read_events()` (fail-open,
+   `dict`-Eintrag), neue Bedingung in `scene.scene_events()`, Test mit
+   Flag an/aus. Kein Platz in LAYOUT nötig — Requisiten hängen frei über/
+   neben einer bestehenden Maschine.
+
+In beiden Fällen: nie Zufalls-Deko, jede Requisite/jeder Status hängt an
+einer echten Datenquelle.
 """
 from __future__ import annotations
 

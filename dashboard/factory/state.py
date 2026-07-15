@@ -25,8 +25,17 @@ MACHINE_IDS = (
     "breaker", "gate", "weather", "lab", "backup_bot", "clock",
 )
 
+_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")
 _BACKUPS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "backups")
-_REGIME_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "data", "current_regime.json")
+_REGIME_FILE = os.path.join(_DATA_DIR, "current_regime.json")
+_EONET_FILE = os.path.join(_DATA_DIR, "eonet_hazards.json")
+_THESIS_REGISTRY_FILE = os.path.join(_DATA_DIR, "thesis_registry.json")
+_WEATHER_MACRO_FILE = os.path.join(_DATA_DIR, "weather_macro.json")
+
+# Vision W4.4: "Backup heute Nacht gelaufen" gilt bis zu dieser Alters-
+# schwelle (Stunden) als frisch — großzügig genug, um den 03:00-Timer
+# tagsüber noch als "letzte Nacht" zu zählen.
+_BACKUP_FRESH_HOURS = 15
 
 
 @dataclass
@@ -43,6 +52,12 @@ class FactoryState:
     machines: Dict[str, MachineState]
     paused: bool
     generated_at: str
+    # Vision W4: Requisiten für die Entdeckungs-Ebene, an ECHTE Zustände
+    # gebunden statt Zufalls-Deko. events = boolesche Flags (scene_events()
+    # entscheidet daraus, was gezeigt wird); weather_demand_label ist
+    # kategorial (ELEVATED/SUBDUED/NORMAL, W4.3).
+    events: Dict[str, bool] = field(default_factory=dict)
+    weather_demand_label: str = ""
 
 
 def _off(machine_id: str, label: str, reason: str = "keine Daten") -> MachineState:
@@ -226,6 +241,97 @@ def _read_clock() -> MachineState:
         return _off("clock", "Werksuhr")
 
 
+# ── Entdeckungs-Ebene (Vision W4) — jede Requisite an einen echten Zustand
+# gebunden, kein Zufalls-Deko-Generator. Jeder Leser einzeln fail-open. ────
+
+def _hazard_active() -> bool:
+    try:
+        with open(_EONET_FILE, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return (data.get("data") or {}).get("hazard_label") == "ELEVATED"
+    except Exception:
+        return False
+
+
+def _sl_cooldown_active() -> bool:
+    """Nutzt StopLossCooldown.all_blocked() (bewusst NICHT die Rohdatei
+    direkt lesen) — die Methode ignoriert bereits abgelaufene Sperren. Ein
+    naives "Datei nicht leer" hätte hier einen echten Bug erzeugt: ein
+    Cooldown-Eintrag von vor über einem Monat (in der echten
+    data/sl_cooldown.json vorgefunden) ist längst abgelaufen, stand aber
+    noch als Zeile in der Datei. `all_blocked()` liefert trotzdem IMMER das
+    korrekte Ergebnis (geprüft) — ein Nebenbefund beim End-to-End-Check
+    gegen echte Daten: die dortige Selbstbereinigung der Datei greift wegen
+    eines Zähl-Bugs in sl_cooldown.py selbst nie wirklich (data.pop()
+    passiert vor dem len(active)<len(data)-Vergleich, der danach immer
+    False ist). Betrifft nur Datei-Hygiene, nicht die Korrektheit hier —
+    bewusst NICHT gefixt (außerhalb der dashboard/-Grenze dieser
+    Design-Session, siehe docs/DESIGN_ROADMAP.md Arbeitsprotokoll)."""
+    try:
+        from analyzers.sl_cooldown import StopLossCooldown
+        return bool(StopLossCooldown().all_blocked())
+    except Exception:
+        return False
+
+
+def _thesis_proven() -> bool:
+    try:
+        with open(_THESIS_REGISTRY_FILE, encoding="utf-8") as fh:
+            registry = json.load(fh)
+        return any(t.get("status") == "PROVEN" for t in registry.values())
+    except Exception:
+        return False
+
+
+def _first_live_trade_exists() -> bool:
+    try:
+        from analyzers.experience_store import ExperienceStore
+        store = ExperienceStore()
+        s = store.stats()
+        store.close()
+        return bool(s.get("live"))
+    except Exception:
+        return False
+
+
+def _backup_ran_recently() -> bool:
+    try:
+        files = [f for f in os.listdir(_BACKUPS_DIR) if f.endswith(".tar.gz")]
+        if not files:
+            return False
+        newest = max((os.path.join(_BACKUPS_DIR, f) for f in files), key=os.path.getmtime)
+        age_h = (datetime.now().timestamp() - os.path.getmtime(newest)) / 3600
+        return age_h < _BACKUP_FRESH_HOURS
+    except Exception:
+        return False
+
+
+def _read_events() -> Dict[str, bool]:
+    """Sammelt alle W4-Ereignis-Flags. Fail-open pro Flag (siehe die
+    einzelnen `_..._active()`/`_..._exists()`-Helfer oben) plus dieses
+    äußere try/except als zweite Sicherheitsnetz-Schicht, analog
+    read_state()."""
+    try:
+        return {
+            "hazard_active": _hazard_active(),
+            "sl_cooldown_active": _sl_cooldown_active(),
+            "thesis_proven": _thesis_proven(),
+            "first_live_trade": _first_live_trade_exists(),
+            "backup_ran_recently": _backup_ran_recently(),
+        }
+    except Exception:
+        return {}
+
+
+def _read_weather_demand_label() -> str:
+    try:
+        with open(_WEATHER_MACRO_FILE, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return str((data.get("data") or {}).get("demand_label") or "")
+    except Exception:
+        return ""
+
+
 _READERS = {
     "docks": _read_docks,
     "analyzer_claude": _read_analyzer_claude,
@@ -263,4 +369,6 @@ def read_state() -> FactoryState:
         machines=machines,
         paused=paused,
         generated_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+        events=_read_events(),
+        weather_demand_label=_read_weather_demand_label(),
     )

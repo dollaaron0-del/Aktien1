@@ -187,30 +187,49 @@ Fokus-Navigation über `st.query_params["factory"]`.
 
 ## W4 — Entdeckungs-Ebene
 
-- [ ] **W4.1 Ereignis-Framework** — `scene.py::scene_events(state) ->
-      list[str]` (SVG-Snippets, werden über die Szene gelegt). Erste drei
-      Requisiten, alle an ECHTE Zustände gebunden: (a) breaker err →
-      rote Rundumleuchte + „NOT-AUS"-Schild, (b) `data/eonet_hazards.json`
-      mit aktiven Hazards → dunkle Wolke überm Dach, (c) SL-Cooldown aktiv
-      (`data/sl_cooldown.json` nicht leer) → „Sperrzone"-Absperrband am
-      Band. Tests je Requisite (mit/ohne Zustand). Fertig wenn: Tests +
-      Verifikation OK.
-- [ ] **W4.2 Tag/Nacht** — Himmels-/Fensterfarbe nach echter Server-Uhrzeit
-      (06–20 Uhr hell, sonst dunkel; Übergang egal, kein Realismus-Anspruch).
-      Fertig wenn: Tests (zwei Uhrzeiten gemockt) + Verifikation OK.
-- [ ] **W4.3 Echtes Wetter** — `data/weather_macro.json` lesen (fail-open):
-      Regen-/Sonnen-Overlay über der Wetterstation passend zum Collector-
-      Inhalt. Fertig wenn: Tests + Verifikation OK.
-- [ ] **W4.4 Easter Eggs** — (a) erster Trade mit `label_source='live'` in
-      experience.db → goldener Wimpel überm Verladetor, (b) eine These in
-      `thesis_registry.json` auf PROVEN → goldene Statue vor der Halle,
-      (c) Backup heute Nacht gelaufen → zufriedener Nachtschicht-Roboter
-      mit Kaffeetasse. Alle an echte Daten gebunden, Tests je Egg.
-      Fertig wenn: Tests + Verifikation OK.
-- [ ] **W4.5 Wachstums-Regel dokumentieren** — Kommentarblock oben in
-      `machines.py`: „Neue Bot-Funktion ⇒ neue Maschine: MachineState-Leser
-      in state.py, Platz in LAYOUT, Box in machines.py, Tooltip, Test."
-      Fertig wenn: committet.
+- [x] **W4.1 Ereignis-Framework** — `scene.py::scene_events(state)`.
+      Drei Requisiten: (a) `breaker.status=="err"` → blinkende Rundumleuchte
+      + „NOT-AUS"-Schild (direkt aus dem Maschinen-Status, keine eigene
+      Datenquelle nötig), (b) `data/eonet_hazards.json` `hazard_label==
+      "ELEVATED"` → dunkle Wolke überm Dach, (c) `StopLossCooldown.
+      all_blocked()` nicht leer → „SPERRZONE"-Absperrband am Förderband.
+      Neue Felder `FactoryState.events: Dict[str,bool]` +
+      `weather_demand_label: str`, befüllt über `state._read_events()`
+      (fail-open pro Flag + äußeres try/except).
+      **Echter Nebenbefund** beim End-to-End-Check gegen echte Daten: (c)
+      zunächst naiv über die Rohdatei geprüft ("nicht leer" = aktiv) — ein
+      über einen Monat alter GILD-Cooldown-Eintrag wäre damit fälschlich
+      als aktiv gemeldet worden. Auf `StopLossCooldown.all_blocked()`
+      umgestellt (respektiert den echten Ablauf). Dabei einen bestehenden,
+      NICHT gefixten Bug in `analyzers/sl_cooldown.py` gefunden: die
+      Selbstbereinigung dort vergleicht `len(active)<len(data)`, NACHDEM
+      abgelaufene Einträge schon aus `data` gepoppt wurden — der Vergleich
+      ist danach immer `False`, die Datei wird nie tatsächlich bereinigt
+      (nur das Rückgabe-Ergebnis von `all_blocked()` ist jederzeit korrekt).
+      Bewusst NICHT gefixt — außerhalb der `dashboard/`-Pfadgrenze dieser
+      Design-Session (Arbeitsprotokoll, docs/DESIGN_ROADMAP.md).
+- [x] **W4.2 Tag/Nacht** — dünner Himmelsstreifen oben in der Szene,
+      Farbe nach `datetime.now().hour` (06–20 Uhr hell, sonst dunkel; `now`
+      injizierbar für Tests, kein Realismus-Anspruch/Übergang).
+- [x] **W4.3 Echtes Wetter** — `state.weather_demand_label` aus
+      `data/weather_macro.json` (`demand_label`, fail-open): ELEVATED →
+      Regen-Striche über der Wetterstation, SUBDUED → Sonne, NORMAL → kein
+      Overlay.
+- [x] **W4.4 Easter Eggs** — (a) `experience_store.stats()['live'] > 0` →
+      goldener Wimpel überm Verladetor, (b) eine These in
+      `thesis_registry.json` auf `status=="PROVEN"` → goldene Statue vor
+      der Halle, (c) jüngstes Backup < 15h alt → Nachtschicht-Roboter-Detail
+      am Backup-Roboter. Alle drei an echte Daten gebunden, je eigener Test.
+- [x] **W4.5 Wachstums-Regel** — Kommentarblock in `machines.py` (schon
+      seit W1.2 vorhanden) um den zweiten Erweiterungspfad ergänzt: neue
+      MASCHINE (Leser+LAYOUT+Tooltip+Test, Box automatisch generisch) vs.
+      neues EREIGNIS (Flag in `_read_events()` + Bedingung in
+      `scene_events()`, kein LAYOUT-Platz nötig). Querverweis in
+      `scene.py`s Moduldoc ergänzt.
+
+      21 neue Tests (Ereignis-Flags einzeln + Kombination, Tag/Nacht mit
+      zwei Uhrzeiten, Wetter-Overlay je Label, drei Easter Eggs, echter
+      Ablauf-Fall für den SL-Cooldown-Bugfund), Verifikation pixel+plain OK.
 
 ## W5 — Pixel-Art-Ausbau (parallel zu W4 möglich)
 

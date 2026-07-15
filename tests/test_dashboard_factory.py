@@ -1,12 +1,15 @@
 """
 Tests für dashboard/factory/ (Vision W1, docs/DESIGN_FABRIK.md).
 """
+import os
+
 import pytest
 
 from dashboard.factory import state as st_mod
 from dashboard.factory.machines import machine_box
 from dashboard.factory.scene import LAYOUT, build_scene_svg
 from dashboard.factory.state import MACHINE_IDS, FactoryState, MachineState, read_state
+from dashboard.theme import PALETTE
 
 
 def _empty_state(status="off") -> FactoryState:
@@ -325,6 +328,205 @@ def test_machine_box_wrapped_in_self_link():
     m = MachineState(id="gate", label="Tor", status="ok")
     box = machine_box(m, 0, 0, 100, 100)
     assert '<a href="?factory=gate" target="_self">' in box
+
+
+# ── W4.1: Ereignis-Framework ──────────────────────────────────────────────────
+
+from datetime import datetime as _dt
+
+from dashboard.factory.scene import scene_events
+
+
+def _state_with_events(**event_flags):
+    state = _empty_state()
+    state.events = event_flags
+    return state
+
+
+def test_breaker_err_shows_notaus():
+    state = _empty_state()
+    state.machines["breaker"] = MachineState(id="breaker", label="Not-Aus", status="err")
+    events = scene_events(state)
+    assert any("NOT-AUS" in e for e in events)
+
+
+def test_breaker_ok_shows_no_notaus():
+    state = _empty_state()
+    state.machines["breaker"] = MachineState(id="breaker", label="Not-Aus", status="ok")
+    events = scene_events(state)
+    assert not any("NOT-AUS" in e for e in events)
+
+
+def test_hazard_active_shows_cloud():
+    state = _state_with_events(hazard_active=True)
+    events = scene_events(state)
+    assert any("ellipse" in e for e in events)
+
+
+def test_hazard_inactive_shows_no_cloud():
+    state = _state_with_events(hazard_active=False)
+    events = scene_events(state)
+    assert not any("ellipse" in e for e in events)
+
+
+def test_sl_cooldown_active_shows_sperrzone():
+    state = _state_with_events(sl_cooldown_active=True)
+    events = scene_events(state)
+    assert any("SPERRZONE" in e for e in events)
+
+
+def test_sl_cooldown_inactive_shows_nothing():
+    state = _state_with_events(sl_cooldown_active=False)
+    assert not any("SPERRZONE" in e for e in scene_events(state))
+
+
+def test_read_events_all_flags_present_and_fail_open():
+    from dashboard.factory.state import _read_events
+    flags = _read_events()
+    assert set(flags.keys()) == {
+        "hazard_active", "sl_cooldown_active", "thesis_proven",
+        "first_live_trade", "backup_ran_recently",
+    }
+    assert all(isinstance(v, bool) for v in flags.values())
+
+
+def test_hazard_active_reflects_real_eonet_file(tmp_path, monkeypatch):
+    import json
+    f = tmp_path / "eonet_hazards.json"
+    f.write_text(json.dumps({"data": {"hazard_label": "ELEVATED"}}))
+    monkeypatch.setattr(st_mod, "_EONET_FILE", str(f))
+    assert st_mod._hazard_active() is True
+
+    f.write_text(json.dumps({"data": {"hazard_label": "NORMAL"}}))
+    assert st_mod._hazard_active() is False
+
+
+def test_sl_cooldown_active_reflects_real_unexpired_lock():
+    """Nutzt die echte StopLossCooldown-Klasse (isoliert per
+    conftest._isolate_sl_cooldown-Autouse-Fixture) statt der Rohdatei — so
+    testen wir denselben Ablaufmechanismus, den auch all_blocked() nutzt."""
+    from analyzers.sl_cooldown import StopLossCooldown
+    StopLossCooldown(cooldown_days=2).record("GILD", 100.0)
+    assert st_mod._sl_cooldown_active() is True
+
+
+def test_sl_cooldown_inactive_when_no_locks():
+    assert st_mod._sl_cooldown_active() is False
+
+
+def test_sl_cooldown_inactive_when_lock_expired():
+    """Der reale Bug, den der End-to-End-Check gegen echte Daten aufgedeckt
+    hat: ein Cooldown-Eintrag von vor über einem Monat darf NICHT mehr als
+    aktiv gelten, obwohl er noch in der Datei steht."""
+    from datetime import datetime, timedelta, timezone
+    from analyzers.sl_cooldown import StopLossCooldown, _FILE
+    import json
+
+    expired_ts = (datetime.now(timezone.utc).replace(tzinfo=None)
+                 - timedelta(days=40)).isoformat()
+    os.makedirs(os.path.dirname(_FILE), exist_ok=True)
+    with open(_FILE, "w") as f:
+        json.dump({"GILD": {"price": 100.0, "timestamp": expired_ts}}, f)
+
+    assert st_mod._sl_cooldown_active() is False
+
+
+def test_thesis_proven_reflects_real_registry(tmp_path, monkeypatch):
+    import json
+    f = tmp_path / "thesis_registry.json"
+    f.write_text(json.dumps({"a": {"status": "PENDING"}, "b": {"status": "PROVEN"}}))
+    monkeypatch.setattr(st_mod, "_THESIS_REGISTRY_FILE", str(f))
+    assert st_mod._thesis_proven() is True
+
+    f.write_text(json.dumps({"a": {"status": "PENDING"}}))
+    assert st_mod._thesis_proven() is False
+
+
+# ── W4.2: Tag/Nacht ────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("hour,expect_day", [(10, True), (2, False)])
+def test_scene_sky_color_reflects_hour(hour, expect_day):
+    from dashboard.theme import PALETTE
+    state = _empty_state()
+    svg_day = build_scene_svg(state, now=_dt(2026, 7, 15, hour))
+    day_color = PALETTE["cobalt_hi"]
+    night_color = PALETTE["bg"]
+    if expect_day:
+        assert f'fill="{day_color}" opacity="0.35"' in svg_day
+    else:
+        assert f'fill="{night_color}" opacity="0.35"' in svg_day
+
+
+# ── W4.3: Echtes Wetter ────────────────────────────────────────────────────────
+
+def test_weather_elevated_shows_rain():
+    state = _empty_state()
+    state.weather_demand_label = "ELEVATED"
+    events = scene_events(state)
+    assert any("fx-rain" in e for e in events)
+
+
+def test_weather_subdued_shows_sun():
+    state = _empty_state()
+    state.weather_demand_label = "SUBDUED"
+    events = scene_events(state)
+    assert any(f'fill="{PALETTE["amber"]}"' in e for e in events)
+
+
+def test_weather_normal_shows_no_overlay():
+    state = _empty_state()
+    state.weather_demand_label = "NORMAL"
+    events = scene_events(state)
+    assert not any("fx-rain" in e for e in events)
+    assert not any(f'fill="{PALETTE["amber"]}"' in e for e in events)
+
+
+def test_read_weather_demand_label_reflects_real_file(tmp_path, monkeypatch):
+    import json
+    f = tmp_path / "weather_macro.json"
+    f.write_text(json.dumps({"data": {"demand_label": "ELEVATED"}}))
+    monkeypatch.setattr(st_mod, "_WEATHER_MACRO_FILE", str(f))
+    assert st_mod._read_weather_demand_label() == "ELEVATED"
+
+
+def test_read_weather_demand_label_missing_file_is_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(st_mod, "_WEATHER_MACRO_FILE", str(tmp_path / "nope.json"))
+    assert st_mod._read_weather_demand_label() == ""
+
+
+# ── W4.4: Easter Eggs ──────────────────────────────────────────────────────────
+
+def test_first_live_trade_shows_golden_pennant():
+    state = _state_with_events(first_live_trade=True)
+    assert any("gold" in e for e in scene_events(state))
+
+
+def test_no_live_trade_shows_no_pennant():
+    state = _state_with_events(first_live_trade=False)
+    assert not any("gold" in e for e in scene_events(state))
+
+
+def test_thesis_proven_shows_statue():
+    state = _state_with_events(thesis_proven=True)
+    assert any("gold" in e for e in scene_events(state))
+
+
+def test_backup_ran_recently_shows_robot_detail():
+    state = _state_with_events(backup_ran_recently=True)
+    events = scene_events(state)
+    assert any("neon_green" not in e and PALETTE["neon_green"] in e for e in events)
+
+
+def test_first_live_trade_exists_reflects_real_experience_store():
+    from analyzers.experience_store import ExperienceStore
+    store = ExperienceStore()
+    did = store.upsert_decision({
+        "ticker": "AAPL", "decided_at": "2026-01-01T10:00:00",
+        "recommendation": "BUY", "direction": "LONG", "sentiment_score": 0.8,
+        "confidence": "HIGH",
+    })
+    store.attach_outcome(did, {"outcome": "WIN", "pnl_pct": 5.0, "label_source": "live"})
+    assert st_mod._first_live_trade_exists() is True
 
 
 def test_build_scene_svg_stays_well_under_50ms_budget():
