@@ -54,3 +54,23 @@ def test_conveyor_svg_absent_in_plain_mode(monkeypatch):
     assert "<svg" not in html_out
     # Der alte Fortschrittsbalken-Pfad bleibt der einzige Weg
     assert any("Warum wurde übersprungen" in str(m.value) for m in at.get("markdown"))
+
+
+# ── H2.4: Zeitraum-Vergleich ──────────────────────────────────────────────────
+
+def test_period_compare_expander_renders_table():
+    _seed()
+    at = AppTest.from_string(_SCRIPT)
+    at.run()
+    assert not at.exception
+    expander_labels = [e.label for e in at.get("expander")]
+    assert "📊 Zeitraum-Vergleich" in expander_labels
+    assert len(at.get("dataframe")) >= 1
+
+
+def test_period_compare_renders_without_any_decisions():
+    """Kein Seed -> darf nicht crashen, Vergleichs-Tabelle bleibt nur mit
+    Nullen statt einer Exception."""
+    at = AppTest.from_string(_SCRIPT)
+    at.run()
+    assert not at.exception

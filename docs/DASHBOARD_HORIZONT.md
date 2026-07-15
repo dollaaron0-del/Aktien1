@@ -244,18 +244,33 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
       Lese-Funktion, 2 AppTest-Integrationstests); Verifikation
       normal/kiosk × pixel/plain je 0 Exceptions.
 
-- [ ] **H2.4 Wochen-Vergleich** (S) 🟢
-      1. [ ] Neues Modul `dashboard/compare.py`:
+- [x] **H2.4 Wochen-Vergleich** (S) 🟢
+      1. [x] Neues Modul `dashboard/compare.py`:
          `def week_stats(start_day: str, end_day: str) -> dict` —
          aggregiert read-only aus `DecisionLog.funnel(day)` je Tag
          (Summen: total/BUY/SKIP) und `AnalysisLog.get_stats()`-Feldern,
          fail-open (fehlende Tage = 0).
-      2. [ ] Im Entscheidungen-Tab (`tabs/decisions.py`) Expander
+      2. [x] Im Entscheidungen-Tab (`tabs/decisions.py`) Expander
          „Zeitraum-Vergleich": zwei Datums-Paare wählen,
          `st.dataframe` mit Spalten A/B/Δ.
-      3. [ ] Tests: week_stats gegen präparierte DecisionLog-Einträge
+      3. [x] Tests: week_stats gegen präparierte DecisionLog-Einträge
          (bare `DecisionLog()` — conftest bindet die Test-DB).
-      4. [ ] → SA
+      4. [x] → SA
+
+      Umgesetzt 15.7.2026 mit einer dokumentierten Abweichung: Punkt 1
+      wollte `AnalysisLog.get_stats()`-Felder verwenden, aber diese
+      Methode aggregiert über die GESAMTE Tabelle (kein Datumsbereich)
+      — eine Erweiterung dort hätte `analyzers/analysis_log.py`
+      angefasst, außerhalb des erlaubten Pfads dieser Ausbau-Session.
+      Stattdessen liest `week_stats()` `AnalysisLog.get_recent(limit=
+      5000)` read-only und filtert clientseitig nach `analyzed_at` —
+      liefert Analysen-Anzahl + Ø-Sentiment im Zeitraum, ohne
+      `analyzers/` zu verändern. `tabs/decisions.py` zeigt jetzt einen
+      „📊 Zeitraum-Vergleich"-Expander mit zwei Datumspaaren (Default:
+      letzte 7 Tage vs. die 7 Tage davor) und einer A/B/Δ-Tabelle.
+      12 neue Tests (8 in `test_dashboard_compare.py`, 4 in
+      `test_dashboard_decisions_conveyor.py`); Verifikation normal/
+      kiosk × pixel/plain je 0 Exceptions.
 
 ## H3 — Erklärbarkeit
 

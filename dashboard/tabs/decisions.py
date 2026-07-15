@@ -1,8 +1,59 @@
 """Tab "Entscheidungs-Transparenz" — ausgelagert aus dashboard/app.py (Roadmap 4.4a)."""
+from datetime import date, timedelta
+
+import pandas as pd
 import streamlit as st
 
 from analyzers.analysis_log import AnalysisLog
 from dashboard import theme as _theme
+from dashboard.compare import week_stats
+
+
+def _render_period_compare() -> None:
+    """H2.4: Zeitraum-Vergleich — zwei Datums-Paare, aggregiert über
+    dashboard.compare.week_stats() (read-only). Fail-open: ein Aggregat-
+    Fehler zeigt nur eine leere Tabelle statt das Dashboard zu crashen."""
+    with st.expander("📊 Zeitraum-Vergleich"):
+        today = date.today()
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.caption("Zeitraum A")
+            a_start = st.date_input("Von (A)", value=today - timedelta(days=7),
+                                    key="cmp_a_start")
+            a_end = st.date_input("Bis (A)", value=today - timedelta(days=1),
+                                  key="cmp_a_end")
+        with col_b:
+            st.caption("Zeitraum B")
+            b_start = st.date_input("Von (B)", value=today - timedelta(days=14),
+                                    key="cmp_b_start")
+            b_end = st.date_input("Bis (B)", value=today - timedelta(days=8),
+                                  key="cmp_b_end")
+
+        try:
+            stats_a = week_stats(a_start.isoformat(), a_end.isoformat())
+            stats_b = week_stats(b_start.isoformat(), b_end.isoformat())
+        except Exception:
+            st.caption("Vergleich derzeit nicht verfügbar.")
+            return
+
+        _ROWS = [
+            ("Entscheidungen gesamt", "total"),
+            ("Käufe (BUY)", "buy"),
+            ("Übersprungen (SKIP)", "skip"),
+            ("Gehalten (HOLD)", "hold"),
+            ("Analysen", "n_analyses"),
+            ("Ø Sentiment", "avg_sentiment"),
+        ]
+        df = pd.DataFrame([
+            {
+                "Kennzahl": label,
+                "A": stats_a.get(key, 0),
+                "B": stats_b.get(key, 0),
+                "Δ (A−B)": round(stats_a.get(key, 0) - stats_b.get(key, 0), 3),
+            }
+            for label, key in _ROWS
+        ])
+        st.dataframe(df, width="stretch", hide_index=True)
 
 
 def render(ctx) -> None:
@@ -193,3 +244,6 @@ def render(ctx) -> None:
                 )
         except Exception:
             pass
+
+    st.divider()
+    _render_period_compare()
