@@ -53,6 +53,46 @@ def _render_thesis_board() -> None:
             st.caption(f"Verdikt: {row['verdict_reason']}")
 
 
+def _render_calibration_curve() -> None:
+    """H3.3: Kalibrier-Kurve live — Trefferquote je Konfidenz-Stufe aus
+    den echten gelabelten Trades. Nutzt das registrierte Altair-Theme
+    "pixel" (D2.3: keine eigenen Farben hardcoden). Fail-open: ohne
+    Daten nur ein Hinweis, nie eine Exception."""
+    st.subheader("📈 Kalibrier-Kurve")
+    st.caption(
+        "Trefferquote je Konfidenz-Stufe — zeigt auch, wo der Bot sich "
+        "überschätzt (siehe Selbstlern-Fundament: Sentiment ist nicht "
+        "monoton kalibriert)."
+    )
+    from dashboard.calibration_curve import confidence_win_rates
+    try:
+        rows = confidence_win_rates()
+    except Exception:
+        rows = []
+
+    if not rows or all(r["n"] == 0 for r in rows):
+        st.caption("Noch keine gelabelten Trades vorhanden.")
+        return
+
+    chart_rows = [r for r in rows if r["win_rate"] is not None]
+    if chart_rows:
+        try:
+            import altair as alt
+            df = pd.DataFrame(chart_rows)
+            chart = alt.Chart(df).mark_bar().encode(
+                x=alt.X("confidence", sort=["HIGH", "MEDIUM", "LOW"], title="Konfidenz"),
+                y=alt.Y("win_rate", title="Trefferquote", scale=alt.Scale(domain=[0, 1])),
+                tooltip=["confidence", "win_rate", "n"],
+            )
+            st.altair_chart(chart, width="stretch")
+        except Exception:
+            pass
+
+    for row in rows:
+        if row["n"] and row["n"] < 20:
+            st.caption(f"⚠️ {row['confidence']}: Stichprobe dünn (n={row['n']}).")
+
+
 def _render_genealogy() -> None:
     """H3.2: Entscheidungs-Genealogie — jede Order zurückverfolgt zu
     ihrer Analyse und deren Quellen. Fail-open: ein Lesefehler zeigt nur
@@ -336,6 +376,8 @@ def render(ctx) -> None:
 
     st.divider()
     _render_thesis_board()
+    st.divider()
+    _render_calibration_curve()
     st.divider()
 
     # Monthly self-assessment

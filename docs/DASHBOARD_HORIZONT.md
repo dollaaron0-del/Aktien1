@@ -388,18 +388,36 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
       10 Modul-Tests + 3 Tab-Tests; Verifikation normal/kiosk ×
       pixel/plain je 0 Exceptions.
 
-- [ ] **H3.3 Kalibrier-Kurve live** (S) 🟢
-      1. [ ] Daten: `ExperienceStore` (Muster `_read_lab()` in
+- [x] **H3.3 Kalibrier-Kurve live** (S) 🟢
+      1. [x] Daten: `ExperienceStore` (Muster `_read_lab()` in
          factory/state.py) — je Konfidenz-Stufe (HIGH/MEDIUM/LOW)
          Trefferquote der gelabelten Trades ziehen. Wenn der Store dafür
          schon eine Methode hat, benutzen; sonst read-only SQL auf
          `data/experience.db` (Schema vorher mit `.schema` ansehen).
-      2. [ ] Altair-Balken/Punkt-Chart (Theme „pixel" ist registriert,
+      2. [x] Altair-Balken/Punkt-Chart (Theme „pixel" ist registriert,
          KEINE eigenen Farben hardcoden — D2.3-Regel) im Lern-Tab bzw.
          Qualitätslabor-Detail-Panel; n<20 → `st.caption`-Warnband
          „Stichprobe dünn".
-      3. [ ] Tests: Aggregation mit präparierter tmp-DB; Warnband-Logik.
-      4. [ ] → SA
+      3. [x] Tests: Aggregation mit präparierter tmp-DB; Warnband-Logik.
+      4. [x] → SA
+
+      Umgesetzt 15.7.2026: `dashboard/calibration_curve.py`s
+      `confidence_win_rates()` nutzt `ExperienceStore.iter_labeled()`
+      (dieselbe Trainings-Schnittstelle wie `scripts/track_record.py`
+      und `analyzers/calibration.py` — keine zweite Aggregation).
+      Liefert immer alle drei Stufen (auch n=0, `win_rate=None` statt
+      Division durch Null). Altair-Balkendiagramm im Tab „Trades &
+      Lernen" unter dem Thesen-Board, nutzt automatisch das registrierte
+      „pixel"-Theme (keine eigenen Farben). Warnband pro Stufe (n<20).
+      **Test-Nachzug:** `AppTest` hat keine eigene Element-Kategorie für
+      `st.altair_chart` — der erreichbare Check ist „kein Exception
+      beim Bauen/Rendern", nicht die Chart-Struktur selbst. **Bestätigt
+      bei der Verifikation:** die echte Produktions-DB zeigt genau das
+      erwartete Bild — HIGH-Konfidenz hat nur 8 gelabelte Trades
+      („Stichprobe dünn"), deckt sich mit dem längst bekannten Befund
+      aus der Kalibrierungs-Analyse. 5 Modul-Tests + 3 Tab-Tests;
+      Verifikation pixel/plain/blueprint × normal/kiosk je
+      0 Exceptions.
 
 ## H4 — Lern-Fortschritt sichtbar
 
