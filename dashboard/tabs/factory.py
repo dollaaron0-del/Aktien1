@@ -5,6 +5,7 @@ Darstellungsform neben Tabellen und Charts, kein Deko-Bild. Rendert in
 BEIDEN Theme-Modi (hängt nur an PALETTE-Konstanten, nicht an
 theme.is_enabled() — die Fabrik IST das Pixel-Theme, kein optionaler Zusatz
 darauf)."""
+import html
 import time
 from datetime import date
 
@@ -14,12 +15,30 @@ from dashboard.factory.scene import build_scene_svg
 from dashboard.factory.state import (
     MACHINE_IDS,
     MachineState,
+    read_feed_events_until,
     read_history,
     read_state,
     reconstruct_from_snapshot,
     snapshot,
 )
 from dashboard.theme import PALETTE
+
+# H2.3: gleiche Icons/Farben wie das Live-Terminal (tabs/live.py) — ein
+# Ereignis sieht dort wie hier gleich aus, keine zweite Farbsprache.
+_REPLAY_EV_ICON = {
+    "cycle_start":   "🔄",
+    "cycle_end":     "🏁",
+    "analysis_done": "🔍",
+    "trade":         "💼",
+    "gate_blocked":  "⛔",
+}
+_REPLAY_EV_COLOR_VAR = {
+    "trade":         "--px-neon-green",
+    "gate_blocked":  "--px-copper",
+    "cycle_start":   "--px-cobalt",
+    "cycle_end":     "--px-cobalt",
+    "analysis_done": "--px-text",
+}
 
 # H2.1: Grundlage für Zeitreise/Replay — Schnappschuss max. 1×/10 Min,
 # sonst würde der 60s-Auto-Refresh die Historie-Datei vollschreiben.
@@ -143,13 +162,36 @@ def _render_detail_panel(m: MachineState) -> None:
         st.json(m.payload)
 
 
+def _render_replay_terminal(day: str, until_ts: str) -> None:
+    """H2.3: Feed-Ereignisse des gewählten Tages bis zum Regler-
+    Zeitpunkt — das ist der "Replay"-Teil (kein Echtzeit-Rerun-Trick,
+    siehe Modul-Doku der Roadmap: robuster Regler statt Streamlit-
+    Frickelei). Fail-open: Lesefehler zeigen nur einen Hinweis."""
+    try:
+        events = read_feed_events_until(day, until_ts)
+    except Exception:
+        events = []
+    if not events:
+        st.caption("Keine Ereignisse bis zu diesem Zeitpunkt.")
+        return
+    lines = []
+    for ev in events:
+        icon = _REPLAY_EV_ICON.get(ev.get("event"), "•")
+        ts = html.escape((ev.get("ts") or "")[11:16])
+        var = _REPLAY_EV_COLOR_VAR.get(ev.get("event"), "--px-text")
+        tk = f" <b>{html.escape(str(ev['ticker']))}</b>" if ev.get("ticker") else ""
+        dt = f" — {html.escape(str(ev['detail']))}" if ev.get("detail") else ""
+        lines.append(f'<div style="color:var({var});">{icon} {ts}{tk}{dt}</div>')
+    st.markdown(f'<div class="px-terminal">{"".join(lines)}</div>', unsafe_allow_html=True)
+
+
 def _render_archive() -> None:
-    """H2.2: Zeitreise-Regler — Grundlage H2.1 (read_history). Bewusst
-    AUSSERHALB des 60s-@st.fragment: der Regler-Zustand darf nicht vom
-    unabhängigen Live-Refresh der Szene mitgerissen/zurückgesetzt
-    werden. Fail-open: kaputte/fehlende Historie zeigt nur einen
-    Hinweis, nie eine Exception."""
-    with st.expander("🕰 Archiv"):
+    """H2.2/H2.3: Zeitreise-Regler + Tages-Replay — Grundlage H2.1
+    (read_history). Bewusst AUSSERHALB des 60s-@st.fragment: der
+    Regler-Zustand darf nicht vom unabhängigen Live-Refresh der Szene
+    mitgerissen/zurückgesetzt werden. Fail-open: kaputte/fehlende
+    Historie zeigt nur einen Hinweis, nie eine Exception."""
+    with st.expander("🕰 Archiv & Replay"):
         day = st.date_input("Datum", value=date.today(), key="factory_archive_day")
         try:
             rows = read_history(day.isoformat())
@@ -172,6 +214,9 @@ def _render_archive() -> None:
         st.warning("ARCHIV-ANSICHT — nicht der Live-Zustand")
         archived_state = reconstruct_from_snapshot(row)
         st.markdown(build_scene_svg(archived_state), unsafe_allow_html=True)
+
+        st.markdown("**Ereignisse bis zu diesem Zeitpunkt:**")
+        _render_replay_terminal(day.isoformat(), chosen_ts)
 
 
 def render(ctx) -> None:

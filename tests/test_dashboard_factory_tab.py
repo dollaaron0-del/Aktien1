@@ -162,3 +162,45 @@ def test_archive_reconstructed_machine_has_no_extras_but_no_crash():
     at = AppTest.from_string(_SCRIPT)
     at.run()
     assert not at.exception
+
+
+# ── H2.3: Tages-Replay-Terminal ───────────────────────────────────────────────
+
+def test_archive_shows_replay_terminal_up_to_slider_time(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    import dashboard.factory.state as st_mod
+    import system.live_status as ls_mod
+
+    ts = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    today = ts[:10]
+    state = st_mod.FactoryState(
+        machines={"gate": st_mod.MachineState(id="gate", label="Verladetor", status="ok")},
+        paused=False, generated_at=ts,
+    )
+    st_mod.snapshot(state)
+
+    feed_db = str(tmp_path / "feed.db")
+    monkeypatch.setattr(ls_mod, "FEED_PATH", feed_db)
+    feed = ls_mod.ActivityFeed(db_path=feed_db)
+    feed._conn.execute(
+        "INSERT INTO events (ts, event, ticker, detail) VALUES (?,?,?,?)",
+        (f"{today}T00:00:01", "trade", "AAPL", "GEKAUFT 3 @ $100"),
+    )
+    feed._conn.commit()
+
+    at = AppTest.from_string(_SCRIPT)
+    at.run()
+    assert not at.exception
+    html_out = "".join(str(m.value) for m in at.get("markdown"))
+    assert "px-terminal" in html_out
+    assert "AAPL" in html_out
+    assert "GEKAUFT 3 @ $100" in html_out
+
+
+def test_archive_replay_terminal_shows_hint_without_events():
+    at = AppTest.from_string(_SCRIPT)
+    at.run()
+    assert not at.exception
+    caption_out = "".join(str(c.value) for c in at.get("caption"))
+    assert "Keine Aufzeichnung" in caption_out  # kein Snapshot -> Archiv zeigt gar nichts

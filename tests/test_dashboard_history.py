@@ -136,3 +136,50 @@ def test_reconstruct_from_snapshot_handles_empty_row():
     rebuilt = reconstruct_from_snapshot({})
     assert rebuilt.machines == {}
     assert rebuilt.paused is False
+
+
+# ── read_feed_events_until() (H2.3 Tages-Replay) ─────────────────────────────
+
+def _seed_feed(db_path, rows):
+    import system.live_status as ls_mod
+    feed = ls_mod.ActivityFeed(db_path=db_path)
+    for ts, event, ticker, detail in rows:
+        feed._conn.execute(
+            "INSERT INTO events (ts, event, ticker, detail) VALUES (?,?,?,?)",
+            (ts, event, ticker, detail),
+        )
+    feed._conn.commit()
+    return feed
+
+
+def test_read_feed_events_until_filters_day_and_cutoff(tmp_path):
+    from dashboard.factory.state import read_feed_events_until
+
+    db_path = str(tmp_path / "feed.db")
+    _seed_feed(db_path, [
+        ("2026-07-15T09:00:00", "cycle_start", None, None),
+        ("2026-07-15T09:05:00", "trade", "AAPL", "GEKAUFT 3 @ $100"),
+        ("2026-07-15T11:00:00", "cycle_end", None, "1 Trade"),  # nach dem Cutoff
+        ("2026-07-14T09:00:00", "trade", "NVDA", "anderer Tag"),
+    ])
+
+    rows = read_feed_events_until("2026-07-15", "2026-07-15T10:00:00", db_path=db_path)
+    assert [r["event"] for r in rows] == ["cycle_start", "trade"]
+    assert rows[0]["ts"] < rows[1]["ts"]  # älteste zuerst
+
+
+def test_read_feed_events_until_empty_when_db_missing(tmp_path):
+    from dashboard.factory.state import read_feed_events_until
+
+    rows = read_feed_events_until("2026-07-15", "2026-07-15T23:59:59",
+                                  db_path=str(tmp_path / "nope.db"))
+    assert rows == []
+
+
+def test_read_feed_events_until_fail_open_on_corrupt_db(tmp_path):
+    from dashboard.factory.state import read_feed_events_until
+
+    bad_db = tmp_path / "corrupt.db"
+    bad_db.write_bytes(b"not a real sqlite file")
+    rows = read_feed_events_until("2026-07-15", "2026-07-15T23:59:59", db_path=str(bad_db))
+    assert rows == []

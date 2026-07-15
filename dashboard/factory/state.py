@@ -480,6 +480,34 @@ def reconstruct_from_snapshot(row: dict) -> FactoryState:
     )
 
 
+def read_feed_events_until(day: str, ts: str, db_path: str | None = None) -> List[dict]:
+    """H2.3 (Tages-Replay): Feed-Ereignisse eines Tages bis zu einem
+    Zeitpunkt, read-only direkt aus der Activity-Feed-DB
+    (system/live_status.py) gelesen — `feed_recent()` liefert nur die
+    letzten 50 Einträge, für einen ganzen Handelstag reicht das nicht.
+    Älteste zuerst. Fail-open: fehlende/kaputte DB → leere Liste."""
+    import sqlite3
+
+    from system.live_status import FEED_PATH
+    path = db_path or FEED_PATH
+    if not os.path.exists(path):
+        return []
+    try:
+        conn = sqlite3.connect(path)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                "SELECT ts, event, ticker, detail FROM events "
+                "WHERE ts LIKE ? AND ts <= ? ORDER BY ts ASC",
+                (f"{day}%", ts),
+            ).fetchall()
+        finally:
+            conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
 def read_history(day: str, path: str | None = None) -> List[dict]:
     """H2.1: alle Schnappschüsse eines Tages (`day` = "YYYY-MM-DD"),
     älteste zuerst. Kaputte/unlesbare Zeilen werden übersprungen statt

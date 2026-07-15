@@ -214,21 +214,35 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
       `test_dashboard_history.py` für die Rekonstruktion selbst);
       Verifikation normal/kiosk × pixel/plain je 0 Exceptions.
 
-- [ ] **H2.3 Tages-Replay** (M, braucht H2.1) 🟡
+- [x] **H2.3 Tages-Replay** (M, braucht H2.1) 🟡
       *Hinweis: KEINE Echtzeit-Animation über st.rerun-Schleifen bauen
       (Streamlit-Frickelei) — stattdessen Schieberegler „Uhrzeit" über
       die Snapshots des Tages + Feed-Events bis zu diesem Zeitpunkt im
       Terminal-Stil darunter. Das ist robust und fühlt sich trotzdem wie
       Replay an.*
-      1. [ ] Zeit-Slider (Werte = Snapshot-Zeitstempel des Tages).
-      2. [ ] Szene zum gewählten Zeitpunkt (wie H2.2).
-      3. [ ] Darunter `.px-terminal`-Block mit den Feed-Ereignissen des
+      1. [x] Zeit-Slider (Werte = Snapshot-Zeitstempel des Tages).
+      2. [x] Szene zum gewählten Zeitpunkt (wie H2.2).
+      3. [x] Darunter `.px-terminal`-Block mit den Feed-Ereignissen des
          Tages BIS zum Slider-Zeitpunkt (`feed_recent` liefert nur die
          letzten 50 — stattdessen direkt `ActivityFeed`-DB per SQL
          `WHERE ts LIKE 'YYYY-MM-DD%' AND ts <= ?` lesen; read-only).
-      4. [ ] Tests mit präparierter Feed-DB (Muster
+      4. [x] Tests mit präparierter Feed-DB (Muster
          `test_dashboard_live_tab.py`: `ActivityFeed(db_path=tmp)`).
-      5. [ ] → SA
+      5. [x] → SA
+
+      Umgesetzt 15.7.2026: Kein zweiter Slider — der bereits in H2.2
+      gebaute Zeitreise-Regler treibt jetzt auch das Replay (genau wie
+      im Roadmap-Hinweis „Szene zum gewählten Zeitpunkt (wie H2.2)"
+      vorgeschlagen). Neue `state.py`-Funktion
+      `read_feed_events_until(day, ts, db_path=None)` liest read-only
+      direkt aus der Activity-Feed-DB (eigene sqlite3-Connection, keine
+      Änderung an `system/live_status.py` — außerhalb des erlaubten
+      Pfads). `tabs/factory.py`s `_render_archive()` heißt jetzt
+      „🕰 Archiv & Replay" und zeigt das Terminal (gleiche Icons/Farben
+      wie `tabs/live.py`, damit keine zweite Farbsprache entsteht)
+      direkt unter der archivierten Szene. 5 neue Tests (3 für die
+      Lese-Funktion, 2 AppTest-Integrationstests); Verifikation
+      normal/kiosk × pixel/plain je 0 Exceptions.
 
 - [ ] **H2.4 Wochen-Vergleich** (S) 🟢
       1. [ ] Neues Modul `dashboard/compare.py`:
