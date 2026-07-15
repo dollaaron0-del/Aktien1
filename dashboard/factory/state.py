@@ -96,8 +96,11 @@ def _analyzer_share(prefix: str) -> MachineState:
             if str((r.get("provenance") or {}).get("model_route") or "").startswith(prefix)
         )
         status = "active" if n > 0 else "off"
+        # payload für D7.2: Rauch-Intensität in der Szene = echter
+        # Routing-Anteil (machines.py skaliert die Anzahl Rauchwolken).
         return MachineState(id=machine_id, label=label, status=status,
-                            tooltip=[f"{n}/{len(rows)} der letzten Analysen"])
+                            tooltip=[f"{n}/{len(rows)} der letzten Analysen"],
+                            payload={"n": n, "total": len(rows)})
     except Exception:
         return _off(machine_id, label)
 
@@ -131,10 +134,25 @@ def _read_warehouse() -> MachineState:
         positions = Portfolio().all_positions()
         status = "ok" if positions else "off"
         tooltip = [f"{t}: {p.shares:g} Stk." for t, p in positions.items()] or ["keine Positionen"]
+        # D7.2: eine Kiste je Position in der Szene, Farbe nach
+        # Haltedauer-Ratio (gleiche Logik wie der Portfolio-Tab: grün <0.8,
+        # amber <1.0, rot ab Zielüberschreitung). Kein Live-Kurs-Abruf hier —
+        # read_state() muss schnell und netzwerkfrei bleiben, daher Alter
+        # statt P&L als Kisten-Signal.
+        details = {}
+        for t, p in positions.items():
+            age_ratio = None
+            try:
+                days = (datetime.now(timezone.utc).replace(tzinfo=None)
+                        - datetime.fromisoformat(p.entry_date)).days
+                age_ratio = round(days / max(p.target_hold_days, 1), 2)
+            except Exception:
+                pass
+            details[t] = {"shares": p.shares, "age_ratio": age_ratio}
         return MachineState(
             id="warehouse", label="Hochregallager", status=status,
             tooltip=tooltip,
-            payload={t: p.shares for t, p in positions.items()},
+            payload={"positions": details},
         )
     except Exception:
         return _off("warehouse", "Hochregallager")

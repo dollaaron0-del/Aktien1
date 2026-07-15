@@ -38,11 +38,21 @@ def _detail_conveyor(m: MachineState) -> None:
 
 
 def _detail_warehouse(m: MachineState) -> None:
-    positions = m.payload or {}
+    positions = (m.payload or {}).get("positions") or {}
     if not positions:
         st.caption("Keine offenen Positionen.")
         return
-    st.table([{"Ticker": t, "Anteile": shares} for t, shares in positions.items()])
+    st.table([
+        {
+            "Ticker": t,
+            "Anteile": (info or {}).get("shares"),
+            "Haltedauer": (
+                f"{(info or {}).get('age_ratio'):.0%} des Ziels"
+                if (info or {}).get("age_ratio") is not None else "–"
+            ),
+        }
+        for t, info in positions.items()
+    ])
 
 
 def _detail_docks(m: MachineState) -> None:

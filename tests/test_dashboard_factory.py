@@ -78,7 +78,11 @@ def test_read_warehouse_reflects_real_portfolio_positions(fresh_portfolio):
     m = st_mod._read_warehouse()
     assert m.id == "warehouse"
     assert m.status == "ok"
-    assert m.payload.get("NVDA") == 5.0
+    nvda = m.payload["positions"]["NVDA"]
+    assert nvda["shares"] == 5.0
+    # Haltedauer-Ratio (D7.2): entry 1.7., Ziel 14 Tage — heute (15.7.)
+    # exakt an der Zielgrenze; ratio muss berechnet und plausibel sein.
+    assert nvda["age_ratio"] is not None and nvda["age_ratio"] >= 0.9
 
 
 def test_read_warehouse_off_when_no_positions(fresh_portfolio):
@@ -581,3 +585,80 @@ def test_machine_box_only_uses_asset_for_matching_machine_id(tmp_path, monkeypat
     box = machine_box(m, 0, 0, 100, 100)
     assert "<rect" in box
     assert "<image" not in box
+
+
+# ── D7.2: Fabrik-Detailtiefe ─────────────────────────────────────────────────
+
+def test_warehouse_crates_one_per_position_with_age_colors():
+    m = MachineState(id="warehouse", label="Lager", status="ok", payload={
+        "positions": {
+            "JUNG": {"shares": 3, "age_ratio": 0.2},   # grün
+            "REIF": {"shares": 2, "age_ratio": 0.9},   # amber
+            "ALT":  {"shares": 1, "age_ratio": 1.3},   # rot
+            "UNBEK": {"shares": 1, "age_ratio": None}, # kobalt
+        },
+    })
+    box = machine_box(m, 0, 0, 270, 220)
+    assert f'fill="{PALETTE["neon_green"]}" opacity="0.85"' in box
+    assert f'fill="{PALETTE["amber"]}" opacity="0.85"' in box
+    assert f'fill="{PALETTE["red"]}" opacity="0.85"' in box
+    assert f'fill="{PALETTE["cobalt"]}" opacity="0.85"' in box
+    assert box.count('opacity="0.85"') == 4  # genau eine Kiste je Position
+
+
+def test_warehouse_crates_capped_with_rest_hint():
+    positions = {f"T{i}": {"shares": 1, "age_ratio": 0.1} for i in range(15)}
+    m = MachineState(id="warehouse", label="Lager", status="ok",
+                     payload={"positions": positions})
+    box = machine_box(m, 0, 0, 270, 220)
+    assert box.count('opacity="0.85"') == 12  # _MAX_CRATES
+    assert "+3 weitere" in box
+
+
+def test_warehouse_no_crates_without_positions():
+    m = MachineState(id="warehouse", label="Lager", status="off", payload={})
+    box = machine_box(m, 0, 0, 270, 220)
+    assert 'opacity="0.85"' not in box
+
+
+def test_conveyor_counter_shows_padded_total():
+    m = MachineState(id="conveyor", label="Band", status="active",
+                     payload={"total": 14})
+    box = machine_box(m, 0, 0, 620, 120)
+    assert ">014</text>" in box
+
+
+def test_conveyor_counter_caps_at_999_and_hides_without_payload():
+    m = MachineState(id="conveyor", label="Band", status="active",
+                     payload={"total": 5000})
+    assert ">999</text>" in machine_box(m, 0, 0, 620, 120)
+    m2 = MachineState(id="conveyor", label="Band", status="off")
+    assert "</text>" not in machine_box(m2, 0, 0, 620, 120).replace(
+        "Band</text>", "")  # nur das Label, kein Zählwerk
+
+
+def test_smoke_intensity_scales_with_routing_share():
+    low = MachineState(id="analyzer_claude", label="C", status="active",
+                       payload={"n": 5, "total": 50})    # 10 % → 1 Wolke
+    high = MachineState(id="analyzer_ollama", label="O", status="active",
+                        payload={"n": 45, "total": 50})  # 90 % → 4 Wolken
+    assert machine_box(low, 0, 0, 200, 130).count("fx-smoke") == 1
+    assert machine_box(high, 0, 0, 200, 130).count("fx-smoke") == 4
+
+
+def test_backup_battery_charge_reflects_age():
+    fresh = MachineState(id="backup_bot", label="R", status="ok",
+                         payload={"age_hours": 0.0})
+    stale = MachineState(id="backup_bot", label="R", status="err",
+                         payload={"age_hours": 200.0})
+    fresh_box = machine_box(fresh, 0, 0, 200, 80)
+    stale_box = machine_box(stale, 0, 0, 200, 80)
+    assert f'width="30.0"' in fresh_box   # (34-4) * 1.0 — voll
+    assert f'width="0.0"' in stale_box    # leer (geclampt)
+    assert f'fill="{PALETTE["neon_green"]}" opacity="0.9"' in fresh_box
+    assert f'fill="{PALETTE["red"]}" opacity="0.9"' in stale_box
+
+
+def test_backup_battery_hidden_without_age():
+    m = MachineState(id="backup_bot", label="R", status="off")
+    assert 'opacity="0.9"' not in machine_box(m, 0, 0, 200, 80)

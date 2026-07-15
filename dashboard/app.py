@@ -206,6 +206,26 @@ with c_refresh:
         st.cache_resource.clear()
         st.rerun()
 
+# ─── Laufband-Anzeigetafel (Design D7.3) ─────────────────────────────────────
+# LED-Ticker wie in einer Werkshalle: die letzten echten Ereignisse aus dem
+# Activity-Feed + nächster geplanter Lauf. Nur pixel, fail-open.
+if _theme.is_enabled():
+    try:
+        from system.live_status import feed_recent as _tick_recent, read_status as _tick_ls
+        _tick_items = []
+        for _ev in _tick_recent(limit=5):
+            _t = (_ev.get("ts") or "")[11:16]
+            _parts = [p for p in (_ev.get("ticker"), _ev.get("detail")) if p]
+            _tick_items.append(f"{_t} {_ev.get('event', '?').upper()}: {' — '.join(_parts) or '–'}")
+        _tick_next = (_tick_ls() or {}).get("next_run")
+        if _tick_next:
+            _tick_items.append(f"NÄCHSTER LAUF: {str(_tick_next)[:16].replace('T', ' ')} UHR")
+        _ticker_html = _theme.ticker(_tick_items)
+        if _ticker_html:
+            st.markdown(_ticker_html, unsafe_allow_html=True)
+    except Exception:
+        pass
+
 # ─── Globaler Bot-Status + Datenstand ────────────────────────────────────────
 # Sichtbar auf JEDEM Tab (nicht nur in der Sidebar): läuft der Bot überhaupt,
 # und von wann stammen die angezeigten Daten? Ohne das wirken eingefrorene
@@ -345,6 +365,50 @@ try:
         st.caption(_ampel_line)
 except Exception:
     pass
+
+# ─── Leitstand-Instrumente (Design D7.1) ─────────────────────────────────────
+# Dieselben Risiko-/Kostenzahlen wie in der Ampel-Zeile, aber als ablesbare
+# Industrie-Instrumente: Manometer (Tagesverlust vs. Circuit-Breaker-Limit),
+# Tank (Rest des Claude-Tagesbudgets), 7-Segment (Depotwert). Nur pixel;
+# fail-open — ein Instrument-Fehler darf das Dashboard nie blockieren.
+if _theme.is_enabled():
+    try:
+        from dashboard import instruments as _instr
+        from portfolio.circuit_breaker import CircuitBreaker as _InstrCB
+        from portfolio.circuit_breaker import _MAX_DAILY_LOSS as _CB_LIMIT
+
+        _cb_st = _InstrCB().status(total_value)
+        _loss_pct = max(0.0, -float(_cb_st.get("daily_pct") or 0.0))
+        _pressure = (_loss_pct / (_CB_LIMIT * 100) * 100) if _CB_LIMIT else 0.0
+
+        from analyzers.api_cost_tracker import APICostTracker as _InstrCost
+        _cost_s = _InstrCost().summary()
+        _cost_today = float(_cost_s.get("today_cost_eur") or 0.0)
+        _cost_limit = float(_cost_s.get("daily_limit_eur") or 0.0)
+        _fuel = (max(0.0, 100.0 - _cost_today / _cost_limit * 100)
+                 if _cost_limit > 0 else 100.0)
+
+        _ic1, _ic2, _ic3 = st.columns([2, 1.3, 2.7])
+        _ic1.markdown(
+            _instr.gauge_svg(
+                _pressure, "KESSELDRUCK",
+                f"Tagesverlust {_loss_pct:.1f}% / Limit {_CB_LIMIT * 100:.0f}%",
+            ),
+            unsafe_allow_html=True,
+        )
+        _ic2.markdown(
+            _instr.tank_svg(
+                _fuel, "TREIBSTOFF",
+                f"Claude {_cost_today:.2f}/{_cost_limit:.2f}€",
+            ),
+            unsafe_allow_html=True,
+        )
+        _ic3.markdown(
+            _instr.seven_segment_svg(f"{total_value:.0f}", "DEPOTWERT USD"),
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        pass
 
 # ─── KPI strip ───────────────────────────────────────────────────────────────
 delta_pct  = (total_value - config.initial_capital) / config.initial_capital * 100

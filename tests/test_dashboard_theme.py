@@ -196,3 +196,59 @@ def test_register_chart_themes_sets_plotly_default_template(monkeypatch):
 def test_altair_theme_config_uses_palette_colors():
     cfg = theme._altair_theme()
     assert cfg["config"]["range"]["category"][0] == theme.PALETTE["cobalt"]
+
+
+# ── D7.3: Laufband-Anzeigetafel ──────────────────────────────────────────────
+
+def test_ticker_escapes_items_and_duplicates_track(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_THEME", "pixel")
+    out = theme.ticker(["10:00 TRADE: <script>x</script>", "NÄCHSTER LAUF: 15:00"])
+    assert out.startswith('<div class="px-ticker">')
+    assert "<script>" not in out
+    assert out.count("&lt;script&gt;") == 2  # Inhalt verdoppelt (nahtlose Schleife)
+    assert out.count("NÄCHSTER LAUF: 15:00") == 2
+
+
+def test_ticker_empty_in_plain_mode_and_without_items(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_THEME", "plain")
+    assert theme.ticker(["x"]) == ""
+    monkeypatch.setenv("DASHBOARD_THEME", "pixel")
+    assert theme.ticker([]) == ""
+
+
+def test_ticker_css_present_and_reduced_motion_safe(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_THEME", "pixel")
+    css = theme._base_css()
+    assert ".px-ticker" in css
+    assert "px-ticker-scroll" in css
+    # reduced-motion-Block muss den Track abschalten:
+    rm = css.split("prefers-reduced-motion", 1)[1][:400]
+    assert ".px-ticker-track" in rm
+
+
+# ── D7.4: CRT-Atmosphäre ─────────────────────────────────────────────────────
+
+def test_crt_scanlines_on_by_default_and_disableable(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_THEME", "pixel")
+    monkeypatch.delenv("DASHBOARD_CRT", raising=False)
+    assert "repeating-linear-gradient" in theme._base_css()
+    monkeypatch.setenv("DASHBOARD_CRT", "0")
+    assert "repeating-linear-gradient" not in theme._base_css()
+
+
+def test_crt_overlay_never_blocks_interaction(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_THEME", "pixel")
+    monkeypatch.delenv("DASHBOARD_CRT", raising=False)
+    crt = theme._crt_css()
+    assert "pointer-events: none" in crt
+
+
+def test_boot_lines_css_reduced_motion_safe(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_THEME", "pixel")
+    css = theme._base_css()
+    assert ".px-boot-line" in css
+    # Basis-Deckkraft 1 + animation:none unter reduced-motion → Zeilen
+    # bleiben ohne Animation einfach sichtbar (kein unsichtbarer Text).
+    assert "opacity: 1;" in css.split(".px-boot-line", 1)[1][:200]
+    rm_blocks = [b[:300] for b in css.split("prefers-reduced-motion")[1:]]
+    assert any(".px-boot-line" in b for b in rm_blocks)

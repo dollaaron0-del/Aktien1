@@ -296,6 +296,74 @@ Alle Helfer geben bei `plain` schlichtes, ungestyltes HTML bzw. no-op zurück
       braucht echtes Anschauen im Browser durch den User oder ein Modell
       mit Browser-Zugriff.
 
+## D7 — Charakter-Ausbau (15.7.2026, User-Wunsch: „mehr Charakter,
+## schön anzusehen, Infos intelligent im Schema eingebunden")
+
+Vier Richtungen, alle vier vom User per Auswahl bestätigt. Prinzip
+unverändert: **kein Element ohne echte Datenquelle** — einzige, bewusst
+benannte Ausnahme ist D7.4 (reine Atmosphäre-Optik).
+
+- [x] **D7.1 Leitstand-Instrumente** — neues Modul
+      `dashboard/instruments.py` (reine SVG-String-Funktionen, Muster
+      `conveyor.py`): (a) **Manometer „Kesseldruck"** = heutiger
+      Tagesverlust relativ zum Circuit-Breaker-Limit
+      (`CircuitBreaker.status().daily_pct` vs. `MAX_DAILY_LOSS_PCT`),
+      (b) **Treibstofftank** = Claude-Tagesbudget
+      (`APICostTracker.summary()` today/limit, Füllstand = Rest),
+      (c) **7-Segment-Anzeige** für den Depotwert. Einbau in `app.py`
+      unter der Gesundheits-Ampel (nur pixel; plain unverändert),
+      fail-open. Fertig wenn: Tests + Verifikation pixel+plain OK.
+
+      Umgesetzt 15.7.2026: Manometer mit grün/amber/rot-Zonen (Nabe
+      blinkt >85 % via fx-blink → respektiert reduced-motion), Tank mit
+      Schwellenfarben (>40 grün, 15–40 amber, <15 rot), 7-Segment mit
+      Geister-Segmenten (klassischer LED-Look; Punkt/Komma als Dot,
+      unbekannte Zeichen wie € werden übersprungen statt zu crashen).
+      24 Tests (`tests/test_dashboard_instruments.py`), Voll-Render
+      pixel: 3× px-instrument vorhanden, plain: 0 — beide 0 Exceptions.
+- [x] **D7.2 Fabrik-Detailtiefe** — `state.py`/`machines.py`:
+      (a) Hochregallager: **eine Kiste je offener Position**, Farbe nach
+      Haltedauer-Ratio (grün <80 %, amber <100 %, rot ≥100 % — gleiche
+      Logik wie Portfolio-Tab; braucht entry_date/target_hold_days im
+      payload), (b) **mechanischer Durchsatz-Zähler** am Förderband
+      (funnel total), (c) **Rauch-Intensität** der Analysatoren nach
+      echtem Routing-Anteil (payload share), (d) **Batterie-Balken** am
+      Nachtschicht-Roboter (Backup-Alter → Ladestand). Tests je Detail.
+
+      Umgesetzt 15.7.2026: neuer `_machine_extras()`-Dispatcher in
+      machines.py (Kisten max. 12 + „+n weitere", Zählwerk 3-stellig
+      gekappt bei 999, Batterie leer nach 48h, Rauch 1–4 Wolken nach
+      Anteil). Warehouse-payload umgestellt auf
+      `{"positions": {ticker: {shares, age_ratio}}}` — bewusst
+      Haltedauer statt P&L als Kisten-Farbe (read_state() bleibt
+      netzwerkfrei, kein Live-Kurs-Abruf); Detail-Panel im Fabrik-Tab
+      zeigt die Haltedauer jetzt mit an. 9 neue Tests, Suite
+      factory+tab 88 grün.
+- [x] **D7.3 Laufband-Anzeigetafel** — LED-Ticker im Kopfbereich
+      (`app.py`): letzte echte Ereignisse aus `ActivityFeed.recent()` +
+      nächster geplanter Lauf; CSS-Marquee (`.px-ticker`),
+      `prefers-reduced-motion`: statisch; plain: entfällt. Alle Inhalte
+      escaped.
+
+      Umgesetzt 15.7.2026: `theme.ticker(items)` (Escaping zentral,
+      Inhalt verdoppelt für die nahtlose -50%-Schleife, 30s Umlauf),
+      Einbau in app.py direkt unter der Kopfzeile via
+      `feed_recent(limit=5)` + `read_status().next_run`, fail-open.
+      3 neue Tests; Voll-Render zeigt echte Feed-Einträge im Ticker.
+- [x] **D7.4 CRT-Atmosphäre** — (a) sehr dezente Scanlines als fixes
+      Overlay (pointer-events:none, opacity ≤0.06, per
+      `DASHBOARD_CRT=0` abschaltbar), (b) kurze Boot-Sequenz auf der
+      Login-Seite (CSS-Typing, `prefers-reduced-motion`: aus). Einzige
+      reine Optik im ganzen Design — bewusst und dokumentiert.
+
+      Umgesetzt 15.7.2026: Scanlines+Vignette als `body::after`
+      (statisch → kein Motion-Problem; Abschalt-Env geprüft), Boot-
+      Sequenz als 3 gestaffelte `.px-boot-line`-Zeilen im `.px-terminal`
+      (bewusst statische Texte, keine vorgetäuschten Systemwerte;
+      `animation-fill-mode: both` + Basis-opacity 1 → unter
+      reduced-motion sofort sichtbar statt unsichtbar). 3 neue Tests;
+      Login-AppTest zeigt 3 Boot-Zeilen + intakten Titel-Vertrag.
+
 ## Vision W — Interaktives Fabrik-Wimmelbild (NACH der Vorführung)
 
 User-Idee 15.7.: Das Dashboard soll langfristig wie ein interaktives

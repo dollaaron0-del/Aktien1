@@ -97,15 +97,114 @@ def _activity_overlay(m: MachineState, x: float, y: float, w: float, h: float) -
         )
 
     if m.id.startswith("analyzer_") and m.status == "active":
+        # D7.2(c): Rauch-Intensität = echter Routing-Anteil der letzten
+        # Analysen (state.py liefert n/total im payload) — 1 Wolke bei
+        # <25 %, bis 4 Wolken ab 75 %. Frugal-Routing wird so in der
+        # Szene ablesbar: die Ollama-Werkbank soll stärker rauchen als
+        # der teure Claude-Analysator.
+        pl = m.payload or {}
+        total = pl.get("total") or 0
+        share = (pl.get("n") or 0) / total if total else 0.0
+        n_puffs = 1 + min(3, int(share * 4))
         cx = x + w / 2
-        for i, dy in enumerate((0, 8, 16)):
+        for i in range(n_puffs):
             parts.append(
                 f'<circle class="fx-smoke" style="animation-delay:{i * 0.4}s" '
-                f'cx="{cx + dy - 8}" cy="{y - 6}" r="5" fill="{PALETTE["text_muted"]}" '
+                f'cx="{cx + i * 8 - 8}" cy="{y - 6}" r="5" fill="{PALETTE["text_muted"]}" '
                 f'opacity="0.5" />'
             )
 
     return "".join(parts)
+
+
+_MAX_CRATES = 12
+
+
+def _warehouse_crates(m: MachineState, x: float, y: float, w: float, h: float) -> str:
+    """D7.2(a): eine Kiste je offener Position, gestapelt am Boden des
+    Lagers. Farbe = Haltedauer-Ratio (grün <0.8, amber <1.0, rot ab
+    Zielüberschreitung — gleiche Schwellen wie der Portfolio-Tab);
+    unbekanntes Alter = kobalt. Auf `_MAX_CRATES` gekappt."""
+    positions = (m.payload or {}).get("positions") or {}
+    if not positions:
+        return ""
+    parts: list[str] = []
+    crate, gap, per_row = 18, 6, max(1, int((w - 24) // (18 + 6)))
+    for i, (_t, info) in enumerate(list(positions.items())[:_MAX_CRATES]):
+        ratio = (info or {}).get("age_ratio")
+        if ratio is None:
+            color = PALETTE["cobalt"]
+        elif ratio >= 1.0:
+            color = PALETTE["red"]
+        elif ratio >= 0.8:
+            color = PALETTE["amber"]
+        else:
+            color = PALETTE["neon_green"]
+        row, col = divmod(i, per_row)
+        cx0 = x + 12 + col * (crate + gap)
+        cy0 = y + h - 34 - row * (crate + gap)
+        parts.append(
+            f'<rect x="{cx0:.0f}" y="{cy0:.0f}" width="{crate}" height="{crate}" '
+            f'rx="2" fill="{color}" opacity="0.85" stroke="{PALETTE["bg"]}" '
+            f'stroke-width="1.5" />'
+        )
+    rest = len(positions) - _MAX_CRATES
+    if rest > 0:
+        parts.append(
+            f'<text x="{x + 12}" y="{y + 20}" font-family="VT323, monospace" '
+            f'font-size="12" fill="{PALETTE["text_muted"]}">+{rest} weitere</text>'
+        )
+    return "".join(parts)
+
+
+def _conveyor_counter(m: MachineState, x: float, y: float, w: float, h: float) -> str:
+    """D7.2(b): mechanischer Durchsatz-Zähler am Förderband — heutige
+    Entscheidungen aus dem echten Funnel (DecisionLog), dreistellig wie
+    ein altes Zählwerk."""
+    total = (m.payload or {}).get("total")
+    if total is None:
+        return ""
+    shown = min(int(total), 999)
+    return (
+        f'<rect x="{x + w - 62}" y="{y + 8}" width="54" height="22" rx="3" '
+        f'fill="#0A0C0F" stroke="{PALETTE["border"]}" stroke-width="1.5" />'
+        f'<text x="{x + w - 35}" y="{y + 25}" text-anchor="middle" '
+        f'font-family="VT323, monospace" font-size="17" '
+        f'fill="{PALETTE["neon_green"]}">{shown:03d}</text>'
+    )
+
+
+def _backup_battery(m: MachineState, x: float, y: float, w: float, h: float) -> str:
+    """D7.2(d): Batterie-Balken am Nachtschicht-Roboter — Ladestand =
+    Frische des letzten Backups (voll direkt danach, leer nach 48h).
+    Farbe folgt dem Maschinen-Status (ok/warn/err)."""
+    age_h = (m.payload or {}).get("age_hours")
+    if age_h is None:
+        return ""
+    charge = max(0.0, min(1.0, 1.0 - float(age_h) / 48.0))
+    color = _STATUS_COLOR.get(m.status, PALETTE["border"])
+    bx, by, bw, bh = x + 10, y + 8, 34, 14
+    return (
+        f'<rect x="{bx}" y="{by}" width="{bw}" height="{bh}" rx="2" '
+        f'fill="none" stroke="{PALETTE["text_muted"]}" stroke-width="1.5" />'
+        f'<rect x="{bx + bw}" y="{by + 4}" width="3" height="{bh - 8}" '
+        f'fill="{PALETTE["text_muted"]}" />'
+        f'<rect x="{bx + 2}" y="{by + 2}" width="{(bw - 4) * charge:.1f}" '
+        f'height="{bh - 4}" fill="{color}" opacity="0.9" />'
+    )
+
+
+def _machine_extras(m: MachineState, x: float, y: float, w: float, h: float) -> str:
+    """D7.2: maschinen-spezifische Detail-Elemente, jedes an eine echte
+    Datenquelle gebunden (Wachstums-Regel W4.5 gilt weiter). Fail-open —
+    fehlt der payload, rendert das Extra einfach nichts."""
+    if m.id == "warehouse":
+        return _warehouse_crates(m, x, y, w, h)
+    if m.id == "conveyor":
+        return _conveyor_counter(m, x, y, w, h)
+    if m.id == "backup_bot":
+        return _backup_battery(m, x, y, w, h)
+    return ""
 
 
 def machine_box(m: MachineState, x: float, y: float, w: float, h: float,
@@ -149,6 +248,7 @@ def machine_box(m: MachineState, x: float, y: float, w: float, h: float,
         f'{base_shape}'
         f'{_activity_overlay(m, x, y, w, h) if animate else ""}'
         f'{_dock_slots(m, x, y, w, h) if m.id == "docks" else ""}'
+        f'{_machine_extras(m, x, y, w, h)}'
         f'<circle class="{led_cls}" cx="{led_cx}" cy="{led_cy}" r="{led_r}" fill="{color}" '
         f'data-status="{m.status}" />'
         f'<text class="fx-label" x="{x + w / 2}" y="{y + h - 10}" text-anchor="middle" '

@@ -42,6 +42,22 @@ def require_login() -> None:
         if _splash_uri:
             st.markdown(f'<img src="{_splash_uri}" style="max-width:100%;">',
                        unsafe_allow_html=True)
+        # D7.4: kurze Boot-Sequenz — bewusst statische Texte (reine
+        # Atmosphäre, keine vorgetäuschten Systemwerte); Stagger-Delays
+        # via CSS (.px-boot-line, reduced-motion-sicher in theme.py).
+        _boot_lines = (
+            "RUFLO INDUSTRIEWERK — SYSTEMSTART …",
+            "ANZEIGE-MODULE GELADEN",
+            "BEDIENER-ANMELDUNG ERFORDERLICH",
+        )
+        st.markdown(
+            '<div class="px-terminal">' + "".join(
+                f'<div class="px-boot-line" style="animation-delay:{i * 0.6}s">'
+                f"&gt; {line}</div>"
+                for i, line in enumerate(_boot_lines)
+            ) + "</div>",
+            unsafe_allow_html=True,
+        )
     st.title("🔒 Dashboard-Login")
     with st.container(border=True):
         entered = st.text_input("Passwort", type="password", key=_INPUT_KEY)

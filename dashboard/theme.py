@@ -110,6 +110,37 @@ button[data-baseweb="tab"] { font-size: 0.9rem; font-weight: 600; }
 """
 
 
+def _crt_enabled() -> bool:
+    """D7.4: CRT-Atmosphäre (Scanlines/Vignette) — die EINZIGE reine Optik
+    im Design (alles andere hängt an echten Daten). Default an, per
+    DASHBOARD_CRT=0 abschaltbar, falls sie auf einem Beamer/Monitor stört."""
+    return os.getenv("DASHBOARD_CRT", "1").strip().lower() not in ("0", "off", "false")
+
+
+def _crt_css() -> str:
+    if not _crt_enabled():
+        return ""
+    # Sehr dezent gehalten (Gesamt-Abdunklung ≤ ~6 %): feine statische
+    # Scanlines + leichte Rand-Vignette. Statisch = kein reduced-motion-
+    # Problem; pointer-events:none = keine Interaktions-Störung.
+    return """
+/* D7.4 CRT-Atmosphäre (rein optisch, DASHBOARD_CRT=0 schaltet ab) */
+body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    pointer-events: none;
+    background:
+        repeating-linear-gradient(0deg,
+            rgba(0, 0, 0, 0.05) 0px, rgba(0, 0, 0, 0.05) 1px,
+            transparent 1px, transparent 3px),
+        radial-gradient(ellipse at center,
+            transparent 60%, rgba(0, 0, 0, 0.14) 100%);
+}
+"""
+
+
 def _base_css() -> str:
     p = PALETTE
     return f"""
@@ -223,9 +254,34 @@ h1 {{
     animation: fx-smoke-rise 2s ease-out infinite;
 }}
 
+/* D7.3: Laufband-Anzeigetafel — LED-Ticker wie in einer Werkshalle.
+   Der Track enthält den Inhalt ZWEIMAL (app.py dupliziert ihn); die
+   Animation schiebt um genau -50 %, dadurch nahtlose Schleife. */
+.px-ticker {{
+    overflow: hidden;
+    white-space: nowrap;
+    background: #0A0C0F;
+    border: 1px solid var(--px-border);
+    border-radius: 4px;
+    padding: 4px 0;
+}}
+.px-ticker-track {{
+    display: inline-block;
+    animation: px-ticker-scroll 30s linear infinite;
+    font-family: 'VT323', monospace;
+    font-size: 1.05rem;
+    color: var(--px-neon-green);
+}}
+.px-ticker-track .px-ticker-sep {{ color: var(--px-copper); margin: 0 14px; }}
+@keyframes px-ticker-scroll {{
+    from {{ transform: translateX(0); }}
+    to   {{ transform: translateX(-50%); }}
+}}
+
 @media (prefers-reduced-motion: reduce) {{
     .px-belt-anim, .fx-belt-run, .fx-blink, .fx-smoke {{ animation: none; }}
     .px-led--warn::before, .px-led--err::before {{ animation: none; }}
+    .px-ticker-track {{ animation: none; }}
 }}
 
 /* ── D1.4 KPI-Leiste als Industriepanel ─────────────────────────────── */
@@ -273,7 +329,25 @@ button[aria-selected="true"][data-baseweb="tab"] {{
 .badge-pending  {{ color: var(--px-amber); }}
 .badge-ok       {{ color: var(--px-neon-green); }}
 .badge-red      {{ color: var(--px-red); }}
-</style>
+
+/* ── D7.4 Boot-Sequenz (Login-Seite) ─────────────────────────────────── */
+/* Zeilen erscheinen gestaffelt; `both` hält vor dem Delay den Aus-Zustand.
+   Bei prefers-reduced-motion fällt die Animation weg und die Basis-
+   Deckkraft 1 greift sofort — alle Zeilen einfach sichtbar. */
+.px-boot-line {{
+    opacity: 1;
+    animation: px-boot-in 0.01s both;
+    font-family: "VT323", "Courier New", monospace;
+    color: var(--px-neon-green);
+}}
+@keyframes px-boot-in {{
+    from {{ opacity: 0; }}
+    to   {{ opacity: 1; }}
+}}
+@media (prefers-reduced-motion: reduce) {{
+    .px-boot-line {{ animation: none; }}
+}}
+{_crt_css()}</style>
 """
 
 
@@ -303,6 +377,21 @@ def panel(html_body: str) -> str:
     if not is_enabled():
         return html_body
     return f'<div class="px-panel">{html_body}</div>'
+
+
+def ticker(items: list) -> str:
+    """D7.3: Laufband-Anzeigetafel. Baut aus echten Ereignis-Texten einen
+    LED-Ticker (`.px-ticker`); jeder Eintrag wird hier escaped. Der Inhalt
+    wird verdoppelt, damit die -50%-CSS-Schleife nahtlos läuft. Bei plain
+    oder leerer Liste: leerer String (Aufrufer rendert dann nichts)."""
+    if not is_enabled() or not items:
+        return ""
+    sep = '<span class="px-ticker-sep">◆</span>'
+    body = sep.join(html.escape(str(i)) for i in items) + sep
+    return (
+        '<div class="px-ticker"><span class="px-ticker-track">'
+        f'{body}{body}</span></div>'
+    )
 
 
 def image_b64(name: str) -> str:
