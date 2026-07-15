@@ -96,22 +96,36 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
       Entscheidung + Bot-Nähe. Erst mit starkem Modell die Schnittstelle
       bauen; danach kann die reine UI 🟢 nachgezogen werden.*
 
-- [ ] **H1.2 Ticker-Schnellanalyse an den Docks** (S) 🟢
+- [x] **H1.2 Ticker-Schnellanalyse an den Docks** (S) 🟢
       Ziel: Ticker-Eingabe im Fabrik-Tab → `user_request_queue` (wie im
       Log-Tab bereits vorhanden — Logik NICHT neu erfinden, aufrufen).
-      1. [ ] In `dashboard/tabs/factory.py` unter dem Detail-Panel-Bereich
+      1. [x] In `dashboard/tabs/factory.py` unter dem Detail-Panel-Bereich
          ein `st.form("factory_ticker_form")` mit `st.text_input`
          (Label „Werksauftrag: Ticker zur Analyse einwerfen") + Submit.
-      2. [ ] Bei Submit: `from analyzers.user_request_queue import
+      2. [x] Bei Submit: `from analyzers.user_request_queue import
          add_ticker, peek` — exakt wie `dashboard/tabs/log.py` (Zeilen um
          `_req_ticker`) es tut, inkl. „bereits vorgemerkt"-Fall
          (`st.success`-Meldungen übernehmen).
-      3. [ ] Test in `tests/test_dashboard_factory_tab.py`: Form
+      3. [x] Test in `tests/test_dashboard_factory_tab.py`: Form
          absenden (AppTest `.text_input[...].set_value("NVDA")` +
          `.run()`), danach `peek()` enthält „NVDA" (Queue-Datei vorher
          per monkeypatch auf tmp_path umbiegen:
          `monkeypatch.setattr(urq_mod, "_FILE", str(tmp_path/"q.json"))`).
-      4. [ ] → SA
+      4. [x] → SA
+
+      Umgesetzt 15.7.2026: `_render_ticker_form()` als eigene Funktion
+      direkt nach `_scene()`, nutzt exakt dieselbe
+      `analyzers.user_request_queue`-Logik und denselben
+      Erfolgsmeldungs-Wortlaut wie `tabs/log.py` (kein zweiter
+      Queue-Mechanismus). Einziger Nachzug beim Testen: AppTest führt
+      `st.form_submit_button` unter der Element-Kategorie `"button"`,
+      nicht `"form_submit_button"` (wie im ursprünglichen Test-Snippet
+      angenommen) — Tests entsprechend angepasst. 3 neue Tests
+      (Einreihen, „bereits vorgemerkt" inkl. Groß-/Kleinschreibung-
+      Normalisierung, leere Eingabe ignoriert); Verifikation
+      pixel/plain/blueprint × normal/kiosk je 0 Exceptions, kein
+      Schreibzugriff auf die echte `data/user_requests.json` ohne
+      Klick bestätigt.
 
 - [ ] **H1.3 Not-Aus-Reset mit Zwei-Schritt-Bestätigung** (M) 🔴
       *Grund für 🔴: setzt Circuit-Breaker-State zurück (Risiko-Mechanik,

@@ -262,6 +262,34 @@ def _render_logbook() -> None:
                 st.rerun()
 
 
+def _render_ticker_form() -> None:
+    """H1.2: Werksauftrag an den Docks — Ticker-Schnellanalyse. Ruft
+    exakt dieselbe Queue-Logik wie tabs/log.py auf (analyzers.
+    user_request_queue), keine eigene Warteschlangen-Mechanik. Fail-open:
+    ein Fehler beim Einreihen zeigt nur keine Erfolgsmeldung."""
+    with st.form("factory_ticker_form"):
+        ticker_input = st.text_input(
+            "Werksauftrag: Ticker zur Analyse einwerfen",
+            placeholder="z.B. NVDA, BYD, Rheinmetall …",
+        )
+        submitted = st.form_submit_button("📥 Einwerfen")
+
+    if submitted and ticker_input.strip():
+        from analyzers.user_request_queue import add_ticker, peek
+        ticker = ticker_input.strip().upper()
+        try:
+            if ticker in peek():
+                st.success(f"**{ticker}** ist bereits für den nächsten Zyklus vorgemerkt.")
+            else:
+                add_ticker(ticker)
+                st.success(
+                    f"✅ **{ticker}** wurde zur Analyse-Queue hinzugefügt.  \n"
+                    f"Der Bot analysiert ihn beim nächsten Zyklus (15:00 Uhr oder beim nächsten Start)."
+                )
+        except Exception:
+            pass
+
+
 def render(ctx) -> None:
     st.subheader("🏭 Fabrik")
     st.caption(
@@ -299,5 +327,6 @@ def render(ctx) -> None:
                 _render_detail_panel(machine)
 
     _scene()
+    _render_ticker_form()
     _render_archive()
     _render_logbook()

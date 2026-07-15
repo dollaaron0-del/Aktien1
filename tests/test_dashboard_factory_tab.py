@@ -245,3 +245,55 @@ def test_warehouse_detail_no_notes_section_without_saved_notes(fresh_portfolio, 
     assert not at.exception
     allmd = "".join(str(m.value) for m in at.get("markdown"))
     assert "Notizen:" not in allmd
+
+
+# ── H1.2: Ticker-Schnellanalyse an den Docks ──────────────────────────────────
+
+def test_ticker_form_queues_new_ticker(tmp_path, monkeypatch):
+    import analyzers.user_request_queue as urq_mod
+    monkeypatch.setattr(urq_mod, "_FILE", str(tmp_path / "q.json"))
+
+    at = AppTest.from_string(_SCRIPT)
+    at.run()
+    ti = next(t for t in at.get("text_input")
+              if t.label == "Werksauftrag: Ticker zur Analyse einwerfen")
+    ti.set_value("NVDA")
+    submit = next(b for b in at.get("button") if b.label == "📥 Einwerfen")
+    submit.click().run()
+
+    assert not at.exception
+    assert "NVDA" in urq_mod.peek()
+    success = "".join(str(s.value) for s in at.get("success"))
+    assert "NVDA" in success and "hinzugefügt" in success
+
+
+def test_ticker_form_shows_already_queued_message(tmp_path, monkeypatch):
+    import analyzers.user_request_queue as urq_mod
+    monkeypatch.setattr(urq_mod, "_FILE", str(tmp_path / "q.json"))
+    urq_mod.add_ticker("NVDA")
+
+    at = AppTest.from_string(_SCRIPT)
+    at.run()
+    ti = next(t for t in at.get("text_input")
+              if t.label == "Werksauftrag: Ticker zur Analyse einwerfen")
+    ti.set_value("nvda")  # Kleinschreibung -> muss normalisiert werden
+    submit = next(b for b in at.get("button") if b.label == "📥 Einwerfen")
+    submit.click().run()
+
+    assert not at.exception
+    success = "".join(str(s.value) for s in at.get("success"))
+    assert "bereits" in success and "vorgemerkt" in success
+    assert urq_mod.peek() == ["NVDA"]  # kein Duplikat
+
+
+def test_ticker_form_ignores_empty_submission(tmp_path, monkeypatch):
+    import analyzers.user_request_queue as urq_mod
+    monkeypatch.setattr(urq_mod, "_FILE", str(tmp_path / "q.json"))
+
+    at = AppTest.from_string(_SCRIPT)
+    at.run()
+    submit = next(b for b in at.get("button") if b.label == "📥 Einwerfen")
+    submit.click().run()
+
+    assert not at.exception
+    assert urq_mod.peek() == []
