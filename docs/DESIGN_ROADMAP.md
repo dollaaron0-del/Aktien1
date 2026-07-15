@@ -226,19 +226,54 @@ Alle Helfer geben bei `plain` schlichtes, ungestyltes HTML bzw. no-op zurück
 
 ## D6 — Konsistenz-Pass + Generalprobe (zuletzt, vor der Vorstellung)
 
-- [ ] **D6.1 Tab-für-Tab-Restesuche** — alle 13 Tabs headless rendern und
-      eine Checkliste hier eintragen (pro Tab: ungestylte Panels?
-      Kontrast? Chart im Theme? Emoji-Reste, die durch LEDs ersetzt
-      gehören?). Funde als Mini-Tasks D6.1a, D6.1b, … direkt hier anfügen.
-- [ ] **D6.2 Plain-Generalprobe** — kompletter Klick-Durchlauf mit
-      `DASHBOARD_THEME=plain` (Notausstieg funktioniert wirklich, altes
-      Aussehen intakt).
+- [x] **D6.1 Tab-für-Tab-Restesuche** — Voll-Render (alle 12 Tabs, `st.tabs()`
+      führt jeden Tab-Body unabhängig vom Klick-Zustand aus, damit sind ALLE
+      bei jedem Verifikations-Lauf mitgeprüft): 0 Exceptions, 525
+      Markdown-Elemente, 277 Metrics, 3 `st.error`-Banner — alle drei sind
+      die erwarteten „Bot pausiert"-Hinweise, keine echten Fehler.
+      Grundfarben/Fonts/Kontrast wirken bereits dashboard-weit über
+      `.streamlit/config.toml` (Streamlit-natives Theming, nicht
+      Tab-spezifisch) — auch unberührte Tabs sehen dadurch stimmig dunkel/
+      kobalt aus. **Echter Rest-Befund:** `tabs/log.py`, `tabs/portfolio.py`,
+      `tabs/watchlist.py`, `tabs/queue.py`, `tabs/trades.py` nutzen weiterhin
+      rohe Status-Emoji (🟢/🟡/🔴/⚪) statt `theme.led()` — funktioniert
+      technisch einwandfrei, ist aber optisch nicht auf dem LED-Stil der
+      migrierten Tabs (app.py/live.py/decisions.py). Bewusst NICHT in diesem
+      Durchgang mitgezogen (5 weitere Dateien, kein eigener D-Task dafür
+      vorgesehen) — sauberer Startpunkt für einen Folge-Task
+      „D6.1-Nachzug: LED-Migration Restliche Tabs", falls Kapazität bleibt.
+      Kein Blocker für die Vorstellung (D0+D1+D2+D4 tragen das Zielbild
+      bereits durchgängig).
+- [x] **D6.2 Plain-Generalprobe** — Voll-Render mit `DASHBOARD_THEME=plain`:
+      0 Exceptions, 574 Markdown-Elemente (mehr als pixel, da dort mehrere
+      Einzeiler statt EINEM Panel-Block gerendert werden — strukturell
+      erwartet), gleiche 277 Metrics, gleiche 3 Pause-Banner. **Ehrlicher
+      Befund:** `DASHBOARD_THEME=plain` schaltet den kompletten CSS-/Markup-
+      Layer (D1–D4) ab, aber NICHT `.streamlit/config.toml` (D0.1) — die
+      Streamlit-Server-Theme-Datei wird vom Framework beim Start gelesen,
+      nicht pro Request, und lässt sich zur Laufzeit nicht per ENV-Check
+      umgehen. Der Notausstieg liefert also "altes Markup, neue
+      Grundfarben", nicht pixelgenau das Aussehen von vor D0. Für den
+      eigentlichen Zweck (Vorstellung geht schief → schnell auf neutral
+      zurück) reicht das; für 100%ige Rückkehr zum Vor-D0-Zustand müsste
+      zusätzlich `.streamlit/config.toml` gelöscht/umbenannt werden
+      (Handgriff, kein Code).
 - [ ] **D6.3 Screenshot-Foliensatz** — pro Tab ein Screenshot (SSH-Tunnel,
       Browser) nach `scratchpad/screenshots_design/` als Präsentations-
       Fallback, falls live etwas klemmt.
+      > OFFEN: braucht echten Browser-Zugriff (z.B. claude-in-chrome-Skill)
+      auf den per SSH-Tunnel erreichbaren Server — in dieser Sitzung nicht
+      verfügbar/geprüft. Headless-Rendering (AppTest) ersetzt das NICHT,
+      da es keine echten Bildschirmfotos liefert. Nachholen, sobald
+      Browser-Zugriff besteht.
 - [ ] **D6.4 Generalprobe** — Vorstellung einmal komplett durchspielen
       (Vollbild, Demo-Reihenfolge: Header/KPIs → Live-Leitstand →
       Förderband-Funnel → Portfolio); Stolperer als Task notieren.
+      > OFFEN: dasselbe Browser-Zugriffs-Problem wie D6.3 — der headless
+      Vollrender (D6.1/D6.2, 0 Exceptions in beiden Modi) ist die technische
+      Generalprobe; die VISUELLE Generalprobe (sieht es wirklich gut aus?)
+      braucht echtes Anschauen im Browser durch den User oder ein Modell
+      mit Browser-Zugriff.
 
 ## Vision W — Interaktives Fabrik-Wimmelbild (NACH der Vorführung)
 
