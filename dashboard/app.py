@@ -48,6 +48,7 @@ st.set_page_config(
 
 from dashboard import theme as _theme  # noqa: E402
 _theme.inject()
+_theme.register_chart_themes()
 
 from dashboard.auth import require_login  # noqa: E402
 require_login()

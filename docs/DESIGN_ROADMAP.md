@@ -156,22 +156,23 @@ Alle Helfer geben bei `plain` schlichtes, ungestyltes HTML bzw. no-op zurück
 
 ## D2 — Chart-Theming (nach D0, unabhängig von D1.2–D1.6)
 
-- [ ] **D2.1 Altair-Theme** — in `theme.py::register_chart_themes()`:
-      `alt.themes.register("pixel", …)` + enable (nur wenn `is_enabled()`);
-      Werte: Hintergrund transparent, Achsen/Grid border-Farbe, Labels
-      text_muted, kategoriale Range `[cobalt, copper, neon_green, amber,
-      red, neon_cyan]`. Aufruf in `app.py` nach `inject()`. Kein Chart-Code
-      in den Tabs anfassen (Theme wirkt global). Fertig wenn: Verifikation
-      OK + Mini-Test (Theme registriert, plain lässt Default aktiv).
-- [ ] **D2.2 Plotly-Template** — dito: `plotly.io.templates["pixel"]`,
-      `templates.default = "pixel"` nur bei `is_enabled()`; gleiche Farben,
-      `paper_bgcolor`/`plot_bgcolor` transparent. Betroffen ist nur
-      `tabs/network.py` — prüfen, dass der dortige Graph das Template erbt
-      (kein explizites `template=`-Argument nötig). Fertig wenn: Verifikation.
-- [ ] **D2.3 Drift-Schutz** — Kommentarblock in `theme.py` ("neue Charts:
-      kein eigenes Farb-Hardcoding, Theme kommt von hier") + Test, dass
-      `register_chart_themes()` idempotent ist (zweifacher Aufruf wirft
-      nicht — Streamlit reruns!). Fertig wenn: Tests grün.
+- [x] **D2.1 Altair-Theme** — `theme._altair_theme()` + Registrierung/Enable
+      in `register_chart_themes()`. Transparenter Hintergrund, Achsen/Grid
+      in border-Farbe, Labels text_muted, kategoriale Range aus der Palette.
+      Betrifft `tabs/regime.py`/`tabs/portfolio.py` (Linienfarben dort bleiben
+      bewusst hartkodiert — nur Hintergrund/Achsen/Labels ändern sich, kein
+      Tab-Code angefasst). Tests: Theme wird registriert+aktiviert, plain
+      lässt "default" aktiv, Kategorie-Range nutzt PALETTE.
+- [x] **D2.2 Plotly-Template** — `pio.templates["pixel"]` + `default=
+      "pixel"`. Ehrlicher Befund: der bestehende `tabs/network.py`-Graph
+      setzt `paper_bgcolor`/`plot_bgcolor`/`font` bereits explizit im
+      `go.Layout(...)` selbst (Zeile ~532) — diese Werte übersteuern jedes
+      Template. Das Template ist damit korrekt registriert und für
+      KÜNFTIGE Plotly-Charts ohne eigene Farbwerte wirksam, verändert den
+      bestehenden Netzwerk-Graphen aber optisch nicht. Kein Tab-Code
+      angefasst (wie gefordert). Test: `pio.templates.default == "pixel"`.
+- [x] **D2.3 Drift-Schutz** — Kommentarblock in `theme.py` + Idempotenz-Test
+      (zweifacher Aufruf wirft nicht). Verifikation (pixel+plain) OK.
 
 ## D3 — Live-Tab als „Leitstand" (nach D0+D1)
 

@@ -151,3 +151,35 @@ def test_register_chart_themes_noop_when_plain(monkeypatch):
     monkeypatch.setattr(theme, "_charts_registered", False)
     theme.register_chart_themes()
     assert theme._charts_registered is False
+
+
+def test_register_chart_themes_registers_and_enables_altair(monkeypatch):
+    import altair as alt
+    monkeypatch.delenv("DASHBOARD_THEME", raising=False)
+    monkeypatch.setattr(theme, "_charts_registered", False)
+    theme.register_chart_themes()
+    assert alt.themes.active == "pixel"
+    alt.themes.enable("default")  # Testisolation: globalen State zurücksetzen
+
+
+def test_register_chart_themes_leaves_default_active_when_plain(monkeypatch):
+    import altair as alt
+    alt.themes.enable("default")
+    monkeypatch.setenv("DASHBOARD_THEME", "plain")
+    monkeypatch.setattr(theme, "_charts_registered", False)
+    theme.register_chart_themes()
+    assert alt.themes.active == "default"
+
+
+def test_register_chart_themes_sets_plotly_default_template(monkeypatch):
+    import plotly.io as pio
+    monkeypatch.delenv("DASHBOARD_THEME", raising=False)
+    monkeypatch.setattr(theme, "_charts_registered", False)
+    theme.register_chart_themes()
+    assert pio.templates.default == "pixel"
+    pio.templates.default = "plotly"  # Testisolation zurücksetzen
+
+
+def test_altair_theme_config_uses_palette_colors():
+    cfg = theme._altair_theme()
+    assert cfg["config"]["range"]["category"][0] == theme.PALETTE["cobalt"]

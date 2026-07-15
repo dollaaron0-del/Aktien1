@@ -287,6 +287,33 @@ def image_b64(name: str) -> str:
 
 _charts_registered = False
 
+# D2.3 Drift-Schutz: neue Charts bekommen ihre Farben AUSSCHLIESSLICH über
+# dieses zentrale Theme (Altair-Theme "pixel" + Plotly-Template "pixel").
+# Kein eigenes Farb-Hardcoding in einem Tab-Modul — sonst driftet die
+# Optik bei der nächsten Palette-Änderung auseinander.
+
+
+def _altair_theme() -> dict:
+    p = PALETTE
+    return {
+        "config": {
+            "background": "transparent",
+            "view": {"stroke": "transparent"},
+            "axis": {
+                "domainColor": p["border"],
+                "gridColor": p["border"],
+                "tickColor": p["border"],
+                "labelColor": p["text_muted"],
+                "titleColor": p["text_muted"],
+            },
+            "legend": {"labelColor": p["text_muted"], "titleColor": p["text_muted"]},
+            "range": {
+                "category": [p["cobalt"], p["copper"], p["neon_green"],
+                             p["amber"], p["red"], p["neon_cyan"]],
+            },
+        }
+    }
+
 
 def register_chart_themes() -> None:
     """Registriert das Altair-Theme + Plotly-Template aus PALETTE (D2).
@@ -296,3 +323,27 @@ def register_chart_themes() -> None:
     if not is_enabled() or _charts_registered:
         return
     _charts_registered = True
+
+    try:
+        import altair as alt
+        alt.themes.register("pixel", _altair_theme)
+        alt.themes.enable("pixel")
+    except Exception:
+        pass
+
+    try:
+        import plotly.io as pio
+        import plotly.graph_objects as go
+        p = PALETTE
+        pio.templates["pixel"] = go.layout.Template(
+            layout=go.Layout(
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color=p["text_muted"]),
+                colorway=[p["cobalt"], p["copper"], p["neon_green"],
+                         p["amber"], p["red"], p["neon_cyan"]],
+            )
+        )
+        pio.templates.default = "pixel"
+    except Exception:
+        pass
