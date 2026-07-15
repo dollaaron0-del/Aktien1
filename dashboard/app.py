@@ -52,30 +52,6 @@ _theme.inject()
 from dashboard.auth import require_login  # noqa: E402
 require_login()
 
-# ─── Custom CSS ──────────────────────────────────────────────────────────────
-st.markdown("""
-<style>
-/* Tighter metric cards */
-[data-testid="metric-container"] {
-    background: #1e2130;
-    border: 1px solid #2d3250;
-    border-radius: 10px;
-    padding: 12px 16px;
-}
-/* Tab font */
-button[data-baseweb="tab"] { font-size: 0.9rem; font-weight: 600; }
-/* Regime badge helpers */
-.regime-bull    { color: #00e676; font-weight: 700; font-size: 1.1rem; }
-.regime-neutral { color: #ffd740; font-weight: 700; font-size: 1.1rem; }
-.regime-bear    { color: #ff7043; font-weight: 700; font-size: 1.1rem; }
-.regime-crisis  { color: #f44336; font-weight: 700; font-size: 1.1rem; }
-.badge-pending  { color: #ffd740; }
-.badge-ok       { color: #00e676; }
-.badge-red      { color: #f44336; }
-</style>
-""", unsafe_allow_html=True)
-
-
 # ─── Resource loading ─────────────────────────────────────────────────────────
 @st.cache_resource
 def load_resources():
@@ -200,14 +176,29 @@ def render_sources_breakdown(raw, total=None) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 c_logo, c_title, c_refresh = st.columns([1, 8, 2])
 with c_logo:
-    st.markdown("## 📈")
+    _logo_uri = _theme.image_b64("logo.png")  # D5.3: echtes Logo, sonst Emoji-Platzhalter
+    if _theme.is_enabled() and _logo_uri:
+        st.markdown(f'<img src="{_logo_uri}" style="height:2.2em;">', unsafe_allow_html=True)
+    else:
+        st.markdown("## 📈")
 with c_title:
-    st.markdown(
-        f"## Stock Sentiment Trading Bot  "
-        f"<small style='color:#888; font-size:0.65em;'>Stand: {datetime.now().strftime('%d.%m.%Y %H:%M')} "
-        f"· Broker: **{config.broker_mode.upper()}**</small>",
-        unsafe_allow_html=True,
-    )
+    if _theme.is_enabled():
+        st.markdown(
+            _theme.panel(
+                '<div class="px-head" style="font-size:1.1rem;">Stock Sentiment Trading Bot</div>'
+                f'<small style="color:var(--px-text-muted);">Stand: '
+                f'{datetime.now().strftime("%d.%m.%Y %H:%M")} · Broker: '
+                f'{config.broker_mode.upper()}</small>'
+            ),
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f"## Stock Sentiment Trading Bot  "
+            f"<small style='color:#888; font-size:0.65em;'>Stand: {datetime.now().strftime('%d.%m.%Y %H:%M')} "
+            f"· Broker: **{config.broker_mode.upper()}**</small>",
+            unsafe_allow_html=True,
+        )
 with c_refresh:
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🔄 Aktualisieren", width="stretch"):
@@ -312,9 +303,9 @@ def _ibkr_gateway_dot() -> str:
     import socket
     try:
         with socket.create_connection((config.ibkr_host, config.ibkr_port), timeout=0.4):
-            return "🟢 IB-Gateway"
+            return _theme.led("ok", "IB-Gateway")
     except Exception:
-        return "🔴 IB-Gateway"
+        return _theme.led("err", "IB-Gateway")
 
 
 def _claude_cost_dot() -> str:
@@ -324,27 +315,33 @@ def _claude_cost_dot() -> str:
         today = float(s.get("today_cost_eur") or 0.0)
         limit = float(s.get("daily_limit_eur") or 0.0)
         pct = (today / limit * 100) if limit > 0 else 0.0
-        dot = "🔴" if pct >= 100 else "🟡" if pct >= 80 else "🟢"
-        return f"{dot} Claude-Kosten {today:.2f}€/{limit:.2f}€"
+        status = "err" if pct >= 100 else "warn" if pct >= 80 else "ok"
+        return _theme.led(status, f"Claude-Kosten {today:.2f}€/{limit:.2f}€")
     except Exception:
-        return "⚪ Claude-Kosten n/a"
+        return _theme.led("off", "Claude-Kosten n/a")
 
 
 def _circuit_breaker_dot(current_value: float) -> str:
     try:
         from portfolio.circuit_breaker import CircuitBreaker
         st_cb = CircuitBreaker().status(current_value)
-        return "🔴 Circuit-Breaker AUSGELÖST" if st_cb.get("triggered") else "🟢 Circuit-Breaker"
+        triggered = bool(st_cb.get("triggered"))
+        return _theme.led("err" if triggered else "ok",
+                          "Circuit-Breaker AUSGELÖST" if triggered else "Circuit-Breaker")
     except Exception:
-        return "⚪ Circuit-Breaker n/a"
+        return _theme.led("off", "Circuit-Breaker n/a")
 
 
 try:
-    st.caption(" · ".join([
+    _ampel_line = " · ".join([
         _ibkr_gateway_dot(),
         _claude_cost_dot(),
         _circuit_breaker_dot(total_value),
-    ]))
+    ])
+    if _theme.is_enabled():
+        st.markdown(_theme.panel(_ampel_line), unsafe_allow_html=True)
+    else:
+        st.caption(_ampel_line)
 except Exception:
     pass
 

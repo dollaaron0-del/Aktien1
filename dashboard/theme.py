@@ -84,6 +84,32 @@ def _font_face_css() -> str:
     return "\n".join(faces)
 
 
+def _legacy_css() -> str:
+    """Exakt der alte Inline-CSS-Block aus app.py (vor D1.1) — der
+    plain-Zustand ist wortwörtlich das heutige Aussehen, kein Redesign."""
+    return """
+<style>
+/* Tighter metric cards */
+[data-testid="metric-container"] {
+    background: #1e2130;
+    border: 1px solid #2d3250;
+    border-radius: 10px;
+    padding: 12px 16px;
+}
+/* Tab font */
+button[data-baseweb="tab"] { font-size: 0.9rem; font-weight: 600; }
+/* Regime badge helpers */
+.regime-bull    { color: #00e676; font-weight: 700; font-size: 1.1rem; }
+.regime-neutral { color: #ffd740; font-weight: 700; font-size: 1.1rem; }
+.regime-bear    { color: #ff7043; font-weight: 700; font-size: 1.1rem; }
+.regime-crisis  { color: #f44336; font-weight: 700; font-size: 1.1rem; }
+.badge-pending  { color: #ffd740; }
+.badge-ok       { color: #00e676; }
+.badge-red      { color: #f44336; }
+</style>
+"""
+
+
 def _base_css() -> str:
     p = PALETTE
     return f"""
@@ -110,6 +136,14 @@ def _base_css() -> str:
     font-family: "Press Start 2P", monospace;
     color: var(--px-cobalt);
     line-height: 1.6;
+}}
+
+/* st.title() wird im ganzen Dashboard NUR auf der Login-Seite verwendet
+   (dashboard/auth.py) — diese Regel ist also faktisch auf D1.6 begrenzt. */
+h1 {{
+    font-family: "Press Start 2P", monospace;
+    font-size: 1.3rem !important;
+    color: var(--px-cobalt);
 }}
 
 .px-panel {{
@@ -160,16 +194,62 @@ def _base_css() -> str:
     0%, 100% {{ opacity: 1; }}
     50%      {{ opacity: 0.25; }}
 }}
+
+/* ── D1.4 KPI-Leiste als Industriepanel ─────────────────────────────── */
+[data-testid="stMetric"], [data-testid="metric-container"] {{
+    background: var(--px-bg-panel);
+    border: 1px solid var(--px-border);
+    border-radius: 4px;
+    padding: 12px 16px;
+}}
+[data-testid="stMetricLabel"] {{
+    font-family: "VT323", "Courier New", monospace;
+    color: var(--px-text-muted);
+    font-size: 1.05rem;
+}}
+[data-testid="stMetricDelta"] svg[fill="rgb(9, 171, 59)"],
+[data-testid="stMetricDelta"] div:has(svg[fill="rgb(9, 171, 59)"]) {{
+    color: var(--px-neon-green) !important;
+}}
+[data-testid="stMetricDelta"] svg[fill="rgb(255, 43, 43)"],
+[data-testid="stMetricDelta"] div:has(svg[fill="rgb(255, 43, 43)"]) {{
+    color: var(--px-red) !important;
+}}
+
+/* ── D1.5 Tab-Leiste ─────────────────────────────────────────────────── */
+button[data-baseweb="tab"] {{
+    font-family: "VT323", "Courier New", monospace;
+    font-size: 1.05rem;
+    color: var(--px-text-muted);
+}}
+button[data-baseweb="tab"]:hover {{
+    color: var(--px-cobalt-hi);
+}}
+button[aria-selected="true"][data-baseweb="tab"] {{
+    color: var(--px-cobalt);
+}}
+[data-baseweb="tab-highlight"] {{
+    background-color: var(--px-cobalt) !important;
+}}
+
+/* ── Regime-/Status-Badges (aus dem alten Inline-Block übernommen) ──── */
+.regime-bull    {{ color: var(--px-neon-green); font-weight: 700; font-size: 1.1rem; }}
+.regime-neutral {{ color: var(--px-amber);      font-weight: 700; font-size: 1.1rem; }}
+.regime-bear    {{ color: var(--px-copper);     font-weight: 700; font-size: 1.1rem; }}
+.regime-crisis  {{ color: var(--px-red);        font-weight: 700; font-size: 1.1rem; }}
+.badge-pending  {{ color: var(--px-amber); }}
+.badge-ok       {{ color: var(--px-neon-green); }}
+.badge-red      {{ color: var(--px-red); }}
 </style>
 """
 
 
 def inject() -> None:
-    """Rendert die Basis-CSS-Klassen + Fonts einmalig. No-Op bei
-    DASHBOARD_THEME=plain (heutiges Aussehen bleibt exakt erhalten)."""
-    if not is_enabled():
-        return
-    st.markdown(_base_css(), unsafe_allow_html=True)
+    """Rendert das Theme-CSS einmalig. Bei DASHBOARD_THEME=plain exakt der
+    alte Inline-Block (heutiges Aussehen bleibt wortwörtlich erhalten,
+    Notausstieg D6.2); sonst das komplette Pixel-Theme (Basisklassen +
+    pixel-ifizierte KPI-/Tab-/Regime-Styles, D1.1/D1.4/D1.5)."""
+    st.markdown(_base_css() if is_enabled() else _legacy_css(), unsafe_allow_html=True)
 
 
 def led(status: str, label: str) -> str:

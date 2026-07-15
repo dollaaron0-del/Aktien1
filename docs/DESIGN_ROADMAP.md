@@ -129,35 +129,30 @@ Alle Helfer geben bei `plain` schlichtes, ungestyltes HTML bzw. no-op zurück
 
 ## D1 — Sichtbare Quick-Wins (Header, KPIs, Ampel, Tabs)
 
-- [ ] **D1.1 Alt-CSS konsolidieren** — den Inline-`<style>`-Block aus
-      `app.py` (~Zeile 52–70, Metric-Container/Tab-Font/Regime-Badges) nach
-      `theme.py::inject()` umziehen (bei plain: exakt den alten Block
-      ausgeben — heutiges Aussehen ist der plain-Zustand). `app.py` ruft nur
-      noch `inject()`. Fertig wenn: optisch unverändert bei plain,
-      Verifikation OK.
-- [ ] **D1.2 Header** — in `app.py` (~Zeile 197–210): Titel als
-      `.px-head`-Markup (Pixel-Font, cobalt), Stand/Broker-Zeile in
-      text_muted, Header-Zeile als `.px-panel`. Emoji-Logo 📈 bleibt
-      Platzhalter bis D5. Fertig wenn: Verifikation OK.
-- [ ] **D1.3 Gesundheits-Ampel → LEDs** — in `app.py` (~Zeile 303–346):
-      `_ibkr_gateway_dot`/`_claude_cost_dot`/`_circuit_breaker_dot` geben
-      statt Emoji-Text `theme.led(status, label)` zurück; Zeile rendert als
-      `.px-panel` mit `unsafe_allow_html=True`. Status-Mapping: 🟢→ok,
-      🟡→warn, 🔴→err, ⚪→off. Plain-Modus liefert weiter den alten
-      Emoji-Text (macht `led()` selbst). Fertig wenn: Verifikation OK und
-      im plain-Lauf der alte Text erscheint (AppTest: Caption/Markdown
-      enthält "IB-Gateway").
-- [ ] **D1.4 KPI-Leiste** — Metric-Karten (CSS `[data-testid=
-      "stMetricValue"]` etc.) auf Panel-Optik: bg_panel, border, positive
-      Deltas neon_green, negative red, Label text_muted in VT323.
-      Fertig wenn: Verifikation OK.
-- [ ] **D1.5 Tab-Leiste** — aktive Tab-Unterstreichung cobalt, inaktive
-      text_muted, Hover cobalt_hi (CSS auf `button[data-baseweb="tab"]`).
-      Fertig wenn: Verifikation OK.
-- [ ] **D1.6 Login-Seite** — `dashboard/auth.py`: Titel als `.px-head`,
-      Formular in `.px-panel` (nur Markup/Klassen — die Passwort-Logik,
-      `secrets.compare_digest` und `st.stop()` bleiben UNVERÄNDERT).
-      Fertig wenn: `tests/test_dashboard_auth.py` weiter grün + Verifikation.
+- [x] **D1.1 Alt-CSS konsolidieren** — Inline-Block aus `app.py` als
+      `theme._legacy_css()` (exakt der alte Text) für plain; `app.py` ruft
+      nur noch `inject()`, das intern zwischen `_base_css()`/`_legacy_css()`
+      wählt. Optisch bei plain unverändert, Verifikation OK.
+- [x] **D1.2 Header** — Titel als `.px-head` in `.px-panel`, Stand/Broker
+      in text_muted; Logo zeigt `logo.png` falls via `image_b64()` vorhanden
+      (D5.3 vorgezogen), sonst Emoji-Platzhalter. Verifikation OK.
+- [x] **D1.3 Gesundheits-Ampel → LEDs** — alle drei Dot-Funktionen nutzen
+      `theme.led(status,label)`; Zeile als `.px-panel`. Plain liefert
+      weiter den alten Emoji-Text (macht `led()` selbst). Verifikation OK.
+- [x] **D1.4 KPI-Leiste** — `[data-testid="stMetric"]` auf Panel-Optik,
+      Label in VT323, Delta-Farben neon_green/red über die SVG-Fill-Farbe
+      der Streamlit-Pfeile. In `theme._base_css()` mitgebaut (D1.1-Aufhänger,
+      gleiche Selektoren). Verifikation OK.
+- [x] **D1.5 Tab-Leiste** — aktive Tab cobalt, inaktive text_muted, Hover
+      cobalt_hi, Tab-Unterstreichung (`[data-baseweb="tab-highlight"]`)
+      cobalt. In `theme._base_css()` mitgebaut. Verifikation OK.
+- [x] **D1.6 Login-Seite** — `st.title()` bleibt ECHTES st.title (Test-
+      Vertrag erhalten), globale `h1`-Pixel-Font-Regel in `theme.py` greift
+      dadurch praktisch nur hier (st.title wird sonst nirgends verwendet,
+      geprüft). Formular in `st.container(border=True)`, Splash-Bild-Slot
+      via `image_b64("splash.png")` (D5.3 vorgezogen). Passwort-Logik
+      unverändert. `tests/test_dashboard_auth.py` weiter grün (22 Tests
+      gesamt mit theme), Verifikation OK.
 
 ## D2 — Chart-Theming (nach D0, unabhängig von D1.2–D1.6)
 
@@ -233,20 +228,16 @@ Alle Helfer geben bei `plain` schlichtes, ungestyltes HTML bzw. no-op zurück
 
 ## D5 — Echte Pixel-Art-Assets (parallel möglich; D5.2 braucht den User)
 
-- [ ] **D5.1 Asset-Infrastruktur** — `dashboard/assets/img/` anlegen;
-      Helfer `theme.image_b64(name) -> str` (liest PNG, gibt data-URI;
-      fehlt die Datei → leerer String, Aufrufer lässt Platzhalter stehen).
-      Test: fehlende Datei crasht nicht. Fertig wenn: Tests grün.
+- [x] **D5.1 Asset-Infrastruktur** — `dashboard/assets/img/` angelegt
+      (`.gitkeep`); `theme.image_b64(name)` bereits in D0.2 gebaut + getestet.
 - [ ] **D5.2 [USER] Bilder generieren + auswählen** — mit dem Prompt vom
       13.7.: (a) Header-Logo/Banner ~600×120, (b) Login-Splash ~800×400,
       (c) optional 12 Tab-Icons 32×32. Ablage als PNG in
       `dashboard/assets/img/` (`logo.png`, `splash.png`, `tab_<name>.png`).
       > Dieser Task kann NICHT vom Modell erledigt werden — User-Auswahl.
-- [ ] **D5.3 Logo + Splash einbinden** — Header (D1.2-Stelle): `logo.png`
-      statt 📈, wenn vorhanden; Login-Seite (D1.6): `splash.png` über dem
-      Formular. Beide über `image_b64()` mit Platzhalter-Fallback — Task ist
-      auch OHNE vorhandene Bilder abschließbar (Fallback-Pfad testbar).
-      Fertig wenn: Verifikation OK (mit und ohne Dateien).
+- [x] **D5.3 Logo + Splash einbinden** — bereits in D1.2/D1.6 verdrahtet
+      (Header + Login-Seite), Fallback-Pfad (keine Datei vorhanden) ist der
+      aktuell aktive, verifizierte Zustand.
 - [ ] **D5.4 (Optional) Tab-Icons** — nur falls D5.2 Icons liefert.
 
 ## D6 — Konsistenz-Pass + Generalprobe (zuletzt, vor der Vorstellung)

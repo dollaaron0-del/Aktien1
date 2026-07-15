@@ -45,15 +45,18 @@ def test_palette_values_are_seven_char_hex():
 
 # ── inject() ───────────────────────────────────────────────────────────────────
 
-def test_inject_renders_nothing_when_plain(monkeypatch):
+def test_inject_renders_legacy_css_when_plain(monkeypatch):
+    """D1.1: plain rendert exakt den alten Inline-Block (heutiges Aussehen),
+    keine px-*-Klassen."""
     monkeypatch.setenv("DASHBOARD_THEME", "plain")
     at = AppTest.from_string(
         "import dashboard.theme as theme\ntheme.inject()\nimport streamlit as st\nst.write('x')"
     )
     at.run()
     assert not at.exception
-    # Kein <style>-Markdown-Element von inject() gerendert (nur 'x' bleibt übrig)
-    assert not any("px-panel" in str(w.value) for w in at.get("markdown"))
+    markdown_texts = [str(w.value) for w in at.get("markdown")]
+    assert not any("px-panel" in t for t in markdown_texts)
+    assert any("metric-container" in t for t in markdown_texts)
 
 
 def test_inject_renders_style_block_when_pixel(monkeypatch):

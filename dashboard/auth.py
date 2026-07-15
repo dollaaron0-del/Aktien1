@@ -18,6 +18,8 @@ import secrets
 
 import streamlit as st
 
+from dashboard import theme as _theme
+
 _SESSION_KEY = "_dashboard_authed"
 _INPUT_KEY = "_dashboard_pw_input"
 
@@ -31,12 +33,22 @@ def require_login() -> None:
     if st.session_state.get(_SESSION_KEY):
         return
 
+    # Nur Markup/Klassen (D1.6) — die Login-Logik unten bleibt unverändert.
+    # st.title() bleibt ein echtes st.title (Test-Vertrag: at.title[0].value
+    # enthält "Login"); die Pixel-Font dafür kommt aus einer h1-Regel in
+    # theme.py, die NUR hier greift (st.title wird sonst nirgends verwendet).
+    if _theme.is_enabled():
+        _splash_uri = _theme.image_b64("splash.png")  # D5.3, Fallback = kein Bild
+        if _splash_uri:
+            st.markdown(f'<img src="{_splash_uri}" style="max-width:100%;">',
+                       unsafe_allow_html=True)
     st.title("🔒 Dashboard-Login")
-    entered = st.text_input("Passwort", type="password", key=_INPUT_KEY)
-    if entered:
-        if secrets.compare_digest(entered, password):
-            st.session_state[_SESSION_KEY] = True
-            st.rerun()
-        else:
-            st.error("Falsches Passwort.")
+    with st.container(border=True):
+        entered = st.text_input("Passwort", type="password", key=_INPUT_KEY)
+        if entered:
+            if secrets.compare_digest(entered, password):
+                st.session_state[_SESSION_KEY] = True
+                st.rerun()
+            else:
+                st.error("Falsches Passwort.")
     st.stop()
