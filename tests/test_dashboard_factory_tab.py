@@ -204,3 +204,44 @@ def test_archive_replay_terminal_shows_hint_without_events():
     assert not at.exception
     caption_out = "".join(str(c.value) for c in at.get("caption"))
     assert "Keine Aufzeichnung" in caption_out  # kein Snapshot -> Archiv zeigt gar nichts
+
+
+# ── H1.4: Positions-Notizen read-only im Lager-Detail-Panel ──────────────────
+
+def test_warehouse_detail_shows_saved_note_readonly(fresh_portfolio, tmp_path, monkeypatch):
+    import dashboard.position_notes as pn_mod
+    monkeypatch.setattr(pn_mod, "_DB_PATH", str(tmp_path / "notes.db"))
+    pn_mod.PositionNotes().set("NVDA", "Warte auf Earnings")
+
+    fresh_portfolio._conn.execute(
+        "INSERT INTO positions (ticker, shares, entry_price, entry_date, "
+        "stop_loss, take_profit, target_hold_days) VALUES (?,?,?,?,?,?,?)",
+        ("NVDA", 5.0, 100.0, "2026-07-01", 90.0, 130.0, 14),
+    )
+    fresh_portfolio._conn.commit()
+
+    at = AppTest.from_string(_SCRIPT)
+    at.query_params["factory"] = "warehouse"
+    at.run()
+    assert not at.exception
+    caption_out = "".join(str(c.value) for c in at.get("caption"))
+    assert "Warte auf Earnings" in caption_out
+
+
+def test_warehouse_detail_no_notes_section_without_saved_notes(fresh_portfolio, tmp_path, monkeypatch):
+    import dashboard.position_notes as pn_mod
+    monkeypatch.setattr(pn_mod, "_DB_PATH", str(tmp_path / "notes.db"))
+
+    fresh_portfolio._conn.execute(
+        "INSERT INTO positions (ticker, shares, entry_price, entry_date, "
+        "stop_loss, take_profit, target_hold_days) VALUES (?,?,?,?,?,?,?)",
+        ("NVDA", 5.0, 100.0, "2026-07-01", 90.0, 130.0, 14),
+    )
+    fresh_portfolio._conn.commit()
+
+    at = AppTest.from_string(_SCRIPT)
+    at.query_params["factory"] = "warehouse"
+    at.run()
+    assert not at.exception
+    allmd = "".join(str(m.value) for m in at.get("markdown"))
+    assert "Notizen:" not in allmd

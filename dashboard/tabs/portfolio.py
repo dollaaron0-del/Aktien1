@@ -8,6 +8,30 @@ from analyzers.bot_scorer import MILESTONES, BotScorer, get_modifiers
 from portfolio.goal_risk_assessor import CAUTION, DANGER, OK, UNREACHABLE, GoalRiskAssessor
 
 
+def _render_position_notes(ticker_label, tickers) -> None:
+    """H1.4: freies Notizfeld je offener Position — reine Gedächtnisstütze,
+    der Bot liest sie nicht (keine Entscheidung hängt daran). Eigene
+    Funktion (statt Inline-Code in render()), damit sie isoliert testbar
+    ist, ohne die schweren render(ctx)-Abhängigkeiten zu brauchen.
+    Fail-open: ein DB-Fehler blendet den Block einfach aus."""
+    try:
+        from dashboard.position_notes import PositionNotes
+        notes = PositionNotes()
+        for ticker in tickers:
+            with st.expander(f"📝 Notiz — {ticker_label(ticker)}"):
+                st.caption("Nur für dich sichtbar — der Bot liest diese Notiz nicht.")
+                current = notes.get(ticker)
+                new_text = st.text_area(
+                    "Notiz", value=current, key=f"note_text_{ticker}",
+                    label_visibility="collapsed",
+                )
+                if st.button("Speichern", key=f"note_save_{ticker}"):
+                    notes.set(ticker, new_text)
+                    st.success("Gespeichert.")
+    except Exception:
+        pass
+
+
 def render(ctx) -> None:
     phase_info = ctx.phase_info
     config = ctx.config
@@ -127,6 +151,8 @@ def render(ctx) -> None:
             df.style.map(_color_pnl, subset=["P&L $", "P&L %"]),
             width="stretch", hide_index=True,
         )
+
+        _render_position_notes(ctx.ticker_label, positions.keys())
     else:
         st.info("Keine offenen Positionen.")
 

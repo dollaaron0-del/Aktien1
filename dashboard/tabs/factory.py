@@ -105,6 +105,23 @@ def _detail_warehouse(m: MachineState) -> None:
         for t, info in positions.items()
     ])
 
+    # H1.4: vorhandene Positions-Notizen read-only mit anzeigen (Pflege
+    # bleibt im Portfolio-Tab) — st.caption escaped automatisch, kein
+    # unsafe_allow_html nötig/verwendet.
+    try:
+        from dashboard.position_notes import PositionNotes
+        _notes = PositionNotes()
+        _has_notes = False
+        for t in positions:
+            _text = _notes.get(t)
+            if _text:
+                if not _has_notes:
+                    st.markdown("**Notizen:**")
+                    _has_notes = True
+                st.caption(f"**{t}:** {_text}")
+    except Exception:
+        pass
+
 
 def _detail_docks(m: MachineState) -> None:
     health = m.payload or {}

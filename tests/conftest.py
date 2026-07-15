@@ -54,6 +54,18 @@ def _isolate_factory_history(tmp_path, monkeypatch):
     monkeypatch.setattr(fstate_mod, "HISTORY_FILE", str(tmp_path / "factory_history_test.jsonl"))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_position_notes(tmp_path, monkeypatch):
+    """Positions-Notizen (H1.4, dashboard/position_notes.py) IMMER in eine
+    Temp-Datei umlenken: der Konstruktor legt beim ersten Aufruf schon die
+    DB-Datei + Tabelle an, auch nur beim Anzeigen (kein Klick nötig) —
+    jeder Test, der tabs/portfolio.py oder tabs/factory.py end-to-end
+    rendert (z.B. der volle App-Vollrender in test_dashboard_kiosk.py),
+    würde sonst in die echte data/position_notes.db schreiben."""
+    import dashboard.position_notes as pn_mod
+    monkeypatch.setattr(pn_mod, "_DB_PATH", str(tmp_path / "position_notes_test.db"))
+
+
 @pytest.fixture()
 def tmp_data_dir(tmp_path, monkeypatch):
     """

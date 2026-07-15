@@ -118,10 +118,10 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
       Datei liegt außerhalb dashboard/). Schnittstellen-Design und
       Sicherheits-Abwägung zuerst mit starkem Modell.*
 
-- [ ] **H1.4 Positions-Notizen** (S) 🟡
+- [x] **H1.4 Positions-Notizen** (S) 🟡
       Ziel: freies Notizfeld je offener Position, NUR fürs Auge (der Bot
       liest es nicht — das auch in den UI-Text schreiben).
-      1. [ ] Neues Modul `dashboard/position_notes.py`:
+      1. [x] Neues Modul `dashboard/position_notes.py`:
          `class PositionNotes` mit `get(ticker) -> str` und
          `set(ticker, text) -> None`, SQLite unter
          `data/position_notes.db` (Tabelle `notes(ticker TEXT PRIMARY
@@ -129,16 +129,31 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
          `__init__(self, db_path: str | None = None)` — Pfad NICHT als
          Default-Parameter-Konstante binden (bekannte Falle!), sondern
          im Body auflösen.
-      2. [ ] In `dashboard/tabs/portfolio.py` je Position ein Expander
+      2. [x] In `dashboard/tabs/portfolio.py` je Position ein Expander
          „Notiz" mit `st.text_area` + Speichern-Knopf (🟡: vorhandenes
          Positions-Rendering nicht umbauen, nur ergänzen).
-      3. [ ] Im Lager-Detail-Panel (`dashboard/tabs/factory.py`,
+      3. [x] Im Lager-Detail-Panel (`dashboard/tabs/factory.py`,
          `_detail_warehouse`) vorhandene Notiz read-only anzeigen.
-      4. [ ] Tests `tests/test_dashboard_position_notes.py`: get/set
+      4. [x] Tests `tests/test_dashboard_position_notes.py`: get/set
          Roundtrip auf tmp-DB; leere Notiz = „"; HTML in Notiz wird beim
          Anzeigen escaped (Anzeige läuft über `st.text_area`/`st.caption`
          — kein unsafe_allow_html verwenden!).
-      5. [ ] → SA
+      5. [x] → SA
+
+      Umgesetzt 15.7.2026: `_render_position_notes()` als eigene,
+      isoliert testbare Funktion in `tabs/portfolio.py` (ergänzt die
+      bestehende Positionstabelle unverändert), je Position ein
+      Expander mit Text-Area + Speichern-Knopf. `_detail_warehouse()`
+      im Fabrik-Tab zeigt vorhandene Notizen zusätzlich read-only (nur
+      falls eine existiert, kein leerer „Notizen:"-Abschnitt).
+      **Nachzug:** `PositionNotes()` legt schon beim Anzeigen (Import +
+      Konstruktor) die DB-Datei an — das hätte jeden End-to-End-Test von
+      `tabs/portfolio.py`/`tabs/factory.py` in die echte
+      `data/position_notes.db` schreiben lassen (gefunden über den
+      vollen App-Vollrender-Test in `test_dashboard_kiosk.py`); neue
+      autouse-Fixture `_isolate_position_notes` in `conftest.py`
+      (gleiches Muster wie `_isolate_factory_history`). 15 neue Tests;
+      Verifikation normal/kiosk × pixel/plain je 0 Exceptions.
 
 - [ ] **H1.5 „Was würde der Bot jetzt tun?"-Trockenlauf** (L) 🔴
       *Grund für 🔴: ruft die echte Analyse-Pipeline auf (Kosten-Routing,
