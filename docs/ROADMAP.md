@@ -7,6 +7,10 @@ komplett abgearbeitet.
 
 Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
 
+> Separater Workstream: **Dashboard-Design** (16-Bit-Industrieautomations-
+> Stil, schrittweise bis zur Programm-Vorstellung) → eigene Checkliste in
+> `docs/DESIGN_ROADMAP.md` (Blöcke D0–D6).
+
 ## Block 0 — Akut/Fundament (unabhängig vom Bot, zuerst)
 
 - [x] **0.1 Backup-Lücke schließen** — Code fertig & committet 7.7. (786888a):
