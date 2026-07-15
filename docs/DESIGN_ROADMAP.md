@@ -287,13 +287,65 @@ Alle Helfer geben bei `plain` schlichtes, ungestyltes HTML bzw. no-op zurück
       (Vollbild, Demo-Reihenfolge: Header/KPIs → Live-Leitstand →
       Förderband-Funnel → Portfolio); Stolperer als Task notieren.
 
+## Vision W — Interaktives Fabrik-Wimmelbild (NACH der Vorführung)
+
+User-Idee 15.7.: Das Dashboard soll langfristig wie ein interaktives
+Wimmelbild wirken — eine lebende Fabrikhalle, in der die Maschinen arbeiten
+und man immer Neues entdeckt. **Kernprinzip (macht es zu mehr als Deko):
+jede Maschine ist ein echtes Subsystem, ihr Zustand kommt aus echten
+Daten** — die Szene ist eine dritte Darstellungsform neben Tabellen und
+Charts, kein Hintergrundbild. Eigener Tab („Fabrik"), ersetzt keine
+Daten-Tabs. Gated: erst nach D0–D6 + Vorführung; lebt erst richtig, wenn
+der Bot wieder läuft.
+
+Maschinen-Mapping (Datenquellen existieren alle schon): Laderampen =
+Collectors (`source_health`; tote Quelle = dunkle Rampe) · großer
+Analysator vs. kleine Werkbank = Claude vs. Ollama (Frugal-Routing sichtbar)
+· Förderband+Sortier-Arme = Entscheidungs-Funnel (D4 ist der Keim) ·
+Hochregallager = Portfolio (Kisten = Positionen, Farbe = P&L) · Not-Aus-Pilz
+= Circuit-Breaker · Verladetor = IB Gateway (Orders verlassen die Halle) ·
+Wetterstation = Regime (`current_regime.json`) + echter Wetter-Collector ·
+Qualitätslabor = Lern-Stack/Experience Store · Nachtschicht-Roboter =
+Backup-Timer 03:00 · Werksuhr/Schichtplan = Scheduler (`bot_status.json`).
+Entdeckungs-Ebene: seltene ECHTE Zustände = seltene Szenen-Ereignisse
+(Earnings-Sperre, SL-Cooldown, EONET-Hazards, erster Live-Trade, These
+PROVEN), Tag/Nacht nach echter Uhrzeit. Kein Zufalls-Deko-Generator.
+
+- [ ] **W1 Hallen-Skelett** — eigener Tab mit EINEM isometrischen SVG-Layout
+      (Halle + Maschinen-Plätze als schlichte Formen, noch keine Pixel-Art);
+      jede Maschine bekommt ihren echten Zustand als Farbe/LED (reuse
+      `theme.led`-Logik, Datenleser existieren). Statisch, kein Klick.
+- [ ] **W2 Leben** — zustandsgetriebene CSS/SMIL-Animation: Band läuft nur
+      bei aktivem Zyklus (`bot_status.json`-Phase), Rampen blinken bei
+      Collector-Aktivität (`activity_feed.db`), Schornstein raucht während
+      Analyse. Szene als eigenständig refreshendes Embed, entkoppelt vom
+      Streamlit-Rerun.
+- [ ] **W3 Interaktivität** — Hover-Tooltips (SVG `<title>`, billig) mit den
+      echten Zahlen; Klick auf Maschine → Detail-Panel (Iframe-Grenze:
+      Query-Params oder postMessage — der technisch härteste Teil, bewusst
+      eigener Block).
+- [ ] **W4 Entdeckungs-Ebene** — Requisiten für seltene echte Ereignisse
+      (s.o.), Tag/Nacht-Zyklus, Wetter aus dem echten Wetter-Collector,
+      dezente Easter Eggs. Erweiterbar: jede neue Bot-Funktion bekommt
+      künftig „ihre Maschine".
+- [ ] **W5 Pixel-Art-Ausbau** — Skelett-Formen nach und nach durch echte
+      isometrische Pixel-Assets ersetzen (eine Maschine pro Etappe;
+      User-Auswahl wie D5.2). Nur falls SVG an Grenzen stößt: Canvas-Engine
+      evaluieren — nicht vorauseilend.
+
+Ehrliche Grenzen: größter Aufwand ist Asset-Arbeit, nicht Code; volle
+Klick-Interaktivität durch die Iframe-Grenze ist der schwerste Teil (W3);
+Performance-Regel: Animationen rein im Browser (CSS/SMIL), nie pro Rerun
+rechnen.
+
 ## Bewusst NICHT geplant
 
 - ✗ Streamlit ersetzen (eigenes Frontend): unverhältnismäßig für ein
   internes Betriebs-Werkzeug.
-- ✗ Isometrische Vollbild-Spielszene als UI: zerstört die Datendichte;
-  das Zielbild wird über Palette, Panels, LEDs, Terminal-Look und die
-  zwei Motiv-Visuals (D3/D4) transportiert.
+- ✗ Spielszene als ERSATZ der Daten-Tabs: zerstört die Datendichte. Die
+  Fabrik-Szene (Vision W) ist bewusst ein ZUSÄTZLICHER Tab; in den
+  Daten-Tabs wird das Zielbild über Palette, Panels, LEDs, Terminal-Look
+  und die zwei Motiv-Visuals (D3/D4) transportiert.
 - ✗ Sound-Effekte.
 
 ## Reihenfolge & Minimal-Paket
