@@ -137,6 +137,29 @@ def _isolate_live_status(tmp_path, monkeypatch):
     monkeypatch.setattr(ls_mod, "_feed", None)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_experience_store(tmp_path, monkeypatch):
+    """Experience Store (analyzers/experience_store.py) IMMER in eine
+    Temp-DB umlenken. SICHERHEITSKRITISCH, ähnlich gefunden wie
+    _isolate_live_status: `ExperienceStore.__init__` hatte `db_path:
+    str = DB_PATH` als DEFAULT-PARAMETER — zur Modul-Ladezeit gebunden,
+    ein reines DB_PATH-Monkeypatch griff darum NICHT bei unguarded
+    `ExperienceStore()`-Aufrufen (dashboard/achievements.py,
+    tests/test_dashboard_factory.py). Realer Befund 16.7.: genau das
+    hat eine SYNTHETISCHE "AAPL"-Live-Trade-Zeile (WIN, +5%, decided_at
+    2026-01-01 — vor jedem echten Bot-Betrieb) in die echte
+    data/experience.db geschrieben und darüber fälschlich die
+    "Erster Live-Trade"-Plakette ausgelöst (achievements.json,
+    unlocked_at 2026-07-15) — der Bot hat bis heute NIE real gehandelt.
+    Beides bereinigt (Zeile gelöscht, Plakette zurückgenommen);
+    `ExperienceStore.__init__` zusätzlich auf Laufzeit-Lookup
+    umgestellt (Muster dashboard/dry_run.py), damit ein DB_PATH-
+    Monkeypatch jetzt auch ungeschützte Aufrufer wie achievements.py
+    erreicht."""
+    import analyzers.experience_store as es_mod
+    monkeypatch.setattr(es_mod, "DB_PATH", str(tmp_path / "experience_test.db"))
+
+
 @pytest.fixture()
 def tmp_data_dir(tmp_path, monkeypatch):
     """

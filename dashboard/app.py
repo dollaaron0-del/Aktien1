@@ -575,7 +575,7 @@ def _get_ticker_news(ticker: str) -> list:
 import types as _types
 _ctx = _types.SimpleNamespace(**locals())
 
-tab_portfolio, tab_live, tab_decisions, tab_regime, tab_queue, tab_network, tab_briefing, tab_trades, tab_tech, tab_watchlist, tab_log, tab_settings, tab_factory = st.tabs([
+tab_portfolio, tab_live, tab_decisions, tab_regime, tab_queue, tab_network, tab_briefing, tab_trades, tab_tech, tab_watchlist, tab_log, tab_settings, tab_factory, tab_dossier = st.tabs([
     "📊 Portfolio",
     "📡 Live",
     "🧠 Entscheidungen",
@@ -589,6 +589,7 @@ tab_portfolio, tab_live, tab_decisions, tab_regime, tab_queue, tab_network, tab_
     "🔍 Analyse-Log",
     "⚙️ Einstellungen",
     "🏭 Fabrik",
+    "🗂 Kartei",
 ])
 
 
@@ -702,6 +703,14 @@ with tab_settings:
 with tab_factory:
     from dashboard.tabs import factory as _tab_factory
     _tab_factory.render(_ctx)
+
+
+# ══════════════════════════════════════════════════════════
+# TAB "KARTEI" – Personalakten je Aktie (Design-Roadmap L1)
+# ══════════════════════════════════════════════════════════
+with tab_dossier:
+    from dashboard.tabs import dossier as _tab_dossier
+    _tab_dossier.render(_ctx)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

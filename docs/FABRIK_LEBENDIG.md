@@ -39,7 +39,7 @@ was das Programm je über sie gesammelt hat. Kern-Ehrlichkeitsregel: jede
 Akte zeigt nur, was WIRKLICH da ist — dünne Akte = dünne Anzeige, keine
 Platzhalter.
 
-- [ ] 🟢 **L1.1 Datensammler `dashboard/dossier.py`** —
+- [x] 🟢 **L1.1 Datensammler `dashboard/dossier.py`** —
       `dossier(ticker) -> Dict` bündelt read-only, jede Quelle einzeln
       fail-open: Profil (ticker_profiles), Analyse-Historie
       (`AnalysisLog.get_recent(ticker=…, limit=100)`, chronologisch),
@@ -51,12 +51,48 @@ Platzhalter.
       (PositionNotes.get). Plus `all_known_tickers()` (distinct aus
       analysis_log, sortiert nach Analysen-Anzahl). Tests je Quelle
       inkl. „Quelle fehlt → Feld leer, kein Crash".
-- [ ] 🟢 **L1.2 Score-EKG** — `dossier_ekg(history)` : Altair-Linie
+
+      Umgesetzt 16.7.2026: `themes_and_related()` nutzt die ÖFFENTLICHEN
+      `StockRelations.get_themes()`/`get_related()` statt des privaten
+      `_TICKER_TO_THEMES` (existierte schon, bessere Wahl als vom
+      Roadmap-Entwurf angenommen). `trade_bilanz(ticker, store=None)`
+      nimmt einen injizierbaren Store (Muster
+      `calibration_curve.confidence_win_rates`) — nötig, weil
+      `ExperienceStore.__init__` seinerzeit `db_path` als
+      Default-Parameter zur Modul-Ladezeit band (siehe Sicherheitsfund
+      unten). 17 Tests (test_dashboard_dossier.py), jede Quelle einzeln
+      fail-open getestet.
+
+      **🔒 Sicherheitsfund beim Bauen (schwerwiegender als geplant):**
+      `tests/test_dashboard_factory.py` rief `ExperienceStore()`
+      UNGESCHÜTZT auf (kein `db_path`) und schrieb dabei bei JEDEM
+      Suite-Lauf eine synthetische AAPL-„Live"-Zeile (WIN, +5 %,
+      `decided_at` 1.1.2026 — vor jedem echten Bot-Betrieb) in die
+      ECHTE `data/experience.db`. Grund: `ExperienceStore.__init__`
+      hatte `db_path: str = DB_PATH` als Default-Parameter — zur
+      Modul-Ladezeit gebunden, ein DB_PATH-Monkeypatch griff darum bei
+      ungeschützten Aufrufern (auch `dashboard/achievements.py`) nicht.
+      Diese Fake-Zeile hatte bereits real die „Erster Live-Trade"-
+      Plakette in der ECHTEN `data/achievements.json` ausgelöst
+      (unlocked_at 15.7.) — der Bot hat bis heute NIE real gehandelt.
+      Behoben: `ExperienceStore.__init__` auf Laufzeit-Lookup
+      umgestellt (Muster `dashboard/dry_run.py`), neue autouse-Fixture
+      `_isolate_experience_store` in `conftest.py`, Fake-Zeile aus der
+      echten DB gelöscht (347 statt 348 Zeilen — die anderen 347 bleiben
+      unangetastet, echt), falsche Plakette aus `achievements.json`
+      entfernt. Volle Suite (1351 Tests) + MD5-Check von 10 echten
+      Dateien vor/nach bestätigen: kein weiterer Leck mehr.
+- [x] 🟢 **L1.2 Score-EKG** — `dossier_ekg(history)` : Altair-Linie
       sentiment_score über analyzed_at, Punkte eingefärbt nach
       recommendation (BUY grün/SKIP grau/SELL rot), Confidence als
       Punktgröße. AppTest-Falle bleibt: es gibt KEINE
       altair_chart-Elementklasse — nur „kein Exception" testbar.
-- [ ] 🟡 **L1.3 Akten-Blatt (UI)** — neuer Tab „🗂 Kartei" in app.py
+
+      Umgesetzt 16.7.2026: als `_ekg_chart()` direkt in
+      `dashboard/tabs/dossier.py` (Muster `tabs/trades.py` — Chart-Code
+      lebt dort inline, kein separates Chart-Modul; Abweichung vom
+      Roadmap-Entwurf, konsistenter mit dem Rest des Codebase).
+- [x] 🟡 **L1.3 Akten-Blatt (UI)** — neuer Tab „🗂 Kartei" in app.py
       (Tab-Liste + Modul `dashboard/tabs/dossier.py`): Selectbox über
       `all_known_tickers()` (Format „NVDA — 47 Analysen"), darunter
       Aktenkopf (Firma/Sektor/Themen), Score-EKG, Bilanz-Zeile
@@ -66,6 +102,20 @@ Platzhalter.
       wiederverwenden, KEIN zweiter Speicher). [URTEIL] Anordnung/
       Gewichtung des Blatts — was oben steht, muss das Wichtigste sein
       (Bilanz vor Puls). plain-Theme: gleiche Daten als Tabellen.
+
+      Umgesetzt 16.7.2026: [URTEIL] Reihenfolge Kopf → KPI-Zeile
+      (Analysen/Trades/Gewinne-Verluste/Ø-Ergebnis) → Score-EKG →
+      Themen/Verwandte (als `?dossier=TICKER`-Links, W3.2-Muster) →
+      letzte 10 gelabelte Entscheidungen → News-Puls-Balken → Notiz.
+      Deep-Link vorselektiert die Akte aus der URL (Kleinschreibung
+      normalisiert). Leerzustand („noch keine Analysen") statt
+      Platzhalter-Akte. plain-Theme bekommt dieselben Daten (Chart +
+      Tabellen sind bereits theme-neutral, keine gesonderte Fallback-
+      Ansicht nötig). 5 AppTest-Tests
+      (test_dashboard_dossier_tab.py). Voll-Render-Verifikation gegen
+      ECHTE Produktionsdaten: GILD erscheint korrekt als
+      meist-analysierter Ticker (50 Analysen) an erster Stelle der
+      Auswahl.
 - [ ] 🟢 **L1.4 Querverweise** — in der Akte: Verwandte als klickbare
       Links (`?dossier=TSM`-Query-Param, Muster `?factory=`-Fokus aus
       W3.2); im Lager-Regal (D8.3) und im Trades-Tab je Ticker ein

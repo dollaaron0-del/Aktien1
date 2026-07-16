@@ -101,7 +101,11 @@ def _live_excursions(window: List[Dict], entry: float, long: bool,
 
 
 class ExperienceStore:
-    def __init__(self, db_path: str = DB_PATH):
+    def __init__(self, db_path: Optional[str] = None):
+        # Kein Default-Parameter auf DB_PATH: der würde zur Klassendefinition
+        # gebunden und ignorierte spätere Overrides (Tests!) — siehe
+        # dashboard/dry_run.py für dasselbe Muster. Zur Laufzeit lesen.
+        db_path = db_path or DB_PATH
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
