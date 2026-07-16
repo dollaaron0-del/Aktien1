@@ -625,10 +625,34 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
       und schreiben). Fehler hier = echtes Leck. Erst User-Entscheid, ob
       Fremd-Einblick überhaupt gewollt ist, dann starkes Modell.*
 
-- [ ] **H5.3 Telegram-Rückverweis** (S) 🔴
+- [x] **H5.3 Telegram-Rückverweis** (S) 🔴
       *Grund für 🔴: ändert den Telegram-Versand (außerhalb dashboard/).
       Kleiner Eingriff, aber falscher Ort für ein günstiges Modell mit
       dieser Pfad-Beschränkung.*
+
+      Umgesetzt 16.7.2026: `notifier/telegram_notifier.py` bekommt
+      `dashboard_link(target, label)` und `send(..., link_target=...)`.
+      Der Link wird ZENTRAL in `send()` angehängt statt in jeder
+      `notify_*`-Methode — eine Stelle, kein Duplikat. Verdrahtet:
+      Kauf/Verkauf/Thesenbruch → `?factory=warehouse` (Hochregallager =
+      Positionen), Tages-Digest → Startseite (ein Digest zeigt aufs
+      Ganze, nicht auf eine einzelne Maschine).
+
+      **Ehrlichkeits-Entscheidung:** `DASHBOARD_URL` ist neu in
+      `config.py` + `env.example`, aber der Default ist LEER = Feature
+      aus. Grund: Das Dashboard hört nur auf 127.0.0.1 und ist
+      ausschließlich über den SSH-Tunnel erreichbar — ein fest
+      eingebauter Link wäre am Handy meistens tot. Lieber gar kein Link
+      als ein toter; ohne die Variable bleibt die Nachricht Byte-für-Byte
+      wie vorher (per Test belegt).
+
+      Ein Test prüft, dass `warehouse` eine ECHTE ID aus `MACHINE_IDS`
+      ist — das Dashboard ignoriert unbekannte `?factory=`-Werte
+      stillschweigend (W3.2), ein Tippfehler im Link-Ziel wäre sonst
+      unbemerkt ins Leere gelaufen. Der Link hebelt außerdem den
+      `TELEGRAM_MODE`-Filter nicht aus (ebenfalls getestet). 14 neue
+      Tests, kein echter Versand (HTTP gemockt); die 44 bestehenden
+      Telegram-/Notifier-Tests bleiben grün.
 
 ## H6 — Plattform
 

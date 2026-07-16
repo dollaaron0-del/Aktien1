@@ -162,6 +162,16 @@ class Config:
     telegram_mode: str = field(
         default_factory=lambda: os.getenv("TELEGRAM_MODE", "important").lower()
     )
+    # Basis-URL des Dashboards für Telegram-Rückverweise (Ausbau-Roadmap H5.3),
+    # z.B. "http://localhost:8503". Wichtige Nachrichten bekommen damit einen
+    # Deep-Link direkt zur passenden Stelle im Leitstand.
+    # Leer = Feature AUS (bewusster Default): Das Dashboard hört nur auf
+    # 127.0.0.1 und ist ausschließlich über den SSH-Tunnel erreichbar — ein
+    # Link nützt nur, wenn der Tunnel gerade steht. Kein Default-Wert, damit
+    # nie ein toter Link im Chat landet.
+    dashboard_url: str = field(
+        default_factory=lambda: os.getenv("DASHBOARD_URL", "").strip()
+    )
 
     # Externer Dead-Man-Switch (Roadmap 1.7, optional): Ping-URL eines Diensts
     # wie healthchecks.io. Bleibt der Ping aus (Server/Netz down, Bot-Prozess

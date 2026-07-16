@@ -37,6 +37,26 @@ _IMPORTANT_LEVELS = {"trade", "critical", "digest", "command"}
 log = logging.getLogger(__name__)
 
 
+def dashboard_link(target: str = "", label: str = "Im Leitstand ansehen") -> str:
+    """Deep-Link ins Dashboard (Ausbau-Roadmap H5.3) — vom Handy-Alarm
+    direkt zur richtigen Stelle im Leitstand. `target` ist eine
+    Fabrik-Maschinen-ID (z.B. "warehouse"), die das Dashboard über
+    `?factory=<id>` als Detail-Panel öffnet; leer = nur die Startseite.
+
+    Liefert "" wenn `DASHBOARD_URL` nicht gesetzt ist — das ist der
+    bewusste Default: Das Dashboard hört nur auf 127.0.0.1 (SSH-Tunnel),
+    ein Link nützt also nur, wenn der Tunnel steht. Lieber gar kein Link
+    als ein toter.
+    """
+    base = (getattr(config, "dashboard_url", "") or "").strip()
+    if not base:
+        return ""
+    url = base.rstrip("/")
+    if target:
+        url += f"/?factory={target}"
+    return f'🔗 <a href="{url}">{label}</a>'
+
+
 class TelegramNotifier:
     def __init__(self):
         self._token = config.telegram_bot_token
@@ -44,7 +64,11 @@ class TelegramNotifier:
         self._enabled = bool(self._token and self._chat_id)
         self._mode = (getattr(config, "telegram_mode", "important") or "important").lower()
 
-    def send(self, message: str, level: str = "info"):
+    def send(self, message: str, level: str = "info", link_target: Optional[str] = None):
+        """`link_target` (H5.3): hängt einen Dashboard-Deep-Link an. Bewusst
+        HIER zentral statt in jeder notify_*-Methode — eine Stelle, kein
+        Duplikat. Ohne DASHBOARD_URL passiert nichts (dashboard_link()
+        liefert dann "")."""
         if not self._enabled:
             return
         if self._mode != "all" and level not in _IMPORTANT_LEVELS:
@@ -53,6 +77,10 @@ class TelegramNotifier:
             log.info("Telegram unterdrückt (level=%s): %.100s", level,
                      message.replace("\n", " "))
             return
+        if link_target is not None:
+            link = dashboard_link(link_target)
+            if link:
+                message = f"{message}\n\n{link}"
         try:
             requests.post(
                 _API_BASE.format(token=self._token),
@@ -134,7 +162,7 @@ class TelegramNotifier:
             if src_parts:
                 lines.append(f"📊 <b>Quellen:</b>  {' · '.join(src_parts)}")
 
-        self.send("\n".join(lines), level="trade")
+        self.send("\n".join(lines), level="trade", link_target="warehouse")
 
     def notify_sell(
         self,
@@ -190,7 +218,7 @@ class TelegramNotifier:
                 short += "…"
             lines += ["", f"💡 <b>Kaufbegründung war:</b>", f"<i>{short}</i>"]
 
-        self.send("\n".join(lines), level="trade")
+        self.send("\n".join(lines), level="trade", link_target="warehouse")
 
     def notify_thesis_warning(self, ticker: str, break_reason: str, confidence: str):
         msg = (
@@ -200,7 +228,7 @@ class TelegramNotifier:
             f"📝 Grund: <i>{break_reason[:300]}</i>\n"
             f"→ Position wird beim nächsten Kurs geschlossen."
         )
-        self.send(msg, level="trade")
+        self.send(msg, level="trade", link_target="warehouse")
 
     def notify_daily_summary(
         self,
@@ -226,7 +254,7 @@ class TelegramNotifier:
             f"{phase_icon} Phase:         {phase} ({progress_pct:.1f}% zum Ziel)"
             f"{actions_text}"
         )
-        self.send(msg, level="digest")
+        self.send(msg, level="digest", link_target="")
 
     def notify_insider_signal(
         self,
