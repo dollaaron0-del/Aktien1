@@ -232,6 +232,22 @@ nicht über Geld.
       Mechanische Zählwerk-Optik wie der D7.2-Durchsatz-Zähler am
       Förderband (gleiches Muster wiederverwenden). 0 Bewegungen =
       Zählwerk zeigt 0, kein Verstecken.
+- [ ] 🟡 **L3.7 Anlieferung & Versand — Trade als sichtbare Lieferung**
+      (User-Wunsch 16.7.: „sieht man im Dashboard, wie eine Lieferung
+      fertig gemacht wird?" — Befund: man sieht nur das ERGEBNIS,
+      Kiste da/weg, nicht den Vorgang). Ereignis-getriebene Animation
+      in der Szene: liegt im Activity-Feed ein `trade`-Event der
+      letzten ~10 Minuten (read_feed_events_until existiert, H2.3),
+      zeigt die Szene den Vorgang — Kauf = Paket rollt vom Förderband
+      ins Lager (Anlieferung), Verkauf = Kiste rollt vom Lager zum
+      Verladetor (Versand); Stop-Loss-Verkauf mit rotem
+      „EXPRESS"-Aufkleber. CSS/SMIL-Animation (Performance-Regel:
+      nie pro Rerun rechnen), reduced-motion-fest, danach Ruhe.
+      **Ehrlichkeits-Regel wie Stromzähler-Scheibe: Animation NUR bei
+      echtem, frischem Trade-Event — kein Dauergewusel als Deko.**
+      [URTEIL] Zeitfenster (10 Min?) an den 60s-Szenen-Refresh und
+      die reale Zyklus-Frequenz anpassen. Verzahnt mit W4-Ereignis-
+      Ebene (goldener Wimpel beim ersten Live-Trade bleibt separat).
 
 ## L4 — Fehlende Maschinen (User-Frage 16.7.: „hat jedes Feature seine
 ## eigene Maschine?")
