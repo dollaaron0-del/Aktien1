@@ -263,6 +263,55 @@ def _render_logbook() -> None:
                 st.rerun()
 
 
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _cached_earnings_rows(tickers: tuple) -> list:
+    """Earnings-Abfrage (yfinance → Netz) höchstens alle 6h; fail-open
+    leer. Tuple statt Liste, damit st.cache_data hashen kann."""
+    from dashboard import departures
+    try:
+        return departures.earnings_rows(list(tickers))
+    except Exception:
+        return []
+
+
+def _render_departures() -> None:
+    """D8.1: Werksbahnhof-Abfahrtstafel — was kommt auf die Fabrik zu?
+    Makro-Termine, Watchlist-Earnings, nächster Zyklus, nächstes Backup.
+    Fail-open: jede Quelle darf einzeln ausfallen."""
+    from dashboard import departures
+    try:
+        extra = _cached_earnings_rows(tuple(departures.watchlist_tickers()))
+        rows = departures.upcoming_events(extra_rows=extra)
+    except Exception:
+        return
+    if _theme.is_enabled():
+        st.markdown(departures.board_html(rows), unsafe_allow_html=True)
+    elif rows:
+        st.markdown("**🚉 Anstehende Termine**")
+        st.table([{"Datum": r["date"], "Termin": r["label"],
+                   "Einstufung": r.get("impact") or r.get("kind", "")}
+                  for r in rows])
+
+
+def _render_power_meter() -> None:
+    """D8.2: E-Werk-Stromzähler — echte KI-Kosten (Split, Ersparnis,
+    14-Tage-Trend) aus api_savings.json. Fail-open."""
+    from dashboard import power_meter
+    try:
+        energy = power_meter.read_energy()
+    except Exception:
+        return
+    if _theme.is_enabled():
+        st.markdown(power_meter.meter_svg(energy), unsafe_allow_html=True)
+    else:
+        st.caption(
+            f"⚡ KI-Kosten: heute {energy['today_cost']:.2f}€ "
+            f"(Claude {energy['today_claude']} / Ollama {energy['today_ollama']}) · "
+            f"gesamt {energy['total_cost']:.2f}€ · "
+            f"gespart {energy['total_saved']:.2f}€"
+        )
+
+
 def _render_ticker_form() -> None:
     """H1.2: Werksauftrag an den Docks — Ticker-Schnellanalyse. Ruft
     exakt dieselbe Queue-Logik wie tabs/log.py auf (analyzers.
@@ -481,6 +530,8 @@ def render(ctx) -> None:
                 _render_detail_panel(machine)
 
     _scene()
+    _render_departures()
+    _render_power_meter()
     _render_ticker_form()
     # H1.1/H1.3: Bedien-Schalter NUR mit echtem ctx — der Kiosk-Modus
     # (H6.1) ruft render(None) für ein Dauer-Wandbild auf; ein Not-Aus-

@@ -364,6 +364,78 @@ benannte Ausnahme ist D7.4 (reine Atmosphäre-Optik).
       reduced-motion sofort sichtbar statt unsichtbar). 3 neue Tests;
       Login-AppTest zeigt 3 Boot-Zeilen + intakten Titel-Vertrag.
 
+## D8 — Informations-Ausbau (16.7.2026, User-Wunsch: „Design-Idee erweitern,
+## mehr Informationen sinnvoll integrieren")
+
+Vier Richtungen vorgeschlagen, drei vom User bestätigt (Unfalltafel
+„X Tage ohne Störfall" bewusst abgewählt). Prinzip unverändert: **kein
+Element ohne echte, bisher UNGENUTZTE Datenquelle** — jedes Panel
+beantwortet eine Frage, die das Dashboard bisher nicht beantwortet.
+
+- [x] **D8.1 Werksbahnhof-Abfahrtstafel** — neues Modul
+      `dashboard/departures.py`: kommende Termine als Bahnhofs-
+      Anzeigetafel im Fabrik-Tab. Datenquellen (alle echt, alle bisher
+      in keinem Panel): (a) `data/macro_calendar.json` (FOMC/CPI/NFP
+      mit Impact-Stufe), (b) Earnings-Termine der aktuellen Watchlist
+      (`data/dynamic_watchlist.json` → `EarningsFilter.next_earnings()`,
+      yfinance — im Tab per `st.cache_data` gedeckelt, fail-open ohne
+      Netz), (c) nächster Bot-Zyklus (`live_status.read_status().next_run`),
+      (d) nächstes Backup (`systemctl show aktien_backup.timer`,
+      read-only, 2s-Timeout — Muster `controls.service_state()`).
+      Beantwortet: „Was kommt auf die Fabrik zu?"
+
+      Umgesetzt 16.7.2026: `upcoming_events()` ruft selbst NIE ins Netz —
+      Earnings kommen nur als fertige `extra_rows` rein (der Tab holt sie
+      über `_cached_earnings_rows`, `st.cache_data` ttl=6h, Tuple-Argument
+      wegen Hashbarkeit). Backup-Termin via `systemctl show
+      --property=NextElapseUSecRealtime --value` (Datum wird aus dem
+      formatierten String feld-weise geparst; ""/n-a/0/infinity → Zeile
+      entfällt). Vergangene/kaputte/>60-Tage-Termine gefiltert; Tafel
+      zeigt relative Zeit (heute/morgen/in N Tagen); plain-Theme bekommt
+      dieselben Daten als nüchterne `st.table`. 13 Tests
+      (test_dashboard_departures.py, netzfrei via injiziertem
+      Fake-Filter + gemocktem subprocess). Voll-Render-Verifikation:
+      Tafel erscheint mit den ECHTEN FOMC/CPI/NFP-Terminen aus der
+      Produktions-macro_calendar.json.
+- [x] **D8.2 E-Werk-Stromzähler** — neues Modul
+      `dashboard/power_meter.py`: die echten KI-Kosten aus
+      `data/api_savings.json` (Pfad via `api_cost_tracker._FILE`,
+      read-only) als Drehstromzähler: Tagesverbrauch, Claude-vs-Ollama-
+      Anteil, gesparte Beträge (Ollama-Vorprüfung + Cache), 14-Tage-
+      Verlaufsbalken. Abgrenzung zu D7.1-Tank (nur heute vs. Limit):
+      der Zähler zeigt SPLIT, ERSPARNIS und TREND — der Frugal-Mode
+      wird damit erstmals im Dashboard sichtbar. Einbau Fabrik-Tab.
+
+      Umgesetzt 16.7.2026: Zählerscheibe dreht (`fx-spin`, neu in
+      theme.py inkl. prefers-reduced-motion-Ausnahme) NUR wenn heute
+      wirklich Kosten anfielen — eine stehende Scheibe ist die ehrliche
+      Anzeige des pausierten Werks. Verlaufsreihe füllt fehlende Tage
+      mit 0 auf (Lücken bleiben sichtbar statt zusammengeschoben);
+      Ersparnis = saved + cache_saved. Read-only-Vertrag ist selbst
+      getestet (Datei-Bytes vor/nach identisch). plain-Theme: eine
+      Caption mit denselben Zahlen. 7 Tests
+      (test_dashboard_power_meter.py).
+- [x] **D8.3 Lager-Detailregal** — neues Modul
+      `dashboard/warehouse_shelf.py`: Positionen als Kisten im
+      Hochregal, gruppiert nach Sektor (`data/ticker_profiles.json`,
+      read-only): Füllstand = Positionsgröße relativ, Aufkleber =
+      P&L (aus `ctx.prices`, kein eigener Netz-Abruf), Etikett =
+      Haltedauer + Ziel-Countdown (`entry_date`/`target_hold_days`).
+      Einbau Portfolio-Tab über der Positionstabelle (nur pixel,
+      plain unverändert); ehrlicher Leer-Zustand („Lager leer") bei
+      0 Positionen — aktuell der Normalfall bis zum Neustart.
+
+      Umgesetzt 16.7.2026: Füllstand relativ zur GRÖSSTEN Position
+      (min. 8 % damit jede Kiste sichtbar bleibt); ohne Kurs in
+      ctx.prices fällt der Wert ehrlich auf den Einstand zurück und
+      P&L zeigt „–" statt einer erfundenen Zahl; unbekannte Ticker
+      landen im Sektor „Sonstige"; kaputte Positions-Objekte werden
+      übersprungen statt das Regal zu reißen. Breites Regal scrollt
+      horizontal in eigener Box (overflow-x). 9 Tests
+      (test_dashboard_warehouse_shelf.py). Verifiziert: Leerzustand
+      gegen das echte (leere) Portfolio + Kisten-Render mit
+      synthetischen Positionen (+10 %/−10 % farbrichtig).
+
 ## Vision W — Interaktives Fabrik-Wimmelbild (NACH der Vorführung)
 
 User-Idee 15.7.: Das Dashboard soll langfristig wie ein interaktives

@@ -32,6 +32,21 @@ def _render_position_notes(ticker_label, tickers) -> None:
         pass
 
 
+def _render_shelf(positions, prices) -> None:
+    """D8.3: Lager-Detailregal — Positionen als Kisten nach Sektor,
+    nur im Pixel-Theme (plain behält die nüchterne Tabelle als einzige
+    Darstellung). Fail-open: ein Fehler blendet das Regal einfach aus."""
+    try:
+        from dashboard import theme
+        if not theme.is_enabled():
+            return
+        from dashboard.warehouse_shelf import shelf_data, shelf_svg
+        groups = shelf_data(positions, prices)
+        st.markdown(shelf_svg(groups), unsafe_allow_html=True)
+    except Exception:
+        pass
+
+
 def _render_weekly_report_button() -> None:
     """H5.1: Wochen-Report als eigenständige HTML-Datei — archivierbar/
     teilbar auch ohne laufendes Dashboard. Fail-open: ein Baufehler
@@ -122,6 +137,7 @@ def render(ctx) -> None:
     # Open positions
     st.subheader("Offene Positionen")
     positions = portfolio.all_positions()
+    _render_shelf(positions, prices)
     if positions:
         rows = []
         _aging_warnings = []

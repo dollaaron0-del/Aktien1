@@ -309,6 +309,15 @@ h1 {{
 .fx-smoke {{
     animation: fx-smoke-rise 2s ease-out infinite;
 }}
+/* D8.2: Zählerscheibe des E-Werk-Stromzählers — dreht nur, wenn heute
+   wirklich Verbrauch anfiel (power_meter.py setzt die Klasse bedingt). */
+@keyframes fx-spin-turn {{
+    from {{ transform: rotate(0deg); }}
+    to   {{ transform: rotate(360deg); }}
+}}
+.fx-spin {{
+    animation: fx-spin-turn 4s linear infinite;
+}}
 
 /* D7.3: Laufband-Anzeigetafel — LED-Ticker wie in einer Werkshalle.
    Der Track enthält den Inhalt ZWEIMAL (app.py dupliziert ihn); die
@@ -335,7 +344,7 @@ h1 {{
 }}
 
 @media (prefers-reduced-motion: reduce) {{
-    .px-belt-anim, .fx-belt-run, .fx-blink, .fx-smoke {{ animation: none; }}
+    .px-belt-anim, .fx-belt-run, .fx-blink, .fx-smoke, .fx-spin {{ animation: none; }}
     .px-led--warn::before, .px-led--err::before {{ animation: none; }}
     .px-ticker-track {{ animation: none; }}
 }}
