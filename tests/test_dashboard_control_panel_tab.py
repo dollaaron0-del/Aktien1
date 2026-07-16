@@ -155,3 +155,61 @@ def test_reset_warns_about_risk_override(monkeypatch):
     captions = "".join(str(c.value) for c in at.get("caption"))
     assert "Risiko-Übersteuerung" in captions
     assert "Allzeithoch" in captions
+
+
+# ── H1.5: Trockenlauf im Steuerpult ──────────────────────────────────────────
+
+def test_dry_run_form_present(monkeypatch):
+    monkeypatch.setattr("dashboard.controls.service_state", lambda: "active")
+    at = AppTest.from_string(_SCRIPT)
+    at.run()
+    assert not at.exception
+    assert "🔬 Trockenlauf" in [b.label for b in at.get("button")]
+
+
+def test_dry_run_shows_decision_and_reason(monkeypatch):
+    monkeypatch.setattr("dashboard.controls.service_state", lambda: "active")
+    monkeypatch.setattr(
+        "dashboard.dry_run.dry_run",
+        lambda t, price=None: {
+            "ok": True, "ticker": "NVDA", "action": "SKIP",
+            "reason": "Lern-Filter AVOID (Edge -0.90%)",
+            "analysis": {"sentiment_score": 0.42, "confidence": "LOW",
+                         "analyzed_at": "2026-07-16T09:00:00"},
+            "regime": "BULL", "price": 120.0, "error": None,
+        },
+    )
+    at = AppTest.from_string(_SCRIPT)
+    at.run()
+    at.text_input(key="dry_run_ticker").set_value("NVDA")
+    next(b for b in at.get("button") if b.label == "🔬 Trockenlauf").click().run()
+    assert not at.exception
+    md = "".join(str(m.value) for m in at.get("markdown"))
+    assert "SKIP" in md
+    infos = "".join(str(i.value) for i in at.get("info"))
+    assert "Lern-Filter AVOID" in infos
+
+
+def test_dry_run_shows_hint_when_no_analysis(monkeypatch):
+    monkeypatch.setattr("dashboard.controls.service_state", lambda: "active")
+    monkeypatch.setattr(
+        "dashboard.dry_run.dry_run",
+        lambda t, price=None: {"ok": False, "error": "Für X liegt noch keine Analyse vor."},
+    )
+    at = AppTest.from_string(_SCRIPT)
+    at.run()
+    at.text_input(key="dry_run_ticker").set_value("X")
+    next(b for b in at.get("button") if b.label == "🔬 Trockenlauf").click().run()
+    assert not at.exception
+    assert "keine Analyse" in "".join(str(i.value) for i in at.get("info"))
+
+
+def test_dry_run_not_triggered_on_empty_ticker(monkeypatch):
+    monkeypatch.setattr("dashboard.controls.service_state", lambda: "active")
+    calls = []
+    monkeypatch.setattr("dashboard.dry_run.dry_run",
+                        lambda t, price=None: calls.append(t) or {"ok": False, "error": "x"})
+    at = AppTest.from_string(_SCRIPT)
+    at.run()
+    next(b for b in at.get("button") if b.label == "🔬 Trockenlauf").click().run()
+    assert calls == []

@@ -234,9 +234,57 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
       (gleiches Muster wie `_isolate_factory_history`). 15 neue Tests;
       Verifikation normal/kiosk × pixel/plain je 0 Exceptions.
 
-- [ ] **H1.5 „Was würde der Bot jetzt tun?"-Trockenlauf** (L) 🔴
+- [x] **H1.5 „Was würde der Bot jetzt tun?"-Trockenlauf** (L) 🔴
       *Grund für 🔴: ruft die echte Analyse-Pipeline auf (Kosten-Routing,
       Seiteneffekt-Freiheit muss GARANTIERT sein). Nur stark.*
+
+      Umgesetzt 16.7.2026 als `dashboard/dry_run.py` + Steuerpult-Formular.
+
+      **Bewusst OHNE frischen LLM-Lauf — die Roadmap-Prämisse ist auf
+      diesem Server gemessen nicht haltbar.** Vorgesehen war „Standard:
+      nur Ollama/mechanisch, Claude nur mit explizitem Haken". Gemessen
+      am 16.7.: Ollama liefert **0,12 tok/s** (24 s für eine
+      Drei-Wort-Antwort, llama3.2:3b, CPU-Modus) — eine echte Analyse mit
+      hunderten Ausgabe-Tokens blockierte den Streamlit-Request
+      minutenlang. Das Projekt hält dieselbe Grenze schon fest
+      (docs/ROADMAP.md: „bei 1,7 tok/s unmöglich"); real ist es noch
+      schlechter. Der Claude-Zweig kostet pro Klick echtes Budget.
+      Beides ist zudem **überflüssig, weil H1.2 den sauberen Weg schon
+      hat**: Ticker in die `user_request_queue` werfen → der Bot
+      analysiert ihn im nächsten Zyklus mit seinem normalen Routing und
+      Budget. Der Trockenlauf beantwortet die komplementäre Frage: „Was
+      würde der Bot mit dem, was er über X BEREITS WEISS, jetzt tun?" —
+      auf Basis der letzten echten Analyse aus dem analysis_log.
+
+      **Seiteneffekt-Freiheit (die Kernanforderung) — nachgewiesen, nicht
+      behauptet.** Untersuchung ergab: `SwingStrategy.evaluate()` ist eine
+      reine Entscheidungsfunktion (schreibt weder decision_log noch
+      analysis_log noch Experience Store — das tut erst der Runner
+      danach). Es blieben genau drei Berührungspunkte, alle einzeln
+      stillgelegt: (1) **Portfolio** → der Lauf zeigt auf eine KOPIE von
+      `data/portfolio.db` in einem Temp-Verzeichnis (Gates rechnen gegen
+      die echte Lage, können sie aber nicht ändern); (2) **Signal-Queue**
+      → `evaluate()` würde ein BUY bei vollen Slots in
+      `data/signal_queue.db` VORMERKEN (swing_strategy.py ~343), darum
+      `signal_queue=None` (wie im bestehenden
+      `scripts/simulate_buy_path.py`); (3) **SL-Cooldown** →
+      `is_blocked()` ist read-only, darf echt laufen. Kein Broker, kein
+      TradeExecutor. Sechs Tests belegen das aktiv: Portfolio-Datei
+      byte-identisch, `PORTFOLIO_DB`-Zeiger auch nach Exception
+      wiederhergestellt, kein Signal eingereiht, kein decision_log-
+      Eintrag, keine Order, kein Netz-Aufruf.
+
+      **Korrektur während der Arbeit:** Erst nahm der Lauf `target_price`
+      aus der Analyse als Kurs — das ist Claudes KURSZIEL, nicht der
+      heutige Kurs, und hätte die Positionsgröße und damit die ganze
+      Antwort verfälscht (fiel im Test gegen Produktionsdaten auf: TSM
+      und QCOM haben kein `target_price` und lieferten gar kein
+      Ergebnis). Das analysis_log speichert den Kurs zum Analysezeitpunkt
+      nicht, darum holt `_current_price()` ihn read-only über denselben
+      Broker-Weg wie der echte Bot. Danach gegen echte Daten verifiziert:
+      TSM $419,48 → **BUY**, QCOM → SKIP („Lern-Filter AVOID, Edge
+      -0,62%"), TXN → SKIP — Portfolio und Signal-Queue per Prüfsumme
+      byte-identisch. 16 Modul-Tests + 4 UI-Tests.
 
 ## H2 — Zeitreise & Replay
 
@@ -620,10 +668,20 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
       Tests; Verifikation normal/kiosk × pixel/plain je 0 Exceptions,
       Knopf im echten Voll-Render bestätigt sichtbar.
 
-- [ ] **H5.2 [USER] Zuschauer-Modus** (M) 🔴
+- [x] **H5.2 [USER] Zuschauer-Modus** (M) 🔴 — **VERWORFEN (User-Entscheid)**
       *Grund für 🔴: Auth/Sicherheit (Settings-Tab kann .env-Keys lesen
       und schreiben). Fehler hier = echtes Leck. Erst User-Entscheid, ob
       Fremd-Einblick überhaupt gewollt ist, dann starkes Modell.*
+
+      > Entscheidung 16.7.2026 (User, auf Nachfrage): **Kein
+      > Fremd-Einblick.** Damit entfällt das zweite Passwort und jede
+      > zusätzliche Auth-Fläche — die sicherste Variante ist die, die es
+      > nicht gibt. Reiht sich in die bewussten Verzichte ein (vgl.
+      > „Telegram-Freigabe verworfen", „Trade-Republic-Daten verworfen").
+      > Nicht gebaut, kein Code. Falls der Wunsch später doch kommt: die
+      > Anforderung wäre, Settings-Tab UND alle H1-Bedien-Schalter
+      > komplett auszublenden (nicht nur zu deaktivieren) — ein
+      > deaktivierter Knopf verrät immer noch, dass es ihn gibt.
 
 - [x] **H5.3 Telegram-Rückverweis** (S) 🔴
       *Grund für 🔴: ändert den Telegram-Versand (außerhalb dashboard/).
@@ -705,9 +763,27 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
       in allen sinnvollen Kombinationen (pixel/plain/blueprint ×
       normal/kiosk/mobile) je 0 Exceptions.
 
-- [ ] **H6.3 [USER] Canvas/WebGL-Fabrik** (L) 🔴
+- [x] **H6.3 [USER] Canvas/WebGL-Fabrik** (L) 🔴 — **NICHT NÖTIG (gemessen)**
       *Nur falls SVG nach W5-Assets + Replay messbar ruckelt (Kriterium
       in DESIGN_FABRIK W5.4). Evaluation + Architektur = stark.*
+
+      > Messung 16.7.2026 (nach D7.2-Extras, Assets-Slots und Replay —
+      > also dem vollen Ausbaustand, den W5.4 als Auslöser nannte):
+      > `build_scene_svg()` braucht **0,35 ms** — das sind **2,1 % eines
+      > 60fps-Frame-Budgets** (16,7 ms). Die Szene ist 6,6 KB groß und hat
+      > **131 DOM-Knoten**; Browser rendern Tausende davon flüssig. Das
+      > Kriterium „sichtbares Ruckeln / kein flüssiges Scrollen" ist nicht
+      > ansatzweise erreicht — eine JS-Engine einzubauen wäre reiner
+      > Selbstzweck. Die Roadmap sagt dazu ausdrücklich: „Erst messen,
+      > dann Notiz mit Befund — NICHT eigenmächtig eine JS-Engine
+      > einbauen." Also nicht gebaut.
+      >
+      > **Nebenbefund (die eigentliche Zeit):** `read_state()` braucht
+      > **280 ms** — dominiert vom 0,4s-Socket-Check zum IB-Gateway
+      > (`_read_gate()`). Das ist 800× teurer als das Rendern, und Canvas
+      > würde daran exakt NICHTS ändern. Falls die Fabrik je träge wirkt,
+      > liegt der Hebel dort (z.B. Gateway-Check cachen), nicht in der
+      > Render-Technik.
 
 - [x] **H6.4 Zweit-Theme „Blaupause"** (S) 🟡
       1. [x] `theme.py`: `PALETTE_BLUEPRINT` (weiß/hellblau auf

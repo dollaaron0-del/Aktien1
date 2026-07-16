@@ -381,6 +381,43 @@ def _render_control_panel(total_value: float = 0.0) -> None:
                     st.success("Not-Aus zurückgesetzt.")
                     st.rerun()
 
+        # ── H1.5: Trockenlauf ───────────────────────────────────────────
+        st.divider()
+        st.markdown("**Was würde der Bot jetzt tun?**")
+        st.caption(
+            "Spielt den echten Entscheidungspfad für einen Ticker durch — "
+            "gegen eine Kopie des echten Portfolios, mit der letzten "
+            "gespeicherten Analyse. Ändert nichts: keine Order, kein "
+            "Log-Eintrag, keine Kosten."
+        )
+        with st.form("factory_dry_run_form"):
+            dr_ticker = st.text_input("Ticker", key="dry_run_ticker")
+            dr_submitted = st.form_submit_button("🔬 Trockenlauf")
+        if dr_submitted and dr_ticker.strip():
+            from dashboard.dry_run import dry_run
+            try:
+                res = dry_run(dr_ticker)
+            except Exception:
+                res = {"ok": False, "error": "Trockenlauf fehlgeschlagen."}
+            if not res.get("ok"):
+                st.info(res.get("error") or "Trockenlauf nicht möglich.")
+            else:
+                _act = res.get("action") or "?"
+                _icon = {"BUY": "🟢", "SELL": "🔴", "HOLD": "⏸", "SKIP": "⏭"}.get(_act, "•")
+                st.markdown(f"### {_icon} {html.escape(_act)}")
+                if res.get("reason"):
+                    st.info(html.escape(str(res["reason"])))
+                _an = res.get("analysis") or {}
+                dc1, dc2, dc3 = st.columns(3)
+                dc1.metric("Sentiment", f"{_an.get('sentiment_score') or 0:.2f}")
+                dc2.metric("Konfidenz", str(_an.get("confidence") or "–"))
+                dc3.metric("Regime", str(res.get("regime") or "–"))
+                st.caption(
+                    f"Grundlage: Analyse vom "
+                    f"{html.escape(str(_an.get('analyzed_at') or '?')[:16])} · "
+                    f"Kurs ${res.get('price') or 0:,.2f}"
+                )
+
 
 def _render_achievements() -> None:
     """H7.2: Plaketten-Wand — echte Meilensteine, einmal erreicht bleiben
