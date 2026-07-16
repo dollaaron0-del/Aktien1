@@ -130,35 +130,71 @@ def held_tickers() -> List[str]:
         return []
 
 
-def _position_rows(now: datetime) -> List[Dict]:
-    """L3.1: je offene Position eine planmäßige Abfahrt — Zieltag ist
-    `entry_date + target_hold_days` (dieselben echten Felder, die auch
-    Lager/Regal nutzen; KEINE zweite Datenhaltung). Netzfrei.
+def position_progress(now: Optional[datetime] = None) -> List[Dict]:
+    """Fracht-Lage je offener Position, EINMAL berechnet für alle
+    Darstellungen (L3.1-Tafel und L3.3-Laufband): `{"ticker",
+    "due_date", "days_held", "hold_days", "overdue_days"}`.
+    `overdue_days` > 0 heißt: Haltedauer-Ziel überschritten.
 
-    Überschrittene Ziele verschwinden NICHT stillschweigend, sondern
-    bleiben als „überfällig" stehen (board_html macht daraus die
-    Beschriftung) — eine Position, die über ihr Ziel hinausläuft, ist
-    genau das, was man sehen will."""
+    Netzfrei und read-only — dieselben echten Felder wie Lager/Regal
+    (`entry_date`, `target_hold_days`), KEINE zweite Datenhaltung.
+    Positionen mit kaputten Feldern werden übersprungen statt geraten.
+    """
+    now = now or datetime.now()
     try:
         from portfolio.portfolio import Portfolio
         positions = Portfolio().all_positions()
     except Exception:
         return []
-    rows = []
+    out = []
     for ticker, pos in positions.items():
         try:
             entry = datetime.fromisoformat(str(pos.entry_date)[:10])
-            due = entry + timedelta(days=int(pos.target_hold_days or 0))
+            hold = int(pos.target_hold_days or 0)
+            due = entry + timedelta(days=hold)
         except (TypeError, ValueError, AttributeError):
             continue
-        overdue = due.date() < now.date()
-        rows.append({
-            "date": due.date().isoformat(),
-            "label": f"{ticker} — planmäßige Abfahrt",
-            "impact": "ÜBERFÄLLIG" if overdue else "ABFAHRT",
-            "kind": "position",
+        out.append({
+            "ticker": str(ticker),
+            "due_date": due.date().isoformat(),
+            "days_held": (now.date() - entry.date()).days,
+            "hold_days": hold,
+            "overdue_days": max(0, (now.date() - due.date()).days),
         })
-    return rows
+    return out
+
+
+def _position_rows(now: datetime) -> List[Dict]:
+    """L3.1: je offene Position eine planmäßige Abfahrt am Tag
+    `entry_date + target_hold_days`. Netzfrei.
+
+    Überschrittene Ziele verschwinden NICHT stillschweigend, sondern
+    bleiben als „überfällig" stehen (board_html macht daraus die
+    Beschriftung) — eine Position, die über ihr Ziel hinausläuft, ist
+    genau das, was man sehen will."""
+    return [{
+        "date": p["due_date"],
+        "label": f"{p['ticker']} — planmäßige Abfahrt",
+        "impact": "ÜBERFÄLLIG" if p["overdue_days"] > 0 else "ABFAHRT",
+        "kind": "position",
+    } for p in position_progress(now)]
+
+
+def freight_ticker_items(now: Optional[datetime] = None) -> List[str]:
+    """L3.3: Fracht-Meldungen fürs D7.3-Laufband — „ZTSM TAG 12/15",
+    „ZQCOM ÜBERFÄLLIG SEIT 3 TAGEN". Zur RENDERZEIT berechnet; es wird
+    bewusst NICHTS in den Feed geschrieben (das Laufband zeigt sonst
+    Bot-Ereignisse — eine Positions-Lage ist kein Ereignis, sondern ein
+    Zustand). Escaping übernimmt `theme.ticker()` zentral."""
+    items = []
+    for p in position_progress(now):
+        if p["overdue_days"] > 0:
+            n = p["overdue_days"]
+            items.append(f"{p['ticker']} ÜBERFÄLLIG SEIT {n} "
+                         f"{'TAG' if n == 1 else 'TAGEN'}")
+        else:
+            items.append(f"{p['ticker']} TAG {p['days_held']}/{p['hold_days']}")
+    return items
 
 
 def earnings_rows(tickers: List[str], now: Optional[datetime] = None,

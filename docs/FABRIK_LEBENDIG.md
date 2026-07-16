@@ -316,10 +316,20 @@ nicht über Geld.
       Test absichern, dass kein Loren-/Schienen-Rect ein Maschinen-
       Rect schneidet (Koordinaten-Assertion, nicht Augenmaß).
       ERST NACH L5.1 bauen (mehr Platz).
-- [ ] 🟢 **L3.3 Ticker-Laufband kennt die Fracht** — das D7.3-Band
+- [x] 🟢 **L3.3 Ticker-Laufband kennt die Fracht** — das D7.3-Band
       mischt Positions-Meldungen ein, zur Renderzeit berechnet (KEINE
       Feed-Schreibungen): „TSM Tag 12/15", „QCOM überfällig seit 3
       Tagen". Escaping wie gehabt.
+
+      Umgesetzt 16.7.2026: `freight_ticker_items()` in departures.py.
+      Dabei die Positions-Rechnung aus L3.1 zu einer gemeinsamen
+      `position_progress()` herausgezogen (ticker/due_date/days_held/
+      hold_days/overdue_days) — Tafel UND Laufband rechnen jetzt aus
+      derselben Quelle, sonst wären sie unweigerlich auseinander
+      gedriftet; ein Test hält das fest. Einbau in app.py direkt am
+      bestehenden D7.3-Block, fail-open; Escaping macht wie gehabt
+      `theme.ticker()` zentral. Singular/Plural bei „ÜBERFÄLLIG SEIT
+      1 TAG/3 TAGEN" korrekt. 6 neue Tests (30 in der Datei).
 - [ ] 🟡 **L3.4 Werksleiter schaut aufs Lager** — das H7.1-Gesicht
       bezieht die Positions-Lage ehrlich mit ein, WENN Kurse da sind
       (app.py hat ctx.prices). FORMEL ENTSCHIEDEN 16.7.:

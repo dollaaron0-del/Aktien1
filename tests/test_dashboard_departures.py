@@ -216,6 +216,49 @@ def test_overdue_position_survives_horizon_filter(monkeypatch, _macro_file):
     assert rows[0]["impact"] == "ÜBERFÄLLIG"
 
 
+# ── L3.3: Fracht-Meldungen fürs Laufband ─────────────────────────────────────
+
+def test_freight_items_show_day_progress(monkeypatch):
+    _fake_portfolio(monkeypatch, {"ZTSM": _pos(entry_date="2026-07-04", hold=15)})
+    assert departures.freight_ticker_items(_NOW) == ["ZTSM TAG 12/15"]
+
+
+def test_freight_items_show_overdue(monkeypatch):
+    _fake_portfolio(monkeypatch, {"ZQCOM": _pos(entry_date="2026-06-30", hold=13)})
+    assert departures.freight_ticker_items(_NOW) == ["ZQCOM ÜBERFÄLLIG SEIT 3 TAGEN"]
+
+
+def test_freight_items_overdue_singular(monkeypatch):
+    _fake_portfolio(monkeypatch, {"ZX": _pos(entry_date="2026-07-01", hold=14)})
+    assert departures.freight_ticker_items(_NOW) == ["ZX ÜBERFÄLLIG SEIT 1 TAG"]
+
+
+def test_freight_items_empty_without_positions(monkeypatch):
+    _fake_portfolio(monkeypatch, {})
+    assert departures.freight_ticker_items(_NOW) == []
+
+
+def test_freight_items_fail_open(monkeypatch):
+    import portfolio.portfolio as port_mod
+
+    class _Boom:
+        def __init__(self):
+            raise RuntimeError("kaputt")
+
+    monkeypatch.setattr(port_mod, "Portfolio", _Boom)
+    assert departures.freight_ticker_items(_NOW) == []
+
+
+def test_position_progress_shared_by_board_and_ticker(monkeypatch):
+    """L3.1 und L3.3 MÜSSEN aus derselben Quelle rechnen — sonst driften
+    Tafel und Laufband auseinander."""
+    _fake_portfolio(monkeypatch, {"ZTSM": _pos(entry_date="2026-07-04", hold=15)})
+    prog = departures.position_progress(_NOW)
+    assert prog[0] == {"ticker": "ZTSM", "due_date": "2026-07-19",
+                       "days_held": 12, "hold_days": 15, "overdue_days": 0}
+    assert departures._position_rows(_NOW)[0]["date"] == prog[0]["due_date"]
+
+
 def test_held_tickers_reads_portfolio(monkeypatch):
     _fake_portfolio(monkeypatch, {"ZTSM": _pos(), "ZLLY": _pos()})
     assert sorted(departures.held_tickers()) == ["ZLLY", "ZTSM"]

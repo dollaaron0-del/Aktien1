@@ -221,6 +221,13 @@ if _theme.is_enabled():
         _tick_next = (_tick_ls() or {}).get("next_run")
         if _tick_next:
             _tick_items.append(f"NÄCHSTER LAUF: {str(_tick_next)[:16].replace('T', ' ')} UHR")
+        # L3.3: das Band kennt auch die Fracht — Haltedauer-Stand der
+        # offenen Positionen, zur Renderzeit berechnet (keine Feed-Einträge).
+        try:
+            from dashboard.departures import freight_ticker_items as _tick_freight
+            _tick_items.extend(_tick_freight())
+        except Exception:
+            pass
         _ticker_html = _theme.ticker(_tick_items)
         if _ticker_html:
             st.markdown(_ticker_html, unsafe_allow_html=True)
