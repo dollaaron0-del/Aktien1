@@ -89,11 +89,36 @@ def _detail_conveyor(m: MachineState) -> None:
             st.caption(f"- {reason}: {n}×")
 
 
+def _render_warehouse_movements(m: MachineState) -> None:
+    """L3.6: die letzten Bestandsbewegungen — Zu-/Abgänge sichtbar
+    machen, nicht nur den Ist-Bestand. Quelle: echte trades-Tabelle
+    (state._warehouse_movements). Läuft VOR dem Positions-Check, damit
+    die Historie auch bei leerem Lager sichtbar bleibt."""
+    moves = (m.payload or {}).get("movements") or {}
+    c1, c2 = st.columns(2)
+    c1.metric("Wareneingang heute", f"+{moves.get('in_today', 0)}")
+    c2.metric("Warenausgang heute", f"−{moves.get('out_today', 0)}")
+    recent = moves.get("recent") or []
+    if recent:
+        st.markdown("**Letzte Bestandsbewegungen**")
+        st.table([
+            {
+                "Zeit": str(r.get("ts") or "")[:16].replace("T", " "),
+                "Ticker": r.get("ticker"),
+                "Bewegung": ("+" if r.get("action") == "BUY" else "−")
+                            + f"{float(r.get('shares') or 0):g} Stk.",
+            }
+            for r in recent
+        ])
+
+
 def _detail_warehouse(m: MachineState) -> None:
+    _render_warehouse_movements(m)
     positions = (m.payload or {}).get("positions") or {}
     if not positions:
         st.caption("Keine offenen Positionen.")
         return
+    st.markdown("**Aktueller Bestand**")
     st.table([
         {
             "Ticker": t,

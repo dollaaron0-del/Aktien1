@@ -153,6 +153,49 @@ def _read_conveyor() -> MachineState:
         return _off("conveyor", "Förderband")
 
 
+def _warehouse_movements(limit: int = 5) -> Dict:
+    """L3.6: Bestandsveränderungen aus der echten `trades`-Tabelle
+    (portfolio.db). Eigene READ-ONLY sqlite3-Verbindung (Muster
+    dashboard/genealogy.py) — die Portfolio-Klasse hat keine
+    Trade-Historie-Schnittstelle, und ein zweiter Schreibpfad hierher
+    wäre ohnehin falsch.
+
+    Liefert `{"in_today", "out_today", "recent": [{ts, ticker, action,
+    shares}]}`. Netzfrei, fail-open (leere Bewegung statt Exception).
+    Der Tages-Schnitt läuft über lokale Kalendertage (die timestamps
+    der Tabelle sind naive lokale ISO-Strings)."""
+    out = {"in_today": 0, "out_today": 0, "recent": []}
+    try:
+        import sqlite3
+
+        from portfolio.portfolio import PORTFOLIO_DB
+        today = datetime.now().date().isoformat()
+        conn = sqlite3.connect(PORTFOLIO_DB)
+        conn.row_factory = sqlite3.Row
+        try:
+            for r in conn.execute(
+                "SELECT action, COUNT(*) n FROM trades "
+                "WHERE substr(timestamp,1,10)=? GROUP BY action", (today,)
+            ):
+                if r["action"] == "BUY":
+                    out["in_today"] = int(r["n"])
+                elif r["action"] == "SELL":
+                    out["out_today"] = int(r["n"])
+            out["recent"] = [
+                {"ts": r["timestamp"], "ticker": r["ticker"],
+                 "action": r["action"], "shares": r["shares"]}
+                for r in conn.execute(
+                    "SELECT timestamp, ticker, action, shares FROM trades "
+                    "ORDER BY timestamp DESC LIMIT ?", (limit,)
+                )
+            ]
+        finally:
+            conn.close()
+    except Exception:
+        return {"in_today": 0, "out_today": 0, "recent": []}
+    return out
+
+
 def _read_warehouse() -> MachineState:
     try:
         from portfolio.portfolio import Portfolio
@@ -174,10 +217,16 @@ def _read_warehouse() -> MachineState:
             except Exception:
                 pass
             details[t] = {"shares": p.shares, "age_ratio": age_ratio}
+        # L3.6: Zu-/Abgänge des Tages — der Bestand allein zeigt nicht,
+        # ob sich heute etwas BEWEGT hat.
+        moves = _warehouse_movements()
+        tooltip.append(
+            f"heute: +{moves['in_today']} rein / -{moves['out_today']} raus"
+        )
         return MachineState(
             id="warehouse", label="Hochregallager", status=status,
             tooltip=tooltip,
-            payload={"positions": details},
+            payload={"positions": details, "movements": moves},
         )
     except Exception:
         return _off("warehouse", "Hochregallager")

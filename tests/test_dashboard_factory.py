@@ -90,6 +90,62 @@ def test_read_warehouse_off_when_no_positions(fresh_portfolio):
     assert m.status == "off"
 
 
+# ── L3.6: Lager-Zählwerk (Zu-/Abgänge) ───────────────────────────────────────
+
+def _add_trade(pf, ticker, action, shares=1.0, ts=None):
+    from datetime import datetime
+    ts = ts or datetime.now().isoformat()
+    pf._conn.execute(
+        "INSERT INTO trades (ticker, action, shares, price, timestamp, pnl) "
+        "VALUES (?,?,?,?,?,?)", (ticker, action, shares, 100.0, ts, 0.0),
+    )
+    pf._conn.commit()
+
+
+def test_warehouse_movements_counts_todays_trades(fresh_portfolio):
+    _add_trade(fresh_portfolio, "ZWH1", "BUY")
+    _add_trade(fresh_portfolio, "ZWH2", "BUY")
+    _add_trade(fresh_portfolio, "ZWH3", "SELL")
+    moves = st_mod._warehouse_movements()
+    assert moves["in_today"] == 2
+    assert moves["out_today"] == 1
+
+
+def test_warehouse_movements_ignores_other_days(fresh_portfolio):
+    _add_trade(fresh_portfolio, "ZOLD", "BUY", ts="2020-01-01T10:00:00")
+    moves = st_mod._warehouse_movements()
+    assert moves["in_today"] == 0
+    assert moves["recent"][0]["ticker"] == "ZOLD"  # in der Historie bleibt er
+
+
+def test_warehouse_movements_recent_newest_first_and_limited(fresh_portfolio):
+    for i in range(7):
+        _add_trade(fresh_portfolio, f"ZR{i}", "BUY", ts=f"2026-07-1{i%10}T10:00:00")
+    moves = st_mod._warehouse_movements(limit=5)
+    assert len(moves["recent"]) == 5
+    tss = [r["ts"] for r in moves["recent"]]
+    assert tss == sorted(tss, reverse=True)
+
+
+def test_warehouse_movements_zero_without_trades(fresh_portfolio):
+    moves = st_mod._warehouse_movements()
+    assert moves == {"in_today": 0, "out_today": 0, "recent": []}
+
+
+def test_warehouse_movements_fail_open(monkeypatch):
+    import portfolio.portfolio as port_mod
+    monkeypatch.setattr(port_mod, "PORTFOLIO_DB", "/nicht/vorhanden/x.db")
+    assert st_mod._warehouse_movements() == {"in_today": 0, "out_today": 0,
+                                             "recent": []}
+
+
+def test_read_warehouse_exposes_movements_and_tooltip(fresh_portfolio):
+    _add_trade(fresh_portfolio, "ZWH1", "BUY")
+    m = st_mod._read_warehouse()
+    assert m.payload["movements"]["in_today"] == 1
+    assert any("heute: +1 rein" in t for t in m.tooltip)
+
+
 @pytest.mark.parametrize("regime,expected_status", [
     ("BULL", "ok"), ("NEUTRAL", "warn"), ("BEAR", "err"), ("CRISIS", "err"),
 ])
@@ -604,6 +660,44 @@ def test_warehouse_crates_one_per_position_with_age_colors():
     assert f'fill="{PALETTE["red"]}" opacity="0.85"' in box
     assert f'fill="{PALETTE["cobalt"]}" opacity="0.85"' in box
     assert box.count('opacity="0.85"') == 4  # genau eine Kiste je Position
+
+
+def test_warehouse_counter_shows_both_directions():
+    """L3.6: das Zählwerk zeigt Zu- UND Abgänge des Tages."""
+    m = MachineState(id="warehouse", label="Lager", status="ok", payload={
+        "positions": {}, "movements": {"in_today": 2, "out_today": 1,
+                                       "recent": []},
+    })
+    box = machine_box(m, 0, 0, 270, 220)
+    assert ">+02<" in box
+    assert ">-01<" in box
+
+
+def test_warehouse_counter_shows_zero_not_hidden():
+    """0 Bewegungen ist eine Information ('heute nichts bewegt'), kein
+    Grund das Zählwerk auszublenden."""
+    m = MachineState(id="warehouse", label="Lager", status="off", payload={
+        "positions": {}, "movements": {"in_today": 0, "out_today": 0,
+                                       "recent": []},
+    })
+    box = machine_box(m, 0, 0, 270, 220)
+    assert ">+00<" in box
+    assert ">-00<" in box
+
+
+def test_warehouse_counter_caps_at_99():
+    m = MachineState(id="warehouse", label="Lager", status="ok", payload={
+        "positions": {}, "movements": {"in_today": 250, "out_today": 0,
+                                       "recent": []},
+    })
+    assert ">+99<" in machine_box(m, 0, 0, 270, 220)
+
+
+def test_warehouse_counter_absent_without_movement_payload():
+    m = MachineState(id="warehouse", label="Lager", status="off",
+                     payload={"positions": {}})
+    box = machine_box(m, 0, 0, 270, 220)
+    assert ">+00<" not in box  # fail-open: kein payload -> kein Zählwerk
 
 
 def test_warehouse_crates_capped_with_rest_hint():

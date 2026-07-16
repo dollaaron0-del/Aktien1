@@ -362,6 +362,21 @@ nicht über Geld.
       Mechanische Zählwerk-Optik wie der D7.2-Durchsatz-Zähler am
       Förderband (gleiches Muster wiederverwenden). 0 Bewegungen =
       Zählwerk zeigt 0, kein Verstecken.
+
+      Umgesetzt 16.7.2026: `state._warehouse_movements()` mit eigener
+      read-only sqlite3-Verbindung auf `portfolio.PORTFOLIO_DB`
+      (Muster genealogy.py — die Portfolio-Klasse hat keine
+      Trade-Historie-Schnittstelle). Echte Spalten geprüft:
+      `trades(ticker, action BUY/SELL, shares, price, timestamp, pnl,
+      …)`, timestamps sind naive lokale ISO-Strings → Tages-Schnitt per
+      `substr(timestamp,1,10)`. Zählwerk zweistellig (nicht dreistellig
+      wie am Förderband: >99 Bewegungen/Tag gibt der Funnel nicht her),
+      grün für Zugang / kupfer für Abgang, 0 wird angezeigt.
+      Zusätzlich: Tooltip-Zeile „heute: +N rein / -N raus" am Lager und
+      im Detail-Panel zwei Metriken + Tabelle der letzten 5 Bewegungen
+      — die läuft VOR dem Positions-Check, damit die Historie auch bei
+      LEEREM Lager sichtbar bleibt (aktueller Normalfall). 10 neue
+      Tests (test_dashboard_factory.py, 89 gesamt).
 - [ ] 🟡 **L3.7 Anlieferung & Versand — Trade als sichtbare Lieferung**
       (User-Wunsch 16.7.: „sieht man im Dashboard, wie eine Lieferung
       fertig gemacht wird?" — Befund: man sieht nur das ERGEBNIS,

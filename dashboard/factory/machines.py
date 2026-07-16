@@ -183,6 +183,31 @@ def _conveyor_counter(m: MachineState, x: float, y: float, w: float, h: float) -
     )
 
 
+def _warehouse_counter(m: MachineState, x: float, y: float, w: float, h: float) -> str:
+    """L3.6: Wareneingangs-/Warenausgangs-Zählwerk am Lager — heutige
+    Zu-/Abgänge aus der echten trades-Tabelle. Zwei kleine Zählwerke
+    (Muster _conveyor_counter, zweistellig: mehr als 99 Bewegungen an
+    einem Tag gibt der Funnel nicht her). 0 wird ANGEZEIGT, nicht
+    versteckt — „heute nichts bewegt" ist eine Information."""
+    moves = (m.payload or {}).get("movements")
+    if not moves:
+        return ""
+    cx, cy = x + w - 58, y + h - 30
+    return (
+        f'<rect x="{cx}" y="{cy}" width="50" height="20" rx="3" '
+        f'fill="#0A0C0F" stroke="{PALETTE["border"]}" stroke-width="1.5" />'
+        f'<text x="{cx + 13}" y="{cy + 15}" text-anchor="middle" '
+        f'font-family="VT323, monospace" font-size="14" '
+        f'fill="{PALETTE["neon_green"]}">+{min(int(moves.get("in_today", 0)), 99):02d}</text>'
+        f'<text x="{cx + 25}" y="{cy + 15}" text-anchor="middle" '
+        f'font-family="VT323, monospace" font-size="13" '
+        f'fill="{PALETTE["text_muted"]}">/</text>'
+        f'<text x="{cx + 38}" y="{cy + 15}" text-anchor="middle" '
+        f'font-family="VT323, monospace" font-size="14" '
+        f'fill="{PALETTE["copper"]}">-{min(int(moves.get("out_today", 0)), 99):02d}</text>'
+    )
+
+
 def _backup_battery(m: MachineState, x: float, y: float, w: float, h: float) -> str:
     """D7.2(d): Batterie-Balken am Nachtschicht-Roboter — Ladestand =
     Frische des letzten Backups (voll direkt danach, leer nach 48h).
@@ -208,7 +233,7 @@ def _machine_extras(m: MachineState, x: float, y: float, w: float, h: float) -> 
     Datenquelle gebunden (Wachstums-Regel W4.5 gilt weiter). Fail-open —
     fehlt der payload, rendert das Extra einfach nichts."""
     if m.id == "warehouse":
-        return _warehouse_crates(m, x, y, w, h)
+        return _warehouse_crates(m, x, y, w, h) + _warehouse_counter(m, x, y, w, h)
     if m.id == "conveyor":
         return _conveyor_counter(m, x, y, w, h)
     if m.id == "backup_bot":
