@@ -1,20 +1,100 @@
 # Fabrik Lebendig — die gesammelten Daten fangen an zu spielen
 
-Stand: 16.7.2026. Dritte Ausbaustufe nach `DESIGN_ROADMAP.md` (D0–D8) und
-`DASHBOARD_HORIZONT.md` (H1–H7, komplett). Drei vom User gewählte
-Großprojekte, deutlich mehr Arbeit als bisherige Einzelpunkte — jedes
-spielt mit Daten, die das Programm über Monate gesammelt, analysiert und
-zugeordnet hat, und macht das Werk lebendiger.
+Stand: 16.7.2026 (abends überarbeitet für autonome Abarbeitung).
+Ausbaustufe nach `DESIGN_ROADMAP.md` (D0–D8) und `DASHBOARD_HORIZONT.md`
+(H1–H7, komplett). Sechs Blöcke L1–L6 — jeder spielt mit Daten, die das
+Programm über Monate gesammelt, analysiert und zugeordnet hat.
 
-**Es gelten unverändert die Arbeitsregeln aus `DASHBOARD_HORIZONT.md`**
-(Pfadgrenzen, Standard-Abschluss „→ SA" mit Tests + Voll-Render
-pixel/plain/blueprint × normal/kiosk/mobile, Abbruchregel, bekannte
-Fallen). Zusätzliche Falle seit 16.7.: `system.live_status` ist in Tests
-per `_isolate_live_status` isoliert (conftest.py) — neue Module, die in
-`data/` schreiben, brauchen weiterhin ihre eigene autouse-Fixture.
+Ampel: 🟢 günstiges Modell reicht · 🟡 günstig mit EINER markierten
+Urteils-Stelle (die Entscheidung ist vorformuliert, nur die Ausführung
+braucht einen Blick) · 🔴 NICHT anfassen (siehe Freigaben).
 
-Ampel wie gehabt: 🟢 günstiges Modell reicht · 🟡 günstig mit markierter
-Urteils-Stelle · 🔴 starkes Modell.
+## ⚙️ Arbeitsanweisung (für das abarbeitende Modell — komplett, ohne
+## Rückfragen an den User)
+
+**User-Freigaben vom 16.7.2026 (abends, per Auswahl bestätigt — es gibt
+KEINE offenen Genehmigungen mehr, NICHT nachfragen):**
+1. **Umfang:** alle 🟢- und 🟡-Punkte in der Reihenfolge-Empfehlung
+   unten. Alle 🔴-Punkte (L2.4, L3.5, L5.2) sind AUSGESCHLOSSEN —
+   überspringen, nicht „nur mal anfangen".
+2. **L5.2 (Kamera-Flug/JS)** ist ausdrücklich gesperrt, auch als
+   Experiment.
+3. **Blocker-Regel:** lässt sich ein Punkt nicht sauber fertigstellen
+   (unerwartete Datenlage, Test nicht grün zu kriegen, Annahme im
+   Dokument falsch) → Punkt im Dokument als `⏸ BLOCKIERT (Datum,
+   1-Satz-Grund)` markieren, NICHT halb einbauen, mit dem NÄCHSTEN
+   Punkt weitermachen. Niemals auf den User warten.
+4. **Commits:** jeder fertige Punkt wird einzeln committet (Pre-Commit
+   erzwingt die volle Suite, ~8 Min — via `nohup git commit … &` und
+   auf den PID warten, sonst Timeout).
+
+**Pfadgrenzen (hart):** Neues nur unter `dashboard/`, `tests/`,
+`docs/`. In Bestandsdateien nur: `dashboard/**` (inkl. theme.py,
+app.py, tabs/, factory/), `tests/conftest.py` (nur ADDITIV: neue
+Fixtures), dieses Dokument. NIEMALS anfassen: `bot/`, `strategy/`,
+`broker/`, `portfolio/`, `analyzers/`, `system/`, `.env`, crontab,
+systemd — alle Bot-Daten nur READ-ONLY konsumieren.
+
+**Muster-Dateien (Vorbild kopieren statt neu erfinden):**
+
+| Aufgabe | Vorbild |
+|---|---|
+| Read-only-Datensammler, fail-open je Quelle | `dashboard/dossier.py` |
+| Eigene read-only sqlite3-Verbindung auf Bot-DB | `dashboard/genealogy.py` |
+| SVG-Panel mit PALETTE + Escaping | `dashboard/instruments.py`, `dashboard/power_meter.py` |
+| Neue Maschine in der Szene | `dashboard/factory/state.py` `_read_*()` + `machines.py` + `test_dashboard_factory.py` |
+| Tab-Fragment isoliert testen | `tests/test_dashboard_dossier_tab.py` (AppTest.from_string-Mini-Skript) |
+| Injizierbarer Store für Tests | `dashboard/calibration_curve.py` (`store=None`-Parameter) |
+| Ereignis-Fenster aus dem Feed lesen | `read_feed_events_until` (H2.3, `dashboard/factory/state.py`) |
+
+**Standard-Abschluss „→ SA" nach JEDEM Punkt:**
+1. Neue Unit-Tests des Punkts grün.
+2. `venv/bin/python3 -m pytest tests/test_dashboard_*.py -q` grün.
+3. Voll-Render: `AppTest.from_file("dashboard/app.py")` für
+   DASHBOARD_THEME=pixel/plain/blueprint × {}, {kiosk:1}, {mobile:1} —
+   alle 9 ohne Exception. Dabei `dashboard.departures.earnings_rows`
+   auf `lambda *a, **k: []` stubben (sonst 12 yfinance-Netzabrufe).
+4. Checkbox hier im Dokument auf `[x]` + kurze „Umgesetzt …"-Notiz
+   (inkl. Abweichungen von der Vorgabe — ehrlich, nicht beschönigen).
+5. Einzel-Commit (siehe Freigabe 4), Stil: `feat(dashboard): L<x.y> …`
+   mit `Co-Authored-By`-Zeile wie in der Git-Historie.
+
+**Eiserne Regeln:**
+- Kein Panel/Maschine ohne ECHTE Datenquelle; leere Quelle → ehrlicher
+  Leerzustand, NIE Platzhalter-Zahlen.
+- Animationen nur, wenn der echte Zustand es hergibt (Vorbild:
+  Stromzähler-Scheibe dreht nur bei echtem Tagesverbrauch); immer
+  `prefers-reduced-motion`-fest (theme.py-Block erweitern).
+- Die Fabrik-Szene (`factory/state.py` read_state-Pfad) bleibt
+  NETZFREI — kein Kurs-Abruf, keine HTTP-Calls; P&L nur in Tabs mit
+  `ctx.prices`.
+- Jede neue Datei, die unter `data/` SCHREIBT, braucht eine
+  autouse-Isolations-Fixture in `tests/conftest.py` — im selben
+  Commit, nicht später. Read-only-Leser brauchen keine.
+- Alle dynamischen Texte in SVG/HTML escapen (`html.escape`).
+- Vor dem Bauen echte Datenstruktur ansehen (eine Zeile aus der
+  echten Datei lesen), nicht der Beschreibung hier blind glauben —
+  Abweichungen als Notiz dokumentieren.
+
+**Bekannte Fallen (alle 15./16.7. real erlebt):**
+- `st.form_submit_button` erscheint in AppTest unter `at.get("button")`,
+  NICHT unter einem eigenen Typ.
+- Es gibt KEINE AppTest-Elementklasse für `st.altair_chart` — Charts
+  nur über „kein Exception" testbar.
+- `st.cache_data`-Funktionen brauchen hashbare Argumente (Tuple statt
+  Liste — siehe `_cached_earnings_rows`).
+- Test-Ticker IMMER synthetisch wählen (`ZXX…`), nie AAPL/NVDA/TSLA —
+  echte Ticker kollidieren mit Produktions-DBs und Nachbar-Tests
+  (Decision-Log-Test-DB ist sessionweit geteilt).
+- Default-Parameter binden zur Ladezeit: NIE `def f(path=KONSTANTE)`
+  für Pfade — Konstante zur Laufzeit im Funktionskörper auflösen
+  (ExperienceStore-Vorfall 16.7., siehe L1.1-Notiz).
+- `system.live_status` cacht ein Feed-Singleton — conftest setzt es
+  zurück; eigene Module nicht noch einmal cachen lassen.
+- `st.markdown` führt KEIN JavaScript aus (innerHTML) — deshalb ist
+  L5.2 gesperrt und L5.1 bewusst JS-frei.
+- Beim Editieren von `scene.py`/`machines.py`: Klick-Links sind
+  `<a href="?factory=…" target="_self">` — Struktur nicht verändern.
 
 ## Datenquellen-Inventar (16.7. geprüft, alles echt vorhanden)
 
@@ -122,11 +202,18 @@ Platzhalter.
       „→ Akte"-Link. Unbekannte Query-Werte stillschweigend ignorieren.
 - [ ] 🟡 **L1.5 Akten-Deckblatt-Stempel** — kleine ehrliche Stempel auf
       der Akte, nur wenn die Bedingung WIRKLICH zutrifft (sonst kein
-      Stempel): „BEWÄHRT" (≥3 gelabelte Trades, Ø pnl > 0), „GEMIEDEN"
-      (Lern-Filter-AVOID aktiv — aus `rl_weights.json` prüfen ob je
-      Ticker abfragbar; [URTEIL] falls nicht sauber abfragbar: Stempel
-      weglassen statt raten), „STAMMGAST" (≥30 Analysen), „FRISCH"
-      (erste Analyse <14 Tage her).
+      Stempel): „BEWÄHRT" (≥3 gelabelte Trades, Ø pnl > 0),
+      „STAMMGAST" (≥30 Analysen), „FRISCH" (erste Analyse <14 Tage
+      her), „GEMIEDEN" — ENTSCHIEDEN 16.7. nach Prüfung:
+      `rl_weights.json` ist GLOBAL (6 Feature-Gewichte), NICHT je
+      Ticker abfragbar. Stattdessen: `analyzers.entry_filter.
+      EntryFilter().evaluate(features)` mit den Features der LETZTEN
+      analysis_log-Zeile des Tickers aufrufen (exakt der Weg, den
+      `dashboard/dry_run.py` fürs „Lern-Filter AVOID" nutzt — vorher
+      dort ansehen, welche Feature-Keys evaluate() erwartet [URTEIL:
+      nur dieses Mapping]). Verdict AVOID → Stempel; NEUTRAL/PROCEED/
+      CAUTION/Exception → KEIN Stempel. Tests je Stempel-Bedingung
+      (positiv + negativ + Exception-Fall).
 
 ## L2 — Traummodus & Erinnerungen (das Werk erinnert sich)
 
@@ -152,9 +239,11 @@ echtes Ereignis mit Datum.
       Schnappschüssen, bei Gleichstand der jüngste). Stand 16.7. gibt
       es erst 2 Tage Material — die Funktion muss mit „noch nichts
       Träumbares" (None) leben und die UI zeigt dann schlicht keinen
-      Traum. [URTEIL] Mindest-Schwelle ggf. anpassen, wenn reale
-      Daten-Dichte bekannt ist.
-- [ ] 🔴 **L2.4 Traum-Wiedergabe** — nur wenn `state.paused` ODER
+      Traum. ENTSCHIEDEN 16.7.: Schwelle fest ≥10 Schnappschüsse; als
+      Modul-Konstante `_MIN_SNAPSHOTS = 10` anlegen (leicht
+      nachjustierbar), NICHT dynamisch raten.
+- [ ] 🔴 **L2.4 Traum-Wiedergabe** (GESPERRT für günstiges Modell,
+      User-Entscheid 16.7.) — nur wenn `state.paused` ODER
       lokale Nachtzeit (22–06 Uhr): eigenes
       `@st.fragment(run_every="3s")`, das pro Tick den NÄCHSTEN
       Schnappschuss des Traum-Tages rendert (reconstruct_from_snapshot
@@ -197,22 +286,30 @@ nicht über Geld.
       Schiene = Haltedauer-Fortschritt (0 % am Wareneingang, 100 % am
       Verladetor), Farbe nach age_ratio (exakt die D7.2-Logik,
       netzfrei), Tooltip Ticker/Anteile/Tage. Max. 8 Loren + „+n"
-      (Muster D7.2-Kisten). [URTEIL] Schienenführung im 24×14-Grid so
-      legen, dass keine Maschine verdeckt wird — vorher Layout in
-      scene.py WIRKLICH ansehen, nicht raten.
+      (Muster D7.2-Kisten). VORGABE 16.7.: Schiene als flacher Bogen
+      im unteren Randstreifen der Szene (unterhalb der Maschinen-
+      Zeile); [URTEIL: nur die exakte Trasse] vorher die Maschinen-
+      Koordinaten in scene.py/machines.py WIRKLICH ansehen und per
+      Test absichern, dass kein Loren-/Schienen-Rect ein Maschinen-
+      Rect schneidet (Koordinaten-Assertion, nicht Augenmaß).
+      ERST NACH L5.1 bauen (mehr Platz).
 - [ ] 🟢 **L3.3 Ticker-Laufband kennt die Fracht** — das D7.3-Band
       mischt Positions-Meldungen ein, zur Renderzeit berechnet (KEINE
       Feed-Schreibungen): „TSM Tag 12/15", „QCOM überfällig seit 3
       Tagen". Escaping wie gehabt.
 - [ ] 🟡 **L3.4 Werksleiter schaut aufs Lager** — das H7.1-Gesicht
       bezieht die Positions-Lage ehrlich mit ein, WENN Kurse da sind
-      (app.py hat ctx.prices): bestehende Stimmungs-Formel um einen
-      dokumentierten Positions-Term ergänzen (z. B. Anteil Positionen
-      im Minus). [URTEIL] Gewichtung — das Gesicht darf nicht von
-      einem einzigen Ausreißer kippen; Formel im Docstring festhalten
-      und testen (Grenzfälle 0 Positionen / alle im Plus / alle im
-      Minus).
-- [ ] 🔴 **L3.5 Positions-Lebenslauf in der Akte** — Brücke zu L1: die
+      (app.py hat ctx.prices). FORMEL ENTSCHIEDEN 16.7.:
+      `angepasst = basis − 0.15 × verlust_anteil`, geklemmt auf [0, 1];
+      `verlust_anteil` = Anteil offener Positionen mit negativem P&L
+      (0 Positionen → Term 0, Basis unverändert). Damit kippt EIN
+      Ausreißer das Gesicht nie um mehr als 0.15. [URTEIL: nur wo die
+      Basis herkommt] vorher in app.py ansehen, welcher Score heute in
+      `face_svg()` fließt, und die Formel dort im Docstring
+      festschreiben. Tests: 0 Positionen / alle im Plus / alle im
+      Minus / genau eine von vier im Minus.
+- [ ] 🔴 **L3.5 Positions-Lebenslauf in der Akte** (GESPERRT für
+      günstiges Modell, User-Entscheid 16.7.) — Brücke zu L1: die
       Personalakte einer GEHALTENEN Aktie zeigt oben eine Lebenslauf-
       Leiste: Einstieg (Datum/Kurs aus positions), bisherige Feed-/
       Order-Ereignisse zu diesem Halt (order_log + activity_feed,
@@ -245,9 +342,9 @@ nicht über Geld.
       nie pro Rerun rechnen), reduced-motion-fest, danach Ruhe.
       **Ehrlichkeits-Regel wie Stromzähler-Scheibe: Animation NUR bei
       echtem, frischem Trade-Event — kein Dauergewusel als Deko.**
-      [URTEIL] Zeitfenster (10 Min?) an den 60s-Szenen-Refresh und
-      die reale Zyklus-Frequenz anpassen. Verzahnt mit W4-Ereignis-
-      Ebene (goldener Wimpel beim ersten Live-Trade bleibt separat).
+      ENTSCHIEDEN 16.7.: Zeitfenster fest 10 Minuten, als Konstante
+      `_DELIVERY_WINDOW_MIN = 10`. Verzahnt mit W4-Ereignis-Ebene
+      (goldener Wimpel beim ersten Live-Trade bleibt separat).
 
 ## L4 — Fehlende Maschinen (User-Frage 16.7.: „hat jedes Feature seine
 ## eigene Maschine?")
@@ -259,9 +356,9 @@ sind bewusst Anbauten, keine Maschinen). Für jede neue Maschine gilt
 das W2-Muster: `_read_<id>()` in state.py (fail-open, netzfrei),
 Eintrag in MACHINE_IDS + MACHINE_LABELS, Zeichnung in machines.py,
 Tooltip + Klick-Fokus, Tests wie test_dashboard_factory.py.
-ACHTUNG Layout: 24×14-Grid in scene.py ist voll — L4 braucht entweder
-L5 (größeres Gelände) zuerst ODER eine bewusste Verdichtung; [URTEIL]
-vor dem ersten L4-Punkt entscheiden, nicht nebenbei quetschen.
+ENTSCHIEDEN 16.7.: **L5.1 (größeres Gelände) ist harte Voraussetzung —
+kein L4-Punkt darf vor abgeschlossenem L5.1 begonnen werden** (das
+aktuelle Grid ist voll, Quetschen ist keine Option).
 
 - [ ] 🟡 **L4.1 Wartehalle (Signal-Queue)** — `data/signal_queue.db`
       (PENDING-Signale bei vollen Slots): Bank mit wartenden Paketen,
@@ -306,7 +403,10 @@ das iframe statt des Dashboards und der Fokus bricht.
       + Animationen bleiben unverändert, mobil = natives Touch-Wischen.
       Kiosk-Modus (H6.1): dort NICHT scrollen lassen, sondern die
       Gesamtansicht skalieren (ein Wandbild scrollt niemand).
-- [ ] 🔴 **L5.2 Echter Kamera-Flug (Drag-Pan + Rad-Zoom, MIT JS)** —
+- [ ] 🔴 **L5.2 Echter Kamera-Flug (Drag-Pan + Rad-Zoom, MIT JS)**
+      (GESPERRT — User-Entscheid 16.7.: erst L5.1 im Alltag testen;
+      dieser Punkt wird, falls überhaupt, später mit starkem Modell
+      gebaut. Auch nicht „experimentell anfangen".) —
       nur wenn L5.1 sich zu klein anfühlt: Szene in
       `st.components.v1.html` einbetten, Vanilla-JS (kein CDN, alles
       inline): Drag verschiebt / Mausrad zoomt die viewBox,
@@ -319,18 +419,57 @@ das iframe statt des Dashboards und der Fokus bricht.
       AppTest iframes nur als Block sieht (Verifikation dünner als
       gewohnt — ehrlich dokumentieren).
 
-## Reihenfolge-Empfehlung
+## L6 — Wissens-Sichtbarkeit (User-Freigabe 16.7.: „wird das Wissen
+## auch visuell erfasst?")
 
-L1.1 → L1.2 → L1.3 ✅ (die Kartei trägt sofort sichtbar) → L3.1 + L3.3 +
-L3.6 (kleine Schritte, großer Lebendigkeits-Gewinn, nutzen D8-/D7.2-
-Infrastruktur) → L2.1 + L2.2 (Erinnerungen) → **L5.1 (größeres Gelände —
-VOR L4, sonst ist kein Platz für neue Maschinen)** → L4.2 + L4.4 (die
-zwei 🟢-Maschinen) → L3.2 (Loren — profitiert vom größeren Gelände) →
-L4.1 + L4.3 → L2.3–L2.5 (Traum; profitiert davon, dass factory_history
-bis dahin mehr Tage hat) → L1.4/L1.5 → L3.4 → L3.5 und L5.2 zuletzt
-(Datenlage klären bzw. nur bei echtem Bedarf).
+Das gesammelte Wissen WIRKT (Lern-Filter, Kalibrierung, Lessons-Memo),
+ist aber teils unsichtbar. Zwei Panels im Tab „Trades & Lernen", direkt
+bei der bestehenden Kalibrier-Kurve (H3.3 — gleiche Chart-Muster).
 
-Hinweis Zeitpunkt: nichts hiervon blockiert den Bot-Neustart morgen —
+- [ ] 🟢 **L6.1 Lernkurven-Wand** — Entwicklung über die Zeit statt nur
+      Ist-Stand: (a) `data/calibration_monitor.json` → `history[]`
+      (run_at, brier, bss, ece, auc — Stand 16.7.: genau 1 Messpunkt
+      vom 7.7.) als Linien-Chart, ABER erst ab ≥3 Messpunkten — bei
+      1–2 stattdessen ehrliche Tabelle + Caption „Kurve entsteht,
+      sobald der Monitor öfter gelaufen ist"; (b) kumulierte Anzahl
+      gelabelter Erfahrungen über die Zeit aus experience.db
+      (`labeled_at` je Zeile; injizierbarer Store wie
+      `calibration_curve.py`). Neues Modul `dashboard/learning_curve.py`
+      (read-only), Render in tabs/trades.py neben der Kalibrier-Kurve.
+- [ ] 🟡 **L6.2 Lern-Filter-Röntgenblick** — was der Filter gelernt
+      hat, sichtbar: `data/rl_weights.json` enthält (16.7. geprüft)
+      `weights` + `feature_names` (sentiment_score, vix_level,
+      momentum_5d, news_velocity, confidence_encoded, regime_encoded)
+      + `trade_count` (aktuell 6!) + `reward_history`. Horizontale
+      Balken je benanntem Feature-Gewicht, PFLICHT-Caption mit
+      `trade_count`: „gelernt aus erst N Trades — mit Vorsicht lesen".
+      [URTEIL: nur die deutschen Feature-Labels] nüchtern übersetzen
+      (z. B. „News-Tempo"), NICHT interpretieren („achtet auf X" wäre
+      Überverkauf bei n=6). Fail-open: Datei fehlt → Panel fehlt.
+
+## Reihenfolge (verbindlich für die autonome Abarbeitung)
+
+1. **L3.1** Abfahrtsplan der Positionen
+2. **L3.3** Laufband kennt die Fracht
+3. **L3.6** Lager-Zählwerk
+4. **L2.1 + L2.2** Erinnerungs-Rechner + Plakette
+5. **L6.1** Lernkurven-Wand
+6. **L6.2** Lern-Filter-Röntgenblick
+7. **L1.4** Querverweise → Akte
+8. **L1.5** Akten-Stempel
+9. **L5.1** Größeres Gelände + Scroll-Flug
+10. **L4.2** Auftragsbriefkasten (erst nach L5.1!)
+11. **L4.4** Funkturm
+12. **L4.1** Wartehalle
+13. **L4.3** Konstruktionsbüro
+14. **L3.2** Loren-Umlauf (nach L5.1, letzter Szenen-Punkt)
+15. **L2.3 + L2.5** Traum-Datenlage + Untertitel (L2.4 selbst bleibt
+    gesperrt — L2.3/L2.5 sind reine Daten-/Anzeige-Bausteine dafür)
+16. **L3.4** Werksleiter-Formel (zuletzt: berührt app.py-Kopfbereich)
+
+ÜBERSPRUNGEN wird (gesperrt): L2.4, L3.5, L5.2.
+
+Hinweis Zeitpunkt: nichts hiervon blockiert den Bot-Neustart —
 alles ist reine Dashboard-/Lese-Arbeit. Umgekehrt profitieren L2 (Feed-
 Untertitel, Traummaterial) und L3 (echte Positionen) stark davon, dass
 der Bot wieder läuft und Daten produziert.
