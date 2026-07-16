@@ -291,6 +291,97 @@ def _render_ticker_form() -> None:
             pass
 
 
+def _render_control_panel(total_value: float = 0.0) -> None:
+    """H1.1/H1.3: Steuerpult am Werk — Pause-Hebel und Not-Aus-Reset.
+    Beide Aktionen mit Bestätigung und Feed-Protokoll (H1-Kopfregel).
+    Fail-open: ein Lesefehler zeigt nur einen Hinweis statt zu crashen."""
+    from dashboard.controls import (
+        pause_status,
+        reset_circuit_breaker,
+        service_state,
+        set_bot_paused,
+    )
+    with st.expander("🎛 Steuerpult"):
+        try:
+            status = pause_status()
+            svc = service_state()
+        except Exception:
+            st.caption("Steuerpult derzeit nicht verfügbar.")
+            return
+        paused = bool(status.get("paused"))
+
+        # ── Ehrlichkeit zuerst: der Flag ist NICHT der Dienst ────────────
+        # Ein "Weiter" hebt nur die Pause auf. Läuft der systemd-Dienst
+        # nicht, passiert danach trotzdem nichts — das muss hier stehen,
+        # sonst täuscht der Schalter Wirkung vor.
+        if svc == "active":
+            st.caption("Dienst `aktien_bot.service`: läuft.")
+        elif svc == "unknown":
+            st.caption("Dienst `aktien_bot.service`: Zustand nicht ermittelbar.")
+        else:
+            st.warning(
+                "Dienst `aktien_bot.service` läuft **nicht** (`" + html.escape(svc) + "`). "
+                "Der Hebel hier schaltet nur den Pause-Flag — der Bot nimmt die "
+                "Arbeit erst wieder auf, wenn du den Dienst zusätzlich selbst "
+                "startest (`systemctl start aktien_bot.service`)."
+            )
+
+        if paused:
+            since = status.get("since") or "?"
+            st.markdown(f"**Zustand:** ⏸ pausiert seit {html.escape(str(since)[:16])}")
+        else:
+            st.markdown("**Zustand:** ▶ nicht pausiert")
+
+        # ── H1.1: Pause-Hebel ───────────────────────────────────────────
+        with st.form("factory_pause_form"):
+            if paused:
+                st.caption("Pause aufheben — der Bot arbeitet dann wieder (sofern der Dienst läuft).")
+                confirm = st.checkbox("Ja, Pause aufheben", key="pause_confirm")
+                submitted = st.form_submit_button("▶ Weiter")
+                new_state, reason = False, ""
+            else:
+                st.caption("Bot pausieren — laufende Jobs werden nicht mehr ausgeführt.")
+                reason = st.text_input("Grund (optional)", key="pause_reason")
+                confirm = st.checkbox("Ja, Bot pausieren", key="pause_confirm")
+                submitted = st.form_submit_button("⏸ Pausieren")
+                new_state = True
+        if submitted:
+            if not confirm:
+                st.warning("Bitte zuerst bestätigen.")
+            else:
+                try:
+                    set_bot_paused(new_state, reason=reason or "", by="dashboard")
+                    st.success("Zustand geändert.")
+                    st.rerun()
+                except Exception:
+                    st.error("Umschalten fehlgeschlagen.")
+
+        # ── H1.3: Not-Aus-Reset (zwei Schritte) ─────────────────────────
+        st.divider()
+        st.markdown("**Not-Aus zurücksetzen**")
+        st.caption(
+            "Setzt Tagesöffnungs- und Allzeithoch-Referenz auf den aktuellen "
+            "Depotwert. Das ist eine bewusste Risiko-Übersteuerung: der heutige "
+            "Verlust zählt danach als 0, und das bisherige Allzeithoch wird "
+            "verworfen (der Drawdown-Schutz schlägt danach später an)."
+        )
+        with st.form("factory_breaker_reset_form"):
+            ack = st.checkbox("Mir ist klar, dass das eine Risiko-Sperre aufhebt",
+                              key="breaker_ack")
+            typed = st.text_input('Zum Bestätigen "RESET" eintippen', key="breaker_typed")
+            reset_submitted = st.form_submit_button("🔴 Not-Aus zurücksetzen")
+        if reset_submitted:
+            if not ack or typed.strip().upper() != "RESET":
+                st.warning('Beide Schritte nötig: Haken setzen UND "RESET" eintippen.')
+            else:
+                result = reset_circuit_breaker(total_value, by="dashboard")
+                if result is None:
+                    st.error("Reset fehlgeschlagen.")
+                else:
+                    st.success("Not-Aus zurückgesetzt.")
+                    st.rerun()
+
+
 def _render_achievements() -> None:
     """H7.2: Plaketten-Wand — echte Meilensteine, einmal erreicht bleiben
     sie erreicht (dashboard.achievements.unlocked() merkt das dauerhaft).
@@ -354,6 +445,12 @@ def render(ctx) -> None:
 
     _scene()
     _render_ticker_form()
+    # H1.1/H1.3: Bedien-Schalter NUR mit echtem ctx — der Kiosk-Modus
+    # (H6.1) ruft render(None) für ein Dauer-Wandbild auf; ein Not-Aus-
+    # Reset-Knopf gehört dort nicht hin, und ohne ctx gäbe es auch keinen
+    # echten Depotwert als Reset-Referenz (0.0 wäre gefährlich falsch).
+    if ctx is not None and hasattr(ctx, "total_value"):
+        _render_control_panel(getattr(ctx, "total_value", 0.0))
     _render_archive()
     _render_logbook()
     _render_achievements()

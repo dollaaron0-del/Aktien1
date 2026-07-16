@@ -90,6 +90,30 @@ def _isolate_achievements(tmp_path, monkeypatch):
     monkeypatch.setattr(ach_mod, "ACHIEVEMENTS_FILE", str(tmp_path / "achievements_test.json"))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_bot_pause(tmp_path, monkeypatch):
+    """Pause-Flag (system/bot_control.py) IMMER in eine Temp-Datei
+    umlenken. SICHERHEITSKRITISCH, nicht nur Hygiene: Der Bot ist seit
+    21.6.2026 BEWUSST pausiert (data/bot_paused.json). Ein Test, der den
+    H1.1-Schalter auf "Weiter" klickt, würde diesen echten Flag ohne
+    Isolation löschen — die Pause wäre still aufgehoben, sobald der
+    systemd-Dienst wieder startet. Der Zustand darf ausschließlich durch
+    den User selbst kippen, nie durch einen Testlauf."""
+    import system.bot_control as bc_mod
+    monkeypatch.setattr(bc_mod, "_PAUSE_FILE", str(tmp_path / "bot_paused_test.json"))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_circuit_breaker_state(tmp_path, monkeypatch):
+    """Circuit-Breaker-State (portfolio/circuit_breaker.py) IMMER in eine
+    Temp-Datei umlenken. Ebenfalls sicherheitskritisch: Der H1.3-Reset
+    überschreibt die echten Risiko-Referenzwerte (Tagesöffnung/
+    Allzeithoch) — ein Testlauf darf die scharfe Drawdown-Schwelle des
+    echten Portfolios niemals verstellen."""
+    import portfolio.circuit_breaker as cb_mod
+    monkeypatch.setattr(cb_mod, "_CACHE_FILE", str(tmp_path / "circuit_breaker_test.json"))
+
+
 @pytest.fixture()
 def tmp_data_dir(tmp_path, monkeypatch):
     """

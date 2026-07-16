@@ -297,3 +297,31 @@ def test_ticker_form_ignores_empty_submission(tmp_path, monkeypatch):
 
     assert not at.exception
     assert urq_mod.peek() == []
+
+
+# ── H1.1/H1.3: Steuerpult nur mit echtem ctx (nicht im Kiosk-Wandbild) ───────
+
+def test_control_panel_absent_without_ctx():
+    """Kiosk-Modus (H6.1) ruft render(None) — ein Not-Aus-Reset-Knopf
+    gehört nicht auf ein Dauer-Wandbild, und ohne ctx gäbe es keinen
+    echten Depotwert als Reset-Referenz."""
+    at = AppTest.from_string(_SCRIPT)  # _SCRIPT nutzt _Ctx ohne total_value
+    at.run()
+    assert not at.exception
+    labels = [e.label for e in at.get("expander")]
+    assert "🎛 Steuerpult" not in labels
+
+
+def test_control_panel_present_with_real_ctx():
+    script = """
+class _Ctx:
+    total_value = 100000.0
+
+from dashboard.tabs import factory
+factory.render(_Ctx())
+"""
+    at = AppTest.from_string(script)
+    at.run()
+    assert not at.exception
+    labels = [e.label for e in at.get("expander")]
+    assert "🎛 Steuerpult" in labels

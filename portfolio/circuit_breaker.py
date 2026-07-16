@@ -121,4 +121,46 @@ class CircuitBreaker:
             "daily_pct":    round(daily_pct, 2),
             "drawdown_pct": round(drawdown, 2),
             "triggered":    not self.check_buy_allowed(current_value)[0],
+            "last_reset":   self._state.get("last_reset"),
         }
+
+    # ── Manueller Reset (Dashboard-Bedienung, Ausbau-Roadmap H1.3) ────────────
+
+    def reset(self, current_value: float, by: str = "dashboard") -> Dict:
+        """Hebt ausgelöste Sperren auf, indem die Referenzwerte auf den
+        AKTUELLEN Portfolio-Wert gesetzt werden.
+
+        Das ist eine bewusste RISIKO-ÜBERSTEUERUNG, kein Reparatur-Knopf:
+        Es gibt keinen "ausgelöst"-Flag zum Löschen — `check_buy_allowed()`
+        rechnet die Sperre jedes Mal neu aus `open_value` (Tagesverlust) und
+        `peak_value` (Drawdown vom Allzeithoch) gegen den aktuellen Wert.
+        Beide zurückzusetzen heißt:
+          - Tagesverlust: der heutige Verlust zählt ab jetzt als 0.
+          - Drawdown: das bisherige Allzeithoch wird VERWORFEN — der
+            Drawdown-Schutz misst danach ab dem (niedrigeren) aktuellen
+            Wert und schlägt entsprechend später an.
+
+        Die Vorzustände werden darum unter `last_reset` mitgeschrieben statt
+        still überschrieben: Die Aktion bleibt im State nachvollziehbar, auch
+        wenn der Aufrufer sie nicht separat protokolliert.
+        """
+        prev_open = self._state.get("open_value")
+        prev_peak = self._state.get("peak_value")
+        record = {
+            "at": datetime.now().isoformat(timespec="seconds"),
+            "by": by,
+            "prev_open_value": prev_open,
+            "prev_peak_value": prev_peak,
+            "reset_to": current_value,
+        }
+        self._state["day"] = date.today().isoformat()
+        self._state["open_value"] = current_value
+        self._state["peak_value"] = current_value
+        self._state["last_reset"] = record
+        self._save()
+        log.warning(
+            "CircuitBreaker MANUELL zurückgesetzt (%s): Referenzwerte auf $%.2f "
+            "(vorher Tagesöffnung $%s, Allzeithoch $%s)",
+            by, current_value, prev_open, prev_peak,
+        )
+        return record

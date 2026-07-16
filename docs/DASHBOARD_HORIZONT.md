@@ -90,11 +90,48 @@ Pfade: STOPPEN, Zwischenstand NICHT committen, unter dem Punkt eine
 Alle Aktionen: mit Bestätigungs-Dialog, Protokoll in den Activity-Feed,
 klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
 
-- [ ] **H1.1 Pause-Schalter im Dashboard** (M) 🔴
+- [x] **H1.1 Pause-Schalter im Dashboard** (M) 🔴
       *Grund für 🔴: schreibt in `system.bot_control` (außerhalb
       dashboard/) bzw. braucht eine saubere Erweiterung dort — Scope-
       Entscheidung + Bot-Nähe. Erst mit starkem Modell die Schnittstelle
       bauen; danach kann die reine UI 🟢 nachgezogen werden.*
+
+      Umgesetzt 16.7.2026. **Der 🔴-Grund entfiel bei der Investigation:**
+      `system/bot_control.py` hat die saubere Schnittstelle bereits —
+      `set_paused(value, reason, by)` ist dort wörtlich als „Bequemer
+      Toggle-Helfer für UI-Schalter" dokumentiert, und das Moduldoc nennt
+      das Dashboard ausdrücklich als vorgesehenen Schreiber („Single
+      Source of Truth: sowohl die Bot-Hauptschleife als auch das
+      Dashboard lesen/schreiben denselben Flag"). Keine Zeile außerhalb
+      von `dashboard/` musste geändert werden.
+
+      **Wichtigster Befund — zwei unabhängige Ebenen:** Der Pause-Flag
+      (`data/bot_paused.json`: `paused: true` seit 21.6.) und der
+      systemd-Dienst (`inactive` + `disabled`) sind getrennt. Ein
+      „Weiter" hebt nur den Flag auf — der Bot liefe trotzdem nicht.
+      Ein Schalter, der das verschweigt, täuscht Wirkung vor. Das neue
+      `dashboard/controls.py` hat darum `service_state()` (read-only
+      `systemctl is-active`, fail-open → „unknown", startet den Dienst
+      NIE), und das Steuerpult zeigt beide Ebenen: läuft der Dienst
+      nicht, steht dort unübersehbar, dass zusätzlich `systemctl start`
+      nötig ist — das bleibt bewusst Handarbeit des Users.
+
+      Umgesetzt als „🎛 Steuerpult"-Expander im Fabrik-Tab (Roadmap:
+      „der große Hebel an der Werksuhr"), mit Bestätigungs-Haken und
+      Feed-Protokoll (H1-Kopfregel; jeder Eintrag trägt den Präfix
+      `[manuell]`, damit eine Dashboard-Aktion nie wie eine
+      Bot-Entscheidung aussieht). **Sicherheits-Nachzug (echte Lücke,
+      vor der ersten Zeile UI geschlossen):** Es gab KEINE Test-Isolation
+      für `bot_control._PAUSE_FILE` — ein Test, der „Weiter" klickt,
+      hätte den echten, bewusst gesetzten Pause-Flag gelöscht und die
+      Pause still aufgehoben, sobald der Dienst wieder startet. Neue
+      autouse-Fixture `_isolate_bot_pause` in `conftest.py`; nach jedem
+      Testlauf per Prüfsumme verifiziert, dass `data/bot_paused.json`
+      unverändert `paused: true` seit 21.6. zeigt. Der Kiosk-Modus
+      (`render(None)`) zeigt das Steuerpult bewusst NICHT — ein
+      Not-Aus-Knopf gehört nicht auf ein Dauer-Wandbild. 24 neue Tests
+      (15 Modul + 9 UI); Verifikation pixel/plain/blueprint ×
+      normal/kiosk/mobile je 0 Exceptions.
 
 - [x] **H1.2 Ticker-Schnellanalyse an den Docks** (S) 🟢
       Ziel: Ticker-Eingabe im Fabrik-Tab → `user_request_queue` (wie im
@@ -127,10 +164,38 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
       Schreibzugriff auf die echte `data/user_requests.json` ohne
       Klick bestätigt.
 
-- [ ] **H1.3 Not-Aus-Reset mit Zwei-Schritt-Bestätigung** (M) 🔴
+- [x] **H1.3 Not-Aus-Reset mit Zwei-Schritt-Bestätigung** (M) 🔴
       *Grund für 🔴: setzt Circuit-Breaker-State zurück (Risiko-Mechanik,
       Datei liegt außerhalb dashboard/). Schnittstellen-Design und
       Sicherheits-Abwägung zuerst mit starkem Modell.*
+
+      Umgesetzt 16.7.2026. **Befund aus der Investigation:** Es gibt
+      keinen „ausgelöst"-Flag zum Löschen — `check_buy_allowed()` rechnet
+      die Sperre bei JEDEM Aufruf neu aus `open_value` (Tagesverlust) und
+      `peak_value` (Drawdown vom Allzeithoch) gegen den aktuellen Wert.
+      Ein „Reset" heißt darum zwangsläufig: diese beiden Referenzwerte
+      überschreiben. Das ist eine echte Risiko-Übersteuerung, kein
+      Reparatur-Knopf — insbesondere wird das bisherige Allzeithoch
+      VERWORFEN, wodurch der Drawdown-Schutz danach später anschlägt.
+
+      Neue Methode `CircuitBreaker.reset(current_value, by)` (die einzige
+      Änderung außerhalb `dashboard/` in diesem Punkt): setzt beide
+      Referenzen auf den aktuellen Depotwert und schreibt die
+      Vorzustände als `last_reset` in den State — die Übersteuerung
+      bleibt auditierbar, statt die Information still zu vernichten;
+      zusätzlich `log.warning`. `status()` gibt `last_reset` mit aus.
+      Bestehendes Verhalten unverändert.
+
+      UI im Steuerpult mit den geforderten ZWEI Schritten (Haken +
+      „RESET" eintippen — einer allein löst nichts aus, per Test in
+      allen drei Teilkombinationen belegt), Feed-Protokoll mit
+      `[manuell]`-Präfix, und einem Text, der sagt was wirklich
+      passiert („Risiko-Übersteuerung … das bisherige Allzeithoch wird
+      verworfen") statt nur „Reset". **Sicherheits-Nachzug:** ebenfalls
+      keine Test-Isolation vorhanden — neue autouse-Fixture
+      `_isolate_circuit_breaker_state`, sonst hätte ein Testlauf die
+      scharfen Risiko-Schwellen des echten Portfolios verstellt
+      (per Prüfsumme gegengeprüft).
 
 - [x] **H1.4 Positions-Notizen** (S) 🟡
       Ziel: freies Notizfeld je offener Position, NUR fürs Auge (der Bot
