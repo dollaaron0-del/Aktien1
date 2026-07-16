@@ -9,6 +9,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import html
 import json
 import streamlit as st
 import pandas as pd
@@ -401,6 +402,57 @@ if st.query_params.get("kiosk") == "1":
     )
     from dashboard.tabs import factory as _kiosk_factory
     _kiosk_factory.render(None)
+    st.stop()
+
+# ─── Handy-Kompaktansicht (Ausbau-Roadmap H6.2) ──────────────────────────────
+# ?mobile=1: die 5 wichtigsten Zahlen + Ampel + Mini-Fabrik + Terminal-Feed
+# untereinander — ehrliche Verkleinerung, kein PWA-Vollausbau. Kopfzeile
+# (Logo/Titel/Status-Banner/Ampel) ist bereits gerendert; Streamlit-eigene
+# Kopfzeile/Toolbar wird wie im Kiosk-Modus per CSS ausgeblendet.
+if st.query_params.get("mobile") == "1":
+    st.markdown(
+        '<style>[data-testid="stHeader"], [data-testid="stToolbar"], '
+        '#MainMenu, footer {display:none;}</style>',
+        unsafe_allow_html=True,
+    )
+    try:
+        from portfolio.circuit_breaker import CircuitBreaker as _MobileCB
+        _mobile_cb = _MobileCB().status(total_value)
+        _mobile_daily_pct = _mobile_cb.get("daily_pct") or 0.0
+        _mobile_open_value = _mobile_cb.get("open_value") or total_value
+        _mobile_daily_pnl = total_value - _mobile_open_value
+    except Exception:
+        _mobile_daily_pct, _mobile_daily_pnl = 0.0, 0.0
+    st.metric(
+        "Depotwert", f"${total_value:,.2f}",
+        f"{_mobile_daily_pnl:+,.2f} $ ({_mobile_daily_pct:+.2f}%)",
+    )
+
+    try:
+        from dashboard.factory import render_scene as _mobile_scene
+        st.markdown(_mobile_scene(), unsafe_allow_html=True)
+    except Exception:
+        pass
+
+    try:
+        from system.live_status import feed_recent as _mobile_feed_recent
+        _mobile_events = _mobile_feed_recent(limit=10)
+    except Exception:
+        _mobile_events = []
+    if _mobile_events:
+        _mobile_lines = []
+        for _mev in _mobile_events:
+            _mts = (_mev.get("ts") or "")[11:16]
+            _mparts = [p for p in (_mev.get("ticker"), _mev.get("detail")) if p]
+            _mobile_lines.append(
+                f"{_mts} {_mev.get('event', '?').upper()}: {' — '.join(_mparts) or '–'}"
+            )
+        st.markdown(
+            '<div class="px-terminal">' + "".join(
+                f"<div>{html.escape(line)}</div>" for line in _mobile_lines
+            ) + "</div>",
+            unsafe_allow_html=True,
+        )
     st.stop()
 
 # ─── Leitstand-Instrumente (Design D7.1) ─────────────────────────────────────

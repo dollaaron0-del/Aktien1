@@ -598,10 +598,23 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
       kein Theme-Zustand). 3 neue Tests; Verifikation lief in allen
       vier Kombinationen (normal/kiosk × pixel/plain) — je 0 Exceptions.
 
-- [ ] **H6.2 Handy-Kompaktansicht** (M) 🟢
+- [x] **H6.2 Handy-Kompaktansicht** (M) 🟢
       Wie H6.1, zweiter Zweig `?mobile=1`: Depotwert + Tages-P&L
       (`st.metric`), Ampel-Zeile, Fabrik-SVG (skaliert eh auf 100%),
       Terminal-Feed (letzte 10). Gleiche Testform wie H6.1.
+
+      Umgesetzt 15.7.2026: zweiter Query-Param-Zweig in `app.py`,
+      direkt nach dem H6.1-Kiosk-Zweig (gleiche Stelle — nach der
+      bereits gerenderten Ampel, vor KPI-Leiste/Instrumente/Tabs).
+      Tages-P&L (Dollar + Prozent) aus `CircuitBreaker().status()`s
+      `open_value`/`daily_pct` abgeleitet (dieselbe Datenquelle wie die
+      Ampel selbst, keine neue Berechnung). Fabrik-Szene über
+      `dashboard.factory.render_scene()`, Terminal-Feed über
+      `feed_recent(limit=10)` (dasselbe Muster wie der H2.3-Replay-
+      Terminal). Streamlit-Chrome-CSS wie im Kiosk-Modus ausgeblendet.
+      4 neue Tests (exakt das H6.1-Testmuster übernommen); Verifikation
+      in allen sinnvollen Kombinationen (pixel/plain/blueprint ×
+      normal/kiosk/mobile) je 0 Exceptions.
 
 - [ ] **H6.3 [USER] Canvas/WebGL-Fabrik** (L) 🔴
       *Nur falls SVG nach W5-Assets + Replay messbar ruckelt (Kriterium
