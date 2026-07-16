@@ -492,15 +492,34 @@ klarer Anzeige, dass es eine manuelle Dashboard-Aktion war.
       > gewünscht ist, oder (b) die ehrliche Zwei-Balken-Mini-Version
       > reicht.
 
-- [ ] **H4.3 Paper-Forward-Fieberkurve** (S) 🟢
-      1. [ ] Datenquelle: `data/paper_forward.json` (existiert; Struktur
+- [x] **H4.3 Paper-Forward-Fieberkurve** (S) 🟢
+      1. [x] Datenquelle: `data/paper_forward.json` (existiert; Struktur
          vorher ansehen). Zeitreihe Strategie vs. Benchmark extrahieren.
-      2. [ ] Altair-Liniendiagramm im Strategie-Tab; solange n Trades
+      2. [x] Altair-Liniendiagramm im Strategie-Tab; solange n Trades
          < 30: halbtransparentes Warnband + Caption „Bilanz statistisch
          dünn (n=…)" — die ehrliche Darstellung ist der Punkt.
-      3. [ ] Tests: präparierte JSON → Chart-Daten korrekt; Warnband-
+      3. [x] Tests: präparierte JSON → Chart-Daten korrekt; Warnband-
          Schwelle.
-      4. [ ] → SA
+      4. [x] → SA
+
+      Umgesetzt 15.7.2026 mit einer dokumentierten Abweichung: Die
+      Investigation ergab, dass `data/paper_forward.json` NUR rohe
+      Positionen speichert (entry/exit/return_pct je Trade), KEINE
+      vorberechnete Strategie-vs-Benchmark-Zeitreihe. Ein Buy&Hold-
+      Vergleich existiert nirgends gecacht —
+      `strategy_lab.paper_forward.benchmark_buy_hold()` bräuchte einen
+      LIVE-Preis-Loader (Netzwerk-Abruf historischer Kurse), außerhalb
+      des Rahmens eines netzfreien Dashboard-Moduls. Sogar
+      `strategy_lab/live_bridge.py`s eigene "netzfreie Bilanz"
+      (`_paper_forward_edge()`) lässt den Benchmark-Teil aus genau
+      diesem Grund bewusst weg. `dashboard/paper_forward_curve.py`s
+      `equity_curve()` baut darum NUR die kumulierte,
+      gewichtete Strategie-Rendite über abgeschlossene Positionen
+      (chronologisch nach `exit_date`) — kein Tab „Strategie" existiert,
+      Einbau darum im Tab „Trades & Lernen" neben Thesen-Board und
+      Kalibrier-Kurve. Halbtransparentes Warnband (Altair-Layer) UND
+      Caption-Text bei n<30, wie gefordert. 10 neue Tests; Verifikation
+      pixel/plain/blueprint × normal/kiosk je 0 Exceptions.
 
 ## H5 — Fernblick & Weitergabe
 

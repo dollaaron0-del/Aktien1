@@ -53,6 +53,54 @@ def _render_thesis_board() -> None:
             st.caption(f"Verdikt: {row['verdict_reason']}")
 
 
+def _render_paper_forward_curve() -> None:
+    """H4.3: Paper-Forward-Fieberkurve — kumulierte Rendite über die
+    echten abgeschlossenen Positionen. BEWUSST ohne Benchmark-Linie
+    (siehe Moduldoc dashboard/paper_forward_curve.py: Buy&Hold-Vergleich
+    bräuchte einen Live-Preis-Abruf, außerhalb des Dashboard-Scopes).
+    Fail-open: ohne Daten nur ein Hinweis, nie eine Exception."""
+    st.subheader("🌡️ Paper-Forward-Fieberkurve")
+    st.caption(
+        "Kumulierte Rendite der Paper-Forward-Strategie über die Zeit "
+        "(ehrlich: ohne Buy&Hold-Vergleich — der bräuchte einen "
+        "Live-Kursabruf, den dieses Dashboard-Modul bewusst nicht macht)."
+    )
+    from dashboard.paper_forward_curve import equity_curve
+    try:
+        rows = equity_curve()
+    except Exception:
+        rows = []
+
+    if not rows:
+        st.caption("Noch keine abgeschlossenen Paper-Forward-Positionen.")
+        return
+
+    if len(rows) < 30:
+        st.caption(f"⚠️ Bilanz statistisch dünn (n={len(rows)}).")
+
+    try:
+        import altair as alt
+        df = pd.DataFrame(rows)
+        df["date"] = pd.to_datetime(df["date"])
+        chart = alt.Chart(df).mark_line(point=True).encode(
+            x=alt.X("date:T", title="Exit-Datum"),
+            y=alt.Y("cum_return:Q", title="Kumulierte Rendite"),
+            tooltip=["date", "ticker", "strategy", "return_pct", "cum_return"],
+        )
+        if len(rows) < 30:
+            # Halbtransparentes Warnband über die ganze Chart-Breite —
+            # die dünne Stichprobe bleibt auch optisch sichtbar, nicht
+            # nur im Caption-Text.
+            band = alt.Chart(df).mark_rect(opacity=0.08).encode(
+                x=alt.X("min(date):T"), x2=alt.X2("max(date):T"),
+                y=alt.value(0), y2=alt.value(300),
+            )
+            chart = band + chart
+        st.altair_chart(chart, width="stretch")
+    except Exception:
+        pass
+
+
 def _render_calibration_curve() -> None:
     """H3.3: Kalibrier-Kurve live — Trefferquote je Konfidenz-Stufe aus
     den echten gelabelten Trades. Nutzt das registrierte Altair-Theme
@@ -378,6 +426,8 @@ def render(ctx) -> None:
     _render_thesis_board()
     st.divider()
     _render_calibration_curve()
+    st.divider()
+    _render_paper_forward_curve()
     st.divider()
 
     # Monthly self-assessment
