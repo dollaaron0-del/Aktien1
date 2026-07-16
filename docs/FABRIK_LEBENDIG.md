@@ -221,14 +221,98 @@ nicht über Geld.
       Stop-Preise persistiert sind: broker/order_log? conditional_
       entries.json? NICHT raten). 🔴 weil Datenlage unklar ist und
       erst sauber ermittelt werden muss.
+- [ ] 🟢 **L3.6 Lager-Zählwerk: Zu- und Abgänge** (User-Frage 16.7.:
+      „sieht man auch Bestandsveränderungen?" — Antwort war: nur
+      indirekt über Feed/Replay, LÜCKE) — am Hochregallager ein
+      Wareneingangs-/Warenausgangs-Zählwerk: „heute +2 / −1" aus der
+      echten `trades`-Tabelle (portfolio.db, read-only eigene
+      sqlite3-Verbindung, Muster genealogy.py; Käufe/Verkäufe des
+      Tages zählen). Im Lager-Detailpanel (Klick-Fokus) zusätzlich die
+      letzten 5 Bestandsbewegungen als Liste (Datum, Ticker, ±Stück).
+      Mechanische Zählwerk-Optik wie der D7.2-Durchsatz-Zähler am
+      Förderband (gleiches Muster wiederverwenden). 0 Bewegungen =
+      Zählwerk zeigt 0, kein Verstecken.
+
+## L4 — Fehlende Maschinen (User-Frage 16.7.: „hat jedes Feature seine
+## eigene Maschine?")
+
+Befund: 11 Maschinen decken die Kern-Subsysteme ab, aber vier ECHTE
+Subsysteme fehlen in der Halle. Regel bleibt: eine Maschine pro
+Subsystem (nicht pro Dashboard-Feature — Panels wie Stromzähler/Tafel
+sind bewusst Anbauten, keine Maschinen). Für jede neue Maschine gilt
+das W2-Muster: `_read_<id>()` in state.py (fail-open, netzfrei),
+Eintrag in MACHINE_IDS + MACHINE_LABELS, Zeichnung in machines.py,
+Tooltip + Klick-Fokus, Tests wie test_dashboard_factory.py.
+ACHTUNG Layout: 24×14-Grid in scene.py ist voll — L4 braucht entweder
+L5 (größeres Gelände) zuerst ODER eine bewusste Verdichtung; [URTEIL]
+vor dem ersten L4-Punkt entscheiden, nicht nebenbei quetschen.
+
+- [ ] 🟡 **L4.1 Wartehalle (Signal-Queue)** — `data/signal_queue.db`
+      (PENDING-Signale bei vollen Slots): Bank mit wartenden Paketen,
+      Anzahl = echte PENDING-Zeilen; Tooltip zeigt Ticker + seit wann.
+      Status: off (leer) / ok (1–2) / warn (≥3, Stau).
+- [ ] 🟢 **L4.2 Auftragsbriefkasten (Werksaufträge)** —
+      `analyzers/user_request_queue.py` (peek() existiert): Briefkasten
+      am Werkstor, Fähnchen oben wenn Aufträge warten; Tooltip = die
+      eingeworfenen Ticker. Verzahnt mit dem H1.2-Formular (das wirft
+      hier ein).
+- [ ] 🟡 **L4.3 Konstruktionsbüro (Strategie-Labor)** —
+      `data/strategy_registry.json` + `data/thesis_registry.json`:
+      Zeichenbrett-Häuschen; Status nach Registry-Inhalt (0 ACTIVE =
+      gedimmt mit ehrlichem Tooltip „keine Strategie mit bewiesener
+      Kante" — DER bekannte Befund, nicht beschönigen), Thesen mit
+      Zeit-Budget-Fortschritt im Detail-Panel.
+- [ ] 🟢 **L4.4 Funkturm (Telegram)** — Sendemast am Dach;
+      Status aus `TELEGRAM_MODE`-Config + `data/notify_throttle.json`
+      (letzte Sendung, gedrosselt?). Funkwellen-Animation NUR wenn
+      heute wirklich gesendet wurde (Ehrlichkeits-Regel wie die
+      Stromzähler-Scheibe); reduced-motion-fest.
+
+## L5 — Werksgelände & Kamera (User-Idee 16.7.: „mit dem Mauszeiger
+## über die Fabrik fliegen — dann muss sie nicht auf eine
+## Bildschirmgröße begrenzt sein")
+
+Technische Ausgangslage (16.7. geprüft, nicht geraten): die Szene ist
+EIN SVG (viewBox 0 0 1200 675, `style="width:100%"`), gerendert über
+`st.markdown(unsafe_allow_html=True)`; Maschinen sind
+`<a href="?factory=…" target="_self">`-Links (Klick-Fokus W3.2).
+**Harte Falle:** `st.markdown` führt KEIN JavaScript aus (innerHTML —
+Scripts werden nicht ausgeführt). Echtes Drag/Zoom braucht darum
+`st.components.v1.html` (iframe) — und DORT müssen die Maschinen-Links
+auf `target="_parent"` umgestellt werden, sonst navigiert der Klick
+das iframe statt des Dashboards und der Fokus bricht.
+
+- [ ] 🟢 **L5.1 Größeres Gelände + Scroll-Flug (die 80%-Lösung,
+      OHNE JS)** — viewBox/Grid wachsen lassen (z. B. 2000×675,
+      Platz für L4-Maschinen), das SVG mit fester Pixel-Breite in
+      einen `overflow-x:auto`-Container (Muster D8.3-Regal). „Fliegen"
+      = scrollen/wischen; funktioniert in st.markdown, Links + Tooltips
+      + Animationen bleiben unverändert, mobil = natives Touch-Wischen.
+      Kiosk-Modus (H6.1): dort NICHT scrollen lassen, sondern die
+      Gesamtansicht skalieren (ein Wandbild scrollt niemand).
+- [ ] 🔴 **L5.2 Echter Kamera-Flug (Drag-Pan + Rad-Zoom, MIT JS)** —
+      nur wenn L5.1 sich zu klein anfühlt: Szene in
+      `st.components.v1.html` einbetten, Vanilla-JS (kein CDN, alles
+      inline): Drag verschiebt / Mausrad zoomt die viewBox,
+      Doppelklick = Reset, Touch-Pinch für mobil. Maschinen-Links auf
+      `target="_parent"` (siehe Falle oben) — Klick-Fokus MUSS danach
+      nachweislich weiter funktionieren (Test + Hand-Verifikation).
+      Zoomgrenzen festlegen (min = Gesamtansicht, max ≈ 3×), damit man
+      sich nicht „verfliegt". iframe-Höhe fest → `height`-Parameter
+      sauber berechnen. 🔴 wegen JS-im-iframe-Komplexität und weil
+      AppTest iframes nur als Block sieht (Verifikation dünner als
+      gewohnt — ehrlich dokumentieren).
 
 ## Reihenfolge-Empfehlung
 
-L1.1 → L1.2 → L1.3 (die Kartei trägt sofort sichtbar) → L3.1 + L3.3
-(kleine Schritte, großer Lebendigkeits-Gewinn, nutzen D8-Infrastruktur)
-→ L2.1 + L2.2 (Erinnerungen) → L3.2 (Loren) → L2.3–L2.5 (Traum; profitiert
-davon, dass factory_history bis dahin mehr Tage hat) → L1.4/L1.5 → L3.4 →
-L3.5 zuletzt (Datenlage klären).
+L1.1 → L1.2 → L1.3 ✅ (die Kartei trägt sofort sichtbar) → L3.1 + L3.3 +
+L3.6 (kleine Schritte, großer Lebendigkeits-Gewinn, nutzen D8-/D7.2-
+Infrastruktur) → L2.1 + L2.2 (Erinnerungen) → **L5.1 (größeres Gelände —
+VOR L4, sonst ist kein Platz für neue Maschinen)** → L4.2 + L4.4 (die
+zwei 🟢-Maschinen) → L3.2 (Loren — profitiert vom größeren Gelände) →
+L4.1 + L4.3 → L2.3–L2.5 (Traum; profitiert davon, dass factory_history
+bis dahin mehr Tage hat) → L1.4/L1.5 → L3.4 → L3.5 und L5.2 zuletzt
+(Datenlage klären bzw. nur bei echtem Bedarf).
 
 Hinweis Zeitpunkt: nichts hiervon blockiert den Bot-Neustart morgen —
 alles ist reine Dashboard-/Lese-Arbeit. Umgekehrt profitieren L2 (Feed-
