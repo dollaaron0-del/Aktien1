@@ -274,13 +274,36 @@ ist netzfrei — P&L (braucht Live-Kurs) erscheint nur in Tabs, die
 `ctx.prices` haben; in der Szene sprechen wir über ZEIT (Haltedauer),
 nicht über Geld.
 
-- [ ] 🟢 **L3.1 Abfahrtsplan der Positionen** — die D8.1-Tafel bekommt
+- [x] 🟢 **L3.1 Abfahrtsplan der Positionen** — die D8.1-Tafel bekommt
       je offener Position eine Zeile: „TSM — planmäßige Abfahrt"
       am Tag entry_date + target_hold_days (kind="position", eigene
       Farbe). Dazu Earnings-Termine GEHALTENER Ticker als „⚠ Fracht-
       risiko" (EarningsFilter, läuft durch denselben 6h-Cache).
       Abfahrt in der Vergangenheit (Ziel überschritten) → „überfällig"
       statt stillschweigend weg.
+
+      Umgesetzt 16.7.2026: `_position_rows()` als weitere NETZFREIE
+      Quelle direkt in `upcoming_events()` (Portfolio ist lokal —
+      gehört zu den internen Quellen, nicht in die gecachten
+      `extra_rows`, die nur für den Netz-Abruf Earnings gedacht sind).
+      Farbsprache: ABFAHRT=cobalt („läuft", wie Szenen-Legende),
+      ÜBERFÄLLIG/FRACHTRISIKO=rot. `board_html` sagt jetzt
+      „überfällig (3 Tage)" statt „in -3 Tagen" (Singular/Plural
+      korrekt) — der Horizont-Filter schneidet nur nach vorne ab, also
+      bleiben überfällige Zeilen stehen und stehen durch die
+      Datums-Sortierung ganz oben. `earnings_rows(held=…)` markiert
+      Earnings gehaltener Titel; der Tab speist gehaltene Ticker
+      ZUSÄTZLICH zur Watchlist in denselben 6h-Cache ein (sonst fehlte
+      der Termin genau im riskantesten Fall — ein Titel, den wir halten,
+      der aber nicht mehr auf der Watchlist steht). ABWEICHUNGEN:
+      (a) `limit` von 10 auf 14 erhöht, sonst hätten Positions-Zeilen
+      bei vollem Depot die Makro-Termine verdrängt; (b) Test-Helfer
+      `_no_system` → `_only_macro` umbenannt, legt jetzt auch die
+      Positions-Quelle stumm (sonst hingen Makro-Tests an der echten
+      Depot-Lage). 11 neue Tests (test_dashboard_departures.py, 24
+      gesamt), netzfrei via Fake-Portfolio. Aktuell zeigt die Tafel
+      keine Abfahrten — das Depot ist bis zum Neustart leer; ab dem
+      ersten Kauf erscheinen sie automatisch.
 - [ ] 🟡 **L3.2 Loren-Umlauf in der Szene** — Schienenkreis durch die
       Halle (scene.py); je Position eine Lore, Position auf der
       Schiene = Haltedauer-Fortschritt (0 % am Wareneingang, 100 % am

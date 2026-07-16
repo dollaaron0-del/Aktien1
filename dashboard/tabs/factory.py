@@ -264,23 +264,32 @@ def _render_logbook() -> None:
 
 
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
-def _cached_earnings_rows(tickers: tuple) -> list:
+def _cached_earnings_rows(tickers: tuple, held: tuple = ()) -> list:
     """Earnings-Abfrage (yfinance → Netz) höchstens alle 6h; fail-open
-    leer. Tuple statt Liste, damit st.cache_data hashen kann."""
+    leer. Tuples statt Listen, damit st.cache_data hashen kann.
+    `held` (L3.1) markiert Earnings gehaltener Titel als Frachtrisiko —
+    liegt bewusst INNERHALB des Caches, damit die Depot-Lage denselben
+    6h-Abruf nutzt statt einen zweiten auszulösen."""
     from dashboard import departures
     try:
-        return departures.earnings_rows(list(tickers))
+        return departures.earnings_rows(list(tickers), held=list(held))
     except Exception:
         return []
 
 
 def _render_departures() -> None:
     """D8.1: Werksbahnhof-Abfahrtstafel — was kommt auf die Fabrik zu?
-    Makro-Termine, Watchlist-Earnings, nächster Zyklus, nächstes Backup.
+    Makro-Termine, Earnings, nächster Zyklus, nächstes Backup — und
+    (L3.1) die planmäßigen Abfahrten der offenen Positionen.
     Fail-open: jede Quelle darf einzeln ausfallen."""
     from dashboard import departures
     try:
-        extra = _cached_earnings_rows(tuple(departures.watchlist_tickers()))
+        held = departures.held_tickers()
+        # Gehaltene Titel MÜSSEN mit abgefragt werden, auch wenn sie
+        # (nicht mehr) auf der Watchlist stehen — sonst fehlte gerade
+        # beim riskantesten Fall der Earnings-Termin.
+        tickers = tuple(sorted(set(departures.watchlist_tickers()) | set(held)))
+        extra = _cached_earnings_rows(tickers, tuple(sorted(held)))
         rows = departures.upcoming_events(extra_rows=extra)
     except Exception:
         return

@@ -119,12 +119,59 @@ def watchlist_tickers(limit: int = 12) -> List[str]:
         return []
 
 
+def held_tickers() -> List[str]:
+    """Ticker der offenen Positionen (read-only, netzfrei). Für den
+    Earnings-Abruf des Aufrufers: eine Position, die in ihre Earnings
+    hineinläuft, ist ein echtes Risiko — anders als ein Watchlist-Titel."""
+    try:
+        from portfolio.portfolio import Portfolio
+        return [str(t).upper() for t in Portfolio().all_positions()]
+    except Exception:
+        return []
+
+
+def _position_rows(now: datetime) -> List[Dict]:
+    """L3.1: je offene Position eine planmäßige Abfahrt — Zieltag ist
+    `entry_date + target_hold_days` (dieselben echten Felder, die auch
+    Lager/Regal nutzen; KEINE zweite Datenhaltung). Netzfrei.
+
+    Überschrittene Ziele verschwinden NICHT stillschweigend, sondern
+    bleiben als „überfällig" stehen (board_html macht daraus die
+    Beschriftung) — eine Position, die über ihr Ziel hinausläuft, ist
+    genau das, was man sehen will."""
+    try:
+        from portfolio.portfolio import Portfolio
+        positions = Portfolio().all_positions()
+    except Exception:
+        return []
+    rows = []
+    for ticker, pos in positions.items():
+        try:
+            entry = datetime.fromisoformat(str(pos.entry_date)[:10])
+            due = entry + timedelta(days=int(pos.target_hold_days or 0))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        overdue = due.date() < now.date()
+        rows.append({
+            "date": due.date().isoformat(),
+            "label": f"{ticker} — planmäßige Abfahrt",
+            "impact": "ÜBERFÄLLIG" if overdue else "ABFAHRT",
+            "kind": "position",
+        })
+    return rows
+
+
 def earnings_rows(tickers: List[str], now: Optional[datetime] = None,
-                  filter_obj=None) -> List[Dict]:
+                  filter_obj=None, held: Optional[List[str]] = None) -> List[Dict]:
     """Earnings-Termine je Ticker über den bestehenden `EarningsFilter`
     (yfinance → NETZ; der Aufrufer cached das). `filter_obj` injizierbar
-    für netzfreie Tests. Fail-open je Ticker."""
+    für netzfreie Tests. Fail-open je Ticker.
+
+    `held` = Ticker mit offener Position: deren Earnings sind
+    „Frachtrisiko" (L3.1) — wir halten das Papier, wenn die Zahlen
+    kommen. Reine Watchlist-Earnings bleiben ein normaler Termin."""
     now = now or datetime.now()
+    held_set = {str(t).upper() for t in (held or [])}
     if filter_obj is None:
         try:
             from analyzers.earnings_filter import EarningsFilter
@@ -139,23 +186,31 @@ def earnings_rows(tickers: List[str], now: Optional[datetime] = None,
             continue
         if ed is None or ed.date() < now.date():
             continue
+        is_held = str(t).upper() in held_set
         rows.append({
             "date": ed.date().isoformat(),
-            "label": f"{t} Earnings",
-            "impact": "EARNINGS",
+            "label": f"{t} Earnings" + (" (im Depot)" if is_held else ""),
+            "impact": "FRACHTRISIKO" if is_held else "EARNINGS",
             "kind": "earnings",
         })
     return rows
 
 
 def upcoming_events(extra_rows: Optional[List[Dict]] = None,
-                    limit: int = 10, days_ahead: int = 60,
+                    limit: int = 14, days_ahead: int = 60,
                     now: Optional[datetime] = None) -> List[Dict]:
-    """Alle netzfreien Quellen + optionale fertige Zusatz-Zeilen (Earnings),
-    gefiltert auf die nächsten `days_ahead` Tage, sortiert, gedeckelt."""
+    """Alle netzfreien Quellen (Makro, System, Positions-Abfahrten) +
+    optionale fertige Zusatz-Zeilen (Earnings — die brauchen Netz und
+    kommen darum gecacht vom Aufrufer), gefiltert auf die nächsten
+    `days_ahead` Tage, sortiert, gedeckelt.
+
+    Der Horizont-Filter schneidet nur nach VORNE ab: überfällige
+    Positions-Abfahrten (Datum in der Vergangenheit) bleiben bewusst
+    drin und stehen durch die Datums-Sortierung ganz oben."""
     now = now or datetime.now()
     horizon = (now + timedelta(days=days_ahead)).date().isoformat()
-    rows = _macro_rows(now) + _system_rows(now) + list(extra_rows or [])
+    rows = (_macro_rows(now) + _system_rows(now) + _position_rows(now)
+            + list(extra_rows or []))
     rows = [r for r in rows if r.get("date") and r["date"] <= horizon]
     rows.sort(key=lambda r: (r["date"], r.get("kind", ""), r.get("label", "")))
     return rows[:limit]
@@ -163,7 +218,13 @@ def upcoming_events(extra_rows: Optional[List[Dict]] = None,
 
 # ── Darstellung ──────────────────────────────────────────────────────────────
 
-_IMPACT_COLOR_KEY = {"HIGH": "red", "MEDIUM": "amber", "EARNINGS": "amber"}
+_IMPACT_COLOR_KEY = {
+    "HIGH": "red", "MEDIUM": "amber", "EARNINGS": "amber",
+    # L3.1: eigene Sprache für die Fracht — planmäßige Abfahrt ist ein
+    # ruhiger Betriebszustand (cobalt = „läuft", wie in der Szenen-
+    # Legende), überfällig und Earnings-im-Depot sind echte Warnungen.
+    "ABFAHRT": "cobalt", "ÜBERFÄLLIG": "red", "FRACHTRISIKO": "red",
+}
 
 
 def board_html(rows: List[Dict], now: Optional[datetime] = None) -> str:
@@ -187,7 +248,16 @@ def board_html(rows: List[Dict], now: Optional[datetime] = None) -> str:
         try:
             d = datetime.fromisoformat(r["date"])
             days = (d.date() - now.date()).days
-            when = "heute" if days == 0 else ("morgen" if days == 1 else f"in {days} Tagen")
+            if days < 0:
+                # L3.1: überfällige Abfahrt — „in -3 Tagen" wäre Unsinn.
+                n = abs(days)
+                when = f"überfällig ({n} Tag{'e' if n != 1 else ''})"
+            elif days == 0:
+                when = "heute"
+            elif days == 1:
+                when = "morgen"
+            else:
+                when = f"in {days} Tagen"
             datestr = d.strftime("%d.%m.")
         except (KeyError, ValueError, TypeError):
             continue
