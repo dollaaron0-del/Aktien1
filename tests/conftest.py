@@ -114,6 +114,29 @@ def _isolate_circuit_breaker_state(tmp_path, monkeypatch):
     monkeypatch.setattr(cb_mod, "_CACHE_FILE", str(tmp_path / "circuit_breaker_test.json"))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_live_status(tmp_path, monkeypatch):
+    """Bot-Status + Activity-Feed (system/live_status.py) IMMER in Temp-Dateien
+    umlenken. Gefunden 16.7. bei der Neustart-Vorbereitung: FEED_PATH war NIE
+    isoliert — jeder Test, der einen Zyklus/Kontrollpanel end-to-end übt, hat
+    Jahre... nein, seit Einführung (15.7.) JEDEN Lauf in die echte
+    data/activity_feed.db geschrieben (2050 Zeilen, ausschließlich Test-
+    Artefakte: Ticker "FOCUS", Gründe "Testlauf"/"Testgrund"/"Wartung",
+    Breaker-Werte $80k/$90k gegen ein $100k-Test-Depot statt des echten
+    $1.000.000-Portfolios). Reale Zeilen gab es nie, weil der Bot seit 21.6.
+    durchgehend pausiert ist — real hätte dieser Feed in der ganzen Zeit gar
+    nichts zu protokollieren gehabt.
+    `feed_emit()` cacht ein `ActivityFeed`-Singleton (`_feed`) beim ersten
+    Aufruf im Prozess — ein reines FEED_PATH-Monkeypatch griffe deshalb NICHT
+    mehr, sobald irgendein früherer Test den Singleton schon gegen den echten
+    Pfad initialisiert hat. Darum wird `_feed` hier zusätzlich auf None
+    zurückgesetzt, damit jeder Test wieder frisch (und isoliert) öffnet."""
+    import system.live_status as ls_mod
+    monkeypatch.setattr(ls_mod, "STATUS_PATH", str(tmp_path / "bot_status_test.json"))
+    monkeypatch.setattr(ls_mod, "FEED_PATH", str(tmp_path / "activity_feed_test.db"))
+    monkeypatch.setattr(ls_mod, "_feed", None)
+
+
 @pytest.fixture()
 def tmp_data_dir(tmp_path, monkeypatch):
     """

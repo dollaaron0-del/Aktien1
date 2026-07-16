@@ -22,6 +22,37 @@ Nur zwei echte Punkte übrig — der komplette Rest der Reaktivierungs-
 Checkliste (Demo-Daten-Rücktausch, Versions-Stempel, Registry-Neugenerierung,
 Backup-Timer) ist laut `REAKTIVIERUNG.md` bereits am 14.7. erledigt.
 
+**16.7. bei der Verifikation zwei zusätzliche Funde gemacht und behoben** (in
+keiner Roadmap dokumentiert, weil erst beim direkten Prüfen der echten
+Dateien sichtbar):
+
+1. **Pause-Flag stand noch auf `true`** — `data/bot_paused.json` trug
+   weiter den 21.6.-Pausierungs-Zustand, unabhängig von systemd (H1.1:
+   Flag und Dienst sind zwei getrennte Ebenen). Wäre morgen nur
+   `systemctl enable --now` ausgeführt worden, hätte der Prozess gestartet,
+   aber sofort in die Pause-Schleife gelaufen (`bot/scheduler.py:939`) — kein
+   Zyklus, keine SL/TP-Überwachung, nur eine Telegram-Meldung und ein
+   60s-Sleep-Loop. Auf deine Bestätigung hin über
+   `dashboard.controls.set_bot_paused(False, ...)` zurückgesetzt (verifiziert,
+   im Activity-Feed protokolliert `[manuell]`) — systemd bleibt dabei
+   `inactive`/`disabled`, der Bot startet dadurch NICHT, es entfernt nur den
+   zweiten Blocker vorab.
+2. **`data/activity_feed.db` war seit ihrer Einführung (15.7.) nie
+   test-isoliert** — alle 2050 gespeicherten Zeilen waren nachweislich
+   Test-Artefakte (einziger je gesehener Ticker: `FOCUS`; Gründe
+   „Testlauf"/„Testgrund"/„Wartung"; Breaker-Reset-Werte $80k/$90k gegen ein
+   $100k-Test-Depot statt des echten $1.000.000-Portfolios) — real konnte
+   dort nichts stehen, weil der Bot seit 21.6. durchgehend pausiert war.
+   Isolations-Fixture `_isolate_live_status` in `tests/conftest.py` ergänzt
+   (Muster: `_isolate_bot_pause`/`_isolate_circuit_breaker_state`, inkl.
+   Singleton-Reset — ein reines Pfad-Monkeypatch hätte nicht gereicht, weil
+   `feed_emit()` sein `ActivityFeed`-Objekt einmal pro Prozess cacht). Die
+   echte Tabelle geleert (100 % Testrauschen, nichts Reales verloren);
+   voller Suite-Lauf danach grün (1300 Tests), alle fünf echten
+   Zustandsdateien (`bot_paused.json`, `circuit_breaker.json`,
+   `portfolio.db`, `activity_feed.db`, `bot_status.json`) per MD5 davor/danach
+   identisch geprüft.
+
 - **`.env` vervollständigen** (Reaktivierung Schritt 2) — reiner User-Task,
   Datei-Zugriff ist für diese Sitzung gesperrt:
   ```
