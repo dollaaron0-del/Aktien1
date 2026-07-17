@@ -302,6 +302,38 @@ def _cached_earnings_rows(tickers: tuple, held: tuple = ()) -> list:
         return []
 
 
+def _render_memories() -> None:
+    """L2.2: „Heute vor …"-Plakette — echte Ereignisse aus der eigenen
+    Geschichte (dashboard/memories.py). Gibt es heute nichts zu
+    erinnern, erscheint NICHTS (kein „noch nichts passiert"-Gefüll).
+    Fail-open."""
+    try:
+        from dashboard.memories import memories_for
+        rows = memories_for()
+    except Exception:
+        return
+    if not rows:
+        return
+    if _theme.is_enabled():
+        items = "".join(
+            f'<div style="font-size:15px;padding:1px 0;">'
+            f'<span style="color:{PALETTE["amber"]};">{html.escape(r["when"])}:</span> '
+            f'{html.escape(r["text"])} '
+            f'<span style="color:{PALETTE["text_muted"]};font-size:12px;">'
+            f'({html.escape(r["date"])})</span></div>'
+            for r in rows
+        )
+        st.markdown(
+            f'<div class="px-panel" style="font-family:VT323,monospace;">'
+            f'<div style="color:{PALETTE["amber"]};letter-spacing:1px;">'
+            f'📅 HEUTE VOR …</div>{items}</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        for r in rows:
+            st.caption(f"📅 {r['when']}: {r['text']} ({r['date']})")
+
+
 def _render_departures() -> None:
     """D8.1: Werksbahnhof-Abfahrtstafel — was kommt auf die Fabrik zu?
     Makro-Termine, Earnings, nächster Zyklus, nächstes Backup — und
@@ -564,6 +596,7 @@ def render(ctx) -> None:
                 _render_detail_panel(machine)
 
     _scene()
+    _render_memories()
     _render_departures()
     _render_power_meter()
     _render_ticker_form()

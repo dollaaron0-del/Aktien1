@@ -221,7 +221,7 @@ Lebendigkeit aus der EIGENEN Geschichte — nichts wird erfunden, jede
 Traumszene ist ein echter archivierter Zustand, jede Erinnerung ein
 echtes Ereignis mit Datum.
 
-- [ ] 🟢 **L2.1 Erinnerungs-Rechner `dashboard/memories.py`** —
+- [x] 🟢 **L2.1 Erinnerungs-Rechner `dashboard/memories.py`** —
       `memories_for(day) -> List[Dict]`: durchsucht experience.db +
       portfolio.db (trades) + achievements.json + thesis_registry nach
       Jahrestagen relativ zu `day`: „Heute vor N Wochen: erster
@@ -229,10 +229,41 @@ echtes Ereignis mit Datum.
       BEAR", „…These mechanical_baseline registriert". Nur echte
       Treffer, max. 3, mit exaktem Datum. Read-only, fail-open, Tests
       mit synthetischer DB (Muster test_dashboard_genealogy).
-- [ ] 🟢 **L2.2 Erinnerungs-Plakette** — Fabrik-Tab, unter der Szene:
+
+      Umgesetzt 16.7.2026: Treffer-Regel bewusst eng gefasst — eine
+      Erinnerung erscheint nur, wenn das Ereignis exakt N ganze Wochen
+      her ist (N≥1); ab 52 Wochen „vor einem Jahr". Damit taucht jedes
+      Ereignis nur an einem Wochentag auf und niemand muss täglich
+      etwas erfinden („keine Erinnerung" ist ein normaler Tag).
+      Vier Quellen gebaut: erster Trade (portfolio.db/trades, eigene
+      read-only sqlite3-Verbindung), größter Gewinn + größter Verlust
+      (experience.db via injizierbarem Store), Plaketten
+      (achievements.json), Thesen (thesis_registry.json). Bester ==
+      schlechtester Trade bei n=1 wird nicht doppelt gezeigt.
+      **NICHT gebaut — ehrlicher Befund statt Erfindung:** „Regime
+      kippte auf BEAR" aus der Skizze ist NICHT baubar,
+      `data/current_regime.json` speichert nur den AKTUELLEN Stand
+      (`{"regime", "timestamp"}`), es gibt keinerlei Regime-Historie;
+      eine Erinnerung daraus wäre geraten. Im Modul-Docstring
+      festgehalten. 16 Tests (test_dashboard_memories.py), netzfrei.
+      **Test-Falle dabei gefunden:** eine autouse-Fixture, die alle
+      Quellen stumm schaltet, hätte die Quellen-Tests selbst
+      ausgehebelt — der naheliegende `monkeypatch.undo()`-Ausweg nimmt
+      aber auch die `fresh_portfolio`-Isolation zurück und ließ den
+      Test gegen die ECHTE data/portfolio.db laufen (fiel auf, weil
+      plötzlich ein echter Produktions-Ticker im Ergebnis stand).
+      Gelöst mit einer NICHT-autouse-Fixture `quiet_sources`, die nur
+      die Regel-Tests anfordern; im Docstring als Warnung vermerkt.
+- [x] 🟢 **L2.2 Erinnerungs-Plakette** — Fabrik-Tab, unter der Szene:
       „📅 Heute vor …"-Zeilen aus L2.1. Plain: st.caption. Nichts
       anzeigen, wenn keine Erinnerung — kein „noch nichts passiert"-
       Gefüll.
+
+      Umgesetzt 16.7.2026: `_render_memories()` direkt unter der Szene
+      (vor der Abfahrtstafel), pixel als `px-panel` mit escaped Text +
+      exaktem Datum in Klammern, plain als `st.caption`-Zeilen.
+      Leerzustand rendert wirklich NICHTS (eigener Test). 4 Tests
+      (test_dashboard_memories_tab.py).
 - [ ] 🟡 **L2.3 Traum-Datenlage** — `dream_material() -> Optional[str]`:
       wählt aus factory_history.jsonl einen vergangenen Tag mit ≥10
       Schnappschüssen (deterministisch: Tag mit den meisten
