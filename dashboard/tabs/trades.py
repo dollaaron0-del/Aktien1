@@ -141,6 +141,123 @@ def _render_calibration_curve() -> None:
             st.caption(f"⚠️ {row['confidence']}: Stichprobe dünn (n={row['n']}).")
 
 
+def _render_learning_curve() -> None:
+    """L6.1: Lernkurven-Wand — Entwicklung statt Ist-Stand: wird die
+    Selbsteinschätzung über die Zeit besser, und wie wächst der
+    Erfahrungsschatz? Fail-open: ohne Daten nur ein Hinweis."""
+    st.subheader("🧱 Lernkurven-Wand")
+    st.caption(
+        "Was das Werk über die Zeit gelernt hat — Güte der "
+        "Selbsteinschätzung (Kalibrierungs-Monitor) und Wachstum des "
+        "Erfahrungsschatzes."
+    )
+    from dashboard.learning_curve import (
+        MIN_POINTS_FOR_CURVE, calibration_history, experience_growth,
+    )
+
+    try:
+        cal = calibration_history()
+    except Exception:
+        cal = []
+    if not cal:
+        st.caption("Noch keine Messpunkte des Kalibrierungs-Monitors.")
+    elif len(cal) < MIN_POINTS_FOR_CURVE:
+        # Zwei Punkte sind kein Trend — eine Linie dazwischen würde eine
+        # Entwicklung suggerieren, die nicht belegt ist.
+        st.caption(
+            f"Erst {len(cal)} Messpunkt{'e' if len(cal) != 1 else ''} — die "
+            f"Kurve entsteht, sobald der Monitor öfter gelaufen ist "
+            f"(ab {MIN_POINTS_FOR_CURVE})."
+        )
+        st.table([
+            {"Lauf": r["run_at"][:16].replace("T", " "), "n": r["n"],
+             "Brier": r["brier"], "BSS": r["bss"], "AUC": r["auc"]}
+            for r in cal
+        ])
+    else:
+        try:
+            import altair as alt
+            df = pd.DataFrame([
+                {"run_at": r["run_at"], "Wert": r[k], "Maß": k.upper()}
+                for r in cal for k in ("brier", "bss", "auc")
+                if r.get(k) is not None
+            ])
+            df["run_at"] = pd.to_datetime(df["run_at"])
+            chart = alt.Chart(df).mark_line(point=True).encode(
+                x=alt.X("run_at:T", title="Monitor-Lauf"),
+                y=alt.Y("Wert:Q"),
+                color=alt.Color("Maß:N"),
+                tooltip=["run_at", "Maß", "Wert"],
+            )
+            st.altair_chart(chart, width="stretch")
+            st.caption(
+                "Brier niedriger = besser · BSS über 0 = besser als der "
+                "naive Mittelwert · AUC über 0,5 = erkennt Muster."
+            )
+        except Exception:
+            pass
+
+    try:
+        growth = experience_growth()
+    except Exception:
+        growth = []
+    if not growth:
+        st.caption("Noch keine gelabelten Erfahrungen.")
+        return
+    st.markdown("**Erfahrungsschatz**")
+    try:
+        import altair as alt
+        gdf = pd.DataFrame(growth)
+        gdf["date"] = pd.to_datetime(gdf["date"])
+        gchart = alt.Chart(gdf).mark_area(opacity=0.6).encode(
+            x=alt.X("date:T", title="Entscheidungstag"),
+            y=alt.Y("total:Q", title="gelabelte Erfahrungen (kumuliert)"),
+            tooltip=["date", "new", "total"],
+        )
+        st.altair_chart(gchart, width="stretch")
+    except Exception:
+        pass
+    st.caption(
+        f"{growth[-1]['total']} gelabelte Entscheidungen von "
+        f"{growth[0]['date']} bis {growth[-1]['date']}. Zeitachse ist der "
+        f"Entscheidungstag, nicht der Etikettier-Tag — alle Labels stammen "
+        f"aus einem Backfill-Lauf und trügen sonst alle dasselbe Datum."
+    )
+
+
+def _render_filter_xray() -> None:
+    """L6.2: Röntgenblick in den Lern-Filter — welche Merkmale er wie
+    gewichtet. Der Hinweis auf die Stichprobengröße ist Pflicht, nicht
+    Zierde: bei 6 Trades sind das Anhaltspunkte, keine Erkenntnisse.
+    Fail-open: ohne Datei kein Panel."""
+    from dashboard.filter_xray import feature_weights
+    try:
+        data = feature_weights()
+    except Exception:
+        return
+    if not data["features"]:
+        return
+    st.subheader("🔬 Röntgenblick: Lern-Filter")
+    n = data["trade_count"]
+    st.caption(
+        f"Gewichte, die der Lern-Filter aus echten Trade-Ausgängen gelernt "
+        f"hat — gelernt aus erst **{n} Trade{'s' if n != 1 else ''}**, mit "
+        f"Vorsicht zu lesen. Der Filter ist derselbe, der im Trockenlauf "
+        f"„Lern-Filter AVOID" + "“ meldet."
+    )
+    try:
+        import altair as alt
+        df = pd.DataFrame(data["features"])
+        chart = alt.Chart(df).mark_bar().encode(
+            x=alt.X("weight:Q", title="Gewicht"),
+            y=alt.Y("label:N", sort="-x", title=None),
+            tooltip=["label", "weight"],
+        )
+        st.altair_chart(chart, width="stretch")
+    except Exception:
+        pass
+
+
 def _render_genealogy() -> None:
     """H3.2: Entscheidungs-Genealogie — jede Order zurückverfolgt zu
     ihrer Analyse und deren Quellen. Fail-open: ein Lesefehler zeigt nur
@@ -426,6 +543,10 @@ def render(ctx) -> None:
     _render_thesis_board()
     st.divider()
     _render_calibration_curve()
+    st.divider()
+    _render_learning_curve()
+    st.divider()
+    _render_filter_xray()
     st.divider()
     _render_paper_forward_curve()
     st.divider()

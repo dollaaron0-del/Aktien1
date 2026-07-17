@@ -505,7 +505,7 @@ Das gesammelte Wissen WIRKT (Lern-Filter, Kalibrierung, Lessons-Memo),
 ist aber teils unsichtbar. Zwei Panels im Tab „Trades & Lernen", direkt
 bei der bestehenden Kalibrier-Kurve (H3.3 — gleiche Chart-Muster).
 
-- [ ] 🟢 **L6.1 Lernkurven-Wand** — Entwicklung über die Zeit statt nur
+- [x] 🟢 **L6.1 Lernkurven-Wand** — Entwicklung über die Zeit statt nur
       Ist-Stand: (a) `data/calibration_monitor.json` → `history[]`
       (run_at, brier, bss, ece, auc — Stand 16.7.: genau 1 Messpunkt
       vom 7.7.) als Linien-Chart, ABER erst ab ≥3 Messpunkten — bei
@@ -515,7 +515,21 @@ bei der bestehenden Kalibrier-Kurve (H3.3 — gleiche Chart-Muster).
       (`labeled_at` je Zeile; injizierbarer Store wie
       `calibration_curve.py`). Neues Modul `dashboard/learning_curve.py`
       (read-only), Render in tabs/trades.py neben der Kalibrier-Kurve.
-- [ ] 🟡 **L6.2 Lern-Filter-Röntgenblick** — was der Filter gelernt
+
+      Umgesetzt 16.7.2026. **ABWEICHUNG bei der Zeitachse von (b) —
+      Datenlage geprüft, Vorgabe war so nicht haltbar:** die Roadmap
+      wollte `labeled_at`, aber ALLE 347 gelabelten Zeilen tragen exakt
+      denselben `labeled_at` (23.6.2026, innerhalb von 7 Sekunden) —
+      sie stammen aus EINEM Backfill-Lauf. Eine Kurve darüber wäre eine
+      Stufe von 0 auf 347 an einem einzigen Tag, also ein Artefakt des
+      Nachetikettierens statt einer Lernkurve. Gebaut mit `decided_at`
+      (wann die Erfahrung GEMACHT wurde) — inhaltlich ohnehin die
+      richtige Achse; im Modul-Docstring, in der Tab-Caption und per
+      Test festgehalten. (a) wie vorgegeben: `MIN_POINTS_FOR_CURVE = 3`,
+      darunter Tabelle + ehrliche Caption (ein Test hält gegen die
+      ECHTE Datei fest, dass aktuell die Tabelle greift). 9 Tests
+      (test_dashboard_learning_curve.py).
+- [x] 🟡 **L6.2 Lern-Filter-Röntgenblick** — was der Filter gelernt
       hat, sichtbar: `data/rl_weights.json` enthält (16.7. geprüft)
       `weights` + `feature_names` (sentiment_score, vix_level,
       momentum_5d, news_velocity, confidence_encoded, regime_encoded)
@@ -525,6 +539,19 @@ bei der bestehenden Kalibrier-Kurve (H3.3 — gleiche Chart-Muster).
       [URTEIL: nur die deutschen Feature-Labels] nüchtern übersetzen
       (z. B. „News-Tempo"), NICHT interpretieren („achtet auf X" wäre
       Überverkauf bei n=6). Fail-open: Datei fehlt → Panel fehlt.
+
+      Umgesetzt 16.7.2026: `dashboard/filter_xray.py`, Pfad über
+      `analyzers.rl_agent._WEIGHTS_FILE` (Single Source, kein zweiter
+      hartkodierter Pfad), read-only. [URTEIL] Labels rein
+      beschreibend übersetzt (Sentiment-Score, VIX-Stand, Momentum
+      (5 Tage), News-Tempo, Konfidenz-Stufe, Marktregime) — keine
+      Deutung. Pflicht-Caption mit `trade_count` gebaut, inkl. Verweis
+      darauf, dass es derselbe Filter ist, der im Trockenlauf
+      „Lern-Filter AVOID" meldet. Fehlen `feature_names` (ältere
+      Datei), wird auf „feature_N" ausgewichen statt zu raten; nicht-
+      numerische Gewichte werden übersprungen. 7 Tests
+      (test_dashboard_filter_xray.py), einer davon gegen die ECHTE
+      Datei (6 Merkmale, trade_count klein → Warnhinweis begründet).
 
 ## Reihenfolge (verbindlich für die autonome Abarbeitung)
 
