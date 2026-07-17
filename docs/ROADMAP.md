@@ -519,8 +519,23 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       NICHT gebaut (würde eine nicht belegte Kante verdrahten). Bleibt [~]
       offen, bis echte Live-Trades (label_source='live') eine belastbare
       Neubewertung erlauben (Block-3-Voraussetzung: laufender Bot + Zeit).
-- [ ] **3.2 Skip-Kontrafaktik** — decision_log-SKIPs mit simulate_outcome
-      nachrechnen → EntryFilter-Schwellen mit Gegenproben validieren.
+- [x] **3.2 Skip-Kontrafaktik** — fertig 17.7. `scripts/skip_counterfactual.py`:
+      liest decision_log-SKIPs, bei denen die KI tatsächlich BUY/SELL
+      empfahl (operative Schranke hat übersteuert — Schwelle/Korrelation/
+      Liquidität/Lernfilter-AVOID/Max-Positionen/Earnings-Sperre/
+      Tagesverlust), simuliert die Gegenprobe mit dem bestehenden
+      `simulate_outcome`/`_load_bars` aus `scripts/backfill_outcomes.py`
+      (kein neuer Simulationscode), bricht das Ergebnis je Skip-Grund mit
+      Bootstrap-CI auf (reuse `scripts.track_record._bootstrap_mean_ci`,
+      Mindest-n-Gate wie 2.4). "unter_schwelle"/"lernfilter_avoid" sind
+      die in der Roadmap gemeinten EntryFilter-Schwellen. 8 Tests
+      (netzfrei, `_load_bars` gemockt), Suite grün. CLI-Smoke-Test gegen
+      echte Daten (17.7., Bot-Reaktivierungstag): 19 passende SKIPs
+      gefunden (alle im selben Bucket "zu_wenige_quellen"), aber 0
+      simulierbar — Skips waren von HEUTE, `simulate_outcome` braucht
+      mind. einen Folgetag an Kursdaten. Ehrlich erwartetes Verhalten,
+      kein Bug; liefert erst ab dem nächsten Handelstag ein echtes
+      Verdikt.
 
 ## Block 4 — Meta-Ebene & Robustheit
 
