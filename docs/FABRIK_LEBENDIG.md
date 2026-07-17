@@ -196,10 +196,16 @@ Platzhalter.
       ECHTE Produktionsdaten: GILD erscheint korrekt als
       meist-analysierter Ticker (50 Analysen) an erster Stelle der
       Auswahl.
-- [ ] 🟢 **L1.4 Querverweise** — in der Akte: Verwandte als klickbare
-      Links (`?dossier=TSM`-Query-Param, Muster `?factory=`-Fokus aus
-      W3.2); im Lager-Regal (D8.3) und im Trades-Tab je Ticker ein
-      „→ Akte"-Link. Unbekannte Query-Werte stillschweigend ignorieren.
+- [x] 🟢 **L1.4 Querverweise** — 17.7. fertig. `dashboard/dossier.py::
+      akte_links_md()` (dedupliziert, limitiert, „?dossier=TICKER"-Query-
+      Param, Muster `?factory=`-Fokus aus W3.2) als EINE Stelle für alle
+      Akte-Links — Kartei-Tab (Verwandte), Portfolio-Tab, Trades-Tab
+      (je eine Caption-Zeile, fail-open in try/except) und das Lager-
+      Regal-SVG (D8.3, jede Kiste ein `<a href="?dossier=…">`-Link im
+      selben Muster wie die Fabrik-Maschinen). Unbekannte Query-Werte
+      werden von `tabs/dossier.py` bereits stillschweigend ignoriert
+      (Fallback auf den Default-Index). 11 Tests (akte_links_md,
+      unbekannter Deep-Link, Lager-Kisten-Link), Suite grün.
 - [ ] 🟡 **L1.5 Akten-Deckblatt-Stempel** — kleine ehrliche Stempel auf
       der Akte, nur wenn die Bedingung WIRKLICH zutrifft (sonst kein
       Stempel): „BEWÄHRT" (≥3 gelabelte Trades, Ø pnl > 0),

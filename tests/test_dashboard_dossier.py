@@ -204,6 +204,28 @@ def test_note_fail_open(monkeypatch):
 
 # ── Zusammenbau ──────────────────────────────────────────────────────────────
 
+# ── L1.4: Querverweise ───────────────────────────────────────────────────────
+
+def test_akte_links_md_builds_links():
+    md = dossier.akte_links_md(["nvda", "TSM"])
+    assert md == "[NVDA](?dossier=NVDA) · [TSM](?dossier=TSM)"
+
+
+def test_akte_links_md_dedupes_and_skips_empty():
+    md = dossier.akte_links_md(["NVDA", "nvda", "", None, "TSM"])
+    assert md == "[NVDA](?dossier=NVDA) · [TSM](?dossier=TSM)"
+
+
+def test_akte_links_md_respects_limit():
+    md = dossier.akte_links_md([f"Z{i}" for i in range(30)], limit=3)
+    assert md.count("?dossier=") == 3
+
+
+def test_akte_links_md_empty_input():
+    assert dossier.akte_links_md([]) == ""
+    assert dossier.akte_links_md(None) == ""
+
+
 def test_dossier_uppercases_ticker(_profiles):
     d = dossier.dossier("nvda")
     assert d["ticker"] == "NVDA"

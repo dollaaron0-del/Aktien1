@@ -67,6 +67,18 @@ def test_deep_link_preselects_ticker(monkeypatch, tmp_path):
     assert sb.value.startswith("ZTAB5")
 
 
+def test_unknown_deep_link_falls_back_silently(monkeypatch, tmp_path):
+    """L1.4: ein unbekannter ?dossier=-Wert (Tippfehler, alter Link) darf
+    keinen Fehler zeigen — er wird stillschweigend ignoriert."""
+    _seed_analysis(monkeypatch, tmp_path, ticker="ZTAB7", n=2)
+    at = AppTest.from_string(_SCRIPT)
+    at.query_params["dossier"] = "GIBTESNICHT"
+    at.run()
+    assert not at.exception
+    assert at.selectbox(key="dossier_select").value.startswith("ZTAB7")
+    assert not at.get("error")
+
+
 def test_metrics_reflect_trade_bilanz(monkeypatch, tmp_path):
     _seed_analysis(monkeypatch, tmp_path, ticker="ZTAB6", n=1)
     at = AppTest.from_string(_SCRIPT)

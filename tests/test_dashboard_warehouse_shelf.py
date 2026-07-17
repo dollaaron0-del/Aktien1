@@ -99,6 +99,16 @@ def test_shelf_svg_escapes_ticker(_profiles):
     assert "&lt;b&gt;" in svg
 
 
+def test_shelf_crates_link_to_dossier(_profiles):
+    """L1.4: jede Kiste führt in die Personalakte (Link-Muster wie die
+    Maschinen der Fabrik-Szene)."""
+    groups = warehouse_shelf.shelf_data({"TSM": _pos()}, {"TSM": 110.0}, now=_NOW)
+    svg = warehouse_shelf.shelf_svg(groups)
+    assert '<a href="?dossier=TSM" target="_self">' in svg
+    assert svg.count("</a>") == 1
+    assert "klicken für die Akte" in svg
+
+
 def test_shelf_svg_shows_pnl_colors(_profiles):
     from dashboard.theme import PALETTE
     groups = warehouse_shelf.shelf_data(

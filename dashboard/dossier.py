@@ -159,6 +159,27 @@ def note(ticker: str) -> str:
 
 # ── Zusammenbau ──────────────────────────────────────────────────────────────
 
+def akte_links_md(tickers, limit: int = 20) -> str:
+    """L1.4: kompakte Markdown-Zeile mit „→ Akte"-Links je Ticker.
+
+    Bewusst eine LINK-ZEILE statt Links in der Tabelle: `st.dataframe`
+    rendert kein HTML/Markdown (bekannte Falle, siehe LED-Migration) —
+    ein Link in einer Zelle bliebe roher Text. Leere Eingabe → leerer
+    String (der Aufrufer rendert dann nichts)."""
+    seen, out = set(), []
+    for raw in tickers or []:
+        if not raw:              # None/"" vor der str()-Wandlung abfangen —
+            continue             # str(None) wäre sonst der Ticker "NONE"
+        t = str(raw).strip().upper()
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        out.append(f"[{t}](?dossier={t})")
+        if len(out) >= limit:
+            break
+    return " · ".join(out)
+
+
 def dossier(ticker: str) -> Dict:
     """Die vollständige Akte. Jede Quelle unabhängig fail-open — eine
     kaputte Quelle darf die anderen nie mitreißen."""

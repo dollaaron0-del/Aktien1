@@ -75,10 +75,7 @@ def _render_akte(ticker: str) -> None:
         if d["themes"]:
             st.caption("Themen: " + ", ".join(d["themes"]))
         if d["related"]:
-            links = " · ".join(
-                f"[{t}](?dossier={t})" for t in d["related"]
-            )
-            st.markdown(f"Verwandte: {links}")
+            st.markdown(f"Verwandte: {_dossier.akte_links_md(d['related'])}")
 
     if trades["rows"]:
         st.markdown("**Letzte Entscheidungen (gelabelt)**")

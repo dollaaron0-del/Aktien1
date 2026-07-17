@@ -103,10 +103,15 @@ def shelf_svg(groups: List[Dict]) -> str:
             hold = c.get("hold_days") or 0
             label = (f"{age}/{hold}d" if age is not None and hold
                      else f"{age}d" if age is not None else "")
+            # L1.4: jede Kiste führt in die Personalakte des Titels —
+            # gleiches Link-Muster wie die Maschinen der Fabrik-Szene
+            # (machines.py: <a href="?…" target="_self">).
             cols.append(
+                f'<a href="?dossier={html.escape(c["ticker"])}" target="_self">'
                 f'<g><title>{html.escape(c["ticker"])}: '
                 f'${c["value"]:,.0f} · P&amp;L {html.escape(pnl_txt)}'
-                f'{" · " + html.escape(label) if label else ""}</title>'
+                f'{" · " + html.escape(label) if label else ""}'
+                f' — klicken für die Akte</title>'
                 f'<rect x="{x}" y="20" width="{crate_w}" height="{crate_h}" '
                 f'fill="{p["bg"]}" stroke="{p["copper"]}" stroke-width="2" rx="3" />'
                 f'<rect x="{x + 4}" y="{20 + crate_h - 4 - fill_h}" '
@@ -121,7 +126,7 @@ def shelf_svg(groups: List[Dict]) -> str:
                 f'<text x="{x + crate_w / 2}" y="80" text-anchor="middle" '
                 f'font-family="VT323, monospace" font-size="12" '
                 f'fill="{p["text_muted"]}">{html.escape(label)}</text>'
-                f'</g>'
+                f'</g></a>'
             )
             x += crate_w + gap
         cols.append(

@@ -470,6 +470,14 @@ def render(ctx) -> None:
                 ),
                 width="stretch", hide_index=True,
             )
+            # L1.4: Einstieg in die Personalakte der gehandelten Titel.
+            try:
+                from dashboard.dossier import akte_links_md
+                _tr_links = akte_links_md(r.get("ticker") for r in recent)
+                if _tr_links:
+                    st.caption(f"🗂 Akte öffnen: {_tr_links}")
+            except Exception:
+                pass
             # Full export: all closed trades
             _all_closed = tracker.get_recent_trades(500)
             if _all_closed:

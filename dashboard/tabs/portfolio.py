@@ -189,6 +189,14 @@ def render(ctx) -> None:
             width="stretch", hide_index=True,
         )
 
+        # L1.4: Einstieg in die Personalakte je gehaltenem Titel.
+        try:
+            from dashboard.dossier import akte_links_md
+            _links = akte_links_md(positions.keys())
+            if _links:
+                st.caption(f"🗂 Akte öffnen: {_links}")
+        except Exception:
+            pass
         _render_position_notes(ctx.ticker_label, positions.keys())
     else:
         st.info("Keine offenen Positionen.")
