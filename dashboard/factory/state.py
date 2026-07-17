@@ -116,16 +116,23 @@ def _analyzer_share(prefix: str) -> MachineState:
     try:
         from analyzers.analysis_log import AnalysisLog
         rows = AnalysisLog().get_recent(limit=50)
-        n = sum(
-            1 for r in rows
-            if str((r.get("provenance") or {}).get("model_route") or "").startswith(prefix)
-        )
+        routes = [str((r.get("provenance") or {}).get("model_route") or "") for r in rows]
+        n = sum(1 for r in routes if r.startswith(prefix))
         status = "active" if n > 0 else "off"
+        # L1.5-Folge (Fabrik-Detail-Panel): der EXAKTE model_route
+        # (z.B. ollama_frugal_full vs. claude_dedup_cache) statt nur des
+        # Präfix-Anteils — beantwortet "WARUM lief das auf diesem Pfad?"
+        # nicht nur "WIE VIEL". Nur die zu diesem Analysator gehörenden
+        # Routen (startswith prefix), sonst leer statt irreführender {}.
+        breakdown: Dict[str, int] = {}
+        for r in routes:
+            if r.startswith(prefix):
+                breakdown[r] = breakdown.get(r, 0) + 1
         # payload für D7.2: Rauch-Intensität in der Szene = echter
         # Routing-Anteil (machines.py skaliert die Anzahl Rauchwolken).
         return MachineState(id=machine_id, label=label, status=status,
                             tooltip=[f"{n}/{len(rows)} der letzten Analysen"],
-                            payload={"n": n, "total": len(rows)})
+                            payload={"n": n, "total": len(rows), "route_breakdown": breakdown})
     except Exception:
         return _off(machine_id, label)
 
@@ -255,12 +262,17 @@ def _read_gate() -> MachineState:
     import socket
     try:
         from config import config
-        with socket.create_connection((config.ibkr_host, config.ibkr_port), timeout=0.4):
+        host, port = config.ibkr_host, config.ibkr_port
+    except Exception:
+        host, port = None, None
+    payload = {"host": host, "port": port}
+    try:
+        with socket.create_connection((host, port), timeout=0.4):
             return MachineState(id="gate", label="Verladetor", status="ok",
-                                tooltip=["IB-Gateway erreichbar"])
+                                tooltip=["IB-Gateway erreichbar"], payload=payload)
     except Exception:
         return MachineState(id="gate", label="Verladetor", status="err",
-                            tooltip=["IB-Gateway nicht erreichbar"])
+                            tooltip=["IB-Gateway nicht erreichbar"], payload=payload)
 
 
 def _read_weather() -> MachineState:
@@ -269,9 +281,14 @@ def _read_weather() -> MachineState:
             data = json.load(fh)
         regime = str(data.get("regime") or "").upper()
         status = {"BULL": "ok", "NEUTRAL": "warn"}.get(regime, "err" if regime else "off")
+        # Detail-Panel-Ausbau: Nachfrage-Label (dieselbe Quelle wie das
+        # W4.3-Regen/Sonne-Overlay, hier zusätzlich als Tabellenzeile statt
+        # nur als Szenen-Effekt) + Zeitstempel des Regime-Standes.
         return MachineState(id="weather", label="Wetterstation", status=status,
                             tooltip=[f"Regime: {regime or 'unbekannt'}"],
-                            payload={"regime": regime})
+                            payload={"regime": regime,
+                                    "demand_label": _read_weather_demand_label(),
+                                    "timestamp": data.get("timestamp")})
     except Exception:
         return _off("weather", "Wetterstation")
 
@@ -293,21 +310,29 @@ def _read_lab() -> MachineState:
         return _off("lab", "Qualitätslabor")
 
 
-def _read_backup_bot() -> MachineState:
+def _read_backup_bot(recent_limit: int = 5) -> MachineState:
     try:
-        files = [f for f in os.listdir(_BACKUPS_DIR) if f.endswith(".tar.gz")]
-        if not files:
+        paths = [os.path.join(_BACKUPS_DIR, f) for f in os.listdir(_BACKUPS_DIR)
+                if f.endswith(".tar.gz")]
+        if not paths:
             return _off("backup_bot", "Nachtschicht-Roboter", "noch kein Backup")
-        newest = max(
-            (os.path.join(_BACKUPS_DIR, f) for f in files),
-            key=os.path.getmtime,
-        )
-        age_h = (datetime.now().timestamp() - os.path.getmtime(newest)) / 3600
+        now = datetime.now().timestamp()
+        paths.sort(key=os.path.getmtime, reverse=True)
+        newest = paths[0]
+        age_h = (now - os.path.getmtime(newest)) / 3600
         status = "ok" if age_h < 36 else "warn" if age_h < 24 * 8 else "err"
+        # Detail-Panel-Ausbau: die letzten Backups als kleine Liste
+        # (Name/Alter/Größe) statt nur der einen Altersangabe des jüngsten.
+        recent = [
+            {"name": os.path.basename(p),
+            "age_hours": round((now - os.path.getmtime(p)) / 3600, 1),
+            "size_mb": round(os.path.getsize(p) / (1024 * 1024), 1)}
+            for p in paths[:recent_limit]
+        ]
         return MachineState(
             id="backup_bot", label="Nachtschicht-Roboter", status=status,
             tooltip=[f"letztes Backup: vor {age_h:.0f}h"],
-            payload={"age_hours": round(age_h, 1)},
+            payload={"age_hours": round(age_h, 1), "recent": recent},
         )
     except Exception:
         return _off("backup_bot", "Nachtschicht-Roboter")

@@ -2,12 +2,13 @@
 Tests für dashboard/factory/ (Vision W1, docs/DESIGN_FABRIK.md).
 """
 import os
+from datetime import datetime
 
 import pytest
 
 from dashboard.factory import state as st_mod
 from dashboard.factory.machines import machine_box
-from dashboard.factory.scene import LAYOUT, build_scene_svg
+from dashboard.factory.scene import _CONNECTIONS, LAYOUT, _connection_paths, build_scene_svg
 from dashboard.factory.state import MACHINE_IDS, FactoryState, MachineState, read_state
 from dashboard.theme import PALETTE
 
@@ -172,6 +173,53 @@ def test_read_gate_err_when_ibkr_unreachable(monkeypatch):
     monkeypatch.setattr(config, "ibkr_port", 1)  # kein Listener dort
     m = st_mod._read_gate()
     assert m.status == "err"
+    assert m.payload == {"host": "127.0.0.1", "port": 1}
+
+
+def test_read_weather_payload_includes_demand_label_and_timestamp(tmp_path, monkeypatch):
+    import json
+    regime_file = tmp_path / "current_regime.json"
+    regime_file.write_text(json.dumps({"regime": "BULL", "timestamp": "2026-07-17T12:00:00"}))
+    monkeypatch.setattr(st_mod, "_REGIME_FILE", str(regime_file))
+    monkeypatch.setattr(st_mod, "_read_weather_demand_label", lambda: "ELEVATED")
+
+    m = st_mod._read_weather()
+    assert m.payload["demand_label"] == "ELEVATED"
+    assert m.payload["timestamp"] == "2026-07-17T12:00:00"
+
+
+def _make_backup(tmp_path, name, age_hours, size_bytes=1024):
+    p = tmp_path / name
+    p.write_bytes(b"0" * size_bytes)
+    ts = datetime.now().timestamp() - age_hours * 3600
+    os.utime(p, (ts, ts))
+    return p
+
+
+def test_read_backup_bot_lists_recent_backups_newest_first(tmp_path, monkeypatch):
+    _make_backup(tmp_path, "aktien_backup_old.tar.gz", age_hours=48)
+    _make_backup(tmp_path, "aktien_backup_new.tar.gz", age_hours=1)
+    monkeypatch.setattr(st_mod, "_BACKUPS_DIR", str(tmp_path))
+
+    m = st_mod._read_backup_bot()
+    names = [r["name"] for r in m.payload["recent"]]
+    assert names == ["aktien_backup_new.tar.gz", "aktien_backup_old.tar.gz"]
+    assert m.payload["recent"][0]["age_hours"] == pytest.approx(1.0, abs=0.1)
+
+
+def test_read_backup_bot_respects_recent_limit(tmp_path, monkeypatch):
+    for i in range(7):
+        _make_backup(tmp_path, f"aktien_backup_{i}.tar.gz", age_hours=i)
+    monkeypatch.setattr(st_mod, "_BACKUPS_DIR", str(tmp_path))
+
+    m = st_mod._read_backup_bot(recent_limit=3)
+    assert len(m.payload["recent"]) == 3
+
+
+def test_read_backup_bot_off_when_no_backups(tmp_path, monkeypatch):
+    monkeypatch.setattr(st_mod, "_BACKUPS_DIR", str(tmp_path))
+    m = st_mod._read_backup_bot()
+    assert m.status == "off"
 
 
 # ── scene.py / machines.py (W1.2) ────────────────────────────────────────────
@@ -184,6 +232,61 @@ def test_scene_contains_all_machine_labels():
 
 def test_scene_layout_has_entry_for_every_machine():
     assert set(LAYOUT.keys()) == set(MACHINE_IDS)
+
+
+def _rects_overlap(r1, r2) -> bool:
+    x1, y1, w1, h1 = r1
+    x2, y2, w2, h2 = r2
+    return x1 < x2 + w2 and x2 < x1 + w1 and y1 < y2 + h2 and y2 < y1 + h1
+
+
+def test_layout_boxes_do_not_overlap():
+    """Vision W6 (Top-Down-Grundriss): mit elf Maschinen in einem Grid
+    statt einer Reihe ist Überlappungsfreiheit eine echte, bisher nie
+    geprüfte Invariante."""
+    ids = list(LAYOUT.keys())
+    for i in range(len(ids)):
+        for j in range(i + 1, len(ids)):
+            assert not _rects_overlap(LAYOUT[ids[i]], LAYOUT[ids[j]]), (
+                f"{ids[i]} und {ids[j]} überlappen"
+            )
+
+
+def _state_with_statuses(statuses: dict) -> FactoryState:
+    return FactoryState(
+        machines={mid: MachineState(id=mid, label=mid, status=statuses.get(mid, "off"))
+                  for mid in MACHINE_IDS},
+        paused=False, generated_at="2026-07-17T10:00:00",
+    )
+
+
+def test_all_connections_reference_known_machine_ids_and_kinds():
+    for src, dst, kind in _CONNECTIONS:
+        assert src in MACHINE_IDS
+        assert dst in MACHINE_IDS
+        assert kind in ("main", "feedback", "utility")
+
+
+def test_connection_paths_include_known_main_connection():
+    svg = _connection_paths(_state_with_statuses({}))
+    assert 'data-connection="docks-analyzer_claude"' in svg
+
+
+def test_connection_only_animates_when_both_endpoints_active():
+    active = _connection_paths(_state_with_statuses(
+        {"docks": "ok", "analyzer_claude": "active"}))
+    idle = _connection_paths(_state_with_statuses(
+        {"docks": "ok", "analyzer_claude": "off"}))
+    assert 'class="fx-pipe-flow" data-connection="docks-analyzer_claude"' in active
+    assert 'class="fx-pipe-flow" data-connection="docks-analyzer_claude"' not in idle
+
+
+def test_feedback_connection_always_dashed_regardless_of_status():
+    all_active = _state_with_statuses({mid: "ok" for mid in MACHINE_IDS})
+    svg = _connection_paths(all_active)
+    assert 'data-connection="lab-analyzer_claude"' in svg
+    assert 'class="fx-pipe-flow" data-connection="lab-analyzer_claude"' not in svg
+    assert 'stroke-dasharray="6 5"' in svg
 
 
 def test_scene_renders_without_error_when_all_off():
@@ -237,6 +340,22 @@ def test_analyzer_share_counts_model_route_prefix(monkeypatch):
     assert m_claude.status == "active"
     assert m_ollama.status == "active"
     assert "1/3" in m_claude.tooltip[0]
+    assert m_claude.payload["route_breakdown"] == {"claude": 1}
+    assert m_ollama.payload["route_breakdown"] == {"ollama_frugal_full": 1}
+
+
+def test_analyzer_share_route_breakdown_separates_distinct_routes(monkeypatch):
+    class _FakeLog:
+        def get_recent(self, limit=50):
+            return [
+                {"provenance": {"model_route": "ollama_frugal_full"}},
+                {"provenance": {"model_route": "ollama_frugal_full"}},
+                {"provenance": {"model_route": "ollama_legacy"}},
+            ]
+
+    monkeypatch.setattr("analyzers.analysis_log.AnalysisLog", _FakeLog)
+    m_ollama = st_mod._read_analyzer_ollama()
+    assert m_ollama.payload["route_breakdown"] == {"ollama_frugal_full": 2, "ollama_legacy": 1}
 
 
 # ── W2.1: Aktivitäts-Animationen ─────────────────────────────────────────────
@@ -314,7 +433,10 @@ def test_dock_slots_empty_payload_renders_nothing_extra():
     m = MachineState(id="docks", label="Laderampen", status="off", payload={})
     box = machine_box(m, 0, 0, 180, 420)
     assert "<svg" not in box  # sanity: ist nur ein <g>-Fragment
-    assert box.count("<rect") == 1  # nur die Basis-Box, keine Slot-Rechtecke
+    # Vision W6: Basis-Skelett hat jetzt 2 Rechtecke (Panel + Ziegel-
+    # Dachkante, siehe machine_box()) statt vorher 1 — keine Slot-
+    # Rechtecke bei leerem Payload kommen NICHT hinzu.
+    assert box.count("<rect") == 2
 
 
 def test_non_dock_machine_ignores_payload_source_lists():

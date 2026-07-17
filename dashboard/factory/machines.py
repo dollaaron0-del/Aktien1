@@ -272,9 +272,15 @@ def machine_box(m: MachineState, x: float, y: float, w: float, h: float,
             f'preserveAspectRatio="xMidYMid slice" />'
         )
     else:
+        # Vision W6: leichte Ziegel-Dachkante im Skelett-Fallback (nur wenn
+        # kein PNG-Asset vorliegt) — verrät von oben betrachtet "kleines
+        # Gebäude" statt einer reinen Fläche, ohne echte Sprites zu
+        # brauchen (die bleiben W5.2, User-Task).
         base_shape = (
             f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="4" '
             f'fill="{PALETTE["bg_panel"]}" stroke="{PALETTE["border"]}" stroke-width="1.5" />'
+            f'<rect x="{x}" y="{y}" width="{w}" height="6" rx="2" '
+            f'fill="{PALETTE["brick"]}" opacity="0.8" />'
         )
 
     inner = (

@@ -35,6 +35,12 @@ _PALETTE_PIXEL: dict[str, str] = {
     "amber":       "#FFC857",  # Warn-LED
     "red":         "#FF4D4D",  # Fehler-LED, Verluste
     "neon_cyan":   "#33E0FF",  # sparsam: Glow/Scanline/Sonder-Highlights
+    # Vision W6 (17.7.): Ziegel/Cozy-Akzente NUR für die Fabrik-Szene
+    # (dashboard/factory/) — der Rest des Dashboards bleibt beim
+    # bestätigten Industrie-Neon-Look, diese zwei Keys werden sonst
+    # nirgends referenziert.
+    "brick":       "#B5563A",  # Ziegelrot (Baukörper der Fabrik von oben)
+    "grass":       "#5B7A52",  # gedecktes Werksgelände-Grün
 }
 
 # H6.4: drittes Theme "Blaupause" — technische Zeichnung, weiß auf Blau.
@@ -54,6 +60,8 @@ PALETTE_BLUEPRINT: dict[str, str] = {
     "amber":       "#FFD98A",
     "red":         "#FF8A8A",
     "neon_cyan":   "#8EEBFF",
+    "brick":       "#E8A87C",  # blaupausen-warmer Ziegelton
+    "grass":       "#8FBFAE",  # blaupausen-warmes Werksgelände-Grün
 }
 
 
@@ -309,6 +317,16 @@ h1 {{
 .fx-smoke {{
     animation: fx-smoke-rise 2s ease-out infinite;
 }}
+/* Vision W6: Verbindungs-Leitungen zwischen Maschinen (Factorio/Mindustry-
+   Optik) — "fließt" nur, wenn beide Enden gerade echt aktiv sind
+   (scene.py::_connection_paths). */
+@keyframes fx-pipe-flow {{
+    to {{ stroke-dashoffset: -28px; }}
+}}
+.fx-pipe-flow {{
+    stroke-dasharray: 10 8;
+    animation: fx-pipe-flow 1s linear infinite;
+}}
 /* D8.2: Zählerscheibe des E-Werk-Stromzählers — dreht nur, wenn heute
    wirklich Verbrauch anfiel (power_meter.py setzt die Klasse bedingt). */
 @keyframes fx-spin-turn {{
@@ -344,7 +362,7 @@ h1 {{
 }}
 
 @media (prefers-reduced-motion: reduce) {{
-    .px-belt-anim, .fx-belt-run, .fx-blink, .fx-smoke, .fx-spin {{ animation: none; }}
+    .px-belt-anim, .fx-belt-run, .fx-blink, .fx-smoke, .fx-spin, .fx-pipe-flow {{ animation: none; }}
     .px-led--warn::before, .px-led--err::before {{ animation: none; }}
     .px-ticker-track {{ animation: none; }}
 }}

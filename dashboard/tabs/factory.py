@@ -174,19 +174,86 @@ def _detail_clock(m: MachineState) -> None:
         st.markdown(f"**Nächster Lauf:** {s['next_run'][:16].replace('T', ' ')} Uhr")
 
 
+def _detail_analyzer(m: MachineState) -> None:
+    """Vision-Feedback 17.7. (Fabrik als Hauptding): Klartext statt nur
+    der Rauch-Intensität aus der Szene — WELCHE Routen genau liefen."""
+    s = m.payload or {}
+    c1, c2 = st.columns(2)
+    c1.metric("Anteil (letzte 50)", f"{s.get('n', 0)}/{s.get('total', 0)}")
+    breakdown = s.get("route_breakdown") or {}
+    if breakdown:
+        st.markdown("**Genauer Modell-Pfad**")
+        st.table([
+            {"Route": route, "Anzahl": n}
+            for route, n in sorted(breakdown.items(), key=lambda kv: -kv[1])
+        ])
+
+
+def _detail_breaker(m: MachineState) -> None:
+    s = m.payload or {}
+    c1, c2 = st.columns(2)
+    c1.metric("Tagesverlust", f"{s.get('daily_pct', 0):+.1f}%")
+    c2.metric("Drawdown vom Hoch", f"{s.get('drawdown_pct', 0):.1f}%")
+    st.markdown(f"**Ausgelöst:** {'🔴 Ja' if s.get('triggered') else '🟢 Nein'}")
+    if s.get("open_value") is not None:
+        st.caption(f"Tagesöffnungswert: ${s['open_value']:,.0f} · "
+                  f"Allzeithoch: ${s.get('peak_value', 0):,.0f}")
+    last_reset = s.get("last_reset")
+    if last_reset:
+        st.caption(f"Letzter Reset: {str(last_reset.get('at') or '')[:16].replace('T', ' ')} "
+                  f"durch {last_reset.get('by') or '?'}")
+
+
+def _detail_gate(m: MachineState) -> None:
+    s = m.payload or {}
+    st.markdown(f"**IB-Gateway:** {s.get('host') or '–'}:{s.get('port') or '–'}")
+    st.markdown(f"**Erreichbar:** {'🟢 Ja' if m.status == 'ok' else '🔴 Nein'}")
+
+
+def _detail_weather(m: MachineState) -> None:
+    s = m.payload or {}
+    st.markdown(f"**Marktregime:** {s.get('regime') or 'unbekannt'}")
+    if s.get("demand_label"):
+        st.markdown(f"**Energienachfrage:** {s['demand_label']}")
+    if s.get("timestamp"):
+        st.caption(f"Stand: {str(s['timestamp'])[:16].replace('T', ' ')} Uhr")
+
+
+def _detail_backup_bot(m: MachineState) -> None:
+    s = m.payload or {}
+    st.markdown(f"**Letztes Backup:** vor {s.get('age_hours', 0):.0f}h")
+    recent = s.get("recent") or []
+    if recent:
+        st.markdown("**Letzte Backups**")
+        st.table([
+            {"Datei": r["name"], "Alter": f"{r['age_hours']:.0f}h",
+            "Größe": f"{r['size_mb']:.0f} MB"}
+            for r in recent
+        ])
+
+
 _DETAIL_RENDERERS = {
     "conveyor": _detail_conveyor,
     "warehouse": _detail_warehouse,
     "docks": _detail_docks,
     "lab": _detail_lab,
     "clock": _detail_clock,
+    "analyzer_claude": _detail_analyzer,
+    "analyzer_ollama": _detail_analyzer,
+    "breaker": _detail_breaker,
+    "gate": _detail_gate,
+    "weather": _detail_weather,
+    "backup_bot": _detail_backup_bot,
 }
 
 
 def _render_detail_panel(m: MachineState) -> None:
-    """Detail-Block unter der Szene (Vision W3.2/W3.3): die fünf
-    wichtigsten Maschinen bekommen einen sinnvollen eigenen Block, alle
-    anderen den generischen Fallback (Label/Status/Tooltip/Rohdaten)."""
+    """Detail-Block unter der Szene (Vision W3.2/W3.3, erweitert 17.7.
+    nach User-Feedback "Fabrik soll das Hauptding werden"): JEDE der elf
+    Maschinen hat einen eigenen Block mit denselben Daten, die sonst nur
+    in den Tabellen-Tabs stünden. Generischer Fallback bleibt als
+    zweite Sicherheitsnetz-Schicht (kaputter Spezial-Block → Rohdaten
+    statt Crash)."""
     st.divider()
     st.markdown(f"### {m.label}")
     st.caption(f"Status: {_STATUS_LABEL.get(m.status, m.status)}")

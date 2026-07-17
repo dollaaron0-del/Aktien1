@@ -115,6 +115,21 @@ def _isolate_circuit_breaker_state(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_market_caution_state(tmp_path, monkeypatch):
+    """Marktbreiten-Vorsichts-Modus (analyzers/regime_adaptive.py) IMMER in
+    eine Temp-Datei umlenken. Gefunden 17.7.: der Bot aktivierte während
+    eines echten Zyklus (72% der Sektoren gefallen) den 24h-Vorsichts-Modus
+    in der echten data/market_caution.json — Tests, die get_adaptive_params()
+    ohne Regime-Override aufrufen, lasen diesen echten Live-Zustand mit
+    und bekamen ungewollt ' + Vorsicht' im Label (test_regime_adaptive.py::
+    test_get_adaptive_params_uses_passed_regime). Dieselbe Sicherheits-
+    Begründung wie beim Circuit-Breaker: ein Testlauf darf den echten,
+    gerade aktiven Risiko-Zustand nie lesen oder verändern."""
+    import analyzers.regime_adaptive as ra_mod
+    monkeypatch.setattr(ra_mod, "_CAUTION_FILE", str(tmp_path / "market_caution_test.json"))
+
+
+@pytest.fixture(autouse=True)
 def _isolate_live_status(tmp_path, monkeypatch):
     """Bot-Status + Activity-Feed (system/live_status.py) IMMER in Temp-Dateien
     umlenken. Gefunden 16.7. bei der Neustart-Vorbereitung: FEED_PATH war NIE

@@ -67,7 +67,23 @@ def test_unknown_factory_id_is_ignored():
     assert not any("Status:" in str(c.value) for c in at.get("caption"))
 
 
-def test_known_machine_id_shows_generic_detail_panel():
+def test_known_machine_id_shows_detail_panel():
+    at = AppTest.from_string(_SCRIPT)
+    at.query_params["factory"] = "gate"
+    at.run()
+    assert not at.exception
+    captions = "".join(str(c.value) for c in at.get("caption"))
+    assert "Status:" in captions
+
+
+def test_unregistered_machine_falls_back_to_generic_panel(monkeypatch):
+    """Alle elf Maschinen haben inzwischen einen eigenen Detail-Renderer
+    (17.7.-Ausbau) — der generische Fallback (Vision W3.3) bleibt trotzdem
+    Pflicht als zweite Sicherheitsnetz-Schicht für künftige Maschinen ohne
+    eigenen Block. Simuliert das, statt auf eine (nicht mehr existierende)
+    unbehandelte echte Maschine zu warten."""
+    from dashboard.tabs import factory
+    monkeypatch.delitem(factory._DETAIL_RENDERERS, "gate")
     at = AppTest.from_string(_SCRIPT)
     at.query_params["factory"] = "gate"
     at.run()
@@ -103,6 +119,83 @@ def test_warehouse_detail_panel_shows_positions_table(fresh_portfolio):
     at.run()
     assert not at.exception
     assert len(at.get("table")) == 1
+
+
+# ── 17.7.: Detail-Panels für die restlichen sechs Maschinen ─────────────────
+# (User-Feedback "Fabrik soll das Hauptding werden" — jede Maschine liefert
+# jetzt dieselben Infos, die sonst nur in den Tabellen-Tabs stünden.)
+
+def test_analyzer_claude_detail_panel_shows_route_breakdown(monkeypatch):
+    class _FakeLog:
+        def get_recent(self, limit=50):
+            return [{"provenance": {"model_route": "claude"}}]
+
+    monkeypatch.setattr("analyzers.analysis_log.AnalysisLog", _FakeLog)
+    at = AppTest.from_string(_SCRIPT)
+    at.query_params["factory"] = "analyzer_claude"
+    at.run()
+    assert not at.exception
+    tables = at.get("table")
+    assert len(tables) == 1
+    assert any("claude" in str(row) for row in tables[0].value.to_dict("records"))
+
+
+def test_breaker_detail_panel_shows_daily_and_drawdown_metrics(fresh_portfolio):
+    at = AppTest.from_string(_SCRIPT)
+    at.query_params["factory"] = "breaker"
+    at.run()
+    assert not at.exception
+    metric_labels = [m.label for m in at.get("metric")]
+    assert "Tagesverlust" in metric_labels
+    assert "Drawdown vom Hoch" in metric_labels
+
+
+def test_gate_detail_panel_shows_host_and_port(monkeypatch):
+    from config import config
+    monkeypatch.setattr(config, "ibkr_host", "127.0.0.1")
+    monkeypatch.setattr(config, "ibkr_port", 1)
+    at = AppTest.from_string(_SCRIPT)
+    at.query_params["factory"] = "gate"
+    at.run()
+    assert not at.exception
+    md = "".join(str(m.value) for m in at.get("markdown"))
+    assert "127.0.0.1:1" in md
+
+
+def test_weather_detail_panel_shows_regime(tmp_path, monkeypatch):
+    import json
+    from dashboard.factory import state as st_mod
+    regime_file = tmp_path / "current_regime.json"
+    regime_file.write_text(json.dumps({"regime": "BULL", "timestamp": "2026-07-17T12:00:00"}))
+    monkeypatch.setattr(st_mod, "_REGIME_FILE", str(regime_file))
+
+    at = AppTest.from_string(_SCRIPT)
+    at.query_params["factory"] = "weather"
+    at.run()
+    assert not at.exception
+    md = "".join(str(m.value) for m in at.get("markdown"))
+    assert "BULL" in md
+
+
+def test_backup_bot_detail_panel_shows_recent_backups_table(tmp_path, monkeypatch):
+    import os as _os
+    from datetime import datetime as _dt
+    from dashboard.factory import state as st_mod
+
+    p = tmp_path / "aktien_backup_test.tar.gz"
+    p.write_bytes(b"0" * 2048)
+    ts = _dt.now().timestamp() - 3600
+    _os.utime(p, (ts, ts))
+    monkeypatch.setattr(st_mod, "_BACKUPS_DIR", str(tmp_path))
+
+    at = AppTest.from_string(_SCRIPT)
+    at.query_params["factory"] = "backup_bot"
+    at.run()
+    assert not at.exception
+    tables = at.get("table")
+    assert len(tables) == 1
+    assert any("aktien_backup_test.tar.gz" in str(row)
+              for row in tables[0].value.to_dict("records"))
 
 
 # ── H2.2: Zeitreise-Regler ────────────────────────────────────────────────────

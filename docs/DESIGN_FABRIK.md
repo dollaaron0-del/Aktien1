@@ -185,6 +185,25 @@ Fokus-Navigation über `st.query_params["factory"]`.
       unbekannter ID, zwei Detail-Panels gegen echte isolierte
       Datenquellen), Verifikation pixel+plain OK.
 
+      **17.7. ERWEITERT** (User-Vision: die Fabrik soll das Hauptding
+      werden, Klick auf JEDES Element liefert die Tabellen-Info):
+      restliche sechs Maschinen bekommen jetzt ebenfalls eigene
+      Detail-Panels statt des generischen JSON-Fallbacks —
+      analyzer_claude/analyzer_ollama (genauer model_route-Breakdown
+      der letzten 50 Analysen, nicht nur der Präfix-Anteil), breaker
+      (Tagesverlust/Drawdown/Reset-Historie aus dem echten
+      CircuitBreaker-State), gate (Host:Port + Erreichbarkeit), weather
+      (Regime + Energienachfrage-Label aus derselben Quelle wie das
+      W4.3-Overlay + Zeitstempel), backup_bot (Liste der letzten Backups
+      mit Alter/Größe statt nur einer Zahl). Damit haben jetzt ALLE elf
+      Maschinen einen eigenen Block; der generische Fallback bleibt als
+      zweite Sicherheitsnetz-Schicht für künftige neue Maschinen. 13 neue
+      Tests (route_breakdown-Aggregation, Backup-Liste sortiert/gekappt,
+      alle fünf neuen Panels gegen echte isolierte Datenquellen inkl.
+      AppTest), Suite grün (121/121 in den Fabrik-Testdateien). Die
+      Tab-Reihenfolge (Fabrik als ERSTER Tab statt vorletzter) bleibt
+      offen — nächster Schritt derselben Vision.
+
 ## W4 — Entdeckungs-Ebene
 
 - [x] **W4.1 Ereignis-Framework** — `scene.py::scene_events(state)`.
@@ -252,9 +271,49 @@ Fokus-Navigation über `st.query_params["factory"]`.
       `test_machine_box_uses_image_when_asset_file_present`,
       `test_machine_box_only_uses_asset_for_matching_machine_id`),
       Verifikation pixel+plain OK.
-- [ ] **W5.2 [USER] Assets je Maschine** — mit dem Stil-Prompt vom 13.7.,
-      eine Maschine pro Etappe generieren/auswählen, Ablage als
-      `factory_<id>.png`. > Kann NICHT vom Modell erledigt werden.
+- [ ] **W5.2 [USER] Assets je Maschine** — der alte Stil-Prompt vom 13.7.
+      (16-Bit-Industrieautomation, Neon) passt nicht mehr zur Vision-W6-
+      Kurskorrektur (Ziegelstein/Top-Down/cozy). Neuer Prompt (17.7.,
+      auf User-Wunsch geschrieben) unten. Eine Maschine pro Etappe
+      generieren/auswählen, Ablage als `factory_<id>.png` in
+      `dashboard/assets/img/`. > Kann NICHT vom Modell erledigt werden
+      (kein Bildgenerierungs-Werkzeug verfügbar) — braucht ein externes
+      Tool (Midjourney/DALL·E/Stable Diffusion/o.ä.).
+
+      **Basis-Stil (vor jede Einzelbeschreibung stellen):**
+      > Top-down (bird's-eye) view pixel art game asset. Cozy, inviting
+      > art style like Stardew Valley, combined with the clear
+      > functional silhouette readability of Factorio/Mindustry. Small
+      > brick building, part of a whimsical factory complex. Warm
+      > earthy palette: terracotta brick red, warm wood brown, soft
+      > moss green, cream mortar lines. Soft rounded pixel shading,
+      > gentle warm lighting — inviting and charming, NOT grim or
+      > sterile industrial neon. Flat rooftop visible directly from
+      > above, subtle brick/tile texture, small charming details
+      > allowed (a chimney, a flower box, a lantern). Transparent
+      > background, single isolated building sprite, no ground/other
+      > buildings around it, no text/UI in the image.
+
+      **Je Maschine anhängen:**
+      | Datei | Maschine | Beschreibung |
+      |---|---|---|
+      | `factory_clock.png` | Werksuhr | small charming clocktower rooftop, round clock face visible from above, brick base, small pointed roof |
+      | `factory_weather.png` | Wetterstation | tiny weather-station kiosk rooftop, spinning weather vane, small rain gauge, antenna |
+      | `factory_docks.png` | Laderampen | long loading-dock building rooftop, several numbered garage-style bay doors along one edge (portrait aspect, ~200×420) |
+      | `factory_analyzer_claude.png` | Claude-Analysator | slightly larger, refined brick building, glowing skylight/terminal window visible from above, small satellite dish, subtle warm glow |
+      | `factory_analyzer_ollama.png` | Ollama-Werkbank | humbler wooden-roofed workshop shed, simpler/rustic than the Claude building, small chimney with gentle smoke |
+      | `factory_conveyor.png` | Förderband | elongated open-topped conveyor structure from above, small crates/parcels on the belt, brick support posts along the sides (wide aspect, ~560×110) |
+      | `factory_gate.png` | Verladetor | small brick gatehouse/checkpoint with a striped boom-barrier arm |
+      | `factory_warehouse.png` | Hochregallager | large brick warehouse rooftop, small stacked-crates yard visible in one corner |
+      | `factory_breaker.png` | Not-Aus | small brick utility shed, red/yellow warning-stripe trim, small emergency light on top |
+      | `factory_lab.png` | Qualitätslabor | small brick laboratory building, tiny greenhouse-style glass skylight, thin vent pipe |
+      | `factory_backup_bot.png` | Nachtschicht-Roboter | small brick maintenance shed, tiny friendly robot peeking out of the doorway, warmly glowing lantern |
+
+      **Technisch:** Seitenverhältnis grob an die `scene.LAYOUT`-Box der
+      jeweiligen Maschine anlehnen (die meisten breit/quadratisch, nur
+      `docks` hochformatig ~1:2). PNG mit transparentem Hintergrund
+      (liegt dann sauber auf dem bereits code-gezeichneten Ziegel-Canvas).
+      Auflösung reicht mit ~512px Kantenlänge, wird im Browser skaliert.
 - [ ] **W5.3 Einbau je geliefertem Asset** — wiederholbarer Mini-Task:
       PNG ablegen, headless prüfen, Screenshot, abhaken (hier je Maschine
       eine Zeile ergänzen: W5.3-conveyor, W5.3-gate, …).
@@ -264,9 +323,75 @@ Fokus-Navigation über `st.query_params["factory"]`.
       messen, dann `> OFFEN:`-Notiz mit Befund — NICHT eigenmächtig eine
       JS-Engine einbauen.
 
+## Vision W6 — Top-Down-Neubau (17.7.2026, User-Entscheidung: voller Umbau)
+
+User-Vorgabe wörtlich: *"ich möchte das das Programm einer Fabrik aus
+ziegelstein ähnelt. Man sollte aus der Top-Down ansicht darauf sehen
+können. Jedes tool aus dem programm hat in der Fabrik ein eigene
+Maschiene die sinvoll miteinander verbinden sein sollten ählich denn
+Videospielen Factorio oder Mindustry nur einladender und cozy wie
+stardew valley. So das man sich wünscht diese Fabrik als Hintergrund
+bild oder Bildschiermschoner zu haben. es passiert immer etwas aber
+nicht so viel die maschienen arebeiten einfach denn ganzen tag vor sich
+hin"*. Auf Nachfrage: **voller Umbau jetzt**, kein Zwischenschritt.
+
+Damit ist die alte „Festgelegte Bau-Entscheidungen"-Halle (Seitenansicht,
+Maschinen in einer Reihe, ganz oben in diesem Dokument) **überholt** —
+sie galt bis 17.7., der Kameraperspektive-Teil ist explizit ersetzt.
+
+- [x] **W6.1 Top-Down-Grundriss** — `scene.py::LAYOUT` komplett neu als
+      Grid statt Reihe, `viewBox` `1200x675`→`1200x820`. Reihenfolge
+      oben→unten spiegelt den echten Datenfluss (Zulauf `docks`/`weather`/
+      `clock` → Analyse `analyzer_claude`/`analyzer_ollama` → Entscheidung
+      `conveyor`/`gate` → Lager/Sicherheit `warehouse`/`breaker`/`lab` →
+      Backoffice `backup_bot`) — wie in Factorio/Mindustry: Rohstoffe oben
+      rein, Ergebnis unten raus. Überlappungsfreiheit aller elf Boxen
+      geprüft + als Test kodiert (`test_layout_boxes_do_not_overlap`).
+- [x] **W6.2 Maschinen-Verbindungen** — neue `_CONNECTIONS`-Liste (14
+      Paare `(von, nach, art)`, `art ∈ {main, feedback, utility}`) +
+      `_connection_paths()`, gerendert VOR den Maschinen-Boxen (Leitung
+      läuft optisch unter den Gebäuden). Jede Verbindung spiegelt eine
+      ECHTE Abhängigkeit im Bot-Code (z.B. `docks`/`weather` → Analysatoren
+      → `conveyor` → `warehouse`/`gate`; `lab` → Analysatoren als
+      gestrichelte Lern-Rückkopplung; `warehouse` → `backup_bot` als
+      Wartungs-Linie) — keine erfundene Deko. Eine `main`-Leitung
+      "fließt" (`fx-pipe-flow`, neues CSS-Keyframe in `theme.py`) NUR,
+      wenn beide Enden gerade `status in (ok, active)` sind — dieselbe
+      Nur-echte-Daten-Regel wie `_activity_overlay` (W2.1).
+      `feedback`/`utility` bleiben immer gestrichelt/statisch.
+- [x] **W6.3 Ziegel/Cozy-Optik (prozedural, kein Bild-Asset nötig)** —
+      zwei neue additive Palette-Keys `"brick"`/`"grass"` in BEIDEN
+      `_PALETTE_PIXEL` UND `PALETTE_BLUEPRINT` (Pflicht, `test_dashboard_
+      theme.py:262` erzwingt identische Keys). Canvas-Hintergrund wird
+      `grass` (Werksgelände), darauf ein eingerückter Ziegel-Baukörper
+      (neues `fx-brick-pattern`, Running-Bond-Optik, analog dem
+      bestehenden `fx-belt-pattern`-Trick). Skelett-Fallback in
+      `machine_box()` bekommt eine dünne Ziegel-Dachkante (nur additive
+      zweite `<rect>`, bestehende Asset-Slot-Tests bleiben unverändert
+      grün, da sie nur `"<rect" in box` prüfen). Restliche Dashboard-Tabs
+      bleiben beim bestätigten Industrie-Neon-Pixel-Look — die zwei neuen
+      Keys werden NUR von der Fabrik-Szene referenziert.
+      **Grenze:** echte Top-Down-Pixel-Art je Maschine bleibt W5.2
+      (User-Task, kann nicht generiert werden) — dieser Umbau liefert die
+      Struktur (Grundriss, Verbindungen, Ziegel-/Rasen-Optik), keine
+      illustrierten Sprites. Docken später über den bestehenden W5.1-
+      Asset-Slot-Mechanismus an, ohne dass W6 nochmal angefasst wird.
+      4 neue Tests (`test_all_connections_reference_known_machine_ids_
+      and_kinds`, `test_connection_paths_include_known_main_connection`,
+      `test_connection_only_animates_when_both_endpoints_active`,
+      `test_feedback_connection_always_dashed_regardless_of_status`) +
+      `test_layout_boxes_do_not_overlap` (W6.1).
+      **Offen aus derselben Vision (User-Entscheidung 17.7.: erst alle
+      Maschinen-Detail-Panels — s. W3.3-Ergänzung oben —, DANACH dies):**
+      W6.4 Fabrik als ersten/Standard-Tab (widerspricht der alten
+      „Bewusst NICHT"-Zeile unten — die gilt nur noch bis zu dieser
+      User-Entscheidung, nicht mehr unverändert).
+
 ## Bewusst NICHT (auch hier)
 
 - ✗ Live-Preis-/Netzwerk-Calls in state.py (einzige Ausnahme: der
   0.4s-Gateway-Socket) — die Szene liest nur, was lokal schon da ist.
 - ✗ Eigener Refresh-Mechanismus neben `st.fragment(run_every="60s")`.
-- ✗ Die Fabrik als Startseite/Ersatz der Daten-Tabs.
+- ~~✗ Die Fabrik als Startseite/Ersatz der Daten-Tabs.~~ ÜBERHOLT (17.7.,
+  Vision W6): User will explizit die Fabrik als Hauptding, s. W6.4 oben —
+  noch nicht umgesetzt, aber nicht mehr "bewusst nicht".

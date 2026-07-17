@@ -1,6 +1,6 @@
 """
-dashboard/factory/scene.py — komplette SVG-Szene der Fabrikhalle
-(Vision W1.2, docs/DESIGN_FABRIK.md).
+dashboard/factory/scene.py — komplette SVG-Szene der Ziegel-Fabrik von oben
+(Vision W1.2, erweitert Vision W6, docs/DESIGN_FABRIK.md).
 
 `build_scene_svg(state)` ist eine reine Funktion (State → SVG-String), leicht
 isoliert testbar. Layout-Koordinaten sind bewusst FEST (kein Autolayout) —
@@ -8,32 +8,121 @@ Positionen ändern sich nur, wenn eine neue Maschine dazukommt. `scene_events()`
 (Vision W4.1) ist der zweite Erweiterungspunkt für seltene Requisiten ohne
 eigenen Kasten (Not-Aus, Wetter-Overlay, Easter Eggs) — Wachstums-Regel für
 beide Fälle steht in machines.py (W4.5).
+
+Vision W6 (17.7.2026, User-Vorgabe "Fabrik aus Ziegelstein, Top-Down,
+Maschinen sinnvoll verbunden, cozy wie Stardew Valley"): Kamera-Wechsel von
+der ursprünglichen Seitenansicht-Halle auf einen Top-Down-Grundriss. Die
+Reihenfolge oben→unten spiegelt den echten Datenfluss des Bots (Zulauf →
+Analyse → Entscheidung → Lager/Sicherheit → Backoffice) — wie in
+Factorio/Mindustry Rohstoffe oben rein-, Ergebnis unten rausfließt.
+`_CONNECTIONS`/`_connection_paths()` zeichnen die Leitungen zwischen den
+Maschinen; eine Leitung "fließt" nur, wenn beide Enden echt aktiv sind
+(dieselbe Nur-echte-Daten-Regel wie `_activity_overlay`).
 """
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from dashboard.factory.machines import machine_box
 from dashboard.factory.state import FactoryState
 from dashboard.theme import PALETTE
 
-_WIDTH, _HEIGHT = 1200, 675
+_WIDTH, _HEIGHT = 1200, 820
 
-# Maschine → (x, y, w, h). Fest laut Design-Dokument.
+# Maschine → (x, y, w, h). Fest laut Design-Dokument — Top-Down-Grundriss
+# (Vision W6), Reihenfolge oben→unten = echter Datenfluss. Alle Boxen von
+# Hand auf Nicht-Überlappung geprüft (test_layout_boxes_do_not_overlap).
 LAYOUT = {
     "clock":           (500,  20, 200,  70),
-    "weather":         (950,  20, 220,  90),
-    "docks":           (20, 130, 180, 420),
-    "analyzer_claude": (280, 150, 200, 130),
-    "analyzer_ollama": (520, 150, 160, 110),
-    "conveyor":        (240, 340, 620, 120),
-    "warehouse":       (900, 250, 270, 220),
-    "gate":            (930, 500, 240, 120),
-    "lab":             (620, 500, 260, 120),
-    "breaker":         (380, 510, 180, 100),
-    "backup_bot":      (60, 580, 200,  80),
+    "weather":         (980,  20, 200,  90),
+    "docks":           (20, 110, 200, 420),
+    "analyzer_claude": (260, 150, 220, 140),
+    "analyzer_ollama": (520, 150, 190, 140),
+    "conveyor":        (260, 330, 560, 110),
+    "gate":            (980, 320, 200, 110),
+    "warehouse":       (260, 460, 280, 200),
+    "breaker":         (580, 480, 170, 110),
+    "lab":             (790, 460, 220, 140),
+    "backup_bot":      (260, 690, 220,  90),
 }
+
+# Vision W6: Leitungen zwischen Maschinen (Factorio/Mindustry-Optik) — jede
+# spiegelt eine ECHTE Abhängigkeit im Bot-Code, keine erfundene Deko.
+# "main" = Daten-/Entscheidungsfluss (fließt animiert, wenn beide Enden
+# aktiv sind), "feedback" = Lern-Rückkopplung, "utility" = Wartung —
+# beide immer gestrichelt/statisch (zeigen Beziehung, nicht Durchsatz).
+_CONNECTIONS: List[Tuple[str, str, str]] = [
+    ("docks", "analyzer_claude", "main"),
+    ("docks", "analyzer_ollama", "main"),
+    ("weather", "analyzer_claude", "main"),
+    ("weather", "analyzer_ollama", "main"),
+    ("clock", "conveyor", "main"),
+    ("analyzer_claude", "conveyor", "main"),
+    ("analyzer_ollama", "conveyor", "main"),
+    ("conveyor", "warehouse", "main"),
+    ("conveyor", "gate", "main"),
+    ("warehouse", "breaker", "main"),
+    ("warehouse", "lab", "main"),
+    ("lab", "analyzer_claude", "feedback"),
+    ("lab", "analyzer_ollama", "feedback"),
+    ("warehouse", "backup_bot", "utility"),
+]
+
+
+def _box_center(rect: Tuple[float, float, float, float]) -> Tuple[float, float]:
+    x, y, w, h = rect
+    return x + w / 2, y + h / 2
+
+
+def _connector_endpoints(
+    r1: Tuple[float, float, float, float], r2: Tuple[float, float, float, float]
+) -> Tuple[float, float, float, float]:
+    """Vision W6: Anker-Punkt an der jeweils näherliegenden Kante — bei
+    überwiegend vertikalem Fluss Boden-Mitte→Kopf-Mitte, bei überwiegend
+    horizontalem Fluss Seiten-Mitte→Seiten-Mitte. Reine Geometrie, kein
+    Pfadfinding nötig (feste Positionen, keine Hindernisse dazwischen)."""
+    x1, y1, w1, h1 = r1
+    x2, y2, w2, h2 = r2
+    c1x, c1y = _box_center(r1)
+    c2x, c2y = _box_center(r2)
+    dx, dy = c2x - c1x, c2y - c1y
+    if abs(dy) >= abs(dx):
+        if dy >= 0:
+            return c1x, y1 + h1, c2x, y2
+        return c1x, y1, c2x, y2 + h2
+    if dx >= 0:
+        return x1 + w1, c1y, x2, c2y
+    return x1, c1y, x2 + w2, c2y
+
+
+def _connection_paths(state: FactoryState) -> str:
+    """Vision W6: Leitungen zwischen Maschinen — "fließt" (fx-pipe-flow)
+    NUR, wenn es eine echte Daten-Verbindung ("main") ist UND beide
+    Enden gerade aktiv sind (dieselbe Nur-echte-Daten-Regel wie
+    `_activity_overlay`); "feedback"/"utility" bleiben immer gestrichelt/
+    statisch — sie zeigen eine Beziehung, keinen Durchsatz."""
+    p = PALETTE
+    parts: List[str] = []
+    for src_id, dst_id, kind in _CONNECTIONS:
+        if src_id not in LAYOUT or dst_id not in LAYOUT:
+            continue
+        x1, y1, x2, y2 = _connector_endpoints(LAYOUT[src_id], LAYOUT[dst_id])
+        src = state.machines.get(src_id)
+        dst = state.machines.get(dst_id)
+        flowing = (
+            kind == "main" and src is not None and dst is not None
+            and src.status in ("ok", "active") and dst.status in ("ok", "active")
+        )
+        cls = "fx-pipe-flow" if flowing else ""
+        stroke = p["cobalt"] if flowing else p["border"]
+        dash_attr = "" if kind == "main" else ' stroke-dasharray="6 5"'
+        parts.append(
+            f'<line class="{cls}" data-connection="{src_id}-{dst_id}" '
+            f'x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}" '
+            f'stroke="{stroke}" stroke-width="3"{dash_attr} opacity="0.75" />'
+        )
+    return "".join(parts)
 
 
 def _sky_color(hour: int) -> str:
@@ -140,22 +229,43 @@ def build_scene_svg(state: FactoryState, *, now: Optional[datetime] = None) -> s
     parts = [
         f'<svg viewBox="0 0 {_WIDTH} {_HEIGHT}" xmlns="http://www.w3.org/2000/svg" '
         f'style="width:100%; height:auto;">',
+        '<defs>'
         # W2.1: geteiltes Streifenmuster fürs laufende Förderband (nur
         # sichtbar genutzt, wenn conveyor.status=="active" — machines.py
         # hängt die fx-belt-run-Klasse dann an ein Rect mit dieser Fill an).
-        '<defs><pattern id="fx-belt-pattern" width="16" height="16" '
+        '<pattern id="fx-belt-pattern" width="16" height="16" '
         'patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'
         f'<rect width="16" height="16" fill="{p["bg_panel"]}" />'
-        f'<rect width="8" height="16" fill="{p["cobalt"]}" /></pattern></defs>',
-        f'<rect x="0" y="0" width="{_WIDTH}" height="{_HEIGHT}" fill="{p["bg"]}" '
-        f'stroke="{p["border"]}" />',
+        f'<rect width="8" height="16" fill="{p["cobalt"]}" /></pattern>'
+        # Vision W6: Ziegel-Musterung (Running-Bond) für den Baukörper —
+        # rein prozedural, kein Bild-Asset nötig (echte Sprites bleiben
+        # W5.2, User-Task).
+        '<pattern id="fx-brick-pattern" width="40" height="20" '
+        'patternUnits="userSpaceOnUse">'
+        f'<rect width="40" height="20" fill="{p["brick"]}" />'
+        f'<rect x="0" y="0" width="40" height="20" fill="none" '
+        f'stroke="{p["border"]}" stroke-width="1.5" />'
+        f'<line x1="20" y1="0" x2="20" y2="10" stroke="{p["border"]}" stroke-width="1.5" />'
+        f'<line x1="0" y1="10" x2="40" y2="10" stroke="{p["border"]}" stroke-width="1.5" />'
+        f'<line x1="20" y1="10" x2="20" y2="20" stroke="{p["border"]}" stroke-width="1.5" />'
+        '</pattern>'
+        '</defs>',
+        # Vision W6: Werksgelände (Rasen) als äußerer Canvas, der Ziegel-
+        # Baukörper sitzt darauf eingerückt — top-down "Grundriss von oben"
+        # statt der alten Seitenansicht-Halle.
+        f'<rect x="0" y="0" width="{_WIDTH}" height="{_HEIGHT}" fill="{p["grass"]}" />',
+        f'<rect x="10" y="10" width="{_WIDTH - 20}" height="{_HEIGHT - 20}" '
+        f'fill="url(#fx-brick-pattern)" stroke="{p["border"]}" stroke-width="2" />',
         # Vision W4.2: Himmelsstreifen nach echter Server-Uhrzeit (kein
         # Übergang, nur ein ehrliches Tag/Nacht-Signal statt Dauer-Tag).
         f'<rect x="0" y="0" width="{_WIDTH}" height="14" '
         f'fill="{_sky_color(now.hour)}" opacity="0.35" />',
-        # Boden
-        f'<rect x="0" y="{_HEIGHT - 24}" width="{_WIDTH}" height="24" fill="{p["bg_panel"]}" />',
     ]
+
+    # Vision W6: Leitungen zwischen Maschinen VOR den Maschinen-Boxen, damit
+    # sie optisch "unter" den Gebäuden verlaufen (wie Förderbänder/Rohre in
+    # Factorio/Mindustry, die zwischen den Gebäuden hindurchlaufen).
+    parts.append(_connection_paths(state))
 
     # Vision W2.3: Nachtmodus bei Pause — die Halle steht wirklich still
     # (keine Animationen, unabhängig vom Einzelstatus), nicht nur optisch
