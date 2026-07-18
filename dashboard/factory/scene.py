@@ -45,6 +45,10 @@ LAYOUT = {
     "breaker":         (580, 480, 170, 110),
     "lab":             (790, 460, 220, 140),
     "backup_bot":      (260, 690, 220,  90),
+    # Karten-Umbau 18.7.2026: Kontrollraum als "Backoffice"-Pendant zum
+    # Nachtschicht-Roboter — administrativ, kein Platz im Datenfluss,
+    # daher symmetrisch am Fuß der Halle statt in der Pipeline-Reihenfolge.
+    "control_room":    (960, 690, 220,  90),
 }
 
 # Vision W6: Leitungen zwischen Maschinen (Factorio/Mindustry-Optik) — jede

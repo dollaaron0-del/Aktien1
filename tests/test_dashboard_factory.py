@@ -21,10 +21,12 @@ def _empty_state(status="off") -> FactoryState:
     )
 
 
-def test_read_state_returns_all_eleven_machine_ids():
+def test_read_state_returns_all_twelve_machine_ids():
+    # Karten-Umbau 18.7.2026: Kontrollraum (Einstellungen-Detailpanel) als
+    # zwölfte Maschine dazugekommen.
     state = read_state()
     assert set(state.machines.keys()) == set(MACHINE_IDS)
-    assert len(MACHINE_IDS) == 11
+    assert len(MACHINE_IDS) == 12
 
 
 def test_read_state_has_paused_bool_and_timestamp():
@@ -220,6 +222,28 @@ def test_read_backup_bot_off_when_no_backups(tmp_path, monkeypatch):
     monkeypatch.setattr(st_mod, "_BACKUPS_DIR", str(tmp_path))
     m = st_mod._read_backup_bot()
     assert m.status == "off"
+
+
+def test_read_control_room_warns_without_dashboard_password(monkeypatch):
+    monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+    m = st_mod._read_control_room()
+    assert m.status == "warn"
+    assert m.payload["password_set"] is False
+
+
+def test_read_control_room_ok_with_dashboard_password(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "s3cret")
+    m = st_mod._read_control_room()
+    assert m.status == "ok"
+    assert m.payload["password_set"] is True
+
+
+def test_read_control_room_fail_open_on_config_error(monkeypatch):
+    import config as _config_mod
+    monkeypatch.setattr(_config_mod, "config", None)
+    m = st_mod._read_control_room()
+    assert m.id == "control_room"
+    assert m.status in ("off", "warn", "ok")
 
 
 # ── scene.py / machines.py (W1.2) ────────────────────────────────────────────

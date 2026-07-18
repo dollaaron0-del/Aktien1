@@ -22,7 +22,7 @@ from typing import Dict, List
 
 MACHINE_IDS = (
     "docks", "analyzer_claude", "analyzer_ollama", "conveyor", "warehouse",
-    "breaker", "gate", "weather", "lab", "backup_bot", "clock",
+    "breaker", "gate", "weather", "lab", "backup_bot", "clock", "control_room",
 )
 
 # H2.2: History-Zeilen (snapshot()) speichern bewusst KEIN Label (klein
@@ -41,6 +41,7 @@ MACHINE_LABELS: Dict[str, str] = {
     "lab": "Qualitätslabor",
     "backup_bot": "Nachtschicht-Roboter",
     "clock": "Werksuhr",
+    "control_room": "Kontrollraum",
 }
 
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")
@@ -358,6 +359,34 @@ def _read_clock() -> MachineState:
         return _off("clock", "Werksuhr")
 
 
+def _read_control_room() -> MachineState:
+    """18.7.2026 (Karten-Umbau): Verwaltung/Einstellungen bekommt eine
+    eigene Maschine — das frühere Einstellungen-Tab lebt jetzt als
+    Detail-Panel hier (dashboard/settings_panel.py). Status spiegelt
+    echte Absicherungs-Lücken (kein erfundener Wert): fehlendes
+    Dashboard-Passwort ist eine bewusste, dokumentierte Härtungslücke
+    (dashboard/auth.py) — "warn" macht sie in der Szene sichtbar statt
+    sie nur im Code-Kommentar stehen zu lassen."""
+    try:
+        password_set = bool(os.getenv("DASHBOARD_PASSWORD", "").strip())
+        from config import config as _cfg
+        api_key_set = bool(getattr(_cfg, "anthropic_api_key", ""))
+        status = "ok" if password_set else "warn"
+        tooltip = [
+            f"Dashboard-Passwort: {'gesetzt' if password_set else 'NICHT gesetzt'}",
+            f"Anthropic-Key: {'gesetzt' if api_key_set else 'fehlt'}",
+            f"Broker-Modus: {getattr(_cfg, 'broker_mode', '–')}",
+        ]
+        return MachineState(
+            id="control_room", label="Kontrollraum", status=status,
+            tooltip=tooltip,
+            payload={"password_set": password_set, "api_key_set": api_key_set,
+                     "broker_mode": getattr(_cfg, "broker_mode", "")},
+        )
+    except Exception:
+        return _off("control_room", "Kontrollraum")
+
+
 # ── Entdeckungs-Ebene (Vision W4) — jede Requisite an einen echten Zustand
 # gebunden, kein Zufalls-Deko-Generator. Jeder Leser einzeln fail-open. ────
 
@@ -461,6 +490,7 @@ _READERS = {
     "lab": _read_lab,
     "backup_bot": _read_backup_bot,
     "clock": _read_clock,
+    "control_room": _read_control_room,
 }
 
 

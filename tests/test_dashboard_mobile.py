@@ -50,4 +50,4 @@ def test_mobile_mode_skips_kpi_strip_and_instruments(monkeypatch):
 def test_without_mobile_param_full_dashboard_with_tabs(monkeypatch):
     at = _run(monkeypatch, mobile=False)
     assert not at.exception
-    assert len(at.tabs) > 10
+    assert len(at.tabs) >= 7  # Tab-Umbau 18.7.2026: 7 Tabs statt >10

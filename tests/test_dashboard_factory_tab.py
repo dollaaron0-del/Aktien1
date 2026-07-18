@@ -234,6 +234,41 @@ def test_weather_detail_panel_without_ctx_regime_data_stays_lean():
     assert "Rezessions-Score-Gauge" not in subheaders
 
 
+_SETTINGS_CTX_SCRIPT = """
+from config import config
+
+class _Ctx:
+    config = config
+
+from dashboard.tabs import factory
+factory.render(_Ctx())
+"""
+
+
+def test_control_room_detail_panel_includes_full_settings_panel_with_ctx():
+    """Karten-Umbau 18.7.2026: das frühere Einstellungen-Tab lebt jetzt im
+    Kontrollraum-Detailpanel — mit echtem ctx erscheint das volle
+    Einstellungen-Formular, nicht nur die Status-Kacheln."""
+    at = AppTest.from_string(_SETTINGS_CTX_SCRIPT)
+    at.query_params["factory"] = "control_room"
+    at.run()
+    assert not at.exception
+    subheaders = "".join(str(s.value) for s in at.get("subheader"))
+    assert "Bot-Einstellungen" in subheaders, \
+        "Volles Einstellungen-Panel fehlt im Kontrollraum-Detail"
+
+
+def test_control_room_detail_panel_without_ctx_stays_lean():
+    """Kiosk/kaputter ctx: Einstellungen-Panel fällt still aus (fail-open),
+    die Status-Kacheln bleiben."""
+    at = AppTest.from_string(_SCRIPT)
+    at.query_params["factory"] = "control_room"
+    at.run()
+    assert not at.exception
+    subheaders = "".join(str(s.value) for s in at.get("subheader"))
+    assert "Bot-Einstellungen" not in subheaders
+
+
 def test_backup_bot_detail_panel_shows_recent_backups_table(tmp_path, monkeypatch):
     import os as _os
     from datetime import datetime as _dt

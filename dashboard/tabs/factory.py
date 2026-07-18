@@ -232,6 +232,16 @@ def _detail_backup_bot(m: MachineState) -> None:
         ])
 
 
+def _detail_control_room(m: MachineState) -> None:
+    s = m.payload or {}
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Dashboard-Passwort", "gesetzt" if s.get("password_set") else "AUS")
+    c2.metric("Anthropic-Key", "gesetzt" if s.get("api_key_set") else "fehlt")
+    c3.metric("Broker-Modus", (s.get("broker_mode") or "–").upper())
+    if not s.get("password_set"):
+        st.caption("⚠️ Kein Dashboard-Passwort gesetzt — dokumentierte Härtungslücke (dashboard/auth.py).")
+
+
 _DETAIL_RENDERERS = {
     "conveyor": _detail_conveyor,
     "warehouse": _detail_warehouse,
@@ -244,6 +254,7 @@ _DETAIL_RENDERERS = {
     "gate": _detail_gate,
     "weather": _detail_weather,
     "backup_bot": _detail_backup_bot,
+    "control_room": _detail_control_room,
 }
 
 
@@ -292,6 +303,16 @@ def _render_detail_panel(m: MachineState, ctx=None) -> None:
             _alog_panel.render(ctx)
         except Exception:
             pass  # Fail-open: model_route-Breakdown oben steht bereits
+
+    # Kontrollraum trägt das volle Einstellungen-Formular (früher eigener
+    # Tab) — gleiche ctx-Regel: Kiosk-Modus bleibt bei der Kurzinfo oben.
+    if m.id == "control_room" and ctx is not None:
+        try:
+            from dashboard import settings_panel as _settings_panel
+            st.divider()
+            _settings_panel.render(ctx)
+        except Exception:
+            pass  # Fail-open: Status-Kacheln oben stehen bereits
 
 
 def _render_replay_terminal(day: str, until_ts: str) -> None:

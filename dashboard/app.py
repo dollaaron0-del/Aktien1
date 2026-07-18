@@ -494,7 +494,9 @@ _ctx = _types.SimpleNamespace(**locals())
 # "Fabrik soll das Hauptding werden"). Signal-Queue lebt im Entscheidungen-
 # Tab (Zähler im Label), Regime/Analyse-Log in den Fabrik-Detailpanels,
 # Wochenbriefing in der Kartei.
-tab_factory, tab_portfolio, tab_live, tab_decisions, tab_trades, tab_watchlist, tab_dossier, tab_settings = st.tabs([
+# Einstellungen (früher letzter Tab) lebt seit 18.7.2026 als Detailpanel
+# des Kontrollraums in der Fabrik (dashboard/settings_panel.py) — 7 Tabs.
+tab_factory, tab_portfolio, tab_live, tab_decisions, tab_trades, tab_watchlist, tab_dossier = st.tabs([
     "🏭 Fabrik",
     "📊 Portfolio",
     "📡 Live",
@@ -502,7 +504,6 @@ tab_factory, tab_portfolio, tab_live, tab_decisions, tab_trades, tab_watchlist, 
     "📈 Trades & Lernen",
     "🔭 Watchlist",
     "🗂 Kartei",
-    "⚙️ Einstellungen",
 ])
 
 
@@ -553,13 +554,6 @@ with st.sidebar:
     from dashboard.tabs import sidebar as _sidebar
     _sidebar.render(_ctx)
 
-
-# ══════════════════════════════════════════════════════════
-# TAB 10 – EINSTELLUNGEN
-# ══════════════════════════════════════════════════════════
-with tab_settings:
-    from dashboard.tabs import settings as _tab_settings
-    _tab_settings.render(_ctx)
 
 
 # ══════════════════════════════════════════════════════════

@@ -1,4 +1,5 @@
-"""Tab "Einstellungen" — ausgelagert aus dashboard/app.py (Roadmap 4.4a)."""
+"""Einstellungen-Panel — bis 18.7.2026 eigener Tab, seit dem Karten-Umbau
+das Detailpanel des Kontrollraums (dashboard/tabs/factory.py)."""
 import os
 import subprocess
 
