@@ -44,7 +44,7 @@ class _Ctx:
     _hdr_paused = True
     _ls = None
 
-from dashboard.tabs import live
+from dashboard import live_panel as live
 live.render(_Ctx())
 """
 

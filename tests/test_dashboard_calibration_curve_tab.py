@@ -6,7 +6,7 @@ statt des vollen render(ctx).
 from streamlit.testing.v1 import AppTest
 
 _SCRIPT = """
-from dashboard.tabs.trades import _render_calibration_curve
+from dashboard.trades_panel import _render_calibration_curve
 _render_calibration_curve()
 """
 

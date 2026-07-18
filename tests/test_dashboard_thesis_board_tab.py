@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from streamlit.testing.v1 import AppTest
 
 _SCRIPT = """
-from dashboard.tabs.trades import _render_thesis_board
+from dashboard.trades_panel import _render_thesis_board
 _render_thesis_board()
 """
 

@@ -34,7 +34,16 @@ def test_kiosk_mode_hides_streamlit_chrome(monkeypatch):
     assert "display:none" in html_out
 
 
-def test_without_kiosk_param_full_dashboard_with_tabs(monkeypatch):
+def test_without_kiosk_param_full_dashboard_shows_hud_and_scene(monkeypatch):
+    """Karten-Umbau 18.7.2026 (Vision W7): auch der volle Modus hat KEINE
+    Tabs mehr (die Fabrik-Szene IST das Programm) — der echte Unterschied
+    zum Kiosk-Wandbild ist jetzt der immer sichtbare HUD (KPI-Leiste,
+    Kopfzeile, Sidebar), den render(None) im Kiosk-Pfad nie erreicht."""
     at = _run(monkeypatch, kiosk=False)
     assert not at.exception
-    assert len(at.tabs) >= 5  # Tab-Umbau 18.7.2026: 5 Tabs statt >10
+    assert len(at.tabs) == 0
+    metrics = [m.label for m in at.get("metric")]
+    assert "Gesamtwert" in metrics, "HUD-KPI-Leiste fehlt im Vollmodus"
+    html_out = "".join(str(m.value) for m in at.get("markdown"))
+    assert "<svg" in html_out
+    assert "fx-machine" in html_out

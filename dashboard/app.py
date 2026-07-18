@@ -481,80 +481,56 @@ def _get_ticker_news(ticker: str) -> list:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TABS
+# KARTEN-UMBAU (Vision W7, 18.7.2026): KEINE TABS MEHR.
+# User-Vorgabe wörtlich: "das ganze Programm Dashboard [soll] nur aus
+# dieser Fabrik bestehen, also eine interaktive Map [...] wenn man
+# [Gegenstände] anklickt, [bekommt man] mehr Infos." Jeder frühere Tab
+# lebt jetzt als Detailpanel einer Maschine (siehe docs/DESIGN_FABRIK.md,
+# Vision W7-Fortschrittsliste). Übrig bleibt: ein immer sichtbarer HUD
+# (Zahlen, die man nicht erst "entdecken" soll) + die Szene selbst.
 # ═══════════════════════════════════════════════════════════════════════════════
-# Kontext-Bündel für ausgelagerte Tab-Module (Roadmap 4.4a, Monolith-Split):
-# alles, was bis hierher im Modul-Namensraum steht (broker/portfolio/config/
-# Helper-Funktionen/…), automatisch statt einzeln durchgereicht — siehe
-# dashboard/tabs/__init__.py-Docstring für die Begründung.
+
+# Kontext-Bündel für die ausgelagerten Detailpanel-Module (Roadmap 4.4a,
+# Monolith-Split): alles, was bis hierher im Modul-Namensraum steht
+# (broker/portfolio/config/Helper-Funktionen/…), automatisch statt
+# einzeln durchgereicht — siehe dashboard/tabs/__init__.py-Docstring.
 import types as _types
 _ctx = _types.SimpleNamespace(**locals())
 
-# Tab-Umbau 18.7.2026: 8 Tabs statt 14, Fabrik zuerst (Vision W6.4 —
-# "Fabrik soll das Hauptding werden"). Signal-Queue lebt im Entscheidungen-
-# Tab (Zähler im Label), Regime/Analyse-Log in den Fabrik-Detailpanels,
-# Wochenbriefing+Watchlist+IPO-Pipeline im Lager-Detailpanel.
-# Einstellungen (früher letzter Tab) lebt seit 18.7.2026 als Detailpanel
-# des Kontrollraums in der Fabrik (dashboard/settings_panel.py). Kartei
-# und Watchlist leben seit 18.7.2026 im Lager-Detailpanel (User-Vorgabe:
-# "Klick aufs Lager → alle Aktien suchen") — 5 Tabs.
-tab_factory, tab_portfolio, tab_live, tab_decisions, tab_trades = st.tabs([
-    "🏭 Fabrik",
-    "📊 Portfolio",
-    "📡 Live",
-    "🧠 Entscheidungen" + (f" ({pending_cnt})" if pending_cnt else ""),
-    "📈 Trades & Lernen",
-])
+# ─── HUD: KPI-Leiste (Tab-Umbau 18.7.2026, aus dem früheren Portfolio-Tab
+# hierher — Depotwert/Cash/Regime/Win-Rate/Queue soll man nicht erst
+# anklicken müssen, um sie zu sehen). ─────────────────────────────────────
+_hud_delta_pct = (total_value - config.initial_capital) / config.initial_capital * 100
+_hud_cash_pct = portfolio.cash / total_value * 100 if total_value else 0
+_hud_regime_str = (regime_data["regime"] if regime_data else "–")
+_hud_regime_score = (regime_data["recession_score"] if regime_data else None)
 
+_hk1, _hk2, _hk3, _hk4, _hk5, _hk6 = st.columns(6)
+_hk1.metric("Gesamtwert", f"${total_value:,.2f}", f"{_hud_delta_pct:+.1f}%")
+_hk2.metric("Cash", f"${portfolio.cash:,.2f}", f"{_hud_cash_pct:.0f}% des Portfolios")
+_hk3.metric("Offene Positionen", len(portfolio.all_positions()))
+_hk4.metric(
+    "Marktregime", _hud_regime_str,
+    f"Score {_hud_regime_score:.2f}" if _hud_regime_score is not None else "–",
+    delta_color="inverse",
+)
+if acc.get("total_closed"):
+    _hk5.metric("Win-Rate", f"{acc['win_rate_pct']}%", f"{acc['total_closed']} Trades")
+elif _rt_stats:
+    _hk5.metric("Win-Rate", f"{_rt_stats['win_rate_pct']}%",
+                f"{_rt_stats['total_closed']} Trades (Portfolio-Historie)")
+else:
+    _hk5.metric("Win-Rate", "–", "0 Trades")
+_hk6.metric("Signal-Warteschlange", f"{pending_cnt} ausstehend", delta_color="off")
+st.divider()
 
-# ══════════════════════════════════════════════════════════
-# TAB "LIVE" – Aktivitätsfeed + Nächste Aktionen (Roadmap 1.5b+c)
-# ══════════════════════════════════════════════════════════
-with tab_live:
-    from dashboard.tabs import live as _tab_live
-    _tab_live.render(_ctx)
-
-
-# ══════════════════════════════════════════════════════════
-# TAB 1 – PORTFOLIO
-# ══════════════════════════════════════════════════════════
-with tab_portfolio:
-    from dashboard.tabs import portfolio as _tab_portfolio
-    _tab_portfolio.render(_ctx)
-
-
-# ══════════════════════════════════════════════════════════
-# TAB 2 – ENTSCHEIDUNGEN (Warum tut der Bot, was er tut?)
-# ══════════════════════════════════════════════════════════
-with tab_decisions:
-    from dashboard.tabs import decisions as _tab_decisions
-    _tab_decisions.render(_ctx)
-
-
-# ══════════════════════════════════════════════════════════
-# TAB 6 – TRADES & LERNEN
-# ══════════════════════════════════════════════════════════
-with tab_trades:
-    from dashboard.tabs import trades as _tab_trades
-    _tab_trades.render(_ctx)
-
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# SIDEBAR
-# ═══════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
     from dashboard.tabs import sidebar as _sidebar
     _sidebar.render(_ctx)
 
-
-
-# ══════════════════════════════════════════════════════════
-# TAB "FABRIK" – interaktives Wimmelbild (Vision W1)
-# ══════════════════════════════════════════════════════════
-with tab_factory:
-    from dashboard.tabs import factory as _tab_factory
-    _tab_factory.render(_ctx)
+# ─── Die Szene IST das Programm ──────────────────────────────────────────
+from dashboard.tabs import factory as _tab_factory
+_tab_factory.render(_ctx)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

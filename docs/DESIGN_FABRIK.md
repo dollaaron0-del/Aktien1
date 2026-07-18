@@ -463,22 +463,44 @@ nur eine Zwischenstufe — das Ziel ist NULL Tabs außer der Szene selbst.
       beide ex-Tabs). `?dossier=`-Links tragen jetzt `factory=warehouse&`
       mit, sonst würde der Link ins Leere zeigen (Kartei-Tab existiert
       nicht mehr). 5 Tabs → committet.
-- [ ] **W7.3 Tab-Leiste komplett entfernen** — verbleibend: Fabrik,
-      Portfolio, Live, Entscheidungen, Trades & Lernen (5 Tabs). Braucht
-      einen persistenten, IMMER sichtbaren HUD-Streifen (Bot-Status,
-      Gesundheits-Ampel, Depotwert) — das ist bewusst KEIN Klick-Ziel,
-      da man diese Zahlen nicht erst "entdecken" soll.
-- [ ] **W7.4 Live-Tab** (Aktivitätsfeed/Timeline) → vermutlich Werksuhr-
-      Detail + permanenter Logbuch-Streifen (existiert als
-      `_render_logbook()` schon in der Szene).
-- [ ] **W7.5 Entscheidungen-Rest** (Zeitraum-Vergleich, der Rest von
-      `tabs/decisions.py`) → Förderband-Detail.
-- [ ] **W7.6 Trades & Lernen** (588 Zeilen: Kalibrierung, Lernkurve,
-      Genealogie, Paper-Forward, Thesis-Board, Filter-X-Ray, Why-Not,
-      Wochen-Report) → Qualitätslabor-Detail, vermutlich deutlich
-      ausgebaut oder als eigene "Tiefenansicht".
-- [ ] **W7.7 Portfolio-Rest** (Wachstumsphase, Ziel-Risiko, Notizen) →
-      Lager-Detail (KPI-Leiste selbst vermutlich in den HUD, s. W7.3).
+- [x] **W7.3–W7.7 Tab-Leiste komplett entfernen — UMGESETZT 18.7.2026**
+      in einem Zug (alle vier Ziele hingen strukturell zusammen, ein
+      Halbzustand mit unerreichbarem Code wäre eine Regression gewesen):
+      - **W7.3 HUD** — `app.py` hat keine `st.tabs()` mehr. Persistenter,
+        immer sichtbarer Streifen bleibt: Kopf (Logo/Titel/Status-Banner),
+        Gesundheits-Ampel, Werksleiter-Gesicht, KPI-Leiste (Gesamtwert/
+        Cash/Positionen/Regime/Win-Rate/Signal-Queue — aus dem früheren
+        Portfolio-Tab hierher, das sind Zahlen zum SEHEN, nicht zum
+        Entdecken), Sidebar (Bot-Pause/Fokus-Modus/Kosten/Config, bleibt
+        unverändert bestehen). Danach direkt `factory.render(_ctx)` —
+        keine Tab-Auswahl mehr nötig.
+      - **W7.4 Live** (`tabs/live.py` → `live_panel.py`) → Werksuhr-
+        Detailpanel (Zustand/Phase/nächster Lauf ist Uhr-Domäne).
+      - **W7.5 Entscheidungen** (`tabs/decisions.py` → `decisions_panel.py`,
+        inkl. der bereits vorher gemergten Signal-Queue) → Förderband-
+        Detailpanel, unter der bestehenden kurzen Funnel-Zusammenfassung.
+      - **W7.6 Trades & Lernen** (`tabs/trades.py` → `trades_panel.py`,
+        588 Zeilen: Kalibrierung, Lernkurve, Genealogie, Paper-Forward,
+        Thesis-Board, Filter-X-Ray, Why-Not) → Qualitätslabor-Detailpanel.
+      - **W7.7 Portfolio-Rest** (`tabs/portfolio.py` → `portfolio_panel.py`:
+        Wachstumsphase, Ziel-Risiko, Positionstabelle, Bot-Score,
+        Wertverlauf, Transaktionen) → Lager-Detailpanel, oberhalb der
+        W7.2-Aktien-Suche.
+
+      Alle vier folgen demselben Muster wie Regime/Analyse-Log/Briefing/
+      Einstellungen/Kartei/Watchlist: `render(ctx)` unverändert
+      wiederverwendet, am Detailpanel per `st.divider()` angehängt,
+      fail-open (`try/except`, Kiosk bleibt schlank). Kiosk-/Mobile-Tests
+      auf die neue Realität umgestellt (auch der Vollmodus hat 0 Tabs —
+      der Unterschied ist jetzt HUD vs. Kurzform statt Tabs vs. keine
+      Tabs). Dashboard-Suite 517 Tests grün, Voll-Render pixel+plain OK.
+
+      **Damit ist Vision W7 (User 18.7.: "das ganze Programm soll nur aus
+      der Fabrik bestehen") strukturell komplett** — alle 8 früheren Tabs
+      sind Detailpanels von Maschinen oder Teil des HUD. Offen bleibt nur
+      noch Politur (Sidebar evtl. ins Kontrollraum-Detail, echte Kisten-
+      Wanderungs-Animation statt der Leitungs-Fließanimation, falls
+      gewünscht) — kein strukturelles Aufräumen mehr nötig.
 
 ## Bewusst NICHT (auch hier)
 

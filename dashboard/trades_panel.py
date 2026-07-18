@@ -1,4 +1,7 @@
-"""Tab "Trades & Lernen" — ausgelagert aus dashboard/app.py (Roadmap 4.4a)."""
+"""Trades & Lernen-Panel — bis 18.7.2026 eigener Tab, seit dem Karten-
+Umbau (Vision W7) Teil des Qualitätslabor-Detailpanels (dashboard/tabs/
+factory.py) — Kalibrierung/Lernkurve/Genealogie/Paper-Forward/Thesis-
+Board gehören zum "was hat das Werk gelernt" der Lab-Maschine."""
 from datetime import datetime
 
 import pandas as pd

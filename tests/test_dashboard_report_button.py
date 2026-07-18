@@ -7,7 +7,7 @@ der schweren ctx-Abhängigkeiten.
 from streamlit.testing.v1 import AppTest
 
 _SCRIPT = """
-from dashboard.tabs.portfolio import _render_weekly_report_button
+from dashboard.portfolio_panel import _render_weekly_report_button
 _render_weekly_report_button()
 """
 

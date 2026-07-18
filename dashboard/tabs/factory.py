@@ -333,6 +333,17 @@ def _render_detail_panel(m: MachineState, ctx=None) -> None:
         except Exception:
             pass  # Fail-open: model_route-Breakdown oben steht bereits
 
+    # Qualitätslabor trägt das volle Trades-&-Lernen-Panel (früher eigener
+    # Tab: Kalibrierung, Lernkurve, Genealogie, Paper-Forward, Thesis-Board)
+    # — passt inhaltlich zum "was hat das Werk gelernt" der Lab-Maschine.
+    if m.id == "lab" and ctx is not None:
+        try:
+            from dashboard import trades_panel as _trades_panel
+            st.divider()
+            _trades_panel.render(ctx)
+        except Exception:
+            pass  # Fail-open: Gelabelt/Gewinne/Verluste-Kacheln oben stehen bereits
+
     # Kontrollraum trägt das volle Einstellungen-Formular (früher eigener
     # Tab) — gleiche ctx-Regel: Kiosk-Modus bleibt bei der Kurzinfo oben.
     if m.id == "control_room" and ctx is not None:
@@ -343,11 +354,41 @@ def _render_detail_panel(m: MachineState, ctx=None) -> None:
         except Exception:
             pass  # Fail-open: Status-Kacheln oben stehen bereits
 
-    # Lager trägt Kartei-Suche + Watchlist/IPO-Pipeline (beide früher
-    # eigene Tabs) — User-Vorgabe 18.7.: "alle Aktien suchen" gehört ans
-    # Lager, nicht in einen separaten Tab.
+    # Lager trägt das volle Portfolio-Panel (Wachstumsphase, Ziel-Risiko,
+    # Positionstabelle, Bot-Score, Wertverlauf, Transaktionen — früher
+    # eigener Tab) sowie Kartei-Suche + Watchlist/IPO-Pipeline (ebenfalls
+    # früher eigene Tabs) — User-Vorgabe 18.7.: "alle Aktien suchen"
+    # gehört ans Lager, nicht in einen separaten Tab.
     if m.id == "warehouse" and ctx is not None:
+        try:
+            from dashboard import portfolio_panel as _portfolio_panel
+            st.divider()
+            _portfolio_panel.render(ctx)
+        except Exception:
+            pass  # Fail-open: Bestand/Bewegungen oben stehen bereits
         _render_warehouse_stock_browser(ctx)
+
+    # Werksuhr trägt das volle Live-Aktivität-Panel (früher eigener Tab)
+    # — "was macht der Bot gerade" ist Uhr-Domäne (Zustand/Phase/nächster
+    # Lauf), gleiche ctx-Regel wie die anderen Panel-Merges.
+    if m.id == "clock" and ctx is not None:
+        try:
+            from dashboard import live_panel as _live_panel
+            st.divider()
+            _live_panel.render(ctx)
+        except Exception:
+            pass  # Fail-open: Zustand/Phase/nächster Lauf oben stehen bereits
+
+    # Förderband trägt die volle Entscheidungs-Transparenz (früher eigener
+    # Tab, inkl. Signal-Queue) — die kurze Funnel-Zusammenfassung oben
+    # bleibt, das hier ist die Tiefe (Tag-Auswahl, Skip-Gründe, Vergleich).
+    if m.id == "conveyor" and ctx is not None:
+        try:
+            from dashboard import decisions_panel as _decisions_panel
+            st.divider()
+            _decisions_panel.render(ctx)
+        except Exception:
+            pass  # Fail-open: Funnel-Metriken oben stehen bereits
 
 
 def _render_replay_terminal(day: str, until_ts: str) -> None:

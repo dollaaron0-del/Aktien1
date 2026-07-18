@@ -7,7 +7,7 @@ schweren ctx-Abhängigkeiten.
 from streamlit.testing.v1 import AppTest
 
 _SCRIPT = """
-from dashboard.tabs.trades import _render_genealogy
+from dashboard.trades_panel import _render_genealogy
 _render_genealogy()
 """
 

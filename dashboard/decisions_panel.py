@@ -1,4 +1,7 @@
-"""Tab "Entscheidungs-Transparenz" — ausgelagert aus dashboard/app.py (Roadmap 4.4a)."""
+"""Entscheidungs-Transparenz-Panel — bis 18.7.2026 eigener Tab, seit dem
+Karten-Umbau (Vision W7) Teil des Förderband-Detailpanels (die kurze
+Funnel-Zusammenfassung dort bleibt, das hier ist die volle Tiefe:
+Tag-Auswahl, Skip-Gründe, Zeitraum-Vergleich, Signal-Queue)."""
 from datetime import date, timedelta
 
 import pandas as pd

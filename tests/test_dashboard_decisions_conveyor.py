@@ -17,7 +17,7 @@ class _Ctx:
     def render_sources_breakdown(self, *a, **k):
         pass
 
-from dashboard.tabs import decisions
+from dashboard import decisions_panel as decisions
 decisions.render(_Ctx())
 '''
 

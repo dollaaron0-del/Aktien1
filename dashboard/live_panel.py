@@ -1,4 +1,6 @@
-"""Tab "Live-Aktivität" — ausgelagert aus dashboard/app.py (Roadmap 4.4a)."""
+"""Live-Aktivität-Panel — bis 18.7.2026 eigener Tab, seit dem Karten-
+Umbau (Vision W7) Teil des Werksuhr-Detailpanels (dashboard/tabs/factory.py)
+— "was macht der Bot gerade" gehört zur Uhr (Zustand/Phase/nächster Lauf)."""
 import html
 import json
 from datetime import datetime

@@ -1,4 +1,8 @@
-"""Tab "Portfolio" — ausgelagert aus dashboard/app.py (Roadmap 4.4a)."""
+"""Portfolio-Panel — bis 18.7.2026 eigener Tab, seit dem Karten-Umbau
+(Vision W7) Teil des Hochregallager-Detailpanels (dashboard/tabs/factory.py):
+Wachstumsphase, Ziel-Risiko, Positionstabelle, Bot-Score, Wertverlauf,
+Transaktionen. Die KPI-Leiste lebt separat im immer sichtbaren HUD
+(app.py::_render_hud)."""
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -74,39 +78,9 @@ def render(ctx) -> None:
     portfolio = ctx.portfolio
     prices = ctx.prices
 
-    # ── KPI-Leiste (Tab-Umbau 18.7.2026: aus dem App-Kopf hierher) ────────
-    # Die sechs Überblickszahlen gehören zu den Portfolio-Details, nicht
-    # doppelt in den Kopf über jedem Tab.
-    delta_pct = (total_value - config.initial_capital) / config.initial_capital * 100
-    cash_pct = portfolio.cash / total_value * 100 if total_value else 0
-    regime_data = getattr(ctx, "regime_data", None)
-    regime_str = (regime_data["regime"] if regime_data else "–")
-    regime_score = (regime_data["recession_score"] if regime_data else None)
-    _rt_stats = getattr(ctx, "_rt_stats", None)
-
-    k1, k2, k3, k4, k5, k6 = st.columns(6)
-    k1.metric("Gesamtwert", f"${total_value:,.2f}", f"{delta_pct:+.1f}%")
-    k2.metric("Cash", f"${portfolio.cash:,.2f}", f"{cash_pct:.0f}% des Portfolios")
-    k3.metric("Offene Positionen", len(portfolio.all_positions()))
-    k4.metric(
-        "Marktregime",
-        regime_str,
-        f"Score {regime_score:.2f}" if regime_score is not None else "–",
-        delta_color="inverse",
-    )
-    if acc.get("total_closed"):
-        k5.metric("Win-Rate", f"{acc['win_rate_pct']}%", f"{acc['total_closed']} Trades")
-    elif _rt_stats:
-        k5.metric("Win-Rate", f"{_rt_stats['win_rate_pct']}%",
-                  f"{_rt_stats['total_closed']} Trades (Portfolio-Historie)")
-    else:
-        k5.metric("Win-Rate", "–", "0 Trades")
-    k6.metric(
-        "Signal-Warteschlange",
-        f"{getattr(ctx, 'pending_cnt', 0)} ausstehend",
-        delta_color="off",
-    )
-    st.divider()
+    # KPI-Leiste lebt seit dem Karten-Umbau (18.7.2026, Vision W7) im
+    # immer sichtbaren HUD (app.py::_render_hud) statt hier — Depotwert/
+    # Cash/Regime soll man nicht erst per Klick "entdecken" müssen.
 
     _render_weekly_report_button()
 

@@ -48,7 +48,7 @@ def test_notes_persist_across_instances(tmp_path):
 from streamlit.testing.v1 import AppTest
 
 _NOTES_SCRIPT = """
-from dashboard.tabs.portfolio import _render_position_notes
+from dashboard.portfolio_panel import _render_position_notes
 _render_position_notes(lambda t: t, ["AAPL", "NVDA"])
 """
 
@@ -85,7 +85,7 @@ def test_notes_html_in_text_is_not_rendered_as_markup(tmp_path):
     PositionNotes(db_path=db_path).set("AAPL", "<script>alert(1)</script>")
 
     script = f"""
-from dashboard.tabs.portfolio import _render_position_notes
+from dashboard.portfolio_panel import _render_position_notes
 import dashboard.position_notes as pn
 pn._DB_PATH = {db_path!r}
 _render_position_notes(lambda t: t, ["AAPL"])
