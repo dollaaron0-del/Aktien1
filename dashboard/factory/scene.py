@@ -322,7 +322,8 @@ def build_scene_svg(state: FactoryState, *, now: Optional[datetime] = None) -> s
     p = PALETTE
     parts = [
         f'<svg viewBox="0 0 {_WIDTH} {_HEIGHT}" xmlns="http://www.w3.org/2000/svg" '
-        f'style="width:100%; height:auto;">',
+        f'preserveAspectRatio="xMidYMid meet" '
+        f'style="width:100%; height:auto; display:block;">',
         '<defs>'
         # W2.1: geteiltes Streifenmuster fürs laufende Förderband (nur
         # sichtbar genutzt, wenn conveyor.status=="active" — machines.py

@@ -176,6 +176,15 @@ def render_sources_breakdown(raw, total=None) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 # HEADER
 # ═══════════════════════════════════════════════════════════════════════════════
+# W8.1 (18.7.2026): der ganze Kopf (Logo/Titel/Status/Ampel) wird in eine
+# schwebende HUD-Leiste gepackt — sitzt beim Scrollen oben, statt die Szene
+# als eigener Block nach unten zu drücken (User-Vorgabe: "die Fabrik soll
+# das Einzigste sein, Zusatzinfos am Rand wie bei einem Handy-Base-Bau-
+# Spiel"). Öffnender Div hier, schließender direkt vor dem Kiosk-Zweig
+# unten — nur bei aktivem Pixel-Theme (Plain-Notausstieg bleibt unangetastet).
+if _theme.is_enabled():
+    st.markdown('<div class="px-hud-bar">', unsafe_allow_html=True)
+
 c_logo, c_title, c_refresh = st.columns([1, 8, 2])
 with c_logo:
     _logo_uri = _theme.image_b64("logo.png")  # D5.3: echtes Logo, sonst Emoji-Platzhalter
@@ -370,6 +379,9 @@ try:
         st.caption(_ampel_line)
 except Exception:
     pass
+
+if _theme.is_enabled():
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ─── Kiosk-Modus (Ausbau-Roadmap H6.1) ───────────────────────────────────────
 # ?kiosk=1: nur die Fabrik als Dauer-Wandbild auf einem Zweitmonitor — keine

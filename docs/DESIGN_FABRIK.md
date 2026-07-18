@@ -499,6 +499,68 @@ nur eine Zwischenstufe — das Ziel ist NULL Tabs außer der Szene selbst.
       der Fabrik bestehen") strukturell komplett** — alle 8 früheren Tabs
       sind Detailpanels von Maschinen oder Teil des HUD.
 
+## Vision W8 — Vollbild statt Fenster (18.7.2026, spät abends)
+
+User-Feedback nach dem Anschauen von W7: *"Die Fabrik ist immer noch nur
+ein Fenster. Die Firma sollte aber im Prinzip das Einzigste sein. Wir
+machen es so: die Firma ist das Einzigste was man auf dem Dashboard
+sieht in voller Größe, Zusatzinformationen werden am Rand eingeblendet
+ähnlich wie bei einem Base-Bau-Spiel auf dem Handy."* W7 hatte die
+Tab-Leiste entfernt, aber die Szene stand immer noch als ein Block unter
+Kopf/KPI-Leiste im normalen Streamlit-Fluss — kein echtes Vollbild.
+
+- [x] **W8.1 Schwebende HUD-Leiste + Vollbild-Szene (18.7.2026)** —
+      `theme.py::_base_css()` (NUR Pixel-Theme, Plain bleibt beim
+      D6.2-Notausstieg unangetastet):
+      - Streamlit-eigene Kopfzeile/Toolbar/Menü/Footer global ausgeblendet
+        (bisher nur in Kiosk-/Mobile-Zweigen; jetzt Standard).
+      - `.block-container`-Ränder auf ein Minimum, `max-width:100%` — die
+        Seite nutzt fast die volle Bildschirmbreite statt eines
+        eingerahmten "Fensters".
+      - `.px-hud-bar`: Kopf (Logo/Titel/Status-Banner/Live-Status/Ampel+
+        Werksleiter-Gesicht) sitzt in einem `position: sticky`-Div mit
+        halbtransparentem, geweichtem Hintergrund (`backdrop-filter`,
+        inkl. `-webkit-`-Präfix für Safari) — bleibt beim Scrollen oben,
+        schiebt die Szene aber nicht als eigener Block nach unten.
+        `app.py` öffnet/schließt den Div um den kompletten Kopf-Abschnitt
+        (nur bei `is_enabled()`).
+      - `.px-scene-wrap`: die Live-Hauptszene (`tabs/factory.py::_scene()`)
+        bekommt `min-height: 76vh` + Flexbox-Zentrierung — dominiert den
+        Bildschirm, statt ein kleiner Block zu sein. Die SVG selbst bleibt
+        unverändert seitenverhältnistreu (`width:100%; height:auto`,
+        `preserveAspectRatio="xMidYMid meet"`) — Letterbox statt
+        Verzerrung. NUR die Live-Hauptszene bekommt den Rahmen; die
+        Zeitreise-Archiv- und Handy-Zweitverwendungen der Szene bleiben
+        bewusst kompakt (kein zweites Vollbild verschachtelt in einem
+        Detail-Panel).
+      - Kiosk-Modus (`?kiosk=1`) profitiert automatisch mit (dieselbe
+        `_scene()`-Funktion) — bekommt jetzt zusätzlich die schwebende
+        Kopfleiste statt gestapelter Einzelelemente.
+      3 neue Tests (`tests/test_dashboard_hud_layout.py`): HUD-Div öffnet
+      und schließt korrekt, Szenen-Rahmen nur bei Pixel-Theme, Plain-Modus
+      bleibt frei von beiden neuen Klassen. Voll-Render pixel+plain OK,
+      532 Dashboard-Tests grün.
+      **Ehrlicher Hinweis wie schon bei W7.10:** CSS-Layout (`position:
+      sticky`, `backdrop-filter`, `vh`-Einheiten) lässt sich nicht per
+      Headless-Test/Figma-Vorschau visuell verifizieren — nur die
+      strukturelle Korrektheit (Klassen vorhanden, HTML balanciert, keine
+      Exceptions) ist automatisiert geprüft. Das tatsächliche Bildschirm-
+      Ergebnis (wirkt es wirklich wie ein Vollbild-Base-Bau-Spiel?) braucht
+      den echten Browser-Check durch den User.
+- [ ] **W8.2 Detail-Panels als echtes Overlay** (noch offen, größerer
+      technischer Schritt): aktuell erscheinen die Maschinen-Detailpanels
+      beim Anklicken weiterhin unterhalb der Szene im normalen Fluss
+      (Scrollen nötig), nicht als schwebendes Overlay/Drawer wie bei
+      einem Base-Bau-Spiel. Reines CSS reicht dafür nicht (kein
+      `:target`-Trick möglich, da der Klick-Mechanismus über
+      `?factory=<id>`-Query-Parameter läuft, den Streamlit serverseitig
+      liest — `:target` funktioniert nur mit `#hash`-Fragmenten, die nie
+      beim Server ankommen). Bräuchte entweder eine JS-Komponente oder
+      einen Wechsel des Klick-Mechanismus — bewusst nicht in derselben
+      Sitzung mit angegangen, da die Detail-Panels seit W7 sehr
+      inhaltsreich sind (ganze frühere Tabs) und ein kleines Overlay dafür
+      zu eng wäre; bräuchte eigene Recherche zur richtigen Lösung.
+
       **Sidebar bewusst NICHT ins Kontrollraum-Detail gefaltet** (geprüft
       18.7., nach W7.10): anders als die Tabs ist die Sidebar keine
       konkurrierende "Seite" — sie ist ein Streamlit-natives Seitenpanel,

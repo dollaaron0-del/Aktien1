@@ -227,6 +227,55 @@ def _base_css() -> str:
 
 {_font_face_css()}
 
+/* W8.1 (18.7.2026, User-Vorgabe: "die Fabrik soll im Prinzip das
+   Einzigste sein [...] Zusatzinformationen werden am Rand eingeblendet
+   ähnlich wie bei einem Base-Bau-Spiel auf dem Handy") — Streamlit-
+   eigene Kopfzeile/Toolbar/Menü/Footer raus, Block-Container-Ränder auf
+   ein Minimum: die Szene bekommt fast die volle Bildschirmbreite/-höhe
+   statt in einem eingerahmten "Fenster" zu stehen. NUR bei aktivem
+   Pixel-Theme (hier in _base_css, nicht in _legacy_css) — der Plain-
+   Notausstieg bleibt unangetastet bei den originalen Streamlit-Rändern. */
+[data-testid="stHeader"], [data-testid="stToolbar"], #MainMenu, footer {{
+    display: none;
+}}
+[data-testid="stAppViewContainer"] .block-container {{
+    max-width: 100%;
+    padding-top: 0.6rem;
+    padding-bottom: 1rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
+}}
+
+/* Schwebende HUD-Leiste (Kopf/Status/Ampel) — bleibt beim Scrollen oben
+   sitzen, halbtransparent+geweicht statt als eigener Block, der die
+   Szene nach unten drückt (app.py öffnet/schließt den Div drumherum). */
+.px-hud-bar {{
+    position: sticky;
+    top: 0;
+    z-index: 999;
+    background: rgba(20, 23, 28, 0.92);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    padding: 4px 8px 8px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid var(--px-border);
+    border-radius: 0 0 6px 6px;
+}}
+
+/* Szenen-Rahmen: großzügige Mindesthöhe, damit die Fabrik den Bildschirm
+   dominiert statt ein kleines Fenster zu sein. Die SVG selbst bleibt
+   seitenverhältnistreu (eigenes width:100%/height:auto, scene.py) —
+   der Rahmen zentriert sie per Flexbox in der Mindesthöhe (Letterbox
+   statt Verzerrung/Kappung, falls die Breite die Höhe zuerst begrenzt).
+   NUR die Live-Hauptszene bekommt diese Klasse (tabs/factory.py); die
+   Zeitreise-Archiv-/Mobile-Zweitverwendungen bleiben bewusst kompakt. */
+.px-scene-wrap {{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 76vh;
+}}
+
 .px-head {{
     font-family: "Press Start 2P", monospace;
     color: var(--px-cobalt);
