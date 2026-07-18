@@ -72,6 +72,22 @@ _CONNECTIONS: List[Tuple[str, str, str]] = [
     ("lab", "analyzer_claude", "feedback"),
     ("lab", "analyzer_ollama", "feedback"),
     ("warehouse", "backup_bot", "utility"),
+    # W7.9 (18.7.2026, User-Vorgabe zu den Referenzbildern: "jedes Tool
+    # bekommt seine eigene Maschine, alles verbunden" — dichter vernetzt
+    # per ECHTER Code-Abhängigkeit, keine erfundene Deko, Prinzip bleibt):
+    # Circuit-Breaker blockiert Kaufentscheidungen wirklich
+    # (strategy/swing_strategy.py:224 _circuit_breaker_active()).
+    ("breaker", "conveyor", "feedback"),
+    # Lern-Daten UND Entscheidungs-Log werden mitgesichert
+    # (scripts/backup.sh: experience.db / decision_log.db).
+    ("lab", "backup_bot", "utility"),
+    ("conveyor", "backup_bot", "utility"),
+    # Konfiguration steuert die Kaufschwelle direkt
+    # (strategy/swing_strategy.py:280 config.buy_threshold).
+    ("control_room", "conveyor", "utility"),
+    # Konfiguration bestimmt, welcher Broker/welches Gateway läuft
+    # (main.py:223 config.broker_mode == "ibkr").
+    ("control_room", "gate", "utility"),
 ]
 
 

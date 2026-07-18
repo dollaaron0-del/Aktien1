@@ -308,6 +308,22 @@ def test_connection_paths_have_pipe_casing_and_joints():
     assert f'stroke="{PALETTE["copper"]}" stroke-width="2"' in svg
 
 
+def test_connections_include_w79_dependencies_verified_in_code():
+    """W7.9 (18.7.2026, User-Vorgabe: dichter vernetzt, jede Verbindung
+    aber weiter eine ECHTE Code-Abhängigkeit, keine erfundene Deko):
+    - breaker->conveyor: strategy/swing_strategy.py:224 _circuit_breaker_active()
+    - lab/conveyor->backup_bot: scripts/backup.sh sichert experience.db + decision_log.db
+    - control_room->conveyor: strategy/swing_strategy.py:280 config.buy_threshold
+    - control_room->gate: main.py:223 config.broker_mode == "ibkr"
+    """
+    pairs = {(src, dst, kind) for src, dst, kind in _CONNECTIONS}
+    assert ("breaker", "conveyor", "feedback") in pairs
+    assert ("lab", "backup_bot", "utility") in pairs
+    assert ("conveyor", "backup_bot", "utility") in pairs
+    assert ("control_room", "conveyor", "utility") in pairs
+    assert ("control_room", "gate", "utility") in pairs
+
+
 def test_connection_only_animates_when_both_endpoints_active():
     active = _connection_paths(_state_with_statuses(
         {"docks": "ok", "analyzer_claude": "active"}))

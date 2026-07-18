@@ -521,6 +521,31 @@ nur eine Zwischenstufe — das Ziel ist NULL Tabs außer der Szene selbst.
       Leitung. 1 neuer Test (`test_connection_paths_have_pipe_casing_and_joints`),
       Voll-Render pixel+plain OK.
 
+- [x] **W7.9 Dichter vernetzt (18.7.2026, gleiche Sitzung)** — User-
+      Präzisierung: die Nicht-Pixel-Art-Referenzbilder waren nicht für
+      die Optik gedacht, sondern für die VERBINDUNGS-IDEE ("jedes Tool
+      bekommt seine eigene Maschine", dicht vernetzt, "chaotisch aber im
+      Rhythmus"). Statt Deko zu erfinden: Code-Audit auf bisher fehlende
+      ECHTE Abhängigkeiten zwischen den 12 Maschinen, 5 gefunden und
+      ergänzt (`_CONNECTIONS` 14→19):
+      - `breaker→conveyor` (feedback) — Circuit-Breaker blockiert
+        Kaufentscheidungen wirklich (`strategy/swing_strategy.py:224`
+        `_circuit_breaker_active()`).
+      - `lab→backup_bot`, `conveyor→backup_bot` (utility) — Lern-Daten
+        (`experience.db`) UND Entscheidungs-Log (`decision_log.db`)
+        werden beim Backup mitgesichert (`scripts/backup.sh`), parallel
+        zur bestehenden `warehouse→backup_bot`-Leitung.
+      - `control_room→conveyor` (utility) — `config.buy_threshold`
+        steuert die Kaufschwelle direkt (`strategy/swing_strategy.py:280`).
+      - `control_room→gate` (utility) — `config.broker_mode` bestimmt,
+        ob Paper- oder IBKR-Gateway läuft (`main.py:223`).
+      Alle fünf einzeln im Code verifiziert (grep+Read), bevor sie
+      hinzugefügt wurden — Prinzip "keine erfundene Deko" bleibt
+      unangetastet. Visuell per Figma-Vorschau geprüft: die Szene wirkt
+      jetzt deutlich dichter vernetzt, ohne unübersichtlich zu werden.
+      1 neuer Test (`test_connections_include_w79_dependencies_verified_in_code`),
+      Voll-Render pixel+plain OK.
+
 ## Bewusst NICHT (auch hier)
 
 - ✗ Live-Preis-/Netzwerk-Calls in state.py (einzige Ausnahme: der
