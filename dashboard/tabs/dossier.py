@@ -105,6 +105,21 @@ def _render_akte(ticker: str) -> None:
             pass
 
 
+def _render_briefing_section(ctx) -> None:
+    """Tab-Umbau 18.7.2026: das Wochenbriefing (früher eigener Tab) lebt
+    jetzt als Abschnitt in der Kartei — Wochenwissen und Einzelakten
+    gehören zusammen ins Archiv. Fail-open, ohne ctx (Tests/Kiosk)
+    entfällt der Abschnitt still."""
+    if ctx is None or not hasattr(ctx, "weekend_prep"):
+        return
+    st.divider()
+    try:
+        from dashboard import briefing_panel as _briefing_panel
+        _briefing_panel.render(ctx)
+    except Exception:
+        st.caption("Wochenbriefing derzeit nicht verfügbar.")
+
+
 def render(ctx) -> None:
     st.caption(
         "Was das Werk über jede Aktie weiß — Score-Verlauf, Bilanz, "
@@ -114,6 +129,7 @@ def render(ctx) -> None:
     known = _dossier.all_known_tickers()
     if not known:
         st.info("Noch keine Analysen vorhanden — die Kartei füllt sich, sobald der Bot läuft.")
+        _render_briefing_section(ctx)
         return
 
     options = [f"{r['ticker']} — {r['n_analyses']} Analysen" for r in known]
@@ -129,3 +145,4 @@ def render(ctx) -> None:
 
     choice = st.selectbox("Aktie wählen", options, index=default_idx, key="dossier_select")
     _render_akte(ticker_by_option[choice])
+    _render_briefing_section(ctx)

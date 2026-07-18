@@ -207,32 +207,9 @@ with c_refresh:
         st.cache_resource.clear()
         st.rerun()
 
-# ─── Laufband-Anzeigetafel (Design D7.3) ─────────────────────────────────────
-# LED-Ticker wie in einer Werkshalle: die letzten echten Ereignisse aus dem
-# Activity-Feed + nächster geplanter Lauf. Nur pixel, fail-open.
-if _theme.is_enabled():
-    try:
-        from system.live_status import feed_recent as _tick_recent, read_status as _tick_ls
-        _tick_items = []
-        for _ev in _tick_recent(limit=5):
-            _t = (_ev.get("ts") or "")[11:16]
-            _parts = [p for p in (_ev.get("ticker"), _ev.get("detail")) if p]
-            _tick_items.append(f"{_t} {_ev.get('event', '?').upper()}: {' — '.join(_parts) or '–'}")
-        _tick_next = (_tick_ls() or {}).get("next_run")
-        if _tick_next:
-            _tick_items.append(f"NÄCHSTER LAUF: {str(_tick_next)[:16].replace('T', ' ')} UHR")
-        # L3.3: das Band kennt auch die Fracht — Haltedauer-Stand der
-        # offenen Positionen, zur Renderzeit berechnet (keine Feed-Einträge).
-        try:
-            from dashboard.departures import freight_ticker_items as _tick_freight
-            _tick_items.extend(_tick_freight())
-        except Exception:
-            pass
-        _ticker_html = _theme.ticker(_tick_items)
-        if _ticker_html:
-            st.markdown(_ticker_html, unsafe_allow_html=True)
-    except Exception:
-        pass
+# Tab-Umbau 18.7.2026: LED-Laufband (D7.3) aus dem Kopf entfernt — dieselben
+# Feed-Ereignisse stehen im Live-Tab-Terminal und im Fabrik-Logbuch; der Kopf
+# bleibt Logo/Titel/Status/Ampel.
 
 # ─── Globaler Bot-Status + Datenstand ────────────────────────────────────────
 # Sichtbar auf JEDEM Tab (nicht nur in der Sidebar): läuft der Bot überhaupt,
@@ -462,81 +439,12 @@ if st.query_params.get("mobile") == "1":
         )
     st.stop()
 
-# ─── Leitstand-Instrumente (Design D7.1) ─────────────────────────────────────
-# Dieselben Risiko-/Kostenzahlen wie in der Ampel-Zeile, aber als ablesbare
-# Industrie-Instrumente: Manometer (Tagesverlust vs. Circuit-Breaker-Limit),
-# Tank (Rest des Claude-Tagesbudgets), 7-Segment (Depotwert). Nur pixel;
-# fail-open — ein Instrument-Fehler darf das Dashboard nie blockieren.
-if _theme.is_enabled():
-    try:
-        from dashboard import instruments as _instr
-        from portfolio.circuit_breaker import CircuitBreaker as _InstrCB
-        from portfolio.circuit_breaker import _MAX_DAILY_LOSS as _CB_LIMIT
-
-        _cb_st = _InstrCB().status(total_value)
-        _loss_pct = max(0.0, -float(_cb_st.get("daily_pct") or 0.0))
-        _pressure = (_loss_pct / (_CB_LIMIT * 100) * 100) if _CB_LIMIT else 0.0
-
-        from analyzers.api_cost_tracker import APICostTracker as _InstrCost
-        _cost_s = _InstrCost().summary()
-        _cost_today = float(_cost_s.get("today_cost_eur") or 0.0)
-        _cost_limit = float(_cost_s.get("daily_limit_eur") or 0.0)
-        _fuel = (max(0.0, 100.0 - _cost_today / _cost_limit * 100)
-                 if _cost_limit > 0 else 100.0)
-
-        _ic1, _ic2, _ic3 = st.columns([2, 1.3, 2.7])
-        _ic1.markdown(
-            _instr.gauge_svg(
-                _pressure, "KESSELDRUCK",
-                f"Tagesverlust {_loss_pct:.1f}% / Limit {_CB_LIMIT * 100:.0f}%",
-            ),
-            unsafe_allow_html=True,
-        )
-        _ic2.markdown(
-            _instr.tank_svg(
-                _fuel, "TREIBSTOFF",
-                f"Claude {_cost_today:.2f}/{_cost_limit:.2f}€",
-            ),
-            unsafe_allow_html=True,
-        )
-        _ic3.markdown(
-            _instr.seven_segment_svg(f"{total_value:.0f}", "DEPOTWERT USD"),
-            unsafe_allow_html=True,
-        )
-    except Exception:
-        pass
-
-# ─── KPI strip ───────────────────────────────────────────────────────────────
-delta_pct  = (total_value - config.initial_capital) / config.initial_capital * 100
-invested   = sum(pos.shares * prices.get(t, pos.entry_price) for t, pos in portfolio.all_positions().items())
-cash_pct   = portfolio.cash / total_value * 100 if total_value else 0
-regime_str = (regime_data["regime"] if regime_data else "–")
-regime_score = (regime_data["recession_score"] if regime_data else None)
-
-k1, k2, k3, k4, k5, k6 = st.columns(6)
-k1.metric("Gesamtwert",      f"${total_value:,.2f}", f"{delta_pct:+.1f}%")
-k2.metric("Cash",            f"${portfolio.cash:,.2f}", f"{cash_pct:.0f}% des Portfolios")
-k3.metric("Offene Positionen", len(portfolio.all_positions()))
-k4.metric(
-    "Marktregime",
-    regime_str,
-    f"Score {regime_score:.2f}" if regime_score is not None else "–",
-    delta_color="inverse",
-)
-if acc.get("total_closed"):
-    k5.metric("Win-Rate", f"{acc['win_rate_pct']}%", f"{acc['total_closed']} Trades")
-elif _rt_stats:
-    k5.metric("Win-Rate", f"{_rt_stats['win_rate_pct']}%",
-              f"{_rt_stats['total_closed']} Trades (Portfolio-Historie)")
-else:
-    k5.metric("Win-Rate", "–", "0 Trades")
-k6.metric(
-    "Signal-Warteschlange",
-    f"{pending_cnt} ausstehend",
-    delta_color="off",
-)
-
-st.divider()
+# Tab-Umbau 18.7.2026: Leitstand-Instrumente (D7.1) in den Fabrik-Tab
+# verschoben (Leitstand-Optik gehört in die Halle), KPI-Leiste in den
+# Portfolio-Tab (dorthin, wo die Detail-Zahlen stehen) — der Kopf bleibt
+# Logo/Titel/Status/Ampel. `invested` weiter hier berechnet, weil
+# tabs/portfolio.py es über ctx konsumiert.
+invested = sum(pos.shares * prices.get(t, pos.entry_price) for t, pos in portfolio.all_positions().items())
 
 
 @st.cache_data(ttl=3600)
@@ -582,21 +490,19 @@ def _get_ticker_news(ticker: str) -> list:
 import types as _types
 _ctx = _types.SimpleNamespace(**locals())
 
-tab_portfolio, tab_live, tab_decisions, tab_regime, tab_queue, tab_network, tab_briefing, tab_trades, tab_tech, tab_watchlist, tab_log, tab_settings, tab_factory, tab_dossier = st.tabs([
+# Tab-Umbau 18.7.2026: 8 Tabs statt 14, Fabrik zuerst (Vision W6.4 —
+# "Fabrik soll das Hauptding werden"). Signal-Queue lebt im Entscheidungen-
+# Tab (Zähler im Label), Regime/Analyse-Log in den Fabrik-Detailpanels,
+# Wochenbriefing in der Kartei.
+tab_factory, tab_portfolio, tab_live, tab_decisions, tab_trades, tab_watchlist, tab_dossier, tab_settings = st.tabs([
+    "🏭 Fabrik",
     "📊 Portfolio",
     "📡 Live",
-    "🧠 Entscheidungen",
-    "🛡 Markt-Regime",
-    f"📋 Signal-Queue ({pending_cnt})" + (f" · 🔍{len(_analysis_queue)}" if _analysis_queue else ""),
-    "🕸 Aktien-Netzwerk",
-    "📰 Wochenbriefing",
+    "🧠 Entscheidungen" + (f" ({pending_cnt})" if pending_cnt else ""),
     "📈 Trades & Lernen",
-    "📉 Technicals",
     "🔭 Watchlist",
-    "🔍 Analyse-Log",
-    "⚙️ Einstellungen",
-    "🏭 Fabrik",
     "🗂 Kartei",
+    "⚙️ Einstellungen",
 ])
 
 
@@ -625,51 +531,11 @@ with tab_decisions:
 
 
 # ══════════════════════════════════════════════════════════
-# TAB 3 – MARKT-REGIME
-# ══════════════════════════════════════════════════════════
-with tab_regime:
-    from dashboard.tabs import regime as _tab_regime
-    _tab_regime.render(_ctx)
-
-
-# ══════════════════════════════════════════════════════════
-# TAB 3 – SIGNAL-QUEUE
-# ══════════════════════════════════════════════════════════
-with tab_queue:
-    from dashboard.tabs import queue as _tab_queue
-    _tab_queue.render(_ctx)
-
-
-# ══════════════════════════════════════════════════════════
-# TAB 4 – AKTIEN-NETZWERK
-# ══════════════════════════════════════════════════════════
-with tab_network:
-    from dashboard.tabs import network as _tab_network
-    _tab_network.render(_ctx)
-
-
-# ══════════════════════════════════════════════════════════
-# TAB 5 – WOCHENBRIEFING
-# ══════════════════════════════════════════════════════════
-with tab_briefing:
-    from dashboard.tabs import briefing as _tab_briefing
-    _tab_briefing.render(_ctx)
-
-
-# ══════════════════════════════════════════════════════════
 # TAB 6 – TRADES & LERNEN
 # ══════════════════════════════════════════════════════════
 with tab_trades:
     from dashboard.tabs import trades as _tab_trades
     _tab_trades.render(_ctx)
-
-
-# ══════════════════════════════════════════════════════════
-# TAB 7 – TECHNICALS
-# ══════════════════════════════════════════════════════════
-with tab_tech:
-    from dashboard.tabs import tech as _tab_tech
-    _tab_tech.render(_ctx)
 
 
 # ══════════════════════════════════════════════════════════
@@ -686,14 +552,6 @@ with tab_watchlist:
 with st.sidebar:
     from dashboard.tabs import sidebar as _sidebar
     _sidebar.render(_ctx)
-
-
-# ══════════════════════════════════════════════════════════
-# TAB 9 – ANALYSE-LOG
-# ══════════════════════════════════════════════════════════
-with tab_log:
-    from dashboard.tabs import log as _tab_log
-    _tab_log.render(_ctx)
 
 
 # ══════════════════════════════════════════════════════════

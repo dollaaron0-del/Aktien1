@@ -1,4 +1,5 @@
-"""Tab "Analyse-Log" — ausgelagert aus dashboard/app.py (Roadmap 4.4a)."""
+"""Analyse-Log-Panel — bis 18.7.2026 eigener Tab, seit dem Tab-Umbau Teil
+der Analysator-Detailpanels der Fabrik (Klick auf Claude-/Ollama-Maschine)."""
 from datetime import datetime, timezone
 
 import streamlit as st

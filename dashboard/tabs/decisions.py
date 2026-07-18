@@ -265,7 +265,8 @@ def render(ctx) -> None:
                 pc3.metric("⏸ HOLD", _prev_recs.get("HOLD", 0))
                 pc4.metric("⏭ SKIP", _prev_recs.get("SKIP", 0))
                 st.caption(
-                    "Details pro Aktie im Tab **🔍 Analyse-Log**. Sobald der Bot "
+                    "Details pro Aktie im Analysator-Panel der 🏭 Fabrik "
+                    "(Klick auf den Claude-Analysator). Sobald der Bot "
                     "wieder läuft, erscheint hier zusätzlich der Strategie-Schritt "
                     "(gekauft / übersprungen + Grund)."
                 )
@@ -274,3 +275,15 @@ def render(ctx) -> None:
 
     st.divider()
     _render_period_compare()
+
+    # ── Signal-Queue (Tab-Umbau 18.7.2026: früher eigener Tab) ────────────
+    # Warteschlangen sind Teil des Entscheidungswegs: Analyse-Vormerkungen,
+    # bedingte Einstiege und ausstehende BUY-Signale gehören inhaltlich
+    # direkt hinter den Entscheidungs-Funnel.
+    st.divider()
+    st.header("📋 Signal-Queue")
+    try:
+        from dashboard import signal_queue_panel as _sq_panel
+        _sq_panel.render(ctx)
+    except Exception:
+        st.caption("Signal-Queue derzeit nicht verfügbar.")

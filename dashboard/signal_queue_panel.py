@@ -1,4 +1,5 @@
-"""Tab "Signal-Queue" — ausgelagert aus dashboard/app.py (Roadmap 4.4a)."""
+"""Signal-Queue-Panel — bis 18.7.2026 eigener Tab, seit dem Tab-Umbau
+ein Abschnitt am Ende des Entscheidungen-Tabs (dashboard/tabs/decisions.py)."""
 import pandas as pd
 import streamlit as st
 

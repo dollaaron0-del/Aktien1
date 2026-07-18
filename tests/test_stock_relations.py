@@ -122,10 +122,13 @@ def test_get_related_ranks_shared_themes_first():
 # ── Anti-Drift-Wächter: Dashboard darf keine eigenen Kopien definieren ────────
 
 def test_dashboard_imports_central_and_has_no_local_copies():
-    # Ganzes dashboard/-Paket scannen, nicht nur app.py: seit dem Monolith-
-    # Split (Roadmap 4.4a) lebt der Netzwerk-Tab in dashboard/tabs/network.py,
-    # nicht mehr in app.py selbst. Die Drift-Prüfung soll unabhängig davon
-    # bestehen bleiben, WO im Paket der Code am Ende liegt.
+    # Ganzes dashboard/-Paket scannen, nicht nur app.py. Seit dem Tab-Umbau
+    # (18.7.2026, Netzwerk-Tab geloescht) nutzt das Dashboard THEMES/
+    # CROSS_LISTINGS/Farben nicht mehr aktiv — die frühere "muss importieren"-
+    # Pflicht ist damit gegenstandslos. Der Anti-Drift-Kern bleibt: WENN
+    # kuenftig wieder Beziehungs-Daten im Dashboard auftauchen, duerfen sie
+    # nur als Import aus analyzers.stock_relations kommen, nie als lokale
+    # Literal-Kopie (genau die drei Kopien, die frueher gedriftet sind).
     dash_dir = os.path.join(_PROJECT_ROOT, "dashboard")
     src_by_file = {}
     for root, _dirs, files in os.walk(dash_dir):
@@ -134,14 +137,8 @@ def test_dashboard_imports_central_and_has_no_local_copies():
                 fp = os.path.join(root, fn)
                 with open(fp, encoding="utf-8") as f:
                     src_by_file[fp] = f.read()
-    combined = "\n".join(src_by_file.values())
 
-    # Muss aus der zentralen Quelle importieren …
-    assert "from analyzers.stock_relations import" in combined
-    for name in ("THEMES", "CROSS_LISTINGS", "THEME_COLORS", "THEME_LABELS_DE"):
-        assert name in combined, f"Dashboard importiert {name} nicht mehr"
-
-    # … und darf die Cluster/Maps/Farben NICHT wieder als Literale hartkodieren.
+    # Cluster/Maps/Farben duerfen NICHT als Literale hartkodiert werden.
     # Präzise Marker für genau die drei Kopien, die früher gedriftet sind:
     forbidden = {
         'Themen-Cluster (ticker-listen)':  r'"AI_CHIPS"\s*:\s*\[',

@@ -409,11 +409,33 @@ sie galt bis 17.7., der Kameraperspektive-Teil ist explizit ersetzt.
       „Bewusst NICHT"-Zeile unten — die gilt nur noch bis zu dieser
       User-Entscheidung, nicht mehr unverändert).
 
+- [x] **W6.4 Fabrik als erster/Standard-Tab — UMGESETZT 18.7.2026** im
+      Rahmen des großen Tab-Umbaus (User: „Dashboard aufräumen und
+      sortieren als Grundlage fürs neue Dashboard", Wochenend-Projekt):
+      **8 Tabs statt 14** — 🏭 Fabrik (zuerst/Standard), 📊 Portfolio,
+      📡 Live, 🧠 Entscheidungen, 📈 Trades & Lernen, 🔭 Watchlist,
+      🗂 Kartei, ⚙️ Einstellungen. Gelöscht: Aktien-Netzwerk (577 Zeilen
+      Plotly-Showcase) + Technicals (Live-yfinance-Anzeige, Indikatoren
+      fließen ohnehin in die Analyse). Verschoben statt gelöscht:
+      Markt-Regime → Wetterstation-Detailpanel (`dashboard/regime_panel.py`),
+      Analyse-Log → Analysator-Detailpanels (`dashboard/analysis_log_panel.py`),
+      Signal-Queue → Abschnitt im Entscheidungen-Tab
+      (`dashboard/signal_queue_panel.py`, Zähler wandert ins Tab-Label),
+      Wochenbriefing → Abschnitt in der Kartei (`dashboard/briefing_panel.py`).
+      Kopfbereich entschlackt: KPI-Leiste → Portfolio-Tab, Leitstand-
+      Instrumente (D7.1) → Fabrik-Tab (`_render_instruments`), LED-Laufband
+      (D7.3) ersatzlos raus (Live-Terminal + Fabrik-Logbuch zeigen dieselben
+      Ereignisse); Kopf = Logo/Titel/Status-Banner/Ampel. Panels bleiben
+      per ctx-Regel kiosk-sicher (ctx=None → schlanke Kurzinfo). Anti-Drift-
+      Test in test_stock_relations.py auf reine Kopie-Verbots-Prüfung
+      reduziert (Import-Pflicht war ohne Netzwerk-Tab gegenstandslos).
+      Dashboard-Suite 520 Tests grün, Voll-Render pixel+plain OK.
+
 ## Bewusst NICHT (auch hier)
 
 - ✗ Live-Preis-/Netzwerk-Calls in state.py (einzige Ausnahme: der
   0.4s-Gateway-Socket) — die Szene liest nur, was lokal schon da ist.
 - ✗ Eigener Refresh-Mechanismus neben `st.fragment(run_every="60s")`.
 - ~~✗ Die Fabrik als Startseite/Ersatz der Daten-Tabs.~~ ÜBERHOLT (17.7.,
-  Vision W6): User will explizit die Fabrik als Hauptding, s. W6.4 oben —
-  noch nicht umgesetzt, aber nicht mehr "bewusst nicht".
+  Vision W6) und seit 18.7.2026 UMGESETZT: Fabrik ist erster/Standard-Tab
+  (s. W6.4 oben), die Daten-Tabs bestehen konsolidiert weiter (8 statt 14).

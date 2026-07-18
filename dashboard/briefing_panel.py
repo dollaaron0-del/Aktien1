@@ -1,4 +1,5 @@
-"""Tab "Wochenbriefing" — ausgelagert aus dashboard/app.py (Roadmap 4.4a)."""
+"""Wochenbriefing-Panel — bis 18.7.2026 eigener Tab, seit dem Tab-Umbau
+ein Abschnitt im Kartei-Tab (dashboard/tabs/dossier.py)."""
 import streamlit as st
 
 

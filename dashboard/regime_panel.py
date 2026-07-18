@@ -1,4 +1,6 @@
-"""Tab "Markt-Regime" — ausgelagert aus dashboard/app.py (Roadmap 4.4a)."""
+"""Markt-Regime-Panel — bis 18.7.2026 eigener Tab, seit dem Tab-Umbau
+Teil des Wetterstation-Detailpanels der Fabrik (Klick auf die Maschine).
+render(ctx) unverändert; im Kiosk-Modus (ctx=None) wird es nicht gerufen."""
 import json
 from datetime import datetime, timezone
 

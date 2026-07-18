@@ -330,6 +330,10 @@ benannte Ausnahme ist D7.4 (reine Atmosphäre-Optik).
       unbekannte Zeichen wie € werden übersprungen statt zu crashen).
       24 Tests (`tests/test_dashboard_instruments.py`), Voll-Render
       pixel: 3× px-instrument vorhanden, plain: 0 — beide 0 Exceptions.
+      **Verschoben 18.7.2026 (Tab-Umbau):** die drei Instrumente leben
+      jetzt im Fabrik-Tab (`tabs/factory.py::_render_instruments`) statt
+      im App-Kopf — Leitstand-Optik gehört in die Halle, der Kopf bleibt
+      Logo/Titel/Status/Ampel.
 - [x] **D7.2 Fabrik-Detailtiefe** — `state.py`/`machines.py`:
       (a) Hochregallager: **eine Kiste je offener Position**, Farbe nach
       Haltedauer-Ratio (grün <80 %, amber <100 %, rot ≥100 % — gleiche
@@ -359,6 +363,9 @@ benannte Ausnahme ist D7.4 (reine Atmosphäre-Optik).
       Einbau in app.py direkt unter der Kopfzeile via
       `feed_recent(limit=5)` + `read_status().next_run`, fail-open.
       3 neue Tests; Voll-Render zeigt echte Feed-Einträge im Ticker.
+      **Entfernt 18.7.2026 (Tab-Umbau):** das Kopf-Laufband ist raus —
+      dieselben Feed-Ereignisse stehen im Live-Terminal (D3.1) und im
+      Fabrik-Logbuch; `theme.ticker()` bleibt als Helfer bestehen.
 - [x] **D7.4 CRT-Atmosphäre** — (a) sehr dezente Scanlines als fixes
       Overlay (pointer-events:none, opacity ≤0.06, per
       `DASHBOARD_CRT=0` abschaltbar), (b) kurze Boot-Sequenz auf der

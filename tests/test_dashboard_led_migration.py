@@ -68,13 +68,13 @@ class _NoNewsSentimentCtx(_Ctx):
 
 _LOG_SCRIPT = """
 from tests.test_dashboard_led_migration import _Ctx
-from dashboard.tabs import log
+from dashboard import analysis_log_panel as log
 log.render(_Ctx())
 """
 
 _LOG_SCRIPT_UNKNOWN_SENTIMENT = """
 from tests.test_dashboard_led_migration import _NoNewsSentimentCtx
-from dashboard.tabs import log
+from dashboard import analysis_log_panel as log
 log.render(_NoNewsSentimentCtx())
 """
 

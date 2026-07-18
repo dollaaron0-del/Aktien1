@@ -247,29 +247,51 @@ _DETAIL_RENDERERS = {
 }
 
 
-def _render_detail_panel(m: MachineState) -> None:
+def _render_detail_panel(m: MachineState, ctx=None) -> None:
     """Detail-Block unter der Szene (Vision W3.2/W3.3, erweitert 17.7.
     nach User-Feedback "Fabrik soll das Hauptding werden"): JEDE der elf
     Maschinen hat einen eigenen Block mit denselben Daten, die sonst nur
     in den Tabellen-Tabs stünden. Generischer Fallback bleibt als
     zweite Sicherheitsnetz-Schicht (kaputter Spezial-Block → Rohdaten
-    statt Crash)."""
+    statt Crash). Seit dem Tab-Umbau (18.7.2026) trägt die Wetterstation
+    zusätzlich das volle Markt-Regime-Panel (früher eigener Tab) —
+    nur mit echtem ctx, der Kiosk-Modus (ctx=None) bleibt schlank."""
     st.divider()
     st.markdown(f"### {m.label}")
     st.caption(f"Status: {_STATUS_LABEL.get(m.status, m.status)}")
 
+    rendered = False
     renderer = _DETAIL_RENDERERS.get(m.id)
     if renderer is not None:
         try:
             renderer(m)
-            return
+            rendered = True
         except Exception:
             pass  # Fail-open: generischer Fallback greift trotzdem
 
-    for line in m.tooltip:
-        st.markdown(f"- {line}")
-    if m.payload:
-        st.json(m.payload)
+    if not rendered:
+        for line in m.tooltip:
+            st.markdown(f"- {line}")
+        if m.payload:
+            st.json(m.payload)
+
+    if m.id == "weather" and ctx is not None:
+        try:
+            from dashboard import regime_panel as _regime_panel
+            st.divider()
+            _regime_panel.render(ctx)
+        except Exception:
+            pass  # Fail-open: Wetter-Kurzinfo oben steht bereits
+
+    # Analysator-Klick trägt das volle Analyse-Log (früher eigener Tab) —
+    # gleiche ctx-Regel wie beim Regime-Panel.
+    if m.id in ("analyzer_claude", "analyzer_ollama") and ctx is not None:
+        try:
+            from dashboard import analysis_log_panel as _alog_panel
+            st.divider()
+            _alog_panel.render(ctx)
+        except Exception:
+            pass  # Fail-open: model_route-Breakdown oben steht bereits
 
 
 def _render_replay_terminal(day: str, until_ts: str) -> None:
@@ -369,6 +391,54 @@ def _cached_earnings_rows(tickers: tuple, held: tuple = ()) -> list:
         return []
 
 
+def _render_instruments(ctx) -> None:
+    """Leitstand-Instrumente (Design D7.1) — Tab-Umbau 18.7.2026: aus dem
+    App-Kopf hierher verschoben, die Leitstand-Optik gehört in die Halle.
+    Manometer (Tagesverlust vs. Circuit-Breaker-Limit), Tank (Rest des
+    Claude-Tagesbudgets), 7-Segment (Depotwert). Braucht echten ctx
+    (Depotwert); Kiosk-Modus (ctx=None) bleibt reine Szene. Fail-open."""
+    if ctx is None or not hasattr(ctx, "total_value"):
+        return
+    try:
+        from dashboard import instruments as _instr
+        from portfolio.circuit_breaker import CircuitBreaker as _InstrCB
+        from portfolio.circuit_breaker import _MAX_DAILY_LOSS as _CB_LIMIT
+
+        total_value = float(getattr(ctx, "total_value", 0.0))
+        _cb_st = _InstrCB().status(total_value)
+        _loss_pct = max(0.0, -float(_cb_st.get("daily_pct") or 0.0))
+        _pressure = (_loss_pct / (_CB_LIMIT * 100) * 100) if _CB_LIMIT else 0.0
+
+        from analyzers.api_cost_tracker import APICostTracker as _InstrCost
+        _cost_s = _InstrCost().summary()
+        _cost_today = float(_cost_s.get("today_cost_eur") or 0.0)
+        _cost_limit = float(_cost_s.get("daily_limit_eur") or 0.0)
+        _fuel = (max(0.0, 100.0 - _cost_today / _cost_limit * 100)
+                 if _cost_limit > 0 else 100.0)
+
+        _ic1, _ic2, _ic3 = st.columns([2, 1.3, 2.7])
+        _ic1.markdown(
+            _instr.gauge_svg(
+                _pressure, "KESSELDRUCK",
+                f"Tagesverlust {_loss_pct:.1f}% / Limit {_CB_LIMIT * 100:.0f}%",
+            ),
+            unsafe_allow_html=True,
+        )
+        _ic2.markdown(
+            _instr.tank_svg(
+                _fuel, "TREIBSTOFF",
+                f"Claude {_cost_today:.2f}/{_cost_limit:.2f}€",
+            ),
+            unsafe_allow_html=True,
+        )
+        _ic3.markdown(
+            _instr.seven_segment_svg(f"{total_value:.0f}", "DEPOTWERT USD"),
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        pass
+
+
 def _render_memories() -> None:
     """L2.2: „Heute vor …"-Plakette — echte Ereignisse aus der eigenen
     Geschichte (dashboard/memories.py). Gibt es heute nichts zu
@@ -447,7 +517,7 @@ def _render_power_meter() -> None:
 
 def _render_ticker_form() -> None:
     """H1.2: Werksauftrag an den Docks — Ticker-Schnellanalyse. Ruft
-    exakt dieselbe Queue-Logik wie tabs/log.py auf (analyzers.
+    exakt dieselbe Queue-Logik wie das Analyse-Log-Panel (dashboard/analysis_log_panel.py) auf (analyzers.
     user_request_queue), keine eigene Warteschlangen-Mechanik. Fail-open:
     ein Fehler beim Einreihen zeigt nur keine Erfolgsmeldung."""
     with st.form("factory_ticker_form"):
@@ -660,9 +730,10 @@ def render(ctx) -> None:
         if focused_id in MACHINE_IDS:
             machine = state.machines.get(focused_id)
             if machine is not None:
-                _render_detail_panel(machine)
+                _render_detail_panel(machine, ctx)
 
     _scene()
+    _render_instruments(ctx)
     _render_memories()
     _render_departures()
     _render_power_meter()

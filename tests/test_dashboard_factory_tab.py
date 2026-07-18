@@ -177,6 +177,63 @@ def test_weather_detail_panel_shows_regime(tmp_path, monkeypatch):
     assert "BULL" in md
 
 
+_REGIME_CTX_SCRIPT = """
+from analyzers.recession_detector import BULL, NEUTRAL, BEAR, CRISIS
+
+class _Detector:
+    def get_history(self, days):
+        return []
+
+class _Portfolio:
+    def all_positions(self):
+        return {}
+
+class _Config:
+    enable_hedging = False
+
+class _Ctx:
+    regime_data = {
+        "regime": BULL, "recession_score": 0.12, "vix": 14.2,
+        "yield_spread": 0.55, "components": {}, "macro_summary": "",
+        "recorded_at": "2099-01-01T00:00:00",
+    }
+    _REGIME_COLOR = {BULL: "#0f0", NEUTRAL: "#ff0", BEAR: "#f80", CRISIS: "#f00"}
+    _REGIME_ICON = {BULL: "B", NEUTRAL: "N", BEAR: "R", CRISIS: "C"}
+    detector = _Detector()
+    portfolio = _Portfolio()
+    config = _Config()
+    prices = {}
+
+from dashboard.tabs import factory
+factory.render(_Ctx())
+"""
+
+
+def test_weather_detail_panel_includes_full_regime_panel_with_ctx(tmp_path, monkeypatch):
+    """Tab-Umbau 18.7.2026: das frühere Markt-Regime-Tab lebt jetzt im
+    Wetterstation-Detailpanel — mit echtem ctx erscheint der volle
+    Regime-Block (Score-Gauge etc.), nicht nur die Kurzinfo."""
+    at = AppTest.from_string(_REGIME_CTX_SCRIPT)
+    at.query_params["factory"] = "weather"
+    at.run()
+    assert not at.exception
+    all_text = "".join(str(m.value) for m in at.get("markdown"))
+    subheaders = "".join(str(s.value) for s in at.get("subheader"))
+    assert "Rezessions-Score-Gauge" in subheaders, \
+        "Volles Regime-Panel fehlt im Wetterstation-Detail"
+
+
+def test_weather_detail_panel_without_ctx_regime_data_stays_lean():
+    """Kiosk/kaputter ctx: Regime-Panel fällt still aus (fail-open),
+    die Wetter-Kurzinfo bleibt."""
+    at = AppTest.from_string(_SCRIPT)
+    at.query_params["factory"] = "weather"
+    at.run()
+    assert not at.exception
+    subheaders = "".join(str(s.value) for s in at.get("subheader"))
+    assert "Rezessions-Score-Gauge" not in subheaders
+
+
 def test_backup_bot_detail_panel_shows_recent_backups_table(tmp_path, monkeypatch):
     import os as _os
     from datetime import datetime as _dt
