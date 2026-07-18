@@ -83,6 +83,30 @@ def path_combos(n_blocks: int, test_blocks: int, max_paths: int,
     return all_combos
 
 
+def _merge_contiguous(blocks: List[Block], indices: set) -> List[Block]:
+    """Merged aufeinanderfolgende Block-Indizes zu je EINEM zusammenhängenden
+    Segment. Notwendig, weil `make_blocks()` Blöcke bewusst lückenlos
+    aneinanderstoßen lässt (`blocks[i][1] == blocks[i+1][0]`, für die
+    Train-Segment-Logik unten gewollt) — würden zwei angrenzende Testblöcke
+    stattdessen UNABHÄNGIG voneinander gesliced (je `_slice_segments`-Aufruf
+    inklusive beider Enden), tauchte ihre gemeinsame Grenze doppelt auf und
+    ließ `pd.concat` später mit "duplicate labels" abstürzen (gefunden 17.7.
+    im ersten echten Mehrkern-CPCV-Lauf, test_blocks=2)."""
+    ordered = sorted(indices)
+    out: List[Block] = []
+    run_start: Optional[int] = None
+    prev: Optional[int] = None
+    for i in ordered:
+        if prev is None or i != prev + 1:
+            if run_start is not None:
+                out.append((blocks[run_start][0], blocks[prev][1]))
+            run_start = i
+        prev = i
+    if run_start is not None:
+        out.append((blocks[run_start][0], blocks[prev][1]))
+    return out
+
+
 def _train_segments(blocks: List[Block], test_idx: set,
                     purge: pd.Timedelta, embargo: pd.Timedelta) -> List[Block]:
     """Zusammenhängende Nicht-Test-Blöcke zu Segmenten gruppiert; an jeder
@@ -195,7 +219,7 @@ def run_cpcv(
     try:
         for test_idx in paths:
             test_idx_set = set(test_idx)
-            test_segments = [blocks[i] for i in sorted(test_idx_set)]
+            test_segments = _merge_contiguous(blocks, test_idx_set)
             train_segments = _train_segments(blocks, test_idx_set, purge, embargo)
             if not train_segments or not test_segments:
                 continue

@@ -15,9 +15,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from strategy_lab.cpcv import (_evaluate_multi, _slice_segments,
-                               _train_segments, make_blocks, path_combos,
-                               run_cpcv)
+from strategy_lab.cpcv import (_evaluate_multi, _merge_contiguous,
+                               _slice_segments, _train_segments, make_blocks,
+                               path_combos, run_cpcv)
 from strategy_lab.strategies import get
 
 
@@ -111,6 +111,46 @@ def test_train_segments_large_margin_can_erase_a_segment():
     assert segs == []                                     # beide Nachbarsegmente wegradiert
 
 
+# ── _merge_contiguous (17.7.-Fix: doppelt gezählte Blockgrenze) ─────────────
+
+def test_merge_contiguous_merges_adjacent_indices_into_one_segment():
+    segs = _merge_contiguous(_BLOCKS, {1, 2})
+    assert segs == [(_BLOCKS[1][0], _BLOCKS[2][1])]
+
+
+def test_merge_contiguous_keeps_noncontiguous_indices_separate():
+    segs = _merge_contiguous(_BLOCKS, {0, 2})
+    assert segs == [_BLOCKS[0], _BLOCKS[2]]
+
+
+def test_merge_contiguous_single_index():
+    segs = _merge_contiguous(_BLOCKS, {3})
+    assert segs == [_BLOCKS[3]]
+
+
+def test_merge_contiguous_three_in_a_row():
+    segs = _merge_contiguous(_BLOCKS, {1, 2, 3})
+    assert segs == [(_BLOCKS[1][0], _BLOCKS[3][1])]
+
+
+def test_slice_segments_of_merged_adjacent_blocks_has_no_duplicate_dates():
+    """Regressions-Test für den 17.7.-Fund: zwei UNABHÄNGIG (nicht gemerged)
+    geslicete angrenzende Blöcke teilen sich `blocks[i][1] == blocks[i+1][0]`
+    (make_blocks() laesst sie bewusst lückenlos aneinanderstoßen) — ohne
+    _merge_contiguous taucht dieses Datum in beiden Chunks auf und lässt
+    pd.concat später mit "duplicate labels" abstürzen."""
+    idx = pd.date_range("2010-01-01", periods=500, freq="B")
+    df = pd.DataFrame({"Close": np.arange(500, dtype=float)}, index=idx)
+    blocks = [(idx[0], idx[100]), (idx[100], idx[200]), (idx[200], idx[300])]
+
+    naive = _slice_segments({"AAA": df}, [blocks[0], blocks[1]])
+    assert pd.concat(naive["AAA"]).index.duplicated().any()   # der Fehlerfall
+
+    merged = _slice_segments({"AAA": df}, _merge_contiguous(blocks, {0, 1}))
+    concatenated = pd.concat(merged["AAA"])
+    assert not concatenated.index.duplicated().any()
+
+
 def test_slice_segments_filters_short_chunks():
     idx = pd.date_range("2010-01-01", periods=500, freq="B")
     df = pd.DataFrame({"Close": np.arange(500, dtype=float)}, index=idx)
@@ -165,6 +205,19 @@ def test_run_cpcv_end_to_end_basic_shape():
     assert rep.n_windows >= 1
     assert rep.verdict in ("ROBUST", "FRAGILE", "OVERFIT")
     assert rep.n_combos_tested == 4
+
+
+def test_run_cpcv_test_blocks_2_does_not_crash_on_adjacent_paths():
+    """Regressions-Test für den 17.7.-Fund (erster echter Mehrkern-Lauf mit
+    test_blocks=2 stürzte in classify_window()/pd.concat mit "duplicate
+    labels" ab, sobald ein Pfad zwei ANGRENZENDE Blöcke als Test wählte).
+    max_paths bewusst hoch genug, dass mit n_blocks=6 mehrere der
+    C(6,2)=15 Kombinationen angrenzend sind (z.B. (0,1),(1,2),...)."""
+    rep = run_cpcv("donchian_breakout", ["AAA", "BBB"], total_years=16,
+                   n_blocks=6, test_blocks=2, purge_days=10, embargo_days=5,
+                   max_combos=4, max_paths=15, loader=_loader)
+    assert rep.n_windows >= 1
+    assert rep.verdict in ("ROBUST", "FRAGILE", "OVERFIT")
 
 
 def test_run_cpcv_deterministic():
