@@ -186,6 +186,39 @@ def _connection_paths(state: FactoryState) -> str:
     return "".join(parts)
 
 
+def _crate_travel_marker(state: FactoryState) -> str:
+    """W7.10 (18.7.2026, User-Vorgabe wörtlich: "wenn eine Aktie gekauft
+    wird, wandert die Kiste über das Förderband ins Lager"): eine
+    sichtbare Kiste, die entlang der conveyor→warehouse-Leitung wandert
+    — macht die bisher abstrakte fx-pipe-flow-Farb-Animation wörtlich.
+    Nur gerendert, wenn diese Leitung wirklich fließt (dieselbe Nur-
+    echte-Daten-Regel wie `_connection_paths`) UND der Bot nicht
+    pausiert ist (W2.3-Nachtmodus-Konvention). Reine CSS-Animation
+    (offset-path), kein Rerun-Kostenaufwand; `fx-crate-travel` ist in
+    theme.py in derselben prefers-reduced-motion-Abschaltliste wie die
+    übrigen fx-*-Animationen."""
+    if state.paused or "conveyor" not in LAYOUT or "warehouse" not in LAYOUT:
+        return ""
+    src = state.machines.get("conveyor")
+    dst = state.machines.get("warehouse")
+    flowing = (
+        src is not None and dst is not None
+        and src.status in ("ok", "active") and dst.status in ("ok", "active")
+    )
+    if not flowing:
+        return ""
+    x1, y1, x2, y2 = _connector_endpoints(LAYOUT["conveyor"], LAYOUT["warehouse"])
+    p = PALETTE
+    return (
+        f'<g class="fx-crate-travel" data-crate="conveyor-warehouse" '
+        f"style=\"offset-path: path('M {x1:.0f} {y1:.0f} L {x2:.0f} {y2:.0f}');\">"
+        f'<rect x="-7" y="-6" width="14" height="12" '
+        f'fill="{p["copper_hi"]}" stroke="{p["border"]}" stroke-width="1.5" />'
+        f'<line x1="-7" y1="0" x2="7" y2="0" stroke="{p["border"]}" stroke-width="1.5" />'
+        f"</g>"
+    )
+
+
 def _sky_color(hour: int) -> str:
     """Vision W4.2: Tag/Nacht nach echter Server-Uhrzeit — kein
     Realismus-Anspruch (kein Übergang), nur ein ehrliches Signal statt
@@ -327,6 +360,7 @@ def build_scene_svg(state: FactoryState, *, now: Optional[datetime] = None) -> s
     # sie optisch "unter" den Gebäuden verlaufen (wie Förderbänder/Rohre in
     # Factorio/Mindustry, die zwischen den Gebäuden hindurchlaufen).
     parts.append(_connection_paths(state))
+    parts.append(_crate_travel_marker(state))
 
     # Vision W2.3: Nachtmodus bei Pause — die Halle steht wirklich still
     # (keine Animationen, unabhängig vom Einzelstatus), nicht nur optisch

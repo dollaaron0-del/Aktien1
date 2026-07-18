@@ -546,6 +546,27 @@ nur eine Zwischenstufe — das Ziel ist NULL Tabs außer der Szene selbst.
       1 neuer Test (`test_connections_include_w79_dependencies_verified_in_code`),
       Voll-Render pixel+plain OK.
 
+- [x] **W7.10 Echte Kisten-Wanderungs-Animation (18.7.2026)** — löst den
+      Platzhalter ein, der bei W7.2 bewusst dokumentiert wurde. User-
+      Vorgabe wörtlich (18.7.): "wenn eine Aktie gekauft wird, wandert
+      die Kiste über das Förderband ins Lager." Neue Funktion
+      `scene.py::_crate_travel_marker()`: eine kleine Kiste (Kupfer-
+      Farbton, Muster wie die Lager-Kisten aus W5.2) wandert per reiner
+      CSS-Animation (`offset-path`, kein SMIL, kein Rerun-Kostenaufwand)
+      entlang der `conveyor→warehouse`-Leitung. Nur sichtbar, wenn diese
+      Leitung wirklich fließt (dieselbe Nur-echte-Daten-Regel wie
+      `_connection_paths`) UND der Bot nicht pausiert ist (W2.3-
+      Nachtmodus-Konvention). `fx-crate-travel`-Keyframe in `theme.py`,
+      in derselben `prefers-reduced-motion`-Abschaltliste wie die
+      übrigen fx-*-Animationen. Wird VOR den Maschinen-Boxen gezeichnet
+      (wie die Leitungen selbst) — verschwindet dadurch optisch "unter"
+      dem Lager-Gebäude, sobald sie ankommt. 3 neue Tests
+      (`test_crate_travel_marker_*`), Voll-Render pixel+plain OK.
+      **Ehrlicher Hinweis:** CSS-`offset-path`-Animationen laufen nur im
+      echten Browser, nicht in einem statischen Screenshot/Headless-Test
+      — visuell nur live im Dashboard prüfbar, nicht per Figma-Vorschau
+      wie die übrigen Design-Iterationen dieser Sitzung.
+
 ## Bewusst NICHT (auch hier)
 
 - ✗ Live-Preis-/Netzwerk-Calls in state.py (einzige Ausnahme: der

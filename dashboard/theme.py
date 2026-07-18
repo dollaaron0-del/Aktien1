@@ -327,6 +327,21 @@ h1 {{
     stroke-dasharray: 10 8;
     animation: fx-pipe-flow 1s linear infinite;
 }}
+/* W7.10: sichtbare Kiste (scene.py::_crate_travel_marker) wandert entlang
+   der conveyor→warehouse-Leitung — macht fx-pipe-flow wörtlich statt nur
+   abstrakter Farb-Fluss. offset-distance ist eine reine CSS-Eigenschaft
+   (kein SMIL), fügt sich in dieselbe reduced-motion-Abschaltung wie die
+   übrigen fx-*-Animationen unten ein. */
+@keyframes fx-crate-travel {{
+    0%   {{ offset-distance: 0%;   opacity: 0; }}
+    8%   {{ opacity: 1; }}
+    92%  {{ opacity: 1; }}
+    100% {{ offset-distance: 100%; opacity: 0; }}
+}}
+.fx-crate-travel {{
+    offset-rotate: 0deg;
+    animation: fx-crate-travel 2.5s linear infinite;
+}}
 /* D8.2: Zählerscheibe des E-Werk-Stromzählers — dreht nur, wenn heute
    wirklich Verbrauch anfiel (power_meter.py setzt die Klasse bedingt). */
 @keyframes fx-spin-turn {{
@@ -362,7 +377,7 @@ h1 {{
 }}
 
 @media (prefers-reduced-motion: reduce) {{
-    .px-belt-anim, .fx-belt-run, .fx-blink, .fx-smoke, .fx-spin, .fx-pipe-flow {{ animation: none; }}
+    .px-belt-anim, .fx-belt-run, .fx-blink, .fx-smoke, .fx-spin, .fx-pipe-flow, .fx-crate-travel {{ animation: none; }}
     .px-led--warn::before, .px-led--err::before {{ animation: none; }}
     .px-ticker-track {{ animation: none; }}
 }}

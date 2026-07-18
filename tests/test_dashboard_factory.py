@@ -8,7 +8,13 @@ import pytest
 
 from dashboard.factory import state as st_mod
 from dashboard.factory.machines import machine_box
-from dashboard.factory.scene import _CONNECTIONS, LAYOUT, _connection_paths, build_scene_svg
+from dashboard.factory.scene import (
+    _CONNECTIONS,
+    LAYOUT,
+    _connection_paths,
+    _crate_travel_marker,
+    build_scene_svg,
+)
 from dashboard.factory.state import MACHINE_IDS, FactoryState, MachineState, read_state
 from dashboard.theme import PALETTE
 
@@ -306,6 +312,28 @@ def test_connection_paths_have_pipe_casing_and_joints():
     assert f'stroke="{PALETTE["border"]}" stroke-width="7"' in svg
     assert 'data-connection-joint="docks-analyzer_claude"' in svg
     assert f'stroke="{PALETTE["copper"]}" stroke-width="2"' in svg
+
+
+def test_crate_travel_marker_present_when_conveyor_warehouse_flowing():
+    svg = _crate_travel_marker(_state_with_statuses(
+        {"conveyor": "active", "warehouse": "ok"}))
+    assert 'data-crate="conveyor-warehouse"' in svg
+    assert "fx-crate-travel" in svg
+    assert "offset-path" in svg
+
+
+def test_crate_travel_marker_absent_when_conveyor_idle():
+    svg = _crate_travel_marker(_state_with_statuses(
+        {"conveyor": "off", "warehouse": "ok"}))
+    assert svg == ""
+
+
+def test_crate_travel_marker_absent_when_bot_paused():
+    state = FactoryState(
+        machines={mid: MachineState(id=mid, label=mid, status="ok") for mid in MACHINE_IDS},
+        paused=True, generated_at="2026-07-17T10:00:00",
+    )
+    assert _crate_travel_marker(state) == ""
 
 
 def test_connections_include_w79_dependencies_verified_in_code():
