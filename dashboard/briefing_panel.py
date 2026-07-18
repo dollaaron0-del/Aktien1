@@ -1,5 +1,6 @@
 """Wochenbriefing-Panel — bis 18.7.2026 eigener Tab, seit dem Tab-Umbau
-ein Abschnitt im Kartei-Tab (dashboard/tabs/dossier.py)."""
+ein Abschnitt im Kartei-Panel (dashboard/dossier_panel.py, seit 18.7.2026
+Teil des Hochregallager-Detailpanels statt eines eigenen Tabs)."""
 import streamlit as st
 
 

@@ -1,4 +1,7 @@
-"""Tab "Dynamische Watchlist" — ausgelagert aus dashboard/app.py (Roadmap 4.4a)."""
+"""Dynamische-Watchlist-Panel — bis 18.7.2026 eigener Tab, seit dem
+Karten-Umbau Teil des Hochregallager-Detailpanels (dashboard/tabs/factory.py),
+neben der durchsuchbaren Kartei — gehört inhaltlich zusammen: welche
+Aktien beobachtet/vorgemerkt sind."""
 import os
 
 import pandas as pd

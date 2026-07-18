@@ -1,11 +1,15 @@
-"""Tab "🗂 Kartei" — Personalakten je Aktie (Design-Roadmap L1.1–L1.3,
-docs/FABRIK_LEBENDIG.md).
+"""🗂 Kartei-Panel — Personalakten je Aktie (Design-Roadmap L1.1–L1.3,
+docs/FABRIK_LEBENDIG.md). Bis 18.7.2026 eigener Tab, seit dem Karten-
+Umbau Teil des Hochregallager-Detailpanels (dashboard/tabs/factory.py)
+— "Klick aufs Lager → alle Aktien durchsuchen" (User-Vorgabe 18.7.).
 
 Bündelt alles, was das Programm je über eine Aktie gesammelt hat, auf
 einem Blatt. Kern-Ehrlichkeitsregel: eine dünne Akte bleibt dünn sichtbar
 — keine Platzhalter, kein erfundenes Füllmaterial. Reiner Leser
-(dashboard/dossier.py), schreibt nirgends außer der bestehenden
-Notiz-Mechanik (PositionNotes, wiederverwendet — kein zweiter Speicher).
+(dashboard/dossier.py, davon zu unterscheiden — das ist die Datenschicht,
+dieses Modul hier ist die Darstellung), schreibt nirgends außer der
+bestehenden Notiz-Mechanik (PositionNotes, wiederverwendet — kein
+zweiter Speicher).
 """
 from __future__ import annotations
 

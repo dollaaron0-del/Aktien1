@@ -208,17 +208,17 @@ def test_note_fail_open(monkeypatch):
 
 def test_akte_links_md_builds_links():
     md = dossier.akte_links_md(["nvda", "TSM"])
-    assert md == "[NVDA](?dossier=NVDA) · [TSM](?dossier=TSM)"
+    assert md == "[NVDA](?factory=warehouse&dossier=NVDA) · [TSM](?factory=warehouse&dossier=TSM)"
 
 
 def test_akte_links_md_dedupes_and_skips_empty():
     md = dossier.akte_links_md(["NVDA", "nvda", "", None, "TSM"])
-    assert md == "[NVDA](?dossier=NVDA) · [TSM](?dossier=TSM)"
+    assert md == "[NVDA](?factory=warehouse&dossier=NVDA) · [TSM](?factory=warehouse&dossier=TSM)"
 
 
 def test_akte_links_md_respects_limit():
     md = dossier.akte_links_md([f"Z{i}" for i in range(30)], limit=3)
-    assert md.count("?dossier=") == 3
+    assert md.count("&dossier=") == 3
 
 
 def test_akte_links_md_empty_input():

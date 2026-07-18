@@ -174,7 +174,10 @@ def akte_links_md(tickers, limit: int = 20) -> str:
         if not t or t in seen:
             continue
         seen.add(t)
-        out.append(f"[{t}](?dossier={t})")
+        # Karten-Umbau 18.7.2026: Kartei lebt im Lager-Detailpanel — der
+        # Link muss die Fabrik-Szene mit fokussiertem Lager öffnen, nicht
+        # nur den (nicht mehr existierenden) Kartei-Tab ansteuern.
+        out.append(f"[{t}](?factory=warehouse&dossier={t})")
         if len(out) >= limit:
             break
     return " · ".join(out)

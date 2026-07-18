@@ -431,6 +431,55 @@ sie galt bis 17.7., der Kameraperspektive-Teil ist explizit ersetzt.
       reduziert (Import-Pflicht war ohne Netzwerk-Tab gegenstandslos).
       Dashboard-Suite 520 Tests grün, Voll-Render pixel+plain OK.
 
+## Vision W7 — Karte statt Dashboard (18.7.2026, User-Entscheidung: volles Aufgehen)
+
+User-Vorgabe wörtlich: *"ich möchte das das ganze Programm Dashboard nur
+aus dieser Fabrik besteht also eine Interaktive Map wird in der man die
+Informationen heraus bekommt wenn man auf entsprechende Gegenstände die
+organisch in der Fabrik verteilt sind drauf schaut und wenn man sie
+anklickt mehr infos bekommt."* Damit ist W6.4 (Fabrik als erster Tab)
+nur eine Zwischenstufe — das Ziel ist NULL Tabs außer der Szene selbst.
+
+**Zwei Architektur-Entscheidungen (User, 18.7.):**
+1. **Kontrollraum als eigenes Gebäude** (nicht ein Fixpunkt außerhalb der
+   Karte) — Verwaltung bleibt visuell Teil der Fabrik. Umgesetzt: 12.
+   Maschine, `control_room`, Backoffice-Pendant zum Nachtschicht-Roboter.
+2. **Aktien als Kisten im Hochregallager, durchsuchbar per Klick aufs
+   Lager; Kauf = Kiste wandert übers Förderband durch die Analysatoren
+   ins Lager.** Umgesetzt: Kartei (Aktien-Suche) + Watchlist/IPO-Pipeline
+   leben jetzt im Lager-Detailpanel (`_render_warehouse_stock_browser`
+   in `tabs/factory.py`, Panels in `dossier_panel.py`/`watchlist_panel.py`).
+   Die Kisten-Wanderung nutzt die bereits bestehende `conveyor→warehouse`-
+   Leitungsanimation (W6.2, fließt bei echter Aktivität) statt einer
+   neuen Pro-Kiste-Physik-Animation — bildet dieselbe reale Bewegung
+   (Analyse → Kauf → Lager) ab, ohne Zusatzkomplexität.
+
+**Fortschritt:**
+- [x] **W7.1 Kontrollraum-Gebäude** — 12. Maschine, Status spiegelt eine
+      echte Härtungslücke (kein Dashboard-Passwort). Volles
+      Einstellungen-Formular am Detailpanel. 7 Tabs → committet.
+- [x] **W7.2 Lager wird Aktien-Hub** — Kartei + Watchlist/IPO-Pipeline ins
+      Lager-Detailpanel verschoben (`dossier_panel.py`, `watchlist_panel.py`,
+      beide ex-Tabs). `?dossier=`-Links tragen jetzt `factory=warehouse&`
+      mit, sonst würde der Link ins Leere zeigen (Kartei-Tab existiert
+      nicht mehr). 5 Tabs → committet.
+- [ ] **W7.3 Tab-Leiste komplett entfernen** — verbleibend: Fabrik,
+      Portfolio, Live, Entscheidungen, Trades & Lernen (5 Tabs). Braucht
+      einen persistenten, IMMER sichtbaren HUD-Streifen (Bot-Status,
+      Gesundheits-Ampel, Depotwert) — das ist bewusst KEIN Klick-Ziel,
+      da man diese Zahlen nicht erst "entdecken" soll.
+- [ ] **W7.4 Live-Tab** (Aktivitätsfeed/Timeline) → vermutlich Werksuhr-
+      Detail + permanenter Logbuch-Streifen (existiert als
+      `_render_logbook()` schon in der Szene).
+- [ ] **W7.5 Entscheidungen-Rest** (Zeitraum-Vergleich, der Rest von
+      `tabs/decisions.py`) → Förderband-Detail.
+- [ ] **W7.6 Trades & Lernen** (588 Zeilen: Kalibrierung, Lernkurve,
+      Genealogie, Paper-Forward, Thesis-Board, Filter-X-Ray, Why-Not,
+      Wochen-Report) → Qualitätslabor-Detail, vermutlich deutlich
+      ausgebaut oder als eigene "Tiefenansicht".
+- [ ] **W7.7 Portfolio-Rest** (Wachstumsphase, Ziel-Risiko, Notizen) →
+      Lager-Detail (KPI-Leiste selbst vermutlich in den HUD, s. W7.3).
+
 ## Bewusst NICHT (auch hier)
 
 - ✗ Live-Preis-/Netzwerk-Calls in state.py (einzige Ausnahme: der

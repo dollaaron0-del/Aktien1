@@ -107,7 +107,9 @@ def shelf_svg(groups: List[Dict]) -> str:
             # gleiches Link-Muster wie die Maschinen der Fabrik-Szene
             # (machines.py: <a href="?…" target="_self">).
             cols.append(
-                f'<a href="?dossier={html.escape(c["ticker"])}" target="_self">'
+                # Karten-Umbau 18.7.2026: Kartei lebt im Lager-Detailpanel
+                # der Fabrik-Szene, nicht mehr in einem eigenen Tab.
+                f'<a href="?factory=warehouse&dossier={html.escape(c["ticker"])}" target="_self">'
                 f'<g><title>{html.escape(c["ticker"])}: '
                 f'${c["value"]:,.0f} · P&amp;L {html.escape(pnl_txt)}'
                 f'{" · " + html.escape(label) if label else ""}'

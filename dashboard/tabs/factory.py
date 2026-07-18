@@ -149,6 +149,35 @@ def _detail_warehouse(m: MachineState) -> None:
         pass
 
 
+def _render_warehouse_stock_browser(ctx) -> None:
+    """Karten-Umbau 18.7.2026, User-Vorgabe wörtlich: "Wenn man auf das
+    Lager klickt öffnet sich ein Tab in der man alle Aktien suchen kann."
+    Kartei (früher eigener Tab) + Watchlist/IPO-Pipeline (früher eigener
+    Tab) gehören inhaltlich zum Lager — hier ist der Ort, an dem man
+    JEDE bekannte Aktie findet, nicht nur die aktuell gekauften. Jede
+    Sektion einzeln fail-open."""
+    st.divider()
+    st.markdown("### 🔎 Alle Aktien durchsuchen")
+    st.caption(
+        "Jede je analysierte oder beobachtete Aktie — nicht nur die aktuell "
+        "gekauften Kisten oben. Wird eine Aktie gekauft, wandert ihre Kiste "
+        "über das Förderband (die Analyse-Pipeline) hierher ins Lager."
+    )
+    try:
+        from dashboard import dossier_panel as _dossier_panel
+        _dossier_panel.render(ctx)
+    except Exception:
+        st.caption("Aktien-Suche derzeit nicht verfügbar.")
+
+    st.divider()
+    st.markdown("### 🚀 Watchlist & IPO-Pipeline")
+    try:
+        from dashboard import watchlist_panel as _watchlist_panel
+        _watchlist_panel.render(ctx)
+    except Exception:
+        st.caption("Watchlist derzeit nicht verfügbar.")
+
+
 def _detail_docks(m: MachineState) -> None:
     health = m.payload or {}
     for label, key in (("🟢 Gesund", "healthy"), ("🟡 Schwach", "weak"), ("🔴 Tot", "dead")):
@@ -313,6 +342,12 @@ def _render_detail_panel(m: MachineState, ctx=None) -> None:
             _settings_panel.render(ctx)
         except Exception:
             pass  # Fail-open: Status-Kacheln oben stehen bereits
+
+    # Lager trägt Kartei-Suche + Watchlist/IPO-Pipeline (beide früher
+    # eigene Tabs) — User-Vorgabe 18.7.: "alle Aktien suchen" gehört ans
+    # Lager, nicht in einen separaten Tab.
+    if m.id == "warehouse" and ctx is not None:
+        _render_warehouse_stock_browser(ctx)
 
 
 def _render_replay_terminal(day: str, until_ts: str) -> None:

@@ -14,6 +14,11 @@ from dashboard.tabs import factory
 factory.render(_Ctx())
 """
 
+_KIOSK_SCRIPT = """
+from dashboard.tabs import factory
+factory.render(None)
+"""
+
 
 def test_factory_tab_renders_svg_scene():
     at = AppTest.from_string(_SCRIPT)
@@ -267,6 +272,47 @@ def test_control_room_detail_panel_without_ctx_stays_lean():
     assert not at.exception
     subheaders = "".join(str(s.value) for s in at.get("subheader"))
     assert "Bot-Einstellungen" not in subheaders
+
+
+_WAREHOUSE_CTX_SCRIPT = """
+from config import config
+from portfolio.portfolio import Portfolio
+
+class _Ctx:
+    config = config
+    portfolio = Portfolio()
+    ticker_label = staticmethod(lambda t: t)
+    _ALL_NAMES = {}
+
+from dashboard.tabs import factory
+factory.render(_Ctx())
+"""
+
+
+def test_warehouse_detail_panel_includes_stock_browser_and_watchlist_with_ctx():
+    """Karten-Umbau 18.7.2026, User-Vorgabe: Klick aufs Lager öffnet die
+    durchsuchbare Kartei (früher eigener Tab) + Watchlist/IPO-Pipeline
+    (früher eigener Tab)."""
+    at = AppTest.from_string(_WAREHOUSE_CTX_SCRIPT, default_timeout=30)
+    at.query_params["factory"] = "warehouse"
+    at.run()
+    assert not at.exception
+    md = "".join(str(m.value) for m in at.get("markdown"))
+    assert "Alle Aktien durchsuchen" in md
+    subheaders = "".join(str(s.value) for s in at.get("subheader"))
+    assert "IPO-Pipeline" in subheaders
+
+
+def test_warehouse_detail_panel_without_ctx_stays_lean():
+    """Echter Kiosk-Fall (ctx=None, wie H6.1 render(None) aufruft) — die
+    Stock-Browser-Sektion braucht echten ctx (Portfolio/Config) und muss
+    dort komplett entfallen, nicht nur ihren inneren Fail-open zeigen."""
+    at = AppTest.from_string(_KIOSK_SCRIPT)
+    at.query_params["factory"] = "warehouse"
+    at.run()
+    assert not at.exception
+    md = "".join(str(m.value) for m in at.get("markdown"))
+    assert "Alle Aktien durchsuchen" not in md
 
 
 def test_backup_bot_detail_panel_shows_recent_backups_table(tmp_path, monkeypatch):

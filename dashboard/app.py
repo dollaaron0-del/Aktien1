@@ -493,17 +493,17 @@ _ctx = _types.SimpleNamespace(**locals())
 # Tab-Umbau 18.7.2026: 8 Tabs statt 14, Fabrik zuerst (Vision W6.4 —
 # "Fabrik soll das Hauptding werden"). Signal-Queue lebt im Entscheidungen-
 # Tab (Zähler im Label), Regime/Analyse-Log in den Fabrik-Detailpanels,
-# Wochenbriefing in der Kartei.
+# Wochenbriefing+Watchlist+IPO-Pipeline im Lager-Detailpanel.
 # Einstellungen (früher letzter Tab) lebt seit 18.7.2026 als Detailpanel
-# des Kontrollraums in der Fabrik (dashboard/settings_panel.py) — 7 Tabs.
-tab_factory, tab_portfolio, tab_live, tab_decisions, tab_trades, tab_watchlist, tab_dossier = st.tabs([
+# des Kontrollraums in der Fabrik (dashboard/settings_panel.py). Kartei
+# und Watchlist leben seit 18.7.2026 im Lager-Detailpanel (User-Vorgabe:
+# "Klick aufs Lager → alle Aktien suchen") — 5 Tabs.
+tab_factory, tab_portfolio, tab_live, tab_decisions, tab_trades = st.tabs([
     "🏭 Fabrik",
     "📊 Portfolio",
     "📡 Live",
     "🧠 Entscheidungen" + (f" ({pending_cnt})" if pending_cnt else ""),
     "📈 Trades & Lernen",
-    "🔭 Watchlist",
-    "🗂 Kartei",
 ])
 
 
@@ -539,13 +539,6 @@ with tab_trades:
     _tab_trades.render(_ctx)
 
 
-# ══════════════════════════════════════════════════════════
-# TAB 8 – DYNAMISCHE WATCHLIST
-# ══════════════════════════════════════════════════════════
-with tab_watchlist:
-    from dashboard.tabs import watchlist as _tab_watchlist
-    _tab_watchlist.render(_ctx)
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
@@ -562,14 +555,6 @@ with st.sidebar:
 with tab_factory:
     from dashboard.tabs import factory as _tab_factory
     _tab_factory.render(_ctx)
-
-
-# ══════════════════════════════════════════════════════════
-# TAB "KARTEI" – Personalakten je Aktie (Design-Roadmap L1)
-# ══════════════════════════════════════════════════════════
-with tab_dossier:
-    from dashboard.tabs import dossier as _tab_dossier
-    _tab_dossier.render(_ctx)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

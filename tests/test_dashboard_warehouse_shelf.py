@@ -104,7 +104,7 @@ def test_shelf_crates_link_to_dossier(_profiles):
     Maschinen der Fabrik-Szene)."""
     groups = warehouse_shelf.shelf_data({"TSM": _pos()}, {"TSM": 110.0}, now=_NOW)
     svg = warehouse_shelf.shelf_svg(groups)
-    assert '<a href="?dossier=TSM" target="_self">' in svg
+    assert '<a href="?factory=warehouse&dossier=TSM" target="_self">' in svg
     assert svg.count("</a>") == 1
     assert "klicken für die Akte" in svg
 

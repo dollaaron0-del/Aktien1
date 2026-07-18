@@ -1,5 +1,5 @@
 """
-Tests für dashboard/tabs/dossier.py (Design-Roadmap L1.3 — Kartei-Tab).
+Tests für dashboard/dossier_panel.py (Design-Roadmap L1.3 — Kartei-Tab).
 
 Isoliertes Mini-Skript (Muster test_dashboard_thesis_board_tab.py). Nutzt
 eine synthetische Analyse-Historie, damit der Tab ohne echte Produktions-
@@ -8,7 +8,7 @@ daten testbar bleibt.
 from streamlit.testing.v1 import AppTest
 
 _SCRIPT = """
-from dashboard.tabs.dossier import render
+from dashboard.dossier_panel import render
 render(None)
 """
 

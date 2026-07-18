@@ -37,4 +37,4 @@ def test_kiosk_mode_hides_streamlit_chrome(monkeypatch):
 def test_without_kiosk_param_full_dashboard_with_tabs(monkeypatch):
     at = _run(monkeypatch, kiosk=False)
     assert not at.exception
-    assert len(at.tabs) >= 7  # Tab-Umbau 18.7.2026: 7 Tabs statt >10
+    assert len(at.tabs) >= 5  # Tab-Umbau 18.7.2026: 5 Tabs statt >10
