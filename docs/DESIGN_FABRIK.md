@@ -271,14 +271,27 @@ Fokus-Navigation über `st.query_params["factory"]`.
       `test_machine_box_uses_image_when_asset_file_present`,
       `test_machine_box_only_uses_asset_for_matching_machine_id`),
       Verifikation pixel+plain OK.
-- [ ] **W5.2 [USER] Assets je Maschine** — der alte Stil-Prompt vom 13.7.
+- [x] **W5.2 Assets je Maschine** — der alte Stil-Prompt vom 13.7.
       (16-Bit-Industrieautomation, Neon) passt nicht mehr zur Vision-W6-
       Kurskorrektur (Ziegelstein/Top-Down/cozy). Neuer Prompt (17.7.,
       auf User-Wunsch geschrieben) unten. Eine Maschine pro Etappe
       generieren/auswählen, Ablage als `factory_<id>.png` in
-      `dashboard/assets/img/`. > Kann NICHT vom Modell erledigt werden
-      (kein Bildgenerierungs-Werkzeug verfügbar) — braucht ein externes
-      Tool (Midjourney/DALL·E/Stable Diffusion/o.ä.).
+      `dashboard/assets/img/`.
+
+      **Umgesetzt 18.7.2026** (User stellte Figma-MCP-Zugang mit Dev-Sitz
+      bereit, s. Memory `figma-zugang-asset-generierung`): kein KI-Bild-
+      generator verfügbar (`generate_figma_design` macht nur Seiten-
+      Screenshots, kein gemaltes Pixel-Art) — stattdessen alle 11 Sprites
+      als ECHTE Pixel-Raster in Figma gebaut (`use_figma`/
+      `createNodeFromSvg`, ein `<rect>` je Pixel, 16px-Zellen). Gemeinsamer
+      Ziegel-„Rahmen"-Baustein (Chamfer-Silhouette, 2:1-Ziegelverhältnis auf
+      User-Wunsch, Laufverband-Fugen, Richtungslicht NW/SO, weicher
+      Schlagschatten) für alle quadratischen/hochformatigen Gebäude geteilt
+      — nur `conveyor` bekam ein eigenes Design (offene Rinne statt
+      Vollwand, der generische Chamfer bricht bei so extremem Seiten-
+      verhältnis). Export via `download_assets`, PNGs liegen mit
+      transparentem Hintergrund in `dashboard/assets/img/`. Figma-Datei:
+      "Ruflo Pixel-Art Assets" (`ZJ9qr8vXJILOYHukpDzr3u`).
 
       **Basis-Stil (vor jede Einzelbeschreibung stellen):**
       > Top-down (bird's-eye) view pixel art game asset. Cozy, inviting
@@ -314,9 +327,18 @@ Fokus-Navigation über `st.query_params["factory"]`.
       `docks` hochformatig ~1:2). PNG mit transparentem Hintergrund
       (liegt dann sauber auf dem bereits code-gezeichneten Ziegel-Canvas).
       Auflösung reicht mit ~512px Kantenlänge, wird im Browser skaliert.
-- [ ] **W5.3 Einbau je geliefertem Asset** — wiederholbarer Mini-Task:
-      PNG ablegen, headless prüfen, Screenshot, abhaken (hier je Maschine
-      eine Zeile ergänzen: W5.3-conveyor, W5.3-gate, …).
+- [x] **W5.3 Einbau je geliefertem Asset** — alle 11 auf einmal (18.7.2026):
+      PNGs abgelegt, `test_dashboard_factory.py`/`test_dashboard_factory_tab.py`/
+      `test_dashboard_theme.py` grün (162 Tests), Voll-Render pixel+plain
+      OK. Zwei Bestandstests (`test_dock_slots_empty_payload_renders_
+      nothing_extra`, `test_machine_box_uses_skeleton_rect_without_
+      asset_file`) verließen sich auf die zufällige Abwesenheit von
+      `factory_docks.png`/`factory_gate.png` im echten Verzeichnis statt
+      auf ein isoliertes leeres `_IMG_DIR` (Muster der Nachbartests) — auf
+      `tmp_path`-Isolation umgestellt, jetzt asset-unabhängig grün.
+      W5.3-clock, W5.3-weather, W5.3-breaker, W5.3-gate, W5.3-lab,
+      W5.3-backup_bot, W5.3-analyzer_claude, W5.3-analyzer_ollama,
+      W5.3-warehouse, W5.3-docks, W5.3-conveyor.
 - [ ] **W5.4 (Nur bei Bedarf) Canvas-Evaluation** — NUR falls die
       SVG-Szene sichtbar ruckelt (Kriterium: flüssiges Scrollen im Tab
       nicht mehr gegeben bei üblicher Maschinen-/Animationszahl). Erst

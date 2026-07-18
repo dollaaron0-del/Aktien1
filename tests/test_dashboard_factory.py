@@ -429,7 +429,13 @@ def test_dock_slots_escape_source_names():
     assert "&lt;script&gt;" in box
 
 
-def test_dock_slots_empty_payload_renders_nothing_extra():
+def test_dock_slots_empty_payload_renders_nothing_extra(tmp_path, monkeypatch):
+    # "docks" hat inzwischen ein echtes W5.2-Asset — isoliertes leeres
+    # Verzeichnis erzwingt hier gezielt den Skelett-Pfad (siehe
+    # test_machine_box_uses_skeleton_rect_without_asset_file).
+    import dashboard.theme as theme_mod
+    monkeypatch.setattr(theme_mod, "_IMG_DIR", str(tmp_path))
+
     m = MachineState(id="docks", label="Laderampen", status="off", payload={})
     box = machine_box(m, 0, 0, 180, 420)
     assert "<svg" not in box  # sanity: ist nur ein <g>-Fragment
@@ -727,7 +733,12 @@ def test_build_scene_svg_stays_well_under_50ms_budget():
 
 # ── W5.1: Asset-Slots (echtes PNG statt Skelett-Form) ────────────────────────
 
-def test_machine_box_uses_skeleton_rect_without_asset_file():
+def test_machine_box_uses_skeleton_rect_without_asset_file(tmp_path, monkeypatch):
+    # "gate" hat inzwischen ein echtes W5.2-Asset — isoliertes leeres
+    # Verzeichnis erzwingt hier gezielt den Skelett-Pfad.
+    import dashboard.theme as theme_mod
+    monkeypatch.setattr(theme_mod, "_IMG_DIR", str(tmp_path))
+
     m = MachineState(id="gate", label="Tor", status="ok")
     box = machine_box(m, 0, 0, 100, 100)
     assert "<rect" in box
