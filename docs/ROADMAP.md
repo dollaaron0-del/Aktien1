@@ -867,24 +867,33 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Meta-Labeling auf LIVE-Ausgängen) braucht laufenden Bot + Zeit —
       der neue Server beschleunigt die Forschung, ersetzt aber nicht die
       Live-Historie (Block 3 bleibt eigener Engpass).
-- [ ] **6.7 Intensiv-Fahrplan (Lab als Dauerbetrieb)** — rechenintensive
-      Läufe vom Hand-Anstoß in feste Routine überführen (systemd-Timer
-      analog der bestehenden Bot-Timer). Skizze:
-      (a) NÄCHTLICH: Walk-Forward über alle Familien (--workers 0) →
-          Registry-Refresh; solange der Bot pausiert ist rein advisory,
-          data/strategy_registry.json bleibt die einzige Schnittstelle.
-      (b) WÖCHENTLICH: Meta-Backtest des Allokators (4.1-Lauf) +
-          Paper-Forward-Abgleich (Soll vs. Ist).
-      (c) MONATLICH: Quellen-Ablation (2.4) + Stress-Test-Vergleich (2.3);
-          QUARTALSWEISE das 6.4-Holdout-Fenster (bewusst selten — Holdout
-          nutzt sich durch Anfassen ab).
-      (d) OUTPUT: Reports als Dateien (reports/ o.ä.) + kurze
-          Telegram-Zusammenfassung (TELEGRAM_MODE=important); ALARM nur
-          bei Verdikt-Wechsel (z.B. ROBUST→FRAGILE) oder Lauf-Fehler,
-          kein Zahlenspam (Lehre aus dem Watchdog-Spam).
-      (e) VORAUSSETZUNG: 6.4-Gates zuerst — ein nächtlicher Suchlauf ohne
-          Multiple-Testing-Korrektur automatisiert nur die Selbsttäuschung;
-          Läufe versionieren (Config-Hash + Datenstand in den Report).
+- [x] **6.7 Intensiv-Fahrplan (Lab als Dauerbetrieb)** — fertig 17./18.7.
+      (User-Anweisung, nachdem die Nacht-Läufe manuell per systemd-run
+      angestoßen wurden: "Warteschlange für die nächsten Nächte, automatisch").
+      `scripts/nightly_research.sh` orchestriert (a)–(c) der ursprünglichen
+      Skizze als EIN Timer (`aktien_nightly_research.timer`, täglich 01:00,
+      Muster exakt wie `aktien_backup.{service,timer}`):
+      (a) NÄCHTLICH: Walk-Forward-Registry-Refresh (Standardfall, Mo–Sa).
+      (b) SONNTAGS: statt Walk-Forward → Meta-Backtest + CPCV (die zwei
+          schwereren Läufe).
+      (c) AM 1. DES MONATS: zusätzlich Quellen-Ablation (2.4) +
+          Stress-Test (2.3).
+      Harte Sicherheits-Deadline 05:30 für die GESAMTE Kette (nicht pro
+      Schritt neu berechnet) — jeder Schritt bekommt nur die Restzeit bis
+      05:30 als `timeout`-Budget (gedeckelt 180 Min./Schritt); reißt die
+      Deadline, werden restliche Schritte übersprungen statt verspätet
+      gestartet — kollidiert nie mit dem 06:00-IPO-Check/08:30-Morgenbericht
+      des Bots. Reports nach `reports/nightly_research_<Zeitstempel>.log`
+      (30-Tage-Rotation, Muster `scripts/backup.sh`s `BACKUP_KEEP`).
+      BEWUSST NICHT automatisiert: das 6.4-Quartals-Holdout — die Roadmap
+      selbst verlangt Zurückhaltung dabei ("Disziplin-Ziel ≤1×/Quartal
+      bleibt Prozess, kein Schloss"), ein Auto-Trigger würde genau das
+      untergraben. Telegram-Alarm-bei-Verdikt-Wechsel (ursprünglich Punkt d)
+      bewusst NICHT gebaut (Scope-Reduktion fürs erste Deployment, kein
+      Zahlenspam-Risiko) — Reports vorerst nur Datei-basiert, Folge-Task bei
+      Bedarf. Multiple-Testing-Korrektur (6.4a) und Holdout-Aussparung
+      (6.4b) sind in den zugrunde liegenden CLI-Tools bereits aktiv, hier
+      nichts extra nötig.
 - [ ] **6.8 Datenlücke mit Compute schließen** — was der GPU-Server GEGEN
       das Daten-Nadelöhr (6.2) tun kann, statt nur schneller zu rechnen.
       Kernidee: Compute erzeugt keine neuen Kurs-Informationen, aber es

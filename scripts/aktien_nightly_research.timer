@@ -1,0 +1,9 @@
+[Unit]
+Description=Aktien-Bot Nacht-Forschungs-Warteschlange taeglich (01:00) — Roadmap 6.7
+
+[Timer]
+OnCalendar=*-*-* 01:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
