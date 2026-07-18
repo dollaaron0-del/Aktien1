@@ -214,15 +214,24 @@ Alle Helfer geben bei `plain` schlichtes, ungestyltes HTML bzw. no-op zurück
 
 - [x] **D5.1 Asset-Infrastruktur** — `dashboard/assets/img/` angelegt
       (`.gitkeep`); `theme.image_b64(name)` bereits in D0.2 gebaut + getestet.
-- [ ] **D5.2 [USER] Bilder generieren + auswählen** — mit dem Prompt vom
-      13.7.: (a) Header-Logo/Banner ~600×120, (b) Login-Splash ~800×400,
-      (c) optional 12 Tab-Icons 32×32. Ablage als PNG in
-      `dashboard/assets/img/` (`logo.png`, `splash.png`, `tab_<name>.png`).
-      > Dieser Task kann NICHT vom Modell erledigt werden — User-Auswahl.
+- [x] **D5.2 Bilder generieren + auswählen** — Umgesetzt 18.7.2026 mit
+      Figma-MCP (Dev-Sitz, s. `figma-zugang-asset-generierung`), gleiche
+      Pixel-Raster-Technik wie W5.2: (a) `logo.png` — kompaktes
+      quadratisches Emblem (256×256, Candlestick-Chart-Terminal mit
+      Stahl-Bezel + Kupfer-Nieten), tatsächlich nur `height:2.2em` im
+      Header gerendert (`app.py:182`) — daher bewusst quadratisch statt
+      der ursprünglich geschätzten 600×120-Banner-Form. (b) `splash.png`
+      — 800×400-Szene (Terminal mit blinkenden Lichtern, Förderband mit
+      3 leuchtenden Datenwürfeln, Sortier-Roboterarm mit Greifer),
+      Industrie-Neon-Palette aus `theme.py::_PALETTE_PIXEL`. (c) Tab-Icons
+      NICHT gebaut: `st.tabs()` nimmt nur reine Text-Labels, kein Bild-
+      Einbaupfad vorhanden (geprüft) — D5.4 dadurch gegenstandslos.
 - [x] **D5.3 Logo + Splash einbinden** — bereits in D1.2/D1.6 verdrahtet
-      (Header + Login-Seite), Fallback-Pfad (keine Datei vorhanden) ist der
-      aktuell aktive, verifizierte Zustand.
-- [ ] **D5.4 (Optional) Tab-Icons** — nur falls D5.2 Icons liefert.
+      (Header + Login-Seite); mit echten Dateien (18.7.) verifiziert
+      (pixel+plain OK, `test_dashboard_theme.py`+`test_dashboard_auth.py`
+      41/41 grün).
+- [x] **D5.4 (Optional) Tab-Icons** — entfällt (s. D5.2c): `st.tabs()`
+      unterstützt keine Bild-Labels, kein Code-Anknüpfungspunkt vorhanden.
 
 ## D6 — Konsistenz-Pass + Generalprobe (zuletzt, vor der Vorstellung)
 
