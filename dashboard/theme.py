@@ -240,14 +240,31 @@ def _base_css() -> str:
    (initial_sidebar_state="auto" kollabiert je nach Fensterbreite) ist ein
    Kind-Element von stHeader; display:none auf dem Elternelement hätte ihn
    mitversteckt und die Sidebar dauerhaft unerreichbar gemacht (genau das
-   vom User gemeldete "die Sidebar ist nicht mehr da"). Höhe/Hintergrund
-   auf 0 statt komplett entfernen — der Pfeil bleibt sichtbar+klickbar. */
+   vom User gemeldete "die Sidebar ist nicht mehr da").
+   W8.4 (18.7.2026, Nachbesserung): height:0 reichte NICHT — per Playwright
+   gegen die echte Live-Seite geprüft (nicht nur AppTest, das kein CSS-Layout
+   kennt): der Ausklapp-Pfeil (data-testid stExpandSidebarButton) liegt als
+   normales Flow-Kind IN stHeader, nicht position:fixed — ein Elternelement
+   mit Höhe 0 nimmt ihn im Layout mit auf Höhe 0 (bounding box wurde None).
+   Nur noch Hintergrund transparent, Höhe bleibt natürlich — der Pfeil hat
+   wieder eine echte, klickbare Fläche.
+   W8.5 (18.7.2026, eigentliche Ursache gefunden): der Pfeil liegt NICHT nur
+   in stHeader, sondern eine Ebene tiefer direkt in stToolbar — und GENAU
+   stToolbar stand seit dem allerersten W8.1-Commit auf display:none. Der
+   Pfeil war also die ganze Zeit tot, unabhängig von stHeader. Per Playwright
+   den DOM-Baum durchsucht (volle Kind-Struktur, nicht nur querySelectorAll):
+   stToolbar hat zwei getrennte Zweige — einen NUR mit stExpandSidebarButton
+   (Sidebar-Pfeil), einen mit drei Geschwistern stToolbarActions,
+   stAppDeployButton, stMainMenu (Deploy-Button + Drei-Punkte-Menü, das
+   eigentliche "Geraffel"). Erster Versuch (nur stToolbarActions verstecken)
+   liess den Deploy-Button sichtbar stehen, weil der ein Geschwister-, kein
+   Kind-Element ist — jetzt alle drei Geschwister einzeln ausgeblendet,
+   stToolbar/stExpandSidebarButton bleiben unangetastet. */
 [data-testid="stHeader"] {{
     background: transparent;
-    height: 0;
-    min-height: 0;
 }}
-[data-testid="stToolbar"], #MainMenu, footer {{
+[data-testid="stToolbarActions"], [data-testid="stAppDeployButton"],
+[data-testid="stMainMenu"], #MainMenu, footer {{
     display: none;
 }}
 [data-testid="stAppViewContainer"] .block-container {{

@@ -30,12 +30,19 @@ def test_pixel_mode_wraps_header_in_hud_bar_and_hides_chrome(monkeypatch):
     # Rest der Seite versehentlich mit einwickelt).
     assert html_out.index('<div class="px-hud-bar">') < html_out.index("</div>")
     assert 'data-testid="stHeader"' in html_out
-    # W8.3: stHeader bleibt im Render-Baum (Höhe 0 statt display:none),
-    # damit der Sidebar-Ausklapp-Pfeil (ein Kind-Element von stHeader in
-    # dieser Streamlit-Version) klickbar bleibt. Nur Toolbar/Menü/Footer
-    # werden komplett entfernt.
-    assert "height: 0;" in html_out
-    assert '[data-testid="stToolbar"], #MainMenu, footer {' in html_out
+    # W8.5: stHeader behält seine natürliche Höhe (nur Hintergrund
+    # transparent), stToolbar selbst bleibt unangetastet — der Sidebar-
+    # Ausklapp-Pfeil (stExpandSidebarButton) liegt als eigener Zweig direkt
+    # in stToolbar. Nur die drei Geschwister-Elemente stToolbarActions,
+    # stAppDeployButton, stMainMenu (Deploy+Drei-Punkte-Menü) werden
+    # ausgeblendet. Per Playwright inkl. echtem Klick auf den Pfeil gegen
+    # die echte Seite verifiziert (AppTest kennt kein CSS-Layout).
+    assert '[data-testid="stHeader"] {' in html_out
+    assert "background: transparent;" in html_out
+    assert '[data-testid="stToolbarActions"]' in html_out
+    assert '[data-testid="stAppDeployButton"]' in html_out
+    assert '[data-testid="stMainMenu"]' in html_out
+    assert '[data-testid="stToolbar"], #MainMenu' not in html_out
     assert "display: none;" in html_out
 
 
