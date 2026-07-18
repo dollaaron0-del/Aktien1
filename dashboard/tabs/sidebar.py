@@ -1,5 +1,6 @@
 """Sidebar — ausgelagert aus dashboard/app.py (Roadmap 4.4a)."""
 from datetime import datetime
+from pathlib import Path
 
 import streamlit as st
 
@@ -204,3 +205,25 @@ def render(ctx) -> None:
     if st.button("🔄 Cache leeren & neu laden", width="stretch"):
         st.cache_resource.clear()
         st.rerun()
+
+    # ── Design-Referenzbilder hochladen ─────────────────────────────────────
+    # Umgeht SFTP/Drive: Upload direkt übers Dashboard, landet dort, wo
+    # Claude Code lokal draufzugreifen kann (kein Server-Zugang nötig).
+    st.divider()
+    with st.expander("🖼 Design-Referenz hochladen"):
+        _ref_dir = Path(__file__).resolve().parent.parent / "assets" / "reference"
+        _ref_dir.mkdir(parents=True, exist_ok=True)
+        _uploaded = st.file_uploader(
+            "Bilder auswählen",
+            type=["png", "jpg", "jpeg", "webp"],
+            accept_multiple_files=True,
+            key="reference_upload",
+        )
+        if _uploaded:
+            for _f in _uploaded:
+                _safe_name = Path(_f.name).name  # Pfad-Traversal aus Dateinamen entfernen
+                (_ref_dir / _safe_name).write_bytes(_f.getbuffer())
+            st.success(f"{len(_uploaded)} Datei(en) gespeichert.")
+        _existing = sorted(p.name for p in _ref_dir.glob("*") if p.is_file())
+        if _existing:
+            st.caption(f"Vorhanden ({len(_existing)}): " + ", ".join(_existing))
