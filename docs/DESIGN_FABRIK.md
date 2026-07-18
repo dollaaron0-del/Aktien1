@@ -497,10 +497,17 @@ nur eine Zwischenstufe — das Ziel ist NULL Tabs außer der Szene selbst.
 
       **Damit ist Vision W7 (User 18.7.: "das ganze Programm soll nur aus
       der Fabrik bestehen") strukturell komplett** — alle 8 früheren Tabs
-      sind Detailpanels von Maschinen oder Teil des HUD. Offen bleibt nur
-      noch Politur (Sidebar evtl. ins Kontrollraum-Detail, echte Kisten-
-      Wanderungs-Animation statt der Leitungs-Fließanimation, falls
-      gewünscht) — kein strukturelles Aufräumen mehr nötig.
+      sind Detailpanels von Maschinen oder Teil des HUD.
+
+      **Sidebar bewusst NICHT ins Kontrollraum-Detail gefaltet** (geprüft
+      18.7., nach W7.10): anders als die Tabs ist die Sidebar keine
+      konkurrierende "Seite" — sie ist ein Streamlit-natives Seitenpanel,
+      das neben der Karte steht, kein Ersatz dafür. Wichtiger: sie trägt
+      den **Bot-Pause-Schalter** — die kritischste Einzelaktion im ganzen
+      Dashboard (kompletter Stopp inkl. SL/TP-Überwachung). Den hinter
+      "Kontrollraum anklicken → runterscrollen" zu verstecken wäre eine
+      echte Verschlechterung, kein Aufräumen — ein Not-Halt gehört so
+      erreichbar wie möglich, nicht in ein Untermenü. Bleibt wie sie ist.
 
 - [x] **W7.8 Rohr-Optik verstärkt (18.7.2026)** — User lud 25 Referenz-
       bilder hoch (neues Upload-Feld in der Sidebar,
