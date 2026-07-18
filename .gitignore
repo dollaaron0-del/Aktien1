@@ -32,3 +32,8 @@ data_REAL_BACKUP_demo/
 .claude/memory.db
 .swarm/
 ruvector.db
+
+# Design-Referenzbilder (Sidebar-Upload, dashboard/tabs/sidebar.py) —
+# Arbeitsmaterial, teils wasserzeichenbehaftete Stock-Fotos, gehört nicht
+# ins Repo (Lizenz + Größe).
+dashboard/assets/reference/

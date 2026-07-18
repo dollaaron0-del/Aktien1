@@ -502,6 +502,25 @@ nur eine Zwischenstufe — das Ziel ist NULL Tabs außer der Szene selbst.
       Wanderungs-Animation statt der Leitungs-Fließanimation, falls
       gewünscht) — kein strukturelles Aufräumen mehr nötig.
 
+- [x] **W7.8 Rohr-Optik verstärkt (18.7.2026)** — User lud 25 Referenz-
+      bilder hoch (neues Upload-Feld in der Sidebar,
+      `dashboard/assets/reference/`, nicht versioniert). Durchsicht ergab
+      vier Stil-Cluster (Stardew Valley, echte Factorio-Screenshots,
+      fotorealistische 3D-Renders/Satisfactory, zwei Ausreißer ohne
+      Fabrik-Bezug) — klare Rücksprache statt Raten, da die Cluster sich
+      widersprechen (Factorios Dichte widerspricht der 17.7.-Vorgabe
+      "nicht zu viel los"; 3D-Renders sind eine andere Technik als unser
+      SVG-Pixel-Raster). **User-Entscheidung:** Pixel-Art-Technik UND
+      warme Ziegel-Palette bleiben unverändert (nichts Bestehendes wird
+      verworfen); die beiden Ausreißer-Bilder waren nur lose Stimmung,
+      keine Vorgabe. Einziges konkretes Ergebnis: die Verbindungs-
+      leitungen (`scene.py::_connection_paths()`) bekommen mehr visuelles
+      Gewicht (Factorio-Anleihe) OHNE Farb-/Stilwechsel — neue dickere
+      Border-Gehäuselinie + periodische Kupfer-Muffen-Striche
+      (`_pipe_joints()`) unter der eigentlichen (ggf. fließenden)
+      Leitung. 1 neuer Test (`test_connection_paths_have_pipe_casing_and_joints`),
+      Voll-Render pixel+plain OK.
+
 ## Bewusst NICHT (auch hier)
 
 - ✗ Live-Preis-/Netzwerk-Calls in state.py (einzige Ausnahme: der

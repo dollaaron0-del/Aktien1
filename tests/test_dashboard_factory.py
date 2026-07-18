@@ -296,6 +296,18 @@ def test_connection_paths_include_known_main_connection():
     assert 'data-connection="docks-analyzer_claude"' in svg
 
 
+def test_connection_paths_have_pipe_casing_and_joints():
+    """W7.8 (18.7.2026, User-Referenzbilder): mehr Rohr-Optik (Factorio-
+    Anleihe) ohne Farb-/Stilwechsel — dickere Kupfer/Border-Gehäuselinie
+    + periodische Muffen-Striche unter der eigentlichen Leitung."""
+    from dashboard.theme import PALETTE
+    svg = _connection_paths(_state_with_statuses({}))
+    assert 'data-connection-casing="docks-analyzer_claude"' in svg
+    assert f'stroke="{PALETTE["border"]}" stroke-width="7"' in svg
+    assert 'data-connection-joint="docks-analyzer_claude"' in svg
+    assert f'stroke="{PALETTE["copper"]}" stroke-width="2"' in svg
+
+
 def test_connection_only_animates_when_both_endpoints_active():
     active = _connection_paths(_state_with_statuses(
         {"docks": "ok", "analyzer_claude": "active"}))

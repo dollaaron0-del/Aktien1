@@ -21,6 +21,7 @@ Maschinen; eine Leitung "fließt" nur, wenn beide Enden echt aktiv sind
 """
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -100,12 +101,46 @@ def _connector_endpoints(
     return x1, c1y, x2 + w2, c2y
 
 
+def _pipe_joints(x1: float, y1: float, x2: float, y2: float, src_id: str, dst_id: str) -> str:
+    """W7.8 (18.7.2026, User-Referenzbilder Factorio-Cluster): kurze
+    Muffen-Striche quer zur Leitung in fester Schrittweite — mehr
+    visuelles Gewicht/Rohr-Optik wie in den Factorio-Screenshots, aber
+    bewusst in der bestehenden Ziegel-Palette (Kupfer) statt eines
+    Stil-/Farbwechsels. Nur auf geraden (horizontalen/vertikalen)
+    Segmenten sinnvoll — genau das, was `_connector_endpoints` liefert."""
+    length = math.hypot(x2 - x1, y2 - y1)
+    step = 22
+    n = int(length // step)
+    if n < 2:
+        return ""
+    horizontal = abs(x2 - x1) >= abs(y2 - y1)
+    parts: List[str] = []
+    for i in range(1, n):
+        t = i * step / length
+        jx, jy = x1 + (x2 - x1) * t, y1 + (y2 - y1) * t
+        if horizontal:
+            jx1, jy1, jx2, jy2 = jx, jy - 5, jx, jy + 5
+        else:
+            jx1, jy1, jx2, jy2 = jx - 5, jy, jx + 5, jy
+        parts.append(
+            f'<line data-connection-joint="{src_id}-{dst_id}" '
+            f'x1="{jx1:.0f}" y1="{jy1:.0f}" x2="{jx2:.0f}" y2="{jy2:.0f}" '
+            f'stroke="{PALETTE["copper"]}" stroke-width="2" opacity="0.6" />'
+        )
+    return "".join(parts)
+
+
 def _connection_paths(state: FactoryState) -> str:
     """Vision W6: Leitungen zwischen Maschinen — "fließt" (fx-pipe-flow)
     NUR, wenn es eine echte Daten-Verbindung ("main") ist UND beide
     Enden gerade aktiv sind (dieselbe Nur-echte-Daten-Regel wie
     `_activity_overlay`); "feedback"/"utility" bleiben immer gestrichelt/
-    statisch — sie zeigen eine Beziehung, keinen Durchsatz."""
+    statisch — sie zeigen eine Beziehung, keinen Durchsatz.
+
+    W7.8: dickere Gehäuse-Linie + Kupfer-Muffen darunter (Factorio-
+    Anleihe aus den User-Referenzbildern vom 18.7., nur mehr Gewicht,
+    keine Farb-/Stiländerung) — die eigentliche (ggf. fließende)
+    Leitung kommt zuletzt oben drauf, exakt wie vorher."""
     p = PALETTE
     parts: List[str] = []
     for src_id, dst_id, kind in _CONNECTIONS:
@@ -122,9 +157,15 @@ def _connection_paths(state: FactoryState) -> str:
         stroke = p["cobalt"] if flowing else p["border"]
         dash_attr = "" if kind == "main" else ' stroke-dasharray="6 5"'
         parts.append(
+            f'<line data-connection-casing="{src_id}-{dst_id}" '
+            f'x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}" '
+            f'stroke="{p["border"]}" stroke-width="7" stroke-linecap="round" opacity="0.5" />'
+        )
+        parts.append(_pipe_joints(x1, y1, x2, y2, src_id, dst_id))
+        parts.append(
             f'<line class="{cls}" data-connection="{src_id}-{dst_id}" '
             f'x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}" '
-            f'stroke="{stroke}" stroke-width="3"{dash_attr} opacity="0.75" />'
+            f'stroke="{stroke}" stroke-width="3"{dash_attr} opacity="0.85" />'
         )
     return "".join(parts)
 
