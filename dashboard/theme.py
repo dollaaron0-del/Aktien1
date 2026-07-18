@@ -234,8 +234,20 @@ def _base_css() -> str:
    ein Minimum: die Szene bekommt fast die volle Bildschirmbreite/-höhe
    statt in einem eingerahmten "Fenster" zu stehen. NUR bei aktivem
    Pixel-Theme (hier in _base_css, nicht in _legacy_css) — der Plain-
-   Notausstieg bleibt unangetastet bei den originalen Streamlit-Rändern. */
-[data-testid="stHeader"], [data-testid="stToolbar"], #MainMenu, footer {{
+   Notausstieg bleibt unangetastet bei den originalen Streamlit-Rändern.
+   W8.3 (18.7.2026, Fix): stHeader NICHT per display:none aus dem Render-
+   Baum nehmen — der Ausklapp-Pfeil für eine eingeklappte Sidebar
+   (initial_sidebar_state="auto" kollabiert je nach Fensterbreite) ist ein
+   Kind-Element von stHeader; display:none auf dem Elternelement hätte ihn
+   mitversteckt und die Sidebar dauerhaft unerreichbar gemacht (genau das
+   vom User gemeldete "die Sidebar ist nicht mehr da"). Höhe/Hintergrund
+   auf 0 statt komplett entfernen — der Pfeil bleibt sichtbar+klickbar. */
+[data-testid="stHeader"] {{
+    background: transparent;
+    height: 0;
+    min-height: 0;
+}}
+[data-testid="stToolbar"], #MainMenu, footer {{
     display: none;
 }}
 [data-testid="stAppViewContainer"] .block-container {{

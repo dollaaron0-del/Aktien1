@@ -30,6 +30,12 @@ def test_pixel_mode_wraps_header_in_hud_bar_and_hides_chrome(monkeypatch):
     # Rest der Seite versehentlich mit einwickelt).
     assert html_out.index('<div class="px-hud-bar">') < html_out.index("</div>")
     assert 'data-testid="stHeader"' in html_out
+    # W8.3: stHeader bleibt im Render-Baum (Höhe 0 statt display:none),
+    # damit der Sidebar-Ausklapp-Pfeil (ein Kind-Element von stHeader in
+    # dieser Streamlit-Version) klickbar bleibt. Nur Toolbar/Menü/Footer
+    # werden komplett entfernt.
+    assert "height: 0;" in html_out
+    assert '[data-testid="stToolbar"], #MainMenu, footer {' in html_out
     assert "display: none;" in html_out
 
 
