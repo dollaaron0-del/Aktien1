@@ -19,6 +19,7 @@ Keine Aussage über die Job-KÖRPER selbst (die laufen hier nie) — das ist
 bewusst eine Charakterisierung des Registrierungs-Verhaltens, kein
 Vollständigkeits-Test der Analyse-Logik.
 """
+import datetime as _dt_mod
 import types
 from unittest.mock import MagicMock
 
@@ -92,6 +93,21 @@ def _make_args(portfolio, monkeypatch, tmp_path, *, ibkr=False, use_margin=False
     monkeypatch.setattr(sched_mod.config, "intraday_scan_time", "17:30")
     monkeypatch.setattr(sched_mod.config, "watchlist", ["AAPL"])
     monkeypatch.setattr(sched_mod.config, "market_lead_minutes", 30)
+
+    # bot.scheduler_analysis.register_analysis_jobs() bestimmt is_weekend
+    # selbst über datetime.now().date().weekday() — unabhängig vom oben
+    # gemockten mkt_schedule. Ohne festes Datum würde dieser Test am
+    # echten Wochenende (real Sa/So) fehlschlagen, weil dann trotz
+    # gemocktem NASDAQ-Slot kein _pre_market_job registriert wird. Fixer
+    # Montag macht den Registrierungs-Charakterisierungstest tagesfest.
+    import bot.scheduler_analysis as scheduler_analysis_mod
+
+    class _FixedDatetime(_dt_mod.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2024, 1, 8, 8, 0, 0)  # Montag
+
+    monkeypatch.setattr(scheduler_analysis_mod, "datetime", _FixedDatetime)
 
     # AnalysisLog/analysis_log.db etc. real, aber in ein Temp-Verzeichnis
     # umgelenkt — verhindert Seiteneffekte auf echte data/-Dateien.
