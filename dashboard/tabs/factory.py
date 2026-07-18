@@ -834,7 +834,26 @@ def render(ctx) -> None:
         if focused_id in MACHINE_IDS:
             machine = state.machines.get(focused_id)
             if machine is not None:
+                # W8.2 (18.7.2026, User-Vorgabe: Detailpanels als echtes
+                # Overlay statt inline unter der Szene): der Server weiß
+                # bereits (über den Query-Parameter), ob ein Panel offen
+                # ist — reines CSS-Positionieren des schon bedingt
+                # gerenderten Inhalts reicht, kein JS/:target-Trick nötig.
+                # Backdrop-<a> UND Schließen-<a> zeigen auf "?" (räumt
+                # factory+dossier gemeinsam auf). Nur bei Pixel-Theme
+                # (D6.2-Prinzip: Plain bleibt beim alten Inline-Verhalten).
+                if _theme.is_enabled():
+                    st.markdown(
+                        '<a class="px-detail-backdrop" href="?" target="_self" '
+                        'aria-label="Schließen"></a>'
+                        '<div class="px-detail-panel">'
+                        '<a class="px-detail-close" href="?" target="_self">'
+                        '✕ Schließen</a>',
+                        unsafe_allow_html=True,
+                    )
                 _render_detail_panel(machine, ctx)
+                if _theme.is_enabled():
+                    st.markdown('</div>', unsafe_allow_html=True)
 
     _scene()
     _render_instruments(ctx)

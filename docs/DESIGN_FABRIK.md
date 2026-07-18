@@ -547,19 +547,32 @@ Kopf/KPI-Leiste im normalen Streamlit-Fluss — kein echtes Vollbild.
       Exceptions) ist automatisiert geprüft. Das tatsächliche Bildschirm-
       Ergebnis (wirkt es wirklich wie ein Vollbild-Base-Bau-Spiel?) braucht
       den echten Browser-Check durch den User.
-- [ ] **W8.2 Detail-Panels als echtes Overlay** (noch offen, größerer
-      technischer Schritt): aktuell erscheinen die Maschinen-Detailpanels
-      beim Anklicken weiterhin unterhalb der Szene im normalen Fluss
-      (Scrollen nötig), nicht als schwebendes Overlay/Drawer wie bei
-      einem Base-Bau-Spiel. Reines CSS reicht dafür nicht (kein
-      `:target`-Trick möglich, da der Klick-Mechanismus über
-      `?factory=<id>`-Query-Parameter läuft, den Streamlit serverseitig
-      liest — `:target` funktioniert nur mit `#hash`-Fragmenten, die nie
-      beim Server ankommen). Bräuchte entweder eine JS-Komponente oder
-      einen Wechsel des Klick-Mechanismus — bewusst nicht in derselben
-      Sitzung mit angegangen, da die Detail-Panels seit W7 sehr
-      inhaltsreich sind (ganze frühere Tabs) und ein kleines Overlay dafür
-      zu eng wäre; bräuchte eigene Recherche zur richtigen Lösung.
+- [x] **W8.2 Detail-Panels als echtes Overlay (18.7.2026, gleicher Abend)**
+      — einfacher als in W8.1 befürchtet: der `:target`-Trick war nie
+      nötig, weil Streamlit den Query-Parameter bereits SERVERSEITIG
+      auswertet (`st.query_params.get("factory")`) — der Server weiß
+      also schon, OB ein Panel gerendert wird. Es musste nur noch WIE
+      (Position) geändert werden: reines CSS-Positionieren des ohnehin
+      bedingt gerenderten Inhalts, kein JS nötig.
+      `tabs/factory.py`: öffnet vor `_render_detail_panel(machine, ctx)`
+      einen Backdrop-Link (`<a href="?" class="px-detail-backdrop">`,
+      räumt `factory`+`dossier` gemeinsam auf) + ein Panel-Div mit
+      Schließen-Link, schließt das Panel-Div danach wieder — nur bei
+      Pixel-Theme (D6.2: Plain bleibt beim alten Inline-Verhalten).
+      `theme.py`: `.px-detail-backdrop` (fixed, `inset:0`, dunkel-
+      transparent, `z-index:1000`) liegt UNTER `.px-detail-panel` (fixed,
+      zentriert, `max-height:88vh` + `overflow-y:auto` für die
+      inzwischen sehr inhaltsreichen Panels, `z-index:1001`) — Klicks
+      im Panel treffen das Panel zuerst (normale DOM-Stapelreihenfolge),
+      Klicks außerhalb schließen über den Backdrop. Eigener
+      `@media (max-width:640px)`-Feinschliff für schmale Fenster.
+      4 neue Tests (`test_detail_panel_renders_as_overlay_with_backdrop_and_close`,
+      `test_detail_panel_overlay_absent_in_plain_theme`), Voll-Render
+      pixel+plain OK, zusätzlich gegen das inhaltsreichste Panel (Lager:
+      Aktien-Suche+Watchlist+Portfolio) durchprobiert — kein Crash.
+      **Damit ist auch der zweite offene Punkt aus W8 erledigt** — CSS-
+      Layout selbst bleibt wie bei W8.1 nur strukturell (nicht visuell)
+      automatisiert prüfbar, braucht den echten Browser-Check.
 
       **Sidebar bewusst NICHT ins Kontrollraum-Detail gefaltet** (geprüft
       18.7., nach W7.10): anders als die Tabs ist die Sidebar keine

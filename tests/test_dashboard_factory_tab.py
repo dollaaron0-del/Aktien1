@@ -81,6 +81,39 @@ def test_known_machine_id_shows_detail_panel():
     assert "Status:" in captions
 
 
+def test_detail_panel_renders_as_overlay_with_backdrop_and_close(monkeypatch):
+    """W8.2 (18.7.2026): Detailpanels sind ein echtes Overlay (Backdrop-
+    Link + schwebendes Panel-Div + Schließen-Link), kein Block mehr unter
+    der Szene — nur bei Pixel-Theme (D6.2: Plain bleibt beim alten
+    Inline-Verhalten)."""
+    monkeypatch.delenv("DASHBOARD_THEME", raising=False)
+    at = AppTest.from_string(_SCRIPT)
+    at.query_params["factory"] = "gate"
+    at.run()
+    assert not at.exception
+    html_out = "".join(str(m.value) for m in at.get("markdown"))
+    assert '<a class="px-detail-backdrop" href="?" target="_self"' in html_out
+    assert html_out.count('<div class="px-detail-panel">') == 1
+    assert '<a class="px-detail-close" href="?" target="_self">' in html_out
+    # Panel-Div wird explizit wieder geschlossen (eigener st.markdown-Aufruf
+    # nach _render_detail_panel) — mindestens ein </div> muss danach folgen.
+    assert "</div>" in html_out[html_out.index('<div class="px-detail-panel">'):]
+
+
+def test_detail_panel_overlay_absent_in_plain_theme(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_THEME", "plain")
+    at = AppTest.from_string(_SCRIPT)
+    at.query_params["factory"] = "gate"
+    at.run()
+    assert not at.exception
+    html_out = "".join(str(m.value) for m in at.get("markdown"))
+    assert "px-detail-backdrop" not in html_out
+    assert "px-detail-panel" not in html_out
+    # Status-Inhalt bleibt trotzdem sichtbar (nur ohne Overlay-Hülle).
+    captions = "".join(str(c.value) for c in at.get("caption"))
+    assert "Status:" in captions
+
+
 def test_unregistered_machine_falls_back_to_generic_panel(monkeypatch):
     """Alle elf Maschinen haben inzwischen einen eigenen Detail-Renderer
     (17.7.-Ausbau) — der generische Fallback (Vision W3.3) bleibt trotzdem

@@ -276,6 +276,59 @@ def _base_css() -> str:
     min-height: 76vh;
 }}
 
+/* W8.2 (18.7.2026, User-Vorgabe: Maschinen-Detailpanels als echtes
+   Overlay statt eines Blocks unter der Szene — "wie bei einem Base-
+   Bau-Spiel auf dem Handy"). Backdrop ist ein <a href="?">, das hinter
+   dem Panel liegt (kleinerer z-index) — Klick irgendwo AUSSERHALB des
+   Panels schließt, Klicks INNERHALB des Panels treffen das Panel/seine
+   Kind-Elemente zuerst (normale DOM-Stapelreihenfolge, kein JS nötig).
+   scene.py::_scene() öffnet Backdrop+Panel-Div vor `_render_detail_panel`
+   und schließt den Panel-Div danach wieder. */
+.px-detail-backdrop {{
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 12, 15, 0.72);
+    z-index: 1000;
+    display: block;
+}}
+.px-detail-panel {{
+    position: fixed;
+    top: 5vh;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(920px, 94vw);
+    max-height: 88vh;
+    overflow-y: auto;
+    background: var(--px-bg-panel);
+    border: 1px solid var(--px-border);
+    border-radius: 8px;
+    padding: 8px 22px 26px;
+    z-index: 1001;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+}}
+.px-detail-close {{
+    position: sticky;
+    top: 0;
+    float: right;
+    margin-top: 6px;
+    background: var(--px-bg-panel);
+    color: var(--px-text-muted);
+    font-family: "VT323", "Courier New", monospace;
+    font-size: 1.1rem;
+    text-decoration: none;
+    border: 1px solid var(--px-border);
+    border-radius: 4px;
+    padding: 2px 10px;
+    z-index: 5;
+}}
+.px-detail-close:hover {{
+    color: var(--px-text);
+    border-color: var(--px-cobalt-hi);
+}}
+@media (max-width: 640px) {{
+    .px-detail-panel {{ top: 2vh; max-height: 94vh; padding: 8px 14px 20px; }}
+}}
+
 .px-head {{
     font-family: "Press Start 2P", monospace;
     color: var(--px-cobalt);
