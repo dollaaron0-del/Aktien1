@@ -388,7 +388,8 @@ class SwingStrategy:
 
         # Position sizing (VOR dem Korrelations-Check nötig: der braucht die
         # geplante Investitionssumme, die es vorher noch nicht gibt).
-        position_value = self._calc_position_size(analysis, current_price, params, config, confluence)
+        position_value = self._calc_position_size(
+            analysis, current_price, params, config, confluence, sentiment, threshold)
         if position_value <= 0:
             return StrategyResult("SKIP", ticker, "Positionsgröße = 0")
 
@@ -671,24 +672,32 @@ class SwingStrategy:
     # ── Position sizing ─────────────────────────────────────────────────────
 
     def _calc_position_size(
-        self, analysis, current_price: float, params, config, confluence: bool = False
+        self, analysis, current_price: float, params, config, confluence: bool = False,
+        sentiment: float = 0.0, threshold: float = 0.0,
     ) -> float:
         """Calculate dollar position size."""
         # Basis ist ein Anteil der GESAMT-EQUITY (Cash + Positionswert), nicht
         # nur des Rest-Cash. Sonst schrumpfen spätere Käufe im selben Zyklus,
         # weil das Cash mit jedem Buy sinkt. total_value({}) bewertet bestehende
         # Positionen mangels Live-Preisen mit dem Einstandspreis – stabile,
-        # ausreichende Schätzung für das Sizing. Die finale Liquiditätsgrenze
-        # (cash * 0.40 weiter unten) verhindert weiterhin ein Überziehen.
+        # ausreichende Schätzung für das Sizing. Der Cash-Reserve-Boden weiter
+        # unten (_deployable_cash) verhindert weiterhin ein Überziehen.
         equity = self.portfolio.total_value({})
         base = equity * config.max_position_pct
 
         # Regime multiplier
         base *= params.position_size_mult
 
-        # Confidence multiplier
+        # Konviction-Multiplier: Confidence-Basis (dämpft) PLUS Sentiment-
+        # Überschuss über der Kaufschwelle (hebt an). Anders als früher kann das
+        # Ergebnis >1.0 werden → starke Signale bekommen mehr Kapital. Die harte
+        # Einzelpositions-Grenze unten deckelt die Freiheit.
         confidence = getattr(analysis, "confidence", "MEDIUM")
-        base *= _CONFIDENCE_SIZING.get(confidence, 0.70)
+        conf_base = _CONFIDENCE_SIZING.get(confidence, 0.70)
+        margin = max(0.0, float(sentiment) - float(threshold))
+        # 0.15 Sentiment-Überschuss ≈ voller Bonus (linear gedeckelt).
+        sent_bonus = min(margin / 0.15, 1.0) * float(getattr(config, "conviction_max_bonus", 0.6))
+        base *= conf_base * (1.0 + sent_bonus)
 
         # Kelly sizing (optional)
         if self.kelly_sizer:
@@ -723,16 +732,81 @@ class SwingStrategy:
         base *= self._atr_vol_multiplier(ticker, current_price, broker=getattr(self, "broker", None))
 
         # Congress×CEO-Confluence-Bonus (Flag aus _evaluate_new durchgereicht –
-        # kein zweiter Netzaufruf). Leichter Größen-Aufschlag; durch die 40%-
-        # Cash-Guardrail unten weiterhin gedeckelt.
+        # kein zweiter Netzaufruf). Leichter Größen-Aufschlag; durch den Einzel-
+        # Deckel und den Cash-Reserve-Boden unten weiterhin gedeckelt.
         if confluence and _CONFLUENCE_SIZE_MULT != 1.0:
             base *= _CONFLUENCE_SIZE_MULT
 
         # Min/max guardrails
         base = max(base, 10.0)
-        base = min(base, self.portfolio.cash * 0.40)  # never more than 40% in one trade
+        # Harte Einzelpositions-Obergrenze (% der Gesamt-Equity): begrenzt die
+        # Konviction-Freiheit nach oben, egal wie stark das Signal ist.
+        base = min(base, equity * float(getattr(config, "max_single_position_pct", 0.25)))
+        # Reserve-bewusste Kaufkraft: nie so viel kaufen, dass der Cash-Boden
+        # unterschritten wird (hält den Bot handlungsfähig). Ersetzt die alte
+        # 40%-pro-Trade-Regel, die Konviction-Käufe unnötig gedeckelt hätte.
+        base = min(base, self._deployable_cash(equity, config))
 
-        return round(base, 2)
+        return round(max(base, 0.0), 2)
+
+    # ── Liquiditäts-Steuerung ────────────────────────────────────────────────
+
+    def _deployable_cash(self, equity: float, config) -> float:
+        """
+        Einsetzbares Cash unter Beachtung des Reserve-Bodens.
+
+        Normal wird der Soft-Boden (cash_reserve_pct) frei gehalten. Ist
+        Rückfluss-Timing aktiv und wird bald Kapital frei, darf sich der Bot
+        Richtung hartem Boden (cash_reserve_hard_pct) lehnen – nie darunter.
+        """
+        cash = self.portfolio.cash
+        soft = equity * float(getattr(config, "cash_reserve_pct", 0.10))
+        hard = equity * min(
+            float(getattr(config, "cash_reserve_hard_pct", 0.05)),
+            float(getattr(config, "cash_reserve_pct", 0.10)),
+        )
+        floor = soft
+        if getattr(config, "reflow_sizing_enabled", True) and soft > hard:
+            reflow = self._capital_freeing_soon(int(getattr(config, "reflow_lookahead_days", 5)))
+            # Anteil der Reserve-Lücke, den der nahe Rückfluss "abdeckt".
+            lean = max(0.0, min(reflow / soft, 1.0)) if soft > 0 else 0.0
+            floor = soft - lean * (soft - hard)
+        return max(0.0, cash - floor)
+
+    def _capital_freeing_soon(self, days: int) -> float:
+        """Kostenbasis der Positionen, deren erwarteter Exit binnen `days` liegt."""
+        try:
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            cutoff = now + timedelta(days=max(0, days))
+            total = 0.0
+            for pos in self.portfolio.all_positions().values():
+                exit_dt = self._expected_exit(pos)
+                if exit_dt is not None and exit_dt <= cutoff:
+                    total += float(pos.shares) * float(pos.entry_price)
+            return total
+        except Exception as _e:  # fail-safe: kein Rückfluss angenommen → Soft-Boden bleibt
+            log.debug("Rückfluss-Schätzung übersprungen: %s", _e)
+            return 0.0
+
+    @staticmethod
+    def _expected_exit(pos):
+        """Erwartetes Freigabe-Datum = Einstieg + target_hold_days (fail-open)."""
+        raw = str(getattr(pos, "entry_date", "") or "")
+        if not raw:
+            return None
+        dt = None
+        try:
+            dt = datetime.fromisoformat(raw[:19])
+        except ValueError:
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                try:
+                    dt = datetime.strptime(raw[:len("2026-01-01 00:00:00") if " " in raw else 10], fmt)
+                    break
+                except ValueError:
+                    continue
+        if dt is None:
+            return None
+        return dt + timedelta(days=max(0, int(getattr(pos, "target_hold_days", 0) or 0)))
 
     # ── Circuit breaker ─────────────────────────────────────────────────────
 

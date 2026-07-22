@@ -103,6 +103,41 @@ class EntryFilter:
         return EntryVerdict(verdict, round(net_pwin, 4), round(net_edge, 4), True, reasons)
 
 
+def entry_effect_note(verdict: str, p_win: float, expected_edge: float,
+                      block_enabled: bool, caution_mult: float,
+                      proceed_mult: float) -> str:
+    """Erklärt im Kauf-Moment, ob der Lern-Filter den Kauf (hart) blockiert hätte
+    und wie er sich auf die tatsächlich ausgeführte Order ausgewirkt hat
+    (User-Vorgabe 22.7.2026: in der Kauf-Nachricht sichtbar machen).
+
+    Ein BUY erreicht diese Stelle nur, wenn NICHT hart blockiert wurde — bei
+    aktivem Block wäre ein AVOID schon vorher ein SKIP gewesen (siehe
+    swing_strategy._evaluate_new). Der Text ist entsprechend darauf ausgelegt.
+    """
+    v = (verdict or "").upper()
+    stats = f"P(Win) {p_win:.0%}, Edge {expected_edge:+.2f}%"
+    if v == "AVOID":
+        m = max(0.0, min(1.0, caution_mult))
+        if block_enabled:
+            # Praktisch nicht erreichbar (wäre ein SKIP) – rein defensiv.
+            return f"🧠 Lern-Filter: AVOID ({stats}) — harter Block AKTIV"
+        return (f"🧠 Lern-Filter: <b>AVOID</b> ({stats}) — harter Block ist AUS, "
+                f"daher trotzdem gekauft, Position aber auf ×{m:.2f} verkleinert")
+    if v == "CAUTION":
+        m = max(0.0, min(1.0, caution_mult))
+        return (f"🧠 Lern-Filter: <b>CAUTION</b> ({stats}) — nicht blockiert, "
+                f"Position vorsichtshalber auf ×{m:.2f} verkleinert")
+    if v == "PROCEED":
+        if proceed_mult and proceed_mult != 1.0:
+            m = max(1.0, min(2.0, proceed_mult))
+            return (f"🧠 Lern-Filter: <b>PROCEED</b> ({stats}) — grünes Licht, "
+                    f"Position auf ×{m:.2f} vergrößert")
+        return (f"🧠 Lern-Filter: <b>PROCEED</b> ({stats}) — grünes Licht, "
+                f"keine Größenänderung")
+    # NEUTRAL oder gar kein Verdikt (Filter aus / Kalibrierungs-Bucket zu dünn).
+    return "🧠 Lern-Filter: kein belastbares Urteil — Kauf nicht blockiert/beeinflusst"
+
+
 def hindsight_footnote(verdict: str, p_win: float, expected_edge: float, pnl: float) -> str:
     """Vergleicht das Einstiegs-Verdikt mit dem tatsächlichen Ausgang beim Exit
     (User-Vorgabe 22.7.2026: "Fußnote bei jedem Trade" — sichtbar machen, ob

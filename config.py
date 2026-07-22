@@ -72,6 +72,35 @@ class Config:
     stop_loss_pct: float = 0.07
     take_profit_pct: float = 0.20
 
+    # ── Konviction-Sizing & Liquiditäts-Steuerung (22.7.2026) ────────────────
+    # Harte Obergrenze für EINE Position (% der Gesamt-Equity). Konvictions-
+    # starke Picks dürfen bis hierher wachsen; darüber wird gekappt.
+    max_single_position_pct: float = field(
+        default_factory=lambda: float(os.getenv("MAX_SINGLE_POSITION_PCT", "0.25"))
+    )
+    # Zusätzlicher Größen-Aufschlag bei starkem Sentiment-Überschuss über der
+    # Kaufschwelle (0.6 = bis +60 % auf die Confidence-Basis).
+    conviction_max_bonus: float = field(
+        default_factory=lambda: float(os.getenv("CONVICTION_MAX_BONUS", "0.6"))
+    )
+    # Cash-Reserve: Soft-Boden, den der Bot normal frei hält (Handlungsfähigkeit).
+    cash_reserve_pct: float = field(
+        default_factory=lambda: float(os.getenv("CASH_RESERVE_PCT", "0.10"))
+    )
+    # Harter Boden: darunter kauft der Bot NIE, auch bei viel erwartetem Rückfluss.
+    cash_reserve_hard_pct: float = field(
+        default_factory=lambda: float(os.getenv("CASH_RESERVE_HARD_PCT", "0.05"))
+    )
+    # Rückfluss-Timing: rechnet Kapital ein, das binnen N Tagen aus Positionen
+    # frei wird (Einstieg + target_hold_days). Aktiv → Bot lehnt sich bei nahem
+    # Rückfluss weiter aus der Soft-Reserve (bis zum harten Boden).
+    reflow_sizing_enabled: bool = field(
+        default_factory=lambda: os.getenv("REFLOW_SIZING_ENABLED", "true").lower() == "true"
+    )
+    reflow_lookahead_days: int = field(
+        default_factory=lambda: int(os.getenv("REFLOW_LOOKAHEAD_DAYS", "5"))
+    )
+
     # Sentiment thresholds (0–1)
     buy_threshold: float = 0.65
     sell_threshold: float = 0.35

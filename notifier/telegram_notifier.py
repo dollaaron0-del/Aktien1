@@ -112,6 +112,7 @@ class TelegramNotifier:
         key_catalysts: Optional[list] = None,
         risk_factors: Optional[list] = None,
         sources_breakdown: Optional[dict] = None,
+        learning_filter_note: str = "",
     ):
         invested = shares * price
         sl_pct  = (price - stop_loss) / price * 100
@@ -134,6 +135,10 @@ class TelegramNotifier:
             f"🧠 Sentiment-Score:  <b>{sentiment_score:.2f}</b>",
             "",
         ]
+
+        # Lern-Filter-Wirkung (blockiert? wie beeinflusst?) – User-Vorgabe 22.7.2026.
+        if learning_filter_note:
+            lines += [learning_filter_note, ""]
 
         # Analyse-Begründung (erste 450 Zeichen)
         if rationale:

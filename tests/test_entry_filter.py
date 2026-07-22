@@ -5,7 +5,7 @@ CalibrationModel (kein I/O, kein Netz).
 import pytest
 
 from analyzers.calibration import CalibrationModel
-from analyzers.entry_filter import EntryFilter
+from analyzers.entry_filter import EntryFilter, entry_effect_note
 
 
 def _model_from(rows):
@@ -78,3 +78,37 @@ def test_broad_regime_dimension_does_not_drown_specific_bands():
     # sichtbar: Netto deutlich besser als die reine Regime-Kante.
     regime_edge = m.calibrate({"regime": "NEUTRAL"}, dimension="regime").expected_edge
     assert v.expected_edge > regime_edge + 0.5
+
+
+# ── entry_effect_note (Kauf-Moment: blockiert? wie beeinflusst?) ───────────────
+
+def test_effect_note_avoid_block_off_says_not_hard_blocked_and_downsized():
+    note = entry_effect_note("AVOID", 0.42, -0.9, block_enabled=False,
+                             caution_mult=0.5, proceed_mult=1.0)
+    assert "AVOID" in note
+    assert "AUS" in note              # harter Block ist AUS
+    assert "×0.50" in note            # trotzdem gekauft, aber verkleinert
+
+
+def test_effect_note_caution_downsizes():
+    note = entry_effect_note("CAUTION", 0.55, 0.1, block_enabled=True,
+                             caution_mult=0.5, proceed_mult=1.0)
+    assert "CAUTION" in note
+    assert "nicht blockiert" in note
+    assert "×0.50" in note
+
+
+def test_effect_note_proceed_enlarges_only_when_mult_set():
+    grown = entry_effect_note("PROCEED", 0.7, 1.5, block_enabled=True,
+                              caution_mult=0.5, proceed_mult=1.25)
+    assert "vergrößert" in grown and "×1.25" in grown
+    flat = entry_effect_note("PROCEED", 0.7, 1.5, block_enabled=True,
+                             caution_mult=0.5, proceed_mult=1.0)
+    assert "keine Größenänderung" in flat
+
+
+def test_effect_note_neutral_or_empty_reports_no_influence():
+    for verdict in ("NEUTRAL", ""):
+        note = entry_effect_note(verdict, 0.5, 0.0, block_enabled=True,
+                                 caution_mult=0.5, proceed_mult=1.0)
+        assert "nicht blockiert/beeinflusst" in note

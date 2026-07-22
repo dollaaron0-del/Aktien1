@@ -301,8 +301,27 @@ class TradeExecutor:
             log.warning("[%s] open_position fehlgeschlagen nach Fill: %s", ticker, ve)
             return f"[{ticker}] ⛔ Buchung fehlgeschlagen: {ve}"
 
+        # Lern-Filter-Wirkung für die Kauf-Nachricht aufbereiten (User-Vorgabe
+        # 22.7.2026): war der Kauf (hart) blockiert und wie hat der Filter die
+        # Order beeinflusst? Fail-open – ohne Note bleibt die Nachricht wie bisher.
+        learning_filter_note = ""
+        try:
+            from config import config
+            from analyzers.entry_filter import entry_effect_note
+            if getattr(config, "learning_filter_enabled", False):
+                learning_filter_note = entry_effect_note(
+                    getattr(result, "entry_filter_verdict", "") or "",
+                    float(getattr(result, "entry_filter_p_win", 0.0) or 0.0),
+                    float(getattr(result, "entry_filter_edge", 0.0) or 0.0),
+                    bool(getattr(config, "learning_filter_block", True)),
+                    float(getattr(config, "learning_filter_caution_size_mult", 0.5)),
+                    float(getattr(config, "learning_filter_proceed_size_mult", 1.0)),
+                )
+        except Exception as e:
+            log.debug("Lern-Filter-Note übersprungen [%s]: %s", ticker, e)
+
         self._notify_buy(ticker, shares, actual_price, stop_loss, take_profit, result.hold_days,
-                         analysis, sources_breakdown)
+                         analysis, sources_breakdown, learning_filter_note)
         self._journal_entry(ticker, actual_price, result.hold_days, take_profit, analysis, sources_breakdown)
 
         return (
@@ -412,7 +431,8 @@ class TradeExecutor:
         return f"[{ticker}] VERKAUFT – {result.reason} | P&L: {sign}{pnl:.2f} USD"
 
     # ── Notify / Journal (best effort) ────────────────────────────────────────
-    def _notify_buy(self, ticker, shares, price, sl, tp, hold_days, analysis, sources_breakdown):
+    def _notify_buy(self, ticker, shares, price, sl, tp, hold_days, analysis,
+                    sources_breakdown, learning_filter_note=""):
         try:
             self.notifier.notify_buy(
                 ticker=ticker, shares=shares, price=price, stop_loss=sl, take_profit=tp,
@@ -425,6 +445,7 @@ class TradeExecutor:
                 key_catalysts=list(getattr(analysis, "key_catalysts", []) or [])[:4],
                 risk_factors=list(getattr(analysis, "risk_factors", []) or [])[:3],
                 sources_breakdown=sources_breakdown,
+                learning_filter_note=learning_filter_note,
             )
         except Exception as e:
             log.debug("notify_buy fehlgeschlagen [%s]: %s", ticker, e)

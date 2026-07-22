@@ -56,8 +56,34 @@ def neutral_macro(monkeypatch):
 
 
 _PARAMS = types.SimpleNamespace(position_size_mult=1.0)
-_CONFIG = types.SimpleNamespace(max_position_pct=0.20)
+# Basis-Config für die Alt-Tests: Einzel-Deckel und Reserve bewusst permissiv,
+# damit diese Tests weiter genau ihre eine Sache prüfen (Equity-Basis, Confluence,
+# ATR). Deckel/Reserve/Rückfluss haben eigene dedizierte Tests weiter unten.
+_CONFIG = types.SimpleNamespace(
+    max_position_pct=0.20,
+    max_single_position_pct=1.0,     # kein Einzel-Deckel in den Basis-Tests
+    conviction_max_bonus=0.6,
+    cash_reserve_pct=0.0,            # keine Reserve-Interferenz in den Basis-Tests
+    cash_reserve_hard_pct=0.0,
+    reflow_sizing_enabled=False,
+    reflow_lookahead_days=5,
+)
 _ANALYSIS = types.SimpleNamespace(confidence="HIGH", ticker="NVDA")
+
+
+def _cfg(**over):
+    """Config mit den echten Produktions-Defaults, gezielt überschreibbar."""
+    base = dict(
+        max_position_pct=0.20,
+        max_single_position_pct=0.25,
+        conviction_max_bonus=0.6,
+        cash_reserve_pct=0.10,
+        cash_reserve_hard_pct=0.05,
+        reflow_sizing_enabled=True,
+        reflow_lookahead_days=5,
+    )
+    base.update(over)
+    return types.SimpleNamespace(**base)
 
 
 def test_sizing_uses_equity_not_cash(tmp_path, monkeypatch):
@@ -147,19 +173,63 @@ def test_atr_scales_position_size(tmp_path, monkeypatch):
     p = make_portfolio(tmp_path, monkeypatch, capital=100_000.0)
     strat = make_strategy(p)
     size = strat._calc_position_size(_ANALYSIS, 100.0, _PARAMS, _CONFIG)
-    # 20_000 Basis × CAP, gedeckelt durch cash*0.40 = 40_000 (greift hier nicht)
+    # 20_000 Basis × CAP (kein Einzel-Deckel/Reserve in _CONFIG → greift nicht)
     assert size == pytest.approx(20_000.0 * sw._ATR_SIZE_CAP)
 
 
-def test_liquidity_guardrail_still_caps_on_cash(tmp_path, monkeypatch):
-    """Die 40%-Cash-Grenze verhindert weiterhin ein Überziehen des Cash."""
+# ── Neue Konviction-/Liquiditäts-Logik (22.7.2026) ──────────────────────────
+
+def test_single_position_ceiling_caps_conviction(tmp_path, monkeypatch):
+    """Starke Konviction will >25% der Equity, der harte Einzel-Deckel kappt bei 25%."""
     p = make_portfolio(tmp_path, monkeypatch, capital=100_000.0)
-    # 95k investiert → nur 5k Cash, Equity 100k
-    p.open_position(make_position("AAPL", 950, 100.0))  # 95_000
-    assert p.cash == pytest.approx(5_000.0)
-
     strat = make_strategy(p)
-    size = strat._calc_position_size(_ANALYSIS, 50.0, _PARAMS, _CONFIG)
+    # HIGH + Sentiment 0.90 über Schwelle 0.65 → Konviction 1.6 → Basis 32_000,
+    # aber Deckel 25% × 100k = 25_000.
+    size = strat._calc_position_size(
+        _ANALYSIS, 100.0, _PARAMS, _cfg(cash_reserve_pct=0.0), False, 0.90, 0.65)
+    assert size == pytest.approx(25_000.0)
 
-    # Equity-Basis wäre 20_000, aber Liquiditätsgrenze cash*0.40 = 2_000 greift
-    assert size == pytest.approx(2_000.0)
+
+def test_conviction_raises_size_on_strong_sentiment(tmp_path, monkeypatch):
+    """Höheres Sentiment über der Schwelle → größere Position (Konviction >1.0)."""
+    p = make_portfolio(tmp_path, monkeypatch, capital=100_000.0)
+    strat = make_strategy(p)
+    # Deckel hoch (1.0) + keine Reserve → nur die Konviction isoliert testen.
+    cfg = _cfg(max_single_position_pct=1.0, cash_reserve_pct=0.0)
+    weak = strat._calc_position_size(_ANALYSIS, 100.0, _PARAMS, cfg, False, 0.65, 0.65)
+    strong = strat._calc_position_size(_ANALYSIS, 100.0, _PARAMS, cfg, False, 0.85, 0.65)
+    assert weak == pytest.approx(20_000.0)     # kein Überschuss → reine HIGH-Basis
+    assert strong == pytest.approx(32_000.0)   # Margin 0.20 → voller +60%-Bonus
+    assert strong > weak
+
+
+def test_cash_reserve_floor_caps_deployable(tmp_path, monkeypatch):
+    """Der Soft-Reserve-Boden verhindert, dass unter X% Cash gekauft wird."""
+    p = make_portfolio(tmp_path, monkeypatch, capital=100_000.0)
+    p.open_position(make_position("AAPL", 800, 100.0))  # 80k investiert → 20k Cash
+    assert p.cash == pytest.approx(20_000.0)
+    strat = make_strategy(p)
+    # Position hält lange (14d, kein naher Rückfluss). Basis 20k, Deckel 25k,
+    # aber deployable = Cash 20k − Reserve 10k = 10k.
+    size = strat._calc_position_size(
+        _ANALYSIS, 100.0, _PARAMS, _cfg(reflow_sizing_enabled=False), False, 0.65, 0.65)
+    assert size == pytest.approx(10_000.0)
+
+
+def test_reflow_leans_into_reserve(tmp_path, monkeypatch):
+    """Wird Kapital bald frei, darf sich der Bot bis zum harten Boden lehnen."""
+    from datetime import datetime, timezone
+    p = make_portfolio(tmp_path, monkeypatch, capital=100_000.0)
+    # 80k in eine Position, die in 2 Tagen frei wird (Halt 0d ab heute).
+    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    p.open_position(Position(
+        ticker="AAPL", shares=800, entry_price=100.0, entry_date=now,
+        stop_loss=90.0, take_profit=120.0, target_hold_days=1,
+    ))
+    assert p.cash == pytest.approx(20_000.0)
+    strat = make_strategy(p)
+    # Reflow (80k) deckt die Reserve-Lücke voll → Boden sinkt auf hart 5% = 5k.
+    # deployable = Cash 20k − 5k = 15k (statt 10k ohne Rückfluss).
+    size = strat._calc_position_size(
+        _ANALYSIS, 100.0, _PARAMS, _cfg(), False, 0.65, 0.65)
+    assert size == pytest.approx(15_000.0)
