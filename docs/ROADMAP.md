@@ -536,6 +536,18 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       mind. einen Folgetag an Kursdaten. Ehrlich erwartetes Verhalten,
       kein Bug; liefert erst ab dem nächsten Handelstag ein echtes
       Verdikt.
+      RE-CHECK 22.7. (5 Handelstage später): Kandidatenpool auf 122 SKIPs
+      gewachsen, davon jetzt 4 simulierbar (vorher 0/19) — Mechanik greift
+      also wie gebaut, sammelt einfach noch. Weiterhin unter dem Mindest-n
+      von 10 je Skip-Grund (lernfilter_avoid n=2, unter_schwelle n=1,
+      zu_wenige_quellen n=1) → "noch keine belastbare Aussage möglich",
+      unverändert ehrlich [~] offen. Parallel dazu 3.1 (Sentiment-Forward-
+      Study) erneut laufen lassen: exakt identisches Ergebnis wie 14.7.
+      (n=347, weiterhin 0 label_source='live') — noch keine einzige echte
+      Live-Position seit der 17.7.-Reaktivierung abgeschlossen (passt zu
+      typischen Hold-Zeiten von Wochen bei dieser Strategie), beide Studien
+      bleiben also mangels Live-Daten unverändert offen. Kein Code
+      angefasst, reiner Re-Lauf bestehender, getesteter Tools.
 
 ## Block 4 — Meta-Ebene & Robustheit
 
