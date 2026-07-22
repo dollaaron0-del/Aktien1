@@ -92,6 +92,12 @@ class StrategyResult:
     reason: str
     shares: float = 0.0
     price: float = 0.0
+    # Lern-Filter-Verdikt zum Einstiegszeitpunkt, für den Hinterher-Vergleich
+    # "hat der Filter recht behalten" beim Exit (analyzers/entry_filter.py).
+    # Leer, wenn der Filter deaktiviert war oder kein Verdikt lieferte.
+    entry_filter_verdict: str = ""
+    entry_filter_p_win: float = 0.0
+    entry_filter_edge: float = 0.0
     stop_loss: float = 0.0
     take_profit: float = 0.0
     hold_days: int = 0
@@ -356,7 +362,7 @@ class SwingStrategy:
             return StrategyResult("SKIP", ticker, f"Max Positionen ({max_pos}) erreicht – Signal in Queue")
 
         # Earnings filter
-        if self.earnings_filter and self.earnings_filter.is_blocked(ticker):
+        if self.earnings_filter and self.earnings_filter.check(ticker).get("block"):
             return StrategyResult("SKIP", ticker, "Earnings-Sperre aktiv")
 
         # SL-Cooldown: nach verlustigem Stop-Loss N Tage keinen Re-Entry
@@ -370,12 +376,6 @@ class SwingStrategy:
         except Exception as _e:
             log.debug("SL-Cooldown-Check übersprungen [%s]: %s", ticker, _e)
 
-        # Correlation check
-        if self.correlation_checker:
-            positions = self.portfolio.all_positions()
-            if self.correlation_checker.is_correlated(ticker, list(positions.keys())):
-                return StrategyResult("SKIP", ticker, "Zu hohe Sektor-Korrelation")
-
         # Liquiditäts-Gate: nicht in untradeable Small-Caps kaufen (Ø-Dollar-
         # Volumen). Fail-open bei Datenausfall (siehe analyzers/liquidity).
         try:
@@ -386,13 +386,28 @@ class SwingStrategy:
         except Exception as _e:
             log.debug("Liquiditäts-Gate übersprungen [%s]: %s", ticker, _e)
 
-        # Position sizing
+        # Position sizing (VOR dem Korrelations-Check nötig: der braucht die
+        # geplante Investitionssumme, die es vorher noch nicht gibt).
         position_value = self._calc_position_size(analysis, current_price, params, config, confluence)
         if position_value <= 0:
             return StrategyResult("SKIP", ticker, "Positionsgröße = 0")
 
+        # Correlation check
+        if self.correlation_checker:
+            positions = self.portfolio.all_positions()
+            existing_value = {t: p.shares * p.entry_price for t, p in positions.items()}
+            corr = self.correlation_checker.can_open(
+                ticker, position_value, self.portfolio.total_value({}), existing_value,
+            )
+            if not corr.get("allowed"):
+                return StrategyResult("SKIP", ticker, corr.get("reason") or "Zu hohe Sektor-Korrelation")
+
         # Selbstlern-Filter: konsultiert das gelernte Kalibrierungsmodell.
         # AVOID → SKIP (wenn block aktiv), CAUTION → kleinere Position. Fail-open.
+        # `_ef_verdict`/`_ef_pwin`/`_ef_edge` wandern unten in den StrategyResult,
+        # damit der Executor sie an die Position hängen kann — Grundlage für den
+        # Hinterher-Vergleich "hat der Filter recht behalten" beim Exit.
+        _ef_verdict, _ef_pwin, _ef_edge = "", 0.0, 0.0
         if getattr(config, "learning_filter_enabled", False):
             ef = _get_entry_filter()
             if ef is not None:
@@ -404,12 +419,23 @@ class SwingStrategy:
                         "debate_winner": getattr(analysis, "debate_winner", "") or "",
                         "regime": str(regime) if regime else "",
                     })
-                    if verdict.verdict == "AVOID" and getattr(config, "learning_filter_block", True):
-                        return StrategyResult(
-                            "SKIP", ticker,
-                            f"Lern-Filter AVOID (Edge {verdict.expected_edge:+.2f}%, "
-                            f"P(Win) {verdict.p_win:.0%})")
-                    if verdict.verdict == "CAUTION":
+                    _ef_verdict, _ef_pwin, _ef_edge = (
+                        verdict.verdict, verdict.p_win, verdict.expected_edge)
+                    if verdict.verdict == "AVOID":
+                        if getattr(config, "learning_filter_block", True):
+                            return StrategyResult(
+                                "SKIP", ticker,
+                                f"Lern-Filter AVOID (Edge {verdict.expected_edge:+.2f}%, "
+                                f"P(Win) {verdict.p_win:.0%})")
+                        # Block deaktiviert (User-Entscheidung 22.7.2026: mehr Trades
+                        # für echte Lern-Daten statt Datenmangel) — AVOID kauft dann
+                        # trotzdem, aber mit derselben verkleinerten Größe wie CAUTION
+                        # (bisher lief AVOID hier ungebremst in VOLLER Größe durch —
+                        # Lücke zwischen Doku-Kommentar oben und Code).
+                        mult = float(getattr(config, "learning_filter_caution_size_mult", 0.5))
+                        position_value *= max(0.0, min(1.0, mult))
+                        log.info("[%s] Lern-Filter AVOID (Block aus) → Position ×%.2f", ticker, mult)
+                    elif verdict.verdict == "CAUTION":
                         mult = float(getattr(config, "learning_filter_caution_size_mult", 0.5))
                         position_value *= max(0.0, min(1.0, mult))
                         log.info("[%s] Lern-Filter CAUTION → Position ×%.2f", ticker, mult)
@@ -484,6 +510,9 @@ class SwingStrategy:
             stop_loss=stop_loss,
             take_profit=take_profit,
             hold_days=hold_days,
+            entry_filter_verdict=_ef_verdict,
+            entry_filter_p_win=_ef_pwin,
+            entry_filter_edge=_ef_edge,
         )
 
     # ── Exit logic ─────────────────────────────────────────────────────────────

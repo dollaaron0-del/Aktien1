@@ -7,6 +7,24 @@ import streamlit as st
 from portfolio.focus_mode import FocusMode
 
 
+def _render_core_status_link() -> None:
+    """Ein-Klick-Kernstatus (User-Vorgabe 20.7.2026, verfeinert): erst als
+    Popover gebaut, aber zu eng für "alle Daten des Bots" — der Knopf führt
+    jetzt stattdessen auf eine eigene Seite (`?status=1`,
+    dashboard/tabs/full_status.py) mit genug Platz für den vollständigen
+    Datenstand. Übergangslösung, solange der Fabrik-Umbau (Vision W7) noch
+    nicht jede Maschine mit einem vollen Detailpanel abdeckt. Reines <a>
+    (target="_self") statt st.link_button — dieselbe Query-Param-Navigation,
+    die die Fabrik-Detailpanels schon nutzen (dashboard/tabs/factory.py)."""
+    st.markdown(
+        '<a href="?status=1" target="_self" style="display:block;'
+        'text-align:center;padding:0.5rem;border:1px solid rgba(128,128,128,0.4);'
+        'border-radius:0.5rem;text-decoration:none;font-weight:600;">'
+        '📋 Kern-Status — volle Übersicht</a>',
+        unsafe_allow_html=True,
+    )
+
+
 def render(ctx) -> None:
     config = ctx.config
     portfolio = ctx.portfolio
@@ -15,6 +33,8 @@ def render(ctx) -> None:
 
     st.markdown("## ⚙️ Bot-Status")
     st.caption(f"Stand: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+
+    _render_core_status_link()
 
     # Nächste Analyse: echter Marktkalender (Börsen + Vorlauf) statt festem
     # 07:30-Countdown; bei pausiertem Bot gibt es schlicht keine nächste Analyse.

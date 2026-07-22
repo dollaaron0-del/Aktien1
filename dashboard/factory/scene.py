@@ -146,6 +146,40 @@ def _pipe_joints(x1: float, y1: float, x2: float, y2: float, src_id: str, dst_id
     return "".join(parts)
 
 
+def _belt_treads(x1: float, y1: float, x2: float, y2: float, src_id: str, dst_id: str) -> str:
+    """W8.6 (18.7.2026, User-Vorgabe zu den neuen Referenzbildern:
+    "orientiere dich sehr stark daran und hol dir Inspiration wie
+    Maschinen und Förderbänder aussehen könnten") — NUR für kind="main"
+    (echter Waren-/Datenfluss): Rollen-Chevrons statt der Kupfer-Muffen
+    aus `_pipe_joints`, näher am Förderband-Look der neuen Referenzbilder
+    (Rollen-Segmente quer zum Band, Pfeilspitzen in Flussrichtung). Die
+    Unterscheidung main=Band/feedback+utility=Rohr bleibt (Vision W6) —
+    nur main-Leitungen sind ein echter Warenfluss, nur die sollen wie ein
+    Förderband aussehen; `_pipe_joints` bleibt für die anderen unverändert."""
+    length = math.hypot(x2 - x1, y2 - y1)
+    step = 16
+    n = int(length // step)
+    if n < 2:
+        return ""
+    ux, uy = (x2 - x1) / length, (y2 - y1) / length
+    nx, ny = -uy, ux
+    parts: List[str] = []
+    for i in range(1, n):
+        t = i * step / length
+        cx, cy = x1 + (x2 - x1) * t, y1 + (y2 - y1) * t
+        tip_x, tip_y = cx + ux * 4, cy + uy * 4
+        base1_x, base1_y = cx - ux * 3 + nx * 5, cy - uy * 3 + ny * 5
+        base2_x, base2_y = cx - ux * 3 - nx * 5, cy - uy * 3 - ny * 5
+        parts.append(
+            f'<polyline data-connection-joint="{src_id}-{dst_id}" '
+            f'points="{base1_x:.0f},{base1_y:.0f} {tip_x:.0f},{tip_y:.0f} '
+            f'{base2_x:.0f},{base2_y:.0f}" fill="none" '
+            f'stroke="{PALETTE["copper_hi"]}" stroke-width="2" '
+            f'stroke-linecap="round" opacity="0.7" />'
+        )
+    return "".join(parts)
+
+
 def _connection_paths(state: FactoryState) -> str:
     """Vision W6: Leitungen zwischen Maschinen — "fließt" (fx-pipe-flow)
     NUR, wenn es eine echte Daten-Verbindung ("main") ist UND beide
@@ -156,7 +190,13 @@ def _connection_paths(state: FactoryState) -> str:
     W7.8: dickere Gehäuse-Linie + Kupfer-Muffen darunter (Factorio-
     Anleihe aus den User-Referenzbildern vom 18.7., nur mehr Gewicht,
     keine Farb-/Stiländerung) — die eigentliche (ggf. fließende)
-    Leitung kommt zuletzt oben drauf, exakt wie vorher."""
+    Leitung kommt zuletzt oben drauf, exakt wie vorher.
+
+    W8.6: main-Leitungen (echter Waren-/Datenfluss) bekommen Rollen-
+    Chevrons (`_belt_treads`) statt der Kupfer-Muffen — sehen jetzt aus
+    wie ein echtes Förderband. feedback/utility bleiben bei den
+    ursprünglichen Muffen (`_pipe_joints`), die zeigen weiter nur eine
+    Beziehung, keinen Warenfluss."""
     p = PALETTE
     parts: List[str] = []
     for src_id, dst_id, kind in _CONNECTIONS:
@@ -177,7 +217,10 @@ def _connection_paths(state: FactoryState) -> str:
             f'x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}" '
             f'stroke="{p["border"]}" stroke-width="7" stroke-linecap="round" opacity="0.5" />'
         )
-        parts.append(_pipe_joints(x1, y1, x2, y2, src_id, dst_id))
+        if kind == "main":
+            parts.append(_belt_treads(x1, y1, x2, y2, src_id, dst_id))
+        else:
+            parts.append(_pipe_joints(x1, y1, x2, y2, src_id, dst_id))
         parts.append(
             f'<line class="{cls}" data-connection="{src_id}-{dst_id}" '
             f'x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}" '

@@ -101,3 +101,18 @@ class EntryFilter:
             verdict = "CAUTION"
         reasons.append(f"→ Netto-Kante {net_edge:+.2f}% (√n-gewichtet) ⇒ {verdict}")
         return EntryVerdict(verdict, round(net_pwin, 4), round(net_edge, 4), True, reasons)
+
+
+def hindsight_footnote(verdict: str, p_win: float, expected_edge: float, pnl: float) -> str:
+    """Vergleicht das Einstiegs-Verdikt mit dem tatsächlichen Ausgang beim Exit
+    (User-Vorgabe 22.7.2026: "Fußnote bei jedem Trade" — sichtbar machen, ob
+    der Lern-Filter überhaupt recht behält). Leerer String, wenn kein Verdikt
+    vorlag (Filter war aus) oder es NEUTRAL war (keine Vorhersage zu prüfen)."""
+    if not verdict or verdict == "NEUTRAL":
+        return ""
+    predicted_positive = verdict in ("PROCEED", "CAUTION")
+    actual_positive = pnl > 0
+    urteil = "lag richtig" if predicted_positive == actual_positive else "lag falsch"
+    ergebnis = "Gewinn" if actual_positive else "Verlust"
+    return (f"🔎 Lern-Filter-Check: {verdict} (P(Win) {p_win:.0%}, "
+            f"Edge {expected_edge:+.2f}%) {urteil} — reales Ergebnis: {ergebnis}")

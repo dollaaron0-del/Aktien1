@@ -279,6 +279,9 @@ class TradeExecutor:
             target_hold_days=result.hold_days,
             rationale=result.reason or getattr(analysis, "entry_rationale", "") or "",
             entry_catalysts=catalysts,
+            entry_filter_verdict=getattr(result, "entry_filter_verdict", "") or "",
+            entry_filter_p_win=float(getattr(result, "entry_filter_p_win", 0.0) or 0.0),
+            entry_filter_edge=float(getattr(result, "entry_filter_edge", 0.0) or 0.0),
         )
         # IBKR meldet stop_placed=False, wenn der GTC-Schutz-Stop nicht
         # hinterlegt werden konnte → Position ist NUR bot-seitig überwacht.
@@ -387,8 +390,23 @@ class TradeExecutor:
                 StopLossCooldown().record(ticker, actual_price)
             except Exception as e:
                 log.debug("[%s] SL-Cooldown record fehlgeschlagen: %s", ticker, e)
-        self._notify_sell(ticker, sell_shares, actual_price, pos, pnl, result.reason, days_held)
-        self._journal_exit(ticker, actual_price, pos.entry_price, pnl, result.reason, days_held)
+        # Fußnote (User-Vorgabe 22.7.2026): "hat der Lern-Filter recht behalten?" —
+        # dieselbe Logik wie in Portfolio.close_position() (dort für die trades-
+        # Tabelle), hier zusätzlich für Telegram/Journal, weil beide VOR dem
+        # DELETE der Positionszeile bereits mit dem unangereicherten result.reason
+        # aufgerufen würden, wenn man es nicht separat berechnet.
+        try:
+            from analyzers.entry_filter import hindsight_footnote
+            _footnote = hindsight_footnote(
+                getattr(pos, "entry_filter_verdict", ""), getattr(pos, "entry_filter_p_win", 0.0),
+                getattr(pos, "entry_filter_edge", 0.0), pnl,
+            )
+        except Exception:
+            _footnote = ""
+        exit_reason = f"{result.reason} | {_footnote}" if _footnote else result.reason
+
+        self._notify_sell(ticker, sell_shares, actual_price, pos, pnl, exit_reason, days_held)
+        self._journal_exit(ticker, actual_price, pos.entry_price, pnl, exit_reason, days_held)
 
         sign = "+" if pnl >= 0 else ""
         return f"[{ticker}] VERKAUFT – {result.reason} | P&L: {sign}{pnl:.2f} USD"

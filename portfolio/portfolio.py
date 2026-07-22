@@ -30,6 +30,12 @@ class Position:
     currency: str = "USD"           # Handelswährung (EUR/GBP/CHF/USD)
     fx_rate_at_entry: float = 1.0   # FX-Rate zur Basiswährung bei Kauf
     partial_tp_count: int = 0       # Anzahl ausgelöster Partial-TP-Stufen (0/1/2)
+    # Lern-Filter-Verdikt beim Einstieg (analyzers/entry_filter.py) — Grundlage für
+    # den Hinterher-Vergleich "hat der Filter recht behalten" beim Exit
+    # (siehe strategy/executor.py::_execute_sell). Leer = Filter war deaktiviert/lieferte nichts.
+    entry_filter_verdict: str = ""
+    entry_filter_p_win: float = 0.0
+    entry_filter_edge: float = 0.0
 
     @property
     def entry_value(self) -> float:
@@ -79,7 +85,10 @@ class Portfolio:
                     rationale TEXT DEFAULT '',
                     entry_catalysts TEXT DEFAULT '[]',
                     currency TEXT DEFAULT 'USD',
-                    fx_rate_at_entry REAL DEFAULT 1.0
+                    fx_rate_at_entry REAL DEFAULT 1.0,
+                    entry_filter_verdict TEXT DEFAULT '',
+                    entry_filter_p_win REAL DEFAULT 0.0,
+                    entry_filter_edge REAL DEFAULT 0.0
                 );
 
                 CREATE TABLE IF NOT EXISTS trades (
@@ -115,6 +124,9 @@ class Portfolio:
             "ALTER TABLE positions ADD COLUMN currency TEXT DEFAULT 'USD'",
             "ALTER TABLE positions ADD COLUMN fx_rate_at_entry REAL DEFAULT 1.0",
             "ALTER TABLE positions ADD COLUMN partial_tp_taken INTEGER DEFAULT 0",
+            "ALTER TABLE positions ADD COLUMN entry_filter_verdict TEXT DEFAULT ''",
+            "ALTER TABLE positions ADD COLUMN entry_filter_p_win REAL DEFAULT 0.0",
+            "ALTER TABLE positions ADD COLUMN entry_filter_edge REAL DEFAULT 0.0",
             "ALTER TABLE trades ADD COLUMN currency TEXT DEFAULT 'USD'",
             "ALTER TABLE trades ADD COLUMN fx_rate REAL DEFAULT 1.0",
         ]:
@@ -231,7 +243,8 @@ class Portfolio:
             """
             SELECT ticker, shares, entry_price, entry_date, stop_loss,
                    take_profit, target_hold_days, rationale, entry_catalysts,
-                   currency, fx_rate_at_entry, partial_tp_taken
+                   currency, fx_rate_at_entry, partial_tp_taken,
+                   entry_filter_verdict, entry_filter_p_win, entry_filter_edge
             FROM positions WHERE ticker=?
             """,
             (ticker,),
@@ -245,7 +258,8 @@ class Portfolio:
             """
             SELECT ticker, shares, entry_price, entry_date, stop_loss,
                    take_profit, target_hold_days, rationale, entry_catalysts,
-                   currency, fx_rate_at_entry, partial_tp_taken
+                   currency, fx_rate_at_entry, partial_tp_taken,
+                   entry_filter_verdict, entry_filter_p_win, entry_filter_edge
             FROM positions
             """
         ).fetchall()
@@ -271,8 +285,9 @@ class Portfolio:
                     INSERT OR REPLACE INTO positions
                         (ticker, shares, entry_price, entry_date, stop_loss,
                          take_profit, target_hold_days, rationale, entry_catalysts,
-                         currency, fx_rate_at_entry, partial_tp_taken)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         currency, fx_rate_at_entry, partial_tp_taken,
+                         entry_filter_verdict, entry_filter_p_win, entry_filter_edge)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         position.ticker,
@@ -287,6 +302,9 @@ class Portfolio:
                         position.currency,
                         position.fx_rate_at_entry,
                         position.partial_tp_count,
+                        position.entry_filter_verdict,
+                        position.entry_filter_p_win,
+                        position.entry_filter_edge,
                     ),
                 )
                 self._insert_trade(
@@ -311,6 +329,19 @@ class Portfolio:
                 pnl = proceeds - pos.entry_value
                 self._set_cash(self._get_cash() + proceeds)
                 self._conn.execute("DELETE FROM positions WHERE ticker=?", (ticker,))
+                # Fußnote (User-Vorgabe 22.7.2026): hat der Lern-Filter beim Einstieg
+                # recht behalten? Nur hier persistiert, weil die Positionszeile mit
+                # dem Verdikt gerade gelöscht wird — ohne das läge die Information
+                # nach dem Exit nirgends mehr vor.
+                try:
+                    from analyzers.entry_filter import hindsight_footnote
+                    footnote = hindsight_footnote(
+                        pos.entry_filter_verdict, pos.entry_filter_p_win,
+                        pos.entry_filter_edge, pnl,
+                    )
+                except Exception:
+                    footnote = ""
+                stored_reason = f"{reason} | {footnote}" if footnote else reason
                 self._insert_trade(
                     ticker=ticker,
                     action="SELL",
@@ -318,7 +349,7 @@ class Portfolio:
                     price=current_price,
                     timestamp=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                     pnl=pnl,
-                    reason=reason,
+                    reason=stored_reason,
                     currency=pos.currency,
                     fx_rate=pos.fx_rate_at_entry,
                 )
@@ -472,6 +503,9 @@ class Portfolio:
         currency = row["currency"] if "currency" in col_names else "USD"
         fx_rate = row["fx_rate_at_entry"] if "fx_rate_at_entry" in col_names else 1.0
         partial_tp_count = int(row["partial_tp_taken"] or 0) if "partial_tp_taken" in col_names else 0
+        ef_verdict = row["entry_filter_verdict"] if "entry_filter_verdict" in col_names else ""
+        ef_pwin = row["entry_filter_p_win"] if "entry_filter_p_win" in col_names else 0.0
+        ef_edge = row["entry_filter_edge"] if "entry_filter_edge" in col_names else 0.0
         return Position(
             ticker=ticker,
             shares=shares,
@@ -485,4 +519,7 @@ class Portfolio:
             currency=currency or "USD",
             fx_rate_at_entry=float(fx_rate or 1.0),
             partial_tp_count=partial_tp_count,
+            entry_filter_verdict=ef_verdict or "",
+            entry_filter_p_win=float(ef_pwin or 0.0),
+            entry_filter_edge=float(ef_edge or 0.0),
         )

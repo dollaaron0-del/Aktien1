@@ -412,6 +412,16 @@ def run_ticker_loop(
                 force_claude=ticker in _force_claude_tickers,
             )
 
+        # Bugfix 20.7.2026: ClaudeAnalyzer setzt analysis.sources_used nie
+        # (Dataclass-Default bleibt {}), aber swing_strategy.evaluate() prüft
+        # genau dieses Feld gegen config.min_sources – jeder Claude-Kauf wurde
+        # dadurch fälschlich mit "Zu wenige Quellen (0 < 1)" blockiert, obwohl
+        # sources_breakdown (dieselbe Zahl, die ins Analysis-Log geht) echte
+        # Treffer zeigt. Nur auffüllen, wenn leer – Pfade, die sources_used
+        # bereits selbst setzen (z.B. multi_agent_analyzer), bleiben unberührt.
+        if not getattr(analysis, "sources_used", None):
+            analysis.sources_used = sources_breakdown
+
         _print_analysis(analysis)
         # store(ticker, direction, sentiment_score, confidence, recommendation)
         # confidence = Konviktion (HIGH/MEDIUM/LOW), recommendation = Aktion (BUY/HOLD/SKIP).

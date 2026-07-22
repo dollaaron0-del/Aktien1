@@ -305,12 +305,35 @@ def test_connection_paths_include_known_main_connection():
 def test_connection_paths_have_pipe_casing_and_joints():
     """W7.8 (18.7.2026, User-Referenzbilder): mehr Rohr-Optik (Factorio-
     Anleihe) ohne Farb-/Stilwechsel — dickere Kupfer/Border-Gehäuselinie
-    + periodische Muffen-Striche unter der eigentlichen Leitung."""
+    unter jeder Leitung, unabhängig von kind. Die Muffen selbst (main vs.
+    feedback/utility) prüfen die zwei folgenden Tests (W8.6-Aufteilung)."""
     from dashboard.theme import PALETTE
     svg = _connection_paths(_state_with_statuses({}))
     assert 'data-connection-casing="docks-analyzer_claude"' in svg
     assert f'stroke="{PALETTE["border"]}" stroke-width="7"' in svg
+
+
+def test_main_connection_gets_belt_tread_chevrons_not_pipe_joints():
+    """W8.6 (18.7.2026, User-Vorgabe: "orientiere dich sehr stark [an den
+    Referenzbildern] ... wie Maschinen und Förderbänder aussehen
+    könnten"): main-Leitungen (echter Warenfluss) bekommen Rollen-
+    Chevrons (`_belt_treads`, Polylinie in copper_hi) statt der alten
+    Kupfer-Muffen-Striche."""
+    from dashboard.theme import PALETTE
+    svg = _connection_paths(_state_with_statuses({}))
     assert 'data-connection-joint="docks-analyzer_claude"' in svg
+    assert "<polyline data-connection-joint=\"docks-analyzer_claude\"" in svg
+    assert f'stroke="{PALETTE["copper_hi"]}" stroke-width="2"' in svg
+
+
+def test_feedback_and_utility_connections_keep_pipe_muffen_joints():
+    """W8.6: feedback/utility zeigen weiter nur eine Beziehung, keinen
+    Warenfluss — bleiben bei den ursprünglichen Kupfer-Muffen-Strichen
+    (`_pipe_joints`), werden NICHT zu Förderband-Chevrons."""
+    from dashboard.theme import PALETTE
+    svg = _connection_paths(_state_with_statuses({}))
+    assert 'data-connection-joint="lab-analyzer_claude"' in svg
+    assert "<line data-connection-joint=\"lab-analyzer_claude\"" in svg
     assert f'stroke="{PALETTE["copper"]}" stroke-width="2"' in svg
 
 

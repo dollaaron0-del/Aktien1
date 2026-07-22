@@ -649,6 +649,63 @@ Kopf/KPI-Leiste im normalen Streamlit-Fluss — kein echtes Vollbild.
       — visuell nur live im Dashboard prüfbar, nicht per Figma-Vorschau
       wie die übrigen Design-Iterationen dieser Sitzung.
 
+- [x] **W8.3–W8.5 Sidebar-Ausklapp-Pfeil (18.7.2026, drei Anläufe)** — User
+      meldete nach W8.1: "die Sidebar ist nicht mehr da". W8.1 hatte
+      `[data-testid="stHeader"]` komplett per `display:none` versteckt
+      (für die Vollbild-Fabrik); der Ausklapp-Pfeil einer kollabierten
+      Sidebar (`stExpandSidebarButton`, bei `initial_sidebar_state="auto"`
+      je nach Fensterbreite) hängt aber als Kind-Element daran und wurde
+      mit unsichtbar. W8.3: `stHeader` bleibt im Baum (nur Höhe/Hintergrund
+      auf 0), Toolbar/Menu/Footer bleiben `display:none`. User meldete
+      erneut "immer noch nicht" → **W8.4**: `height:0` auf dem Elternteil
+      nimmt ein normales Flow-Kind im Layout mit auf Höhe 0 (Bounding-Box
+      wurde `None`) — nur noch Hintergrund transparent, Höhe bleibt
+      natürlich. Wieder nicht ausreichend → **W8.5** (echte Ursache, erst
+      per Playwright/echtem Chromium gefunden, AppTest kennt kein
+      CSS-Layout): der Pfeil liegt in Wahrheit eine Ebene tiefer direkt in
+      `stToolbar`, und GENAU `stToolbar` stand seit dem allerersten
+      W8.1-Commit auf `display:none` — unabhängig vom `stHeader`-Fix. Die
+      Kind-Struktur hat zwei getrennte Zweige: einen nur mit
+      `stExpandSidebarButton`, einen mit den Geschwistern
+      `stToolbarActions`/`stAppDeployButton`/`stMainMenu` (Deploy-Button +
+      Drei-Punkte-Menü, das eigentliche "Geraffel"). Jetzt werden nur noch
+      diese drei einzeln versteckt, `stToolbar` selbst bleibt da. Diesmal
+      end-to-end statt nur strukturell verifiziert: lokale
+      Streamlit-Instanz + Playwright bei 700px Fensterbreite (Sidebar
+      kollabiert), Pfeil tatsächlich angeklickt, Bounding-Box-Wechsel
+      (width 0→300) bestätigt, Deploy-Button/Menü per Screenshot als weg
+      gegengecheckt. **Lehre für künftige Layout-Fixes:** rein strukturelle
+      Prüfung (Klassen vorhanden, kein Crash) reicht bei CSS-Positionierung
+      nicht — Playwright gegen die echte Seite ist hier die einzige
+      verlässliche Verifikation.
+
+- [x] **W8.6 Förderband-Chevrons statt Kupfer-Muffen (18.7.2026)** — User-
+      Vorgabe zu den Referenzbildern vom selben Tag: "orientiere dich sehr
+      stark daran und hol dir Inspiration wie Maschinen und Förderbänder
+      aussehen könnten." Neue `scene.py::_belt_treads()`: nur `kind="main"`
+      -Leitungen (echter Waren-/Datenfluss) bekommen Rollen-Chevrons
+      (Polylinien in `copper_hi`, quer zur Leitung, Pfeilspitze in
+      Flussrichtung) statt der bisherigen `_pipe_joints()`-Kupfer-Muffen —
+      sieht jetzt wie ein echtes Förderband aus. `feedback`/`utility`
+      zeigen weiterhin nur eine Beziehung, keinen Warenfluss, und bleiben
+      bei den alten Muffen. 2 neue Tests
+      (`test_main_connection_gets_belt_tread_chevrons_not_pipe_joints`,
+      `test_feedback_and_utility_connections_keep_pipe_muffen_joints`).
+
+- [x] **W8.7 Kern-Status-Vollseite statt Popover (20.7.2026)** — User-
+      Vorgabe: ein Ein-Klick-Zugang zu "allen Daten des Bots", erst als
+      Popover gebaut, aber zu eng für den vollen Datenstand. Umgebaut auf
+      eine eigene Seite (`?status=1`, `dashboard/tabs/full_status.py`):
+      `app.py` prüft den Query-Param VOR der KPI-Leiste/Fabrik-Szene und
+      rendert bei `status=1` die Vollseite statt der Szene; die Sidebar
+      bleibt erhalten (Bot-Pause-Schalter muss immer erreichbar bleiben,
+      s. Begründung bei W8.2). Sidebar bekommt einen Link
+      (`_render_core_status_link()`, reines `<a href="?status=1"
+      target="_self">` statt `st.link_button` — dieselbe
+      Query-Param-Navigation wie die Fabrik-Detailpanels). Bewusste
+      Übergangslösung, solange der Fabrik-Umbau noch nicht jede Maschine
+      mit einem vollen Detailpanel abdeckt.
+
 ## Bewusst NICHT (auch hier)
 
 - ✗ Live-Preis-/Netzwerk-Calls in state.py (einzige Ausnahme: der

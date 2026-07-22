@@ -195,6 +195,15 @@ class IBKRBroker:
             ib = IB()
             log.info("IBKR: Verbindungsversuch %s:%d (clientId=%d) …", _HOST, _PORT, _CLIENT_ID)
             ib.connect(_HOST, _PORT, clientId=_CLIENT_ID, readonly=False, timeout=10)
+            # ib_insync.IB.RequestTimeout ist per Default 0 (= KEIN Timeout) für
+            # alle blockierenden Aufrufe, die intern über IB._run()/util.run()
+            # laufen (whatIfOrder, qualifyContracts, …) – bleibt IB Gateway eine
+            # Antwort schuldig (beobachtet bei whatIfOrder für einen ausländischen
+            # Titel), haengt der Aufruf für IMMER und blockiert wegen @_synchronized
+            # den gesamten Broker (auch Preis-Abrufe/Sells anderer Ticker). Fester
+            # Timeout macht solche Aufrufe zu einem klaren TimeoutError statt
+            # einem Totalausfall.
+            ib.RequestTimeout = 20
             log.info("IBKR: TCP-Verbindung hergestellt – frage Konten ab …")
         except (asyncio.TimeoutError, TimeoutError, ConnectionError, OSError) as e:
             # Erwartbar, wenn das IB Gateway nicht läuft oder dessen Verbindung
@@ -445,12 +454,25 @@ class IBKRBroker:
                       getattr(order, "action", "?"), e)
             return None
 
-    def _place_order(self, contract, action: str, shares: float) -> Dict:
+    def _place_order(self, contract, action: str, shares: float,
+                     cash_qty: Optional[float] = None) -> Dict:
         from ib_insync import MarketOrder
         # Hinweis: _place_order wird auch von buy_crypto/sell_crypto genutzt –
         # die brauchen Bruchteile. Aktien werden VORHER über _whole_shares()
         # auf ganze Stück gerundet (siehe buy()/sell()).
         order = MarketOrder(action, shares)
+        # IBKR-Krypto-Orders (PAXOS) lehnen sonst mit Error 10289 ab
+        # ("You must set Cash Quantity for this order") – cash_qty wird nur
+        # von buy_crypto() durchgereicht, Aktien-Orders bleiben unberührt.
+        # PAXOS akzeptiert bei Market-Orders ausserdem nur tif=IOC (Error
+        # 10052 "Invalid time in force" bei ib_insync-Default "DAY") UND
+        # verlangt totalQuantity=0, wenn cashQty gesetzt ist (Error 10293
+        # "Cryptocurrency Cash Quantity order cannot specify size" – beides
+        # gleichzeitig ist nicht erlaubt).
+        if cash_qty is not None:
+            order.cashQty = round(float(cash_qty), 2)
+            order.totalQuantity = 0
+            order.tif = "IOC"
         # Account immer explizit setzen – bei mehreren Konten (paper + live) sonst falsches Konto
         account = getattr(self, "_active_account", _ACCOUNT) or _ACCOUNT
         if account:
@@ -722,7 +744,7 @@ class IBKRBroker:
             qualified = self._ib.qualifyContracts(contract)
             if not qualified:
                 return OrderResult.error(ticker=symbol, reason=f"Crypto-Contract {symbol} nicht qualifizierbar", mode="ibkr")
-            result = self._place_order(contract, "BUY", qty)
+            result = self._place_order(contract, "BUY", qty, cash_qty=usd_amount)
             result["usd_amount"] = usd_amount
             return result
         except Exception as e:

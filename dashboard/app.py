@@ -509,40 +509,49 @@ def _get_ticker_news(ticker: str) -> list:
 import types as _types
 _ctx = _types.SimpleNamespace(**locals())
 
-# ─── HUD: KPI-Leiste (Tab-Umbau 18.7.2026, aus dem früheren Portfolio-Tab
-# hierher — Depotwert/Cash/Regime/Win-Rate/Queue soll man nicht erst
-# anklicken müssen, um sie zu sehen). ─────────────────────────────────────
-_hud_delta_pct = (total_value - config.initial_capital) / config.initial_capital * 100
-_hud_cash_pct = portfolio.cash / total_value * 100 if total_value else 0
-_hud_regime_str = (regime_data["regime"] if regime_data else "–")
-_hud_regime_score = (regime_data["recession_score"] if regime_data else None)
-
-_hk1, _hk2, _hk3, _hk4, _hk5, _hk6 = st.columns(6)
-_hk1.metric("Gesamtwert", f"${total_value:,.2f}", f"{_hud_delta_pct:+.1f}%")
-_hk2.metric("Cash", f"${portfolio.cash:,.2f}", f"{_hud_cash_pct:.0f}% des Portfolios")
-_hk3.metric("Offene Positionen", len(portfolio.all_positions()))
-_hk4.metric(
-    "Marktregime", _hud_regime_str,
-    f"Score {_hud_regime_score:.2f}" if _hud_regime_score is not None else "–",
-    delta_color="inverse",
-)
-if acc.get("total_closed"):
-    _hk5.metric("Win-Rate", f"{acc['win_rate_pct']}%", f"{acc['total_closed']} Trades")
-elif _rt_stats:
-    _hk5.metric("Win-Rate", f"{_rt_stats['win_rate_pct']}%",
-                f"{_rt_stats['total_closed']} Trades (Portfolio-Historie)")
-else:
-    _hk5.metric("Win-Rate", "–", "0 Trades")
-_hk6.metric("Signal-Warteschlange", f"{pending_cnt} ausstehend", delta_color="off")
-st.divider()
-
 with st.sidebar:
     from dashboard.tabs import sidebar as _sidebar
     _sidebar.render(_ctx)
 
-# ─── Die Szene IST das Programm ──────────────────────────────────────────
-from dashboard.tabs import factory as _tab_factory
-_tab_factory.render(_ctx)
+# ─── Kern-Status-Vollseite (W8.7, 20.7.2026, User-Vorgabe): Übergangs-
+# lösung, solange der Fabrik-Umbau noch nicht jede Maschine mit einem
+# vollen Detailpanel abdeckt — ?status=1 zeigt statt der Szene eine Seite
+# mit Platz für ALLE Bot-Daten (dashboard/tabs/full_status.py). Sidebar
+# bleibt erhalten (Pause-Schalter etc. sollen weiter erreichbar sein).
+if st.query_params.get("status") == "1":
+    from dashboard.tabs import full_status as _tab_full_status
+    _tab_full_status.render(_ctx)
+else:
+    # ─── HUD: KPI-Leiste (Tab-Umbau 18.7.2026, aus dem früheren Portfolio-
+    # Tab hierher — Depotwert/Cash/Regime/Win-Rate/Queue soll man nicht
+    # erst anklicken müssen, um sie zu sehen). ────────────────────────────
+    _hud_delta_pct = (total_value - config.initial_capital) / config.initial_capital * 100
+    _hud_cash_pct = portfolio.cash / total_value * 100 if total_value else 0
+    _hud_regime_str = (regime_data["regime"] if regime_data else "–")
+    _hud_regime_score = (regime_data["recession_score"] if regime_data else None)
+
+    _hk1, _hk2, _hk3, _hk4, _hk5, _hk6 = st.columns(6)
+    _hk1.metric("Gesamtwert", f"${total_value:,.2f}", f"{_hud_delta_pct:+.1f}%")
+    _hk2.metric("Cash", f"${portfolio.cash:,.2f}", f"{_hud_cash_pct:.0f}% des Portfolios")
+    _hk3.metric("Offene Positionen", len(portfolio.all_positions()))
+    _hk4.metric(
+        "Marktregime", _hud_regime_str,
+        f"Score {_hud_regime_score:.2f}" if _hud_regime_score is not None else "–",
+        delta_color="inverse",
+    )
+    if acc.get("total_closed"):
+        _hk5.metric("Win-Rate", f"{acc['win_rate_pct']}%", f"{acc['total_closed']} Trades")
+    elif _rt_stats:
+        _hk5.metric("Win-Rate", f"{_rt_stats['win_rate_pct']}%",
+                    f"{_rt_stats['total_closed']} Trades (Portfolio-Historie)")
+    else:
+        _hk5.metric("Win-Rate", "–", "0 Trades")
+    _hk6.metric("Signal-Warteschlange", f"{pending_cnt} ausstehend", delta_color="off")
+    st.divider()
+
+    # ─── Die Szene IST das Programm ──────────────────────────────────────
+    from dashboard.tabs import factory as _tab_factory
+    _tab_factory.render(_ctx)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
