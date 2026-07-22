@@ -732,7 +732,7 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
 > freigegeben. Analog zur Bot-Pausierung: Vorbereitung ja, Scharfschalten nur
 > auf Anweisung.
 
-- [ ] **6.1 Umzugs-Fundament** (Großteil existiert schon): restore.sh +
+- [~] **6.1 Umzugs-Fundament** (Großteil existiert schon): restore.sh +
       docs/SERVER_RUNBOOK.md sind erprobt (0.5); Push-Frage 0.2 wird damit
       PFLICHT (Code muss versioniert auf den neuen Server, nicht per scp);
       Demo-Daten-Swap-Rücktausch VOR dem Umzug klären (sonst zieht die
@@ -746,6 +746,35 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       (6.8a) wachsen auf zig–hunderte GB; Backup-Strategie muss das UND die
       Lern-DBs off-server abdecken (heute: Backup nur lokal, Timer nicht
       enabled — 0.1-Rest wird mit dem Umzug PFLICHT statt optional).
+      KONKRETISIERT 22.7. (User-Plan: gemieteter → lokaler Server, Ziel
+      „Umzugstag = 1 Stunde"): (c) Backup-LEARNING-Array um 5 seit 12./14.7.
+      neu entstandene, bisher ungesicherte Dateien ergänzt (prompt_archive.db,
+      order_log.db, thesis_registry.json, holdout_access.json,
+      calibration_monitor.json) — per --verify geprüft. (d) ECHTE
+      RESTORE-PROBE wiederholt (letzte war 11.7., seitdem >90 Commits):
+      frischer Klon + frisches Backup-Archiv in isoliertem Verzeichnis,
+      Restore lief in 2:13 Min durch (venv+101 Pakete+Config-Check+DB-Zugriff),
+      Stichprobe der 5 neuen Dateien bestätigt inhaltsgleich (179 Prompts/
+      35 Orders exakt, decision_log-Differenz nur normaler Zeitversatz).
+      (e) SYSTEMATISCHER DRIFT-CHECK aller 10 aktien_*.service/.timer-Dateien
+      im Repo gegen die tatsächlich installierten Versionen unter
+      /etc/systemd/system/ — 9/10 identisch, ABER aktien_bot.service im Repo
+      war STARK veraltet (WorkingDirectory=/home/user/Aktien, System-Python
+      statt venv, falscher Log-Pfad) und hätte auf einem neuen Server nach
+      dem Runbook-Schritt 4 einen kaputten Bot-Service erzeugt. Gefixt
+      (618b3e6) — jetzt byte-identisch zur laufenden Version. (f) SICHERHEITS-
+      FUND: die eigentlichen IB-Gateway-Login-Daten stecken nicht in .env,
+      sondern fest einprogrammiert in /opt/ibgateway/autologin.sh (außerhalb
+      des Repos) — im Runbook jetzt explizit als „manuell/sicher übertragen,
+      nie in Repo/Doku/Chat" markiert. (g) BACKUP_REMOTE weiterhin NICHT
+      gesetzt (Log bestätigt: „Kein Off-Server-Ziel gesetzt") — Code+Daten
+      liegen bis zum Umzug auf einer Platte; offene Frage an User, ob vorher
+      ein Zwischenziel eingerichtet werden soll. Neuer Abschnitt 0 im Runbook
+      („Was reist wie mit?", 3-Spalten-Tabelle Git/Backup/manuell) fasst das
+      zusammen. (h) IN ARBEIT: Push-Token (0.2) — User richtet gerade eine
+      fine-grained PAT (Contents:write) + Credential-Storage ein, damit
+      „Code holen" am Umzugstag ein einfacher git clone wird (aktuell
+      294 Commits nicht auf origin).
 - [ ] **6.2 Daten-Ausbau** (Voraussetzung, dass mehr Compute überhaupt lohnt).
       Das Nadelöhr konkret: (1) nur 10/42 Ticker = zu wenige unabhängige
       Stichproben, (2) Survivorship-Bias — yfinance kennt nur heutige
