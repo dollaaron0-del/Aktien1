@@ -69,6 +69,13 @@ LEARNING=(
     "data/strategy_state.db"
     "data/analysis_log.db"        # Roh-Analysen (Quelle für Backfill-Labeling)
     "data/rl_weights.json"        # gelernte Gewichte
+    # Nachgezogen 22.7. (Umzugsvorbereitung, Roadmap 6.1) – seit 12./14.7. neu
+    # entstandenes, nicht reproduzierbares Wissen, fehlte bisher im Backup:
+    "data/prompt_archive.db"      # KI-Prompt-Archiv (1.4d, Basis für Replay 4.5)
+    "data/order_log.db"           # Order-Lifecycle-Log (1.5f)
+    "data/thesis_registry.json"   # These-Verdikte PENDING/PROVEN/ABANDONED (6.10)
+    "data/holdout_access.json"    # Anti-Overfit-Holdout-Zugriffslog (6.4b)
+    "data/calibration_monitor.json"  # Kalibrierungs-Monitor-Snapshot-Verlauf (1.2)
 )
 
 # Optional: Social-Daten, News-Archiv (groß, aber nützlich)
