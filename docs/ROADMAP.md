@@ -741,9 +741,46 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       geschönt, (3) nur 78 gelabelte echte Trades, (4) keine historischen
       News-/Sentiment-Daten (halber Bot nicht backtestbar). Maßnahmen nach
       Aufwand:
-      (a) GRATIS/SOFORT gegen (1): Universum auf mehrere hundert Ticker,
-          Parquet-Cache vorab befüllen; EU-Universum durchs selbe Lab
-          (zieht 5.2 vor).
+      (a) ✅ GRATIS/SOFORT gegen (1) GEBAUT 22.7.: neues
+          `scripts/prefill_universe_cache.py` lädt den AKTUELLEN S&P-500-
+          Bestand aus der PIT-Mitgliederliste (6.2b) und befüllt
+          `backtesting.data_loader`'s Parquet-Cache dafür — 501/503 Ticker
+          erfolgreich gecacht (20J Historie), nur FDXF/HONA ohne Daten
+          (junge Spin-off-Symbole, yfinance kennt sie noch nicht).
+          NEBENFUND beim Bauen: (b)'s PIT-Mechanik war auf diesem Server
+          faktisch TOT — `data/sp500_membership.csv` existierte nicht
+          (ganzer `data/`-Ordner ist gitignored, Datei war nie neu geladen
+          worden seit dem letzten Daten-Reset); per
+          `scripts/sp500_membership_download.py` neu gezogen. Zweiter
+          Nebenfund: fja05680/sp500 schreibt Aktienklassen mit Punkt
+          (BRK.B, BF.B), yfinance kennt nur den Bindestrich (BRK-B) —
+          ohne Normalisierung liefert der Loader dafür 0 Zeilen; im neuen
+          Skript gefixt (`.` → `-`). WICHTIG: `scripts/walk_forward.py`
+          nutzt das erweiterte Universum nicht automatisch — Default-Base
+          bleibt `config.watchlist`, erst `--tickers <breite Liste>
+          --pit-universe` zieht es wirklich heran (kein Verhalten am
+          Bot/Live-Pfad geändert). EU-Universum-Erweiterung bleibt offen
+          (zieht 5.2 vor, hier bewusst nicht mitgemacht — anderer
+          Datenquellen-Fußabdruck).
+          HARDWARE-BEFUND (Timing-Test 22.7.): 10 Ticker × 1 Familie ×
+          60 Kombos × 8 Fenster (--workers 0, 6-Kern-Server) = 3:42 Min
+          Wandzeit → ein Lauf über alle 503 Ticker × 6 Familien würde
+          hochgerechnet ~18 STUNDEN brauchen — auf dieser Hardware nicht
+          praktikabel. Deshalb NICHT den vollen Cache-Umfang durchgejagt,
+          sondern ein Zufalls-Sample (Seed 42, reproduzierbar) über 25
+          Ticker × alle 6 Familien mit `--pit-universe` gefahren (`--no-save`,
+          reiner Validierungslauf, überschreibt NICHT die echte
+          data/strategy_registry.json): Ergebnis deckungsgleich mit den
+          bisherigen Befunden (Meta-Backtest-Befund, Paper-Forward-Befund)
+          — 0 ROBUST, 4 Familien FRAGILE (baseline_swing, donchian_breakout,
+          gap_meanrev, rsi_meanrev), 2 OVERFIT (ts_momentum, w52_high),
+          Promotion-Registry 0 ACTIVE. Mehr (PIT-korrekte) Ticker allein
+          erzeugen also KEINE Kante — bestätigt statt widerlegt die
+          bisherige Kein-Kante-Diagnose, diesmal ohne den Look-Ahead-Bias
+          der alten "heutige Liste rückwirkend"-Methode. Der konkrete
+          ~18h-Hochrechnungswert ist ein greifbares Argument FÜR den
+          geplanten Server-Umzug (Block 6) statt nur der allgemeinen
+          Vermutung "mehr Compute wäre gut".
       (b) ✅ GRATIS/TEILFIX gegen (2): HISTORISCHE Index-Zusammensetzungen
           statt heutiger Liste — GEBAUT 12.7. (Vision V0.3):
           scripts/sp500_membership_download.py lädt github.com/fja05680/sp500
