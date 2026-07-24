@@ -159,8 +159,14 @@ def _stamp_route(result: AnalysisResult, route: str, reason: str) -> AnalysisRes
 class ClaudeAnalyzer:
     """Analysiert Aktien-News mittels Claude API."""
 
-    def __init__(self, api_key: str = "", model: str = "claude-sonnet-4-5"):
+    def __init__(self, api_key: str = "", model: str = ""):
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "")
+        # Kein hartcodiertes Hauptmodell mehr: leer → config.claude_model (Default
+        # Haiku 4.5). So greift CLAUDE_MODEL auch auf dem Hauptpfad (früher lief die
+        # Katalysator-Analyse fest auf Sonnet 4.5, an der Config vorbei).
+        if not model:
+            from config import config as _cfg
+            model = _cfg.claude_model
         self.ollama_ratio = float(os.environ.get("OLLAMA_RATIO", 0.6))
         # Lokales Ollama-Modell für die Vorfilterung. Muss ein tatsächlich
         # geladenes Modell sein (siehe `ollama list`), sonst schlägt jeder
