@@ -47,6 +47,9 @@ _SOURCE_KEYS = {
     "dbnomics": "global_momentum",
     "tanker_flow": "tanker_signal",
     "eonet": "hazard_label",
+    "usgs": "quake_label",
+    "aviation": "aviation_label",
+    "cyber": "cyber_label",
 }
 
 
@@ -199,6 +202,36 @@ class MacroContext:
         except Exception as e:
             log.warning("MacroContext: EONET fehlgeschlagen: %s", e)
 
+        # ── Erdbeben-Backdrop (USGS, keylos, nur Kontext) ───────────────────
+        try:
+            from collectors.usgs_collector import USGSCollector, quake_summary
+            qz = USGSCollector().read()
+            if qz:
+                s["quake_label"]   = qz.get("hazard_label")
+                s["quake_summary"] = quake_summary(qz)
+        except Exception as e:
+            log.warning("MacroContext: USGS fehlgeschlagen: %s", e)
+
+        # ── Luftverkehrs-Aktivität (OpenSky, keylos, nur Kontext) ───────────
+        try:
+            from collectors.aviation_collector import AviationCollector, aviation_summary
+            az = AviationCollector().read()
+            if az:
+                s["aviation_label"]   = az.get("activity_label")
+                s["aviation_summary"] = aviation_summary(az)
+        except Exception as e:
+            log.warning("MacroContext: Aviation fehlgeschlagen: %s", e)
+
+        # ── Cyber-Bedrohungs-Tempo (CISA KEV + ransomware.live, nur Kontext) ─
+        try:
+            from collectors.cyber_collector import CyberCollector, cyber_summary
+            cz = CyberCollector().read()
+            if cz:
+                s["cyber_label"]   = cz.get("threat_label")
+                s["cyber_summary"] = cyber_summary(cz)
+        except Exception as e:
+            log.warning("MacroContext: Cyber fehlgeschlagen: %s", e)
+
         _CACHE = s
         _CACHED_AT = datetime.now(timezone.utc).replace(tzinfo=None)
         return s
@@ -309,6 +342,24 @@ class MacroContext:
                 detail = (detail + f"; {storms} US/Atlantik") if detail else f"{storms} US/Atlantik-Stürme"
             lines.append(f"- Naturgefahren-Backdrop (NASA EONET): {hz}"
                          f"{f' — {detail}' if detail else ''} (Insurance/Energie-Kontext)")
+
+        qz = s.get("quake_label")
+        if qz == "ELEVATED":
+            detail = s.get("quake_summary") or ""
+            lines.append(f"- Erdbeben-Backdrop (USGS): {qz}"
+                         f"{f' — {detail}' if detail else ''} (Lieferketten/Insurance-Kontext)")
+
+        av = s.get("aviation_label")
+        if av == "LOW":
+            detail = s.get("aviation_summary") or ""
+            lines.append(f"- Luftverkehr (OpenSky): auffällig niedrig"
+                         f"{f' — {detail}' if detail else ''} (Airlines/Logistik-Kontext, experimentell)")
+
+        cy = s.get("cyber_label")
+        if cy == "ELEVATED":
+            detail = s.get("cyber_summary") or ""
+            lines.append(f"- Cyber-Bedrohungs-Tempo (CISA KEV): {cy}"
+                         f"{f' — {detail}' if detail else ''} (Cybersecurity-Sektor-Kontext)")
 
         if not lines:
             return ""

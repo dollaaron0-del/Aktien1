@@ -106,7 +106,10 @@ def all_failing_patches():
          patch("collectors.weather_collector.WeatherCollector", side_effect=Exception("x")), \
          patch("collectors.dbnomics_collector.DBnomicsCollector", side_effect=Exception("x")), \
          patch("collectors.tanker_flow_collector.get_latest", side_effect=Exception("x")), \
-         patch("collectors.eonet_collector.EONETCollector", side_effect=Exception("x")):
+         patch("collectors.eonet_collector.EONETCollector", side_effect=Exception("x")), \
+         patch("collectors.usgs_collector.USGSCollector", side_effect=Exception("x")), \
+         patch("collectors.aviation_collector.AviationCollector", side_effect=Exception("x")), \
+         patch("collectors.cyber_collector.CyberCollector", side_effect=Exception("x")):
         yield
 
 
