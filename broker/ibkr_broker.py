@@ -168,21 +168,49 @@ def _valid_price(p) -> bool:
         return False
 
 
-def _ticker_price(td) -> Optional[float]:
+def _ticker_price(td, stale_close_fallback=None) -> Optional[float]:
     """Bester verfügbarer Preis aus einem ib_insync-Ticker: marketPrice
-    (Midpoint), dann last, dann close. Wichtig bei Delayed-Daten, wo der
-    Midpoint anfangs NaN sein kann, last/close aber schon stehen."""
-    for getter in (
-        lambda: td.marketPrice(),
-        lambda: getattr(td, "last", None),
-        lambda: getattr(td, "close", None),
-    ):
+    (Midpoint), dann last. Beides sind echte Live-Ticks dieser Session -
+    wenn vorhanden, verlässlich.
+
+    Sind beide ungültig (kein Live-Tick diese Session – typisch bei
+    geschlossenem Markt oder einer Subscription ohne ersten Tick), ist
+    td.close KEINE verlässliche Quelle mehr: das Feld kann tagealt sein,
+    ohne dass sich das an irgendeinem Zeitstempel erkennen ließe (td.time
+    zeigt nur den Empfang des Snapshots, nicht das Alter des Preises
+    selbst). Realer Vorfall 25.7.2026: td.close lieferte für SAP den
+    Schluss von vor ZWEI Handelstagen (128,32 statt 141,16), während
+    marketPrice/last beide -1 (ungültig) waren – der Bot hielt das für
+    einen Stop-Loss-Bruch und versuchte wiederholt zu verkaufen, obwohl
+    die Position komfortabel im Plus lag.
+
+    `stale_close_fallback` ist ein Callable, das eine verlässliche
+    Quelle für "letzter bekannter Schluss" liefert (siehe
+    IBKRBroker._historical_close: reqHistoricalData statt Streaming-Cache).
+    Erst wenn auch das fehlschlägt, wird td.close als letzter Ausweg
+    genutzt (besser ein möglicherweise alter Preis als gar keiner)."""
+    for getter in (lambda: td.marketPrice(), lambda: getattr(td, "last", None)):
         try:
             p = getter()
         except Exception:
             continue
         if _valid_price(p):
             return round(float(p), 4)
+
+    if stale_close_fallback is not None:
+        try:
+            p = stale_close_fallback()
+            if _valid_price(p):
+                return round(float(p), 4)
+        except Exception:
+            pass
+
+    try:
+        p = getattr(td, "close", None)
+        if _valid_price(p):
+            return round(float(p), 4)
+    except Exception:
+        pass
     return None
 
 
@@ -192,14 +220,23 @@ class IBKRBroker:
     Verbindung wird beim ersten Aufruf von connect() hergestellt.
     """
 
-    def __init__(self):
+    def __init__(self, client_id: Optional[int] = None, readonly: bool = False):
+        """`client_id`/`readonly` erlauben eine ZWEITE, rein lesende Verbindung
+        zum selben Gateway (Dashboard/Telegram über broker.factory), ohne die
+        Handels-Session des Live-Bots (eigene Client-ID) zu stören. Ohne
+        Angabe identisch zum bisherigen Verhalten (main.py: Client-ID aus
+        IBKR_CLIENT_ID, volle Handelsrechte)."""
         self._ib = None
         self._connected = False
         self._active_account: str = _ACCOUNT
         self._lock = threading.RLock()
+        self._client_id = client_id if client_id is not None else _CLIENT_ID
+        self._readonly = readonly
         # conId/Symbol → [(lowEdge, increment), …] aus reqMarketRule; die
         # Tick-Staffel einer Aktie ändert sich nicht innerhalb einer Session.
         self._market_rule_cache: Dict = {}
+        # conId/Symbol → (Preis, monotonic-Zeit) für _historical_close.
+        self._hist_close_cache: Dict = {}
         self._connect()
 
     # ── Verbindungsmanagement ─────────────────────────────────────────────────
@@ -215,8 +252,9 @@ class IBKRBroker:
             return False
         try:
             ib = IB()
-            log.info("IBKR: Verbindungsversuch %s:%d (clientId=%d) …", _HOST, _PORT, _CLIENT_ID)
-            ib.connect(_HOST, _PORT, clientId=_CLIENT_ID, readonly=False, timeout=10)
+            log.info("IBKR: Verbindungsversuch %s:%d (clientId=%d%s) …",
+                     _HOST, _PORT, self._client_id, ", readonly" if self._readonly else "")
+            ib.connect(_HOST, _PORT, clientId=self._client_id, readonly=self._readonly, timeout=10)
             # ib_insync.IB.RequestTimeout ist per Default 0 (= KEIN Timeout) für
             # alle blockierenden Aufrufe, die intern über IB._run()/util.run()
             # laufen (whatIfOrder, qualifyContracts, …) – bleibt IB Gateway eine
@@ -313,6 +351,40 @@ class IBKRBroker:
 
     # ── Preisabfragen ─────────────────────────────────────────────────────────
 
+    # Cache für _historical_close: mehrere Preisabfragen kurz hintereinander
+    # (z.B. get_prices für ein ganzes Portfolio) sollen nicht pro Ticker eine
+    # eigene reqHistoricalData-Runde auslösen. Kurze TTL genügt – der Fallback
+    # greift ohnehin nur, wenn diese Session noch keinen Live-Tick bekam.
+    _HIST_CLOSE_TTL = 60
+
+    def _historical_close(self, contract) -> Optional[float]:
+        """Letzter bekannter Tagesschluss via reqHistoricalData – verlässliche
+        Quelle, wenn weder marketPrice() noch last einen Live-Tick liefern.
+
+        Anders als der Streaming-Snapshot (td.close, kann tagealt im Cache
+        hängen bleiben, siehe _ticker_price-Docstring) fragt reqHistoricalData
+        aktiv bei IBKR nach und lieferte im SAP-Vorfall den korrekten
+        Freitagsschluss (141,16), während der Snapshot bei 128,32 (Mittwoch)
+        hängengeblieben war."""
+        key = getattr(contract, "conId", None) or contract.symbol
+        now = time.monotonic()
+        cached = self._hist_close_cache.get(key)
+        if cached and now - cached[1] < self._HIST_CLOSE_TTL:
+            return cached[0]
+        try:
+            bars = self._ib.reqHistoricalData(
+                contract, endDateTime="", durationStr="2 D",
+                barSizeSetting="1 day", whatToShow="TRADES",
+                useRTH=True, formatDate=1,
+            )
+            price = float(bars[-1].close) if bars else None
+        except Exception as e:
+            log.debug("IBKR _historical_close %s: %s", getattr(contract, "symbol", "?"), e)
+            price = None
+        if price is not None:
+            self._hist_close_cache[key] = (price, now)
+        return price
+
     @_synchronized
     def get_price(self, ticker: str) -> Optional[float]:
         if not self._ensure_connected():
@@ -322,7 +394,7 @@ class IBKRBroker:
             self._ib.qualifyContracts(contract)
             ticker_data = self._ib.reqMktData(contract, "", False, False)
             self._ib.sleep(_PRICE_TIMEOUT)
-            price = _ticker_price(ticker_data)
+            price = _ticker_price(ticker_data, lambda: self._historical_close(contract))
             self._ib.cancelMktData(contract)
             if price is not None:
                 log.debug("IBKR price %s: %.4f", ticker, price)
@@ -348,6 +420,7 @@ class IBKRBroker:
 
             self._ib.qualifyContracts(*[c for _, c in contracts])
             ticker_map = {}
+            contract_map = {t: c for t, c in contracts}
             for t, c in contracts:
                 td = self._ib.reqMktData(c, "", False, False)
                 ticker_map[t] = td
@@ -355,7 +428,8 @@ class IBKRBroker:
             self._ib.sleep(_PRICE_TIMEOUT)
 
             for t, td in ticker_map.items():
-                p = _ticker_price(td)
+                c = contract_map[t]
+                p = _ticker_price(td, lambda c=c: self._historical_close(c))
                 if p is not None:
                     result[t] = p
 

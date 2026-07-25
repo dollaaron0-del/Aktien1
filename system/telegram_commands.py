@@ -94,11 +94,14 @@ def build_status_text() -> str:
     try:
         from portfolio.portfolio import Portfolio
         from portfolio.circuit_breaker import CircuitBreaker
-        from broker.paper_broker import PaperBroker
+        from broker.factory import get_readonly_broker
 
         port = Portfolio()
         positions = port.all_positions()
-        prices = PaperBroker().get_prices(list(positions.keys())) if positions else {}
+        # Dieselbe Preisquelle wie der Live-Bot, nicht PaperBroker/yfinance –
+        # sonst zeigt der Telegram-Status eine andere Wirklichkeit als die,
+        # auf der der Bot tatsächlich handelt (25.7.2026, SAP-Vorfall).
+        prices = get_readonly_broker().get_prices(list(positions.keys())) if positions else {}
         total_value = port.total_value(prices)
         cb = CircuitBreaker().status(total_value)
         lines.append("🔴 Circuit-Breaker AUSGELÖST" if cb.get("triggered") else "🟢 Circuit-Breaker")

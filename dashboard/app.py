@@ -16,7 +16,7 @@ import pandas as pd
 from datetime import datetime, timezone
 
 from config import config
-from broker.paper_broker import PaperBroker
+from broker.factory import get_readonly_broker
 from portfolio.portfolio import Portfolio
 from portfolio.performance_tracker import PerformanceTracker
 from portfolio.phase_controller import PhaseController
@@ -57,7 +57,13 @@ require_login()
 # ─── Resource loading ─────────────────────────────────────────────────────────
 @st.cache_resource
 def load_resources():
-    broker       = PaperBroker()
+    # Dieselbe Preis-/Positionsquelle wie der Live-Bot (config.broker_mode) –
+    # sonst zeigt das Dashboard eine andere Wirklichkeit als die, auf der der
+    # Bot tatsächlich handelt (25.7.2026, SAP-Vorfall: Dashboard hätte per
+    # PaperBroker/yfinance eine gesunde Position gezeigt, während IBKR intern
+    # einen fehlerhaften Stop-Loss-Bruch sah). Read-only, eigene Client-ID –
+    # kann nie eine Order platzieren und stört die Bot-Session nicht.
+    broker       = get_readonly_broker()
     portfolio    = Portfolio(config.initial_capital)
     tracker      = PerformanceTracker()
     phase_ctrl   = PhaseController(

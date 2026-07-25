@@ -97,7 +97,10 @@ def _as_analysis_result(row: Dict):
 
 def _current_price(ticker: str) -> Optional[float]:
     """Aktueller Kurs — read-only über denselben Broker-Weg, den auch der
-    echte Bot nutzt (`PaperBroker.get_price()`, intern gecacht).
+    echte Bot nutzt (broker.factory.get_readonly_broker(): IBKR bei
+    BROKER_MODE=ibkr, sonst PaperBroker). Bis 25.7.2026 stand hier fest
+    PaperBroker – der Trockenlauf verglich sich also gegen eine andere
+    Preisquelle (yfinance-Cache) als die, auf der der Bot live entscheidet.
 
     Bewusst NICHT `target_price` aus der Analyse: das ist Claudes KURSZIEL,
     nicht der heutige Kurs. Damit zu rechnen ergäbe eine falsche
@@ -106,8 +109,8 @@ def _current_price(ticker: str) -> Optional[float]:
     Das analysis_log speichert den Kurs zum Analysezeitpunkt nicht.
     """
     try:
-        from broker.paper_broker import PaperBroker
-        return PaperBroker().get_price(ticker)
+        from broker.factory import get_readonly_broker
+        return get_readonly_broker().get_price(ticker)
     except Exception:
         return None
 
