@@ -56,6 +56,13 @@ _TRAILING_STEPS_CRISIS = [
 # Konfidenz-basierte Positionsgrößen
 _CONFIDENCE_SIZING = {"HIGH": 1.0, "MEDIUM": 0.70, "LOW": 0.45}
 
+
+def _is_fractional_asset(ticker: str) -> bool:
+    """Assets, die in Bruchteilen handelbar sind (Krypto). Aktien nicht: die
+    IBKR-API lehnt Teilaktien ab (Error 10243)."""
+    upper = (ticker or "").upper()
+    return "/" in upper or upper.endswith("-USD")
+
 # Congress×CEO-Confluence-Overlay: kaufen Exec UND Politiker unabhängig denselben
 # Ticker (analyzers/insider_signal.InsiderScore.confluence), gilt das als seltene,
 # wirklich unabhängige Bestätigung → Kaufschwelle leicht runter + Sizing leicht hoch.
@@ -235,8 +242,36 @@ class SwingStrategy:
         if pos is not None:
             return self._evaluate_existing(ticker, pos, analysis, current_price, params, regime)
 
+        # 2b. Cross-Listing: dieselbe Firma steht schon unter einem anderen
+        # Börsenkürzel im Buch (SAP vs. SAP.DE, ASML vs. ASML.AS …). Ohne
+        # diesen Check bewertete der Bot das US-ADR als brandneue Firma und
+        # kaufte dieselbe Firma ein zweites Mal – Sizing, Einzelpositions-
+        # Deckel und Korrelations-Check sahen zwei getrennte Werte (real
+        # passiert am 24.7.2026 mit SAP). Aufstocken bleibt möglich, aber
+        # ausschließlich über den Ticker, unter dem die Position geführt wird:
+        # der läuft im selben Zyklus durch _evaluate_existing (Scale-in).
+        alias = self._held_under_other_listing(ticker)
+        if alias:
+            return StrategyResult(
+                "SKIP", ticker,
+                f"Firma bereits im Depot als {alias} (Cross-Listing) – "
+                f"Aufstocken läuft über {alias}")
+
         # 3. New position evaluation
         return self._evaluate_new(ticker, analysis, current_price, params, regime, market_is_ranging, rl_agent, config)
+
+    def _held_under_other_listing(self, ticker: str) -> Optional[str]:
+        """Ticker einer offenen Position derselben Firma an einem anderen
+        Handelsplatz – oder None. Fail-open: ohne Mapping kein Block."""
+        try:
+            from analyzers.stock_relations import canonical
+            canon = canonical(ticker)
+            for held in self.portfolio.all_positions():
+                if held.upper() != ticker.upper() and canonical(held) == canon:
+                    return held
+        except Exception as e:
+            log.debug("Cross-Listing-Prüfung übersprungen [%s]: %s", ticker, e)
+        return None
 
     def _evaluate_existing(
         self, ticker, pos, analysis, current_price, params, regime
@@ -476,6 +511,18 @@ class SwingStrategy:
                 log.debug("RL-Veto übersprungen [%s]: %s", ticker, _rl_err)
 
         shares = position_value / current_price
+
+        # Aktien-Orders unter 1 Stück kann die IBKR-API nicht ausführen. Ohne
+        # diesen Guard ging die Order trotzdem raus, scheiterte beim Broker und
+        # löste einen lauten "BUY-Order fehlgeschlagen"-Alarm aus, obwohl nur
+        # das Budget zu klein war (24.7.2026: SAP mit 0,86 Stück, weil der
+        # Cash-Reserve-Boden fast erreicht war). Krypto handelt Bruchteile und
+        # bleibt ausgenommen.
+        if shares < 1 and not _is_fractional_asset(ticker):
+            return StrategyResult(
+                "SKIP", ticker,
+                f"Positionsgröße {shares:.2f} Stück < 1 bei Kurs {current_price:.2f} "
+                f"(einsetzbares Budget {position_value:.0f}) – keine Teilaktien handelbar")
 
         # SL/TP
         sl_pct = params.sl_pct

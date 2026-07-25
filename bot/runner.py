@@ -332,6 +332,29 @@ def _get_watchlist(portfolio: Portfolio) -> tuple:
     else:
         log.debug("Frugal-Modus: BenchList + Sektor-Sampler übersprungen")
 
+    # Cross-Listing-Dedup: dieselbe Firma nicht zweimal analysieren (SAP + SAP.DE
+    # liefen am 24.7.2026 parallel durch den Zyklus – doppelte Analysekosten und
+    # zwei widersprüchliche Entscheidungen für eine Firma). Der Ticker, unter dem
+    # eine Position geführt wird, gewinnt; sonst der zuerst aufgenommene.
+    try:
+        from analyzers.stock_relations import canonical
+        _held = {t.upper() for t in portfolio.all_positions()}
+        _by_company: dict = {}
+        for _t in base:
+            _c = canonical(_t)
+            _prev = _by_company.get(_c)
+            if _prev is None or (_t.upper() in _held and _prev.upper() not in _held):
+                _by_company[_c] = _t
+        _deduped = [t for t in base if _by_company.get(canonical(t)) == t]
+        _dropped = [t for t in base if t not in _deduped]
+        if _dropped:
+            log.info("Cross-Listing-Dedup: %s übersprungen (Firma bereits als %s in der Watchlist)",
+                     ", ".join(_dropped),
+                     ", ".join(_by_company[canonical(t)] for t in _dropped))
+            base = _deduped
+    except Exception as e:
+        log.debug("Cross-Listing-Dedup übersprungen: %s", e)
+
     log.info("Analyse-Watchlist: %d Aktien → %s", len(base), ", ".join(base[:15]))
     return base, _bench_geo_contexts
 
