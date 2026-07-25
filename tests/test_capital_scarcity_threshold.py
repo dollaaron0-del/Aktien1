@@ -6,12 +6,15 @@ mittelmäßige Signale noch durchgingen, bis das Cash-Polster abrupt am
 Reserve-Boden aufschlug — danach war der Bot für 6+ Tage komplett
 handlungsunfähig, bis die ersten Positionen turnusmäßig frei wurden.
 
-Semantik: sinkt das freie Cash (% der Equity), steigt buy_threshold
-asymmetrisch (nur strenger, nie lockerer, wie der bestehende Makro-
-Aufschlag). Bei Cash >= capital_scarcity_cash_pct_full (Default 20 %)
-unverändert ("100 % Kapital → Hürden wie bisher", User-Vorgabe); bei
-Cash <= capital_scarcity_cash_pct_empty (Default 5 %, nahe dem harten
-Reserve-Boden) der volle Aufschlag; dazwischen linear interpoliert.
+Semantik (nach User-Präzisierung, zweite Iteration): keine harten Stufen.
+Der Aufschlag ist eine durchgehende Exponentialkurve über die GESAMTE Spanne
+von 0-100% Cash: max_adj * 2^(-cash_pct / pivot_pct).
+  - cash_pct=0 (kein Cash mehr)          → exakt max_adj (asymptotisches Maximum)
+  - cash_pct=pivot_pct ("Kipppunkt")     → exakt max_adj/2
+  - cash_pct→100%                        → geht glatt gegen 0, nie hart geklemmt
+Eine erste Version hatte noch feste Plateaus (0 oberhalb 20% Cash, Maximum
+unterhalb 5%) mit linearer/potenzierter Interpolation nur dazwischen - genau
+die harten Grenzen, die der User in der Präzisierung explizit ausschloss.
 """
 import types
 from datetime import datetime, timezone
@@ -20,7 +23,7 @@ import pytest
 
 import portfolio.portfolio as port_mod
 from portfolio.portfolio import Portfolio, Position
-from strategy.swing_strategy import SwingStrategy
+from strategy.swing_strategy import SwingStrategy, _capital_scarcity_adjustment
 
 
 def make_portfolio(tmp_path, monkeypatch, capital=100_000.0):
@@ -73,9 +76,8 @@ def _config(**over):
         buy_threshold=0.65, min_sources=1,
         learning_filter_enabled=False, earnings_filter_enabled=False,
         capital_scarcity_threshold_enabled=True,
-        capital_scarcity_cash_pct_full=0.20,
-        capital_scarcity_cash_pct_empty=0.05,
         capital_scarcity_max_adj=0.15,
+        capital_scarcity_pivot_pct=0.10,
         max_position_pct=0.20, max_single_position_pct=1.0,
         conviction_max_bonus=0.6, cash_reserve_pct=0.0,
         cash_reserve_hard_pct=0.0, reflow_sizing_enabled=False,
@@ -104,126 +106,107 @@ def _evaluate(strat, sentiment, config):
                                "BULL", False, None, config)
 
 
-# ── Kernverhalten ────────────────────────────────────────────────────────────
+# ── Reine Kurvenform (_capital_scarcity_adjustment direkt) ─────────────────
 
-def test_full_cash_no_adjustment(tmp_path, monkeypatch):
-    """100 % Kapital verfügbar (all-cash) → Schwelle bleibt wie bisher."""
+def test_zero_cash_hits_exact_max():
+    """Kein Cash mehr → exakt das asymptotische Maximum."""
+    assert _capital_scarcity_adjustment(0.0, max_adj=0.15, pivot_pct=0.10) == pytest.approx(0.15)
+
+
+def test_pivot_point_is_exactly_half_max():
+    """Der Kipppunkt ist per Definition dort, wo der Aufschlag die Hälfte
+    des Maximums erreicht hat."""
+    adj = _capital_scarcity_adjustment(0.10, max_adj=0.15, pivot_pct=0.10)
+    assert adj == pytest.approx(0.075)
+
+
+def test_full_cash_is_negligible_but_not_zero():
+    """100 % Cash: der Aufschlag ist praktisch nicht spürbar, aber KEIN
+    hartes Plateau bei exakt 0 - anders als die erste Implementierung."""
+    adj = _capital_scarcity_adjustment(1.0, max_adj=0.15, pivot_pct=0.10)
+    assert 0.0 < adj < 0.001
+
+
+def test_curve_has_no_plateau_strictly_monotonic():
+    """Über die gesamte Spanne streng monoton fallend - kein Bereich, in dem
+    der Aufschlag konstant bleibt (das wäre wieder eine harte Stufe)."""
+    cash_levels = [0.0, 0.01, 0.03, 0.05, 0.08, 0.10, 0.15, 0.20, 0.30, 0.50, 0.80, 1.0]
+    adjustments = [_capital_scarcity_adjustment(c, 0.15, 0.10) for c in cash_levels]
+    for a, b in zip(adjustments, adjustments[1:]):
+        assert a > b, f"Kurve muss überall streng fallen: {adjustments}"
+
+
+def test_smaller_pivot_decays_faster():
+    """Kleinerer Kipppunkt-Wert → die Kurve fällt schon bei mehr Cash stark ab."""
+    adj_tight = _capital_scarcity_adjustment(0.10, max_adj=0.15, pivot_pct=0.05)
+    adj_loose = _capital_scarcity_adjustment(0.10, max_adj=0.15, pivot_pct=0.20)
+    assert adj_tight < adj_loose
+
+
+def test_invalid_pivot_returns_zero():
+    assert _capital_scarcity_adjustment(0.10, max_adj=0.15, pivot_pct=0.0) == 0.0
+    assert _capital_scarcity_adjustment(0.10, max_adj=0.15, pivot_pct=-1.0) == 0.0
+
+
+def test_negative_cash_pct_clamped_to_zero_not_exceeding_max():
+    """Ein (eigentlich unmögliches) negatives cash_pct darf den Aufschlag
+    nicht über max_adj hinaustreiben - Sicherheitsnetz, keine Policy-Grenze."""
+    adj = _capital_scarcity_adjustment(-0.05, max_adj=0.15, pivot_pct=0.10)
+    assert adj == pytest.approx(0.15)
+
+
+# ── End-to-End über _evaluate_new ───────────────────────────────────────────
+
+def test_full_cash_normal_signal_still_buys(tmp_path, monkeypatch):
+    """All-Cash-Portfolio: der winzige Aufschlag ändert am Kaufverhalten
+    nichts spürbares."""
     p = make_portfolio(tmp_path, monkeypatch, capital=100_000.0)
     strat = make_strategy(p)
     cfg = _config()
-    # Sentiment knapp über der unveränderten Schwelle 0.65 → BUY.
     res = _evaluate(strat, 0.66, cfg)
     assert res.action == "BUY"
 
 
-def test_scarce_cash_raises_threshold_and_blocks_mediocre_signal(tmp_path, monkeypatch):
-    """Cash am unteren Rand (5 % von Equity) → voller Aufschlag (+0.15);
-    ein Sentiment, das bei normaler Schwelle gekauft hätte, wird jetzt geskippt."""
+def test_scarce_cash_blocks_mediocre_signal(tmp_path, monkeypatch):
+    """Cash nahe null → nahe voller Aufschlag; ein Sentiment, das bei
+    normaler Schwelle gekauft hätte, wird jetzt geskippt."""
     p = make_portfolio(tmp_path, monkeypatch, capital=100_000.0)
-    p.open_position(make_position("AAPL", 950, 100.0))   # bindet 95_000, Cash 5_000 (5%)
+    p.open_position(make_position("AAPL", 990, 100.0))   # Cash 1_000 (1%)
     strat = make_strategy(p)
     cfg = _config()
 
     res = _evaluate(strat, 0.66, cfg)
     assert res.action == "SKIP"
     assert "Schwelle" in res.reason
-    assert "0.80" in res.reason   # 0.65 + 0.15 voller Aufschlag
 
 
 def test_scarce_cash_still_buys_on_strong_signal(tmp_path, monkeypatch):
     """Der Aufschlag blockt nicht kategorisch – ein wirklich starkes Signal
     kommt trotz knappem Cash noch durch."""
     p = make_portfolio(tmp_path, monkeypatch, capital=100_000.0)
-    p.open_position(make_position("AAPL", 950, 100.0))
+    p.open_position(make_position("AAPL", 990, 100.0))
     strat = make_strategy(p)
     cfg = _config()
     res = _evaluate(strat, 0.90, cfg)
     assert res.action == "BUY"
 
 
-def test_pure_linear_interpolation_with_exponent_one(tmp_path, monkeypatch):
-    """exponent=1.0 reproduziert die ursprüngliche lineare Kurve (Backward-
-    Kompat): Cash genau in der Mitte (12,5 % von 20/5) → halber Aufschlag
-    (+0.075)."""
+def test_pivot_point_end_to_end(tmp_path, monkeypatch):
+    """Am Kipppunkt (10 % Cash) ist die Schwelle exakt 0.65+0.075=0.725."""
     p = make_portfolio(tmp_path, monkeypatch, capital=100_000.0)
-    p.open_position(make_position("AAPL", 875, 100.0))    # Cash 12_500 (12.5%)
+    p.open_position(make_position("AAPL", 900, 100.0))    # Cash 10_000 (10%)
     strat = make_strategy(p)
-    cfg = _config(capital_scarcity_curve_exponent=1.0)
+    cfg = _config()
 
-    res = _evaluate(strat, 0.70, cfg)   # 0.65+0.075=0.725 < 0.70 < ohne Aufschlag würde kaufen
-    assert res.action == "SKIP"
-    assert "0.72" in res.reason or "0.73" in res.reason  # 0.725 gerundet
-
-
-def test_default_exponential_curve_is_more_lenient_at_midpoint(tmp_path, monkeypatch):
-    """Kern der 25.7.-Umstellung auf eine Exponentialkurve: beim selben
-    Cash-Stand (12,5 %, Kurvenmitte) ist der Aufschlag mit dem Default-
-    Exponenten (2.0) NUR EIN VIERTEL des Maximums (+0.0375), nicht die
-    Hälfte wie bei linear (+0.075) - "flexibel in der Mitte, strikt erst
-    am Ende der Kurve"."""
-    p = make_portfolio(tmp_path, monkeypatch, capital=100_000.0)
-    p.open_position(make_position("AAPL", 875, 100.0))    # Cash 12_500 (12.5%)
-    strat = make_strategy(p)
-    cfg = _config()   # capital_scarcity_curve_exponent Default = 2.0
-
-    # 0.65 + 0.0375 = 0.6875: ein Signal, das bei linear (0.725) geskippt
-    # worden wäre, kauft jetzt.
-    res = _evaluate(strat, 0.70, cfg)
-    assert res.action == "BUY"
-
-    # Etwas oberhalb der neuen (niedrigeren) Schwelle greift die Sizing-Logik normal.
-    res2 = _evaluate(strat, 0.68, cfg)
-    assert res2.action == "SKIP"
-    assert "Sentiment" in res2.reason
-
-
-def _sub_portfolio(tmp_path, name, monkeypatch, capital=100_000.0):
-    """Wie make_portfolio, aber mit eigenem Unterverzeichnis – für Tests, die
-    mehrere unabhängige Portfolios innerhalb derselben tmp_path brauchen."""
-    sub = tmp_path / name
-    sub.mkdir(parents=True, exist_ok=True)
-    return make_portfolio(sub, monkeypatch, capital=capital)
-
-
-def test_curve_endpoints_independent_of_exponent(tmp_path, monkeypatch):
-    """Egal welcher Exponent: bei full-Cash bleibt der Aufschlag exakt 0, bei
-    empty-Cash exakt max_adj - nur die Kurvenform dazwischen ändert sich."""
-    for exponent in (1.0, 2.0, 3.0, 5.0):
-        cfg = _config(capital_scarcity_curve_exponent=exponent)
-
-        p_full = _sub_portfolio(tmp_path, f"full_{exponent}", monkeypatch)
-        strat_full = make_strategy(p_full)
-        res_full = _evaluate(strat_full, 0.66, cfg)
-        assert res_full.action == "BUY", f"exponent={exponent}: full-Cash muss unverändert kaufen"
-
-        p_empty = _sub_portfolio(tmp_path, f"empty_{exponent}", monkeypatch)
-        p_empty.open_position(make_position("AAPL", 950, 100.0))   # 5% Cash
-        strat_empty = make_strategy(p_empty)
-        res_empty = _evaluate(strat_empty, 0.79, cfg)
-        assert res_empty.action == "SKIP", f"exponent={exponent}: 0.79 < 0.80 muss überall skippen"
-        res_empty2 = _evaluate(strat_empty, 0.81, cfg)
-        assert res_empty2.action == "BUY", f"exponent={exponent}: 0.81 > 0.80 muss überall kaufen"
-
-
-def test_higher_exponent_is_more_lenient_before_the_end(tmp_path, monkeypatch):
-    """Größerer Exponent → flachere Kurve über einen größeren Teil der Spanne,
-    steilerer Endspurt: bei 75 % der Strecke (10,25 % Cash) muss exponent=3
-    einen kleineren Aufschlag liefern als exponent=2."""
-    def _adj_at(exponent):
-        p = _sub_portfolio(tmp_path, f"steep_{exponent}", monkeypatch)
-        p.open_position(make_position("AAPL", 897.5, 100.0))   # Cash 10_250 (10.25%)
-        equity = p.total_value({})
-        cash_pct = p.cash / equity
-        full, empty, max_adj = 0.20, 0.05, 0.15
-        linear = max(0.0, min(1.0, (full - cash_pct) / (full - empty)))
-        return (linear ** exponent) * max_adj
-
-    assert _adj_at(3.0) < _adj_at(2.0) < _adj_at(1.0)
+    res_below = _evaluate(strat, 0.72, cfg)
+    assert res_below.action == "SKIP"
+    res_above = _evaluate(strat, 0.73, cfg)
+    assert res_above.action == "BUY"
 
 
 def test_disabled_flag_ignores_cash_level(tmp_path, monkeypatch):
     p = make_portfolio(tmp_path, monkeypatch, capital=100_000.0)
-    p.open_position(make_position("AAPL", 950, 100.0))    # 5% Cash
+    p.open_position(make_position("AAPL", 990, 100.0))    # 1% Cash
     strat = make_strategy(p)
     cfg = _config(capital_scarcity_threshold_enabled=False)
 
@@ -249,11 +232,11 @@ def test_scarcity_and_macro_headwind_stack(tmp_path, monkeypatch):
         lambda: types.SimpleNamespace(bias_score=lambda: -0.7, size_modifier=lambda t: 1.0),
     )
     p = make_portfolio(tmp_path, monkeypatch, capital=100_000.0)
-    p.open_position(make_position("AAPL", 950, 100.0))    # 5% Cash → +0.15
+    p.open_position(make_position("AAPL", 990, 100.0))    # 1% Cash → nahe max_adj
     strat = make_strategy(p)
     cfg = _config()
 
-    # 0.65 (Basis) + 0.08 (Makro <= -0.6) + 0.15 (Cash) = 0.88
+    # 0.65 (Basis) + 0.08 (Makro <= -0.6) + ~0.145 (Cash, nahe Maximum) ≈ 0.875
     res = _evaluate(strat, 0.85, cfg)
     assert res.action == "SKIP"
     res2 = _evaluate(strat, 0.90, cfg)

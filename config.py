@@ -118,31 +118,26 @@ class Config:
     # Reserve-Boden aufschlug und der Bot abrupt komplett handlungsunfähig
     # wurde. Diese Schwelle wirkt VORHER: je knapper das Cash, desto höher die
     # Latte, sodass nur noch die stärksten Signale das restliche Pulver bekommen.
+    #
+    # Durchgehende Exponentialkurve OHNE harte Stufen (User-Präzisierung:
+    # "schon ab 100% fängt das an, nur wenig am Anfang, ab einem Kipppunkt
+    # steiler"). Formel: max_adj * 2^(-cash_pct / pivot_pct) - gilt für JEDEN
+    # Cash-Stand zwischen 0% und 100%, kein Plateau an keinem Ende.
     capital_scarcity_threshold_enabled: bool = field(
         default_factory=lambda: os.getenv("CAPITAL_SCARCITY_THRESHOLD_ENABLED", "true").lower() == "true"
     )
-    # Ab diesem Cash-Anteil (% der Equity) gilt "genug Pulver" - Schwelle bleibt
-    # unverändert (100 % Normalbetrieb im Sinne des Users).
-    capital_scarcity_cash_pct_full: float = field(
-        default_factory=lambda: float(os.getenv("CAPITAL_SCARCITY_CASH_PCT_FULL", "0.20"))
-    )
-    # Bei/unter diesem Cash-Anteil (nahe cash_reserve_hard_pct) greift der volle
-    # Aufschlag - hier wird ohnehin kaum noch Positionsgröße zugelassen.
-    capital_scarcity_cash_pct_empty: float = field(
-        default_factory=lambda: float(os.getenv("CAPITAL_SCARCITY_CASH_PCT_EMPTY", "0.05"))
-    )
-    # Maximaler Aufschlag auf buy_threshold bei komplett knappem Cash (zwischen
-    # full und empty interpoliert, Kurvenform via capital_scarcity_curve_exponent).
+    # Maximaler Aufschlag auf buy_threshold - asymptotisches Maximum, exakt
+    # erreicht nur bei cash_pct=0 (kein Cash mehr), sonst nur angenähert.
     capital_scarcity_max_adj: float = field(
         default_factory=lambda: float(os.getenv("CAPITAL_SCARCITY_MAX_ADJ", "0.15"))
     )
-    # Kurvenform der Interpolation: 1.0 = linear (alter Verlauf), >1.0 macht sie
-    # exponentiell/konvex - bei reichlich Cash bleibt die Latte fast unverändert
-    # (flexibel), erst nahe am Boden zieht sie merklich an (klare Richtlinie am
-    # Ende der Kurve statt gleichmäßigem Anstieg über die ganze Spanne).
-    # 2.0 = quadratisch, 3.0 = spürbar steiler nur im letzten Drittel.
-    capital_scarcity_curve_exponent: float = field(
-        default_factory=lambda: float(os.getenv("CAPITAL_SCARCITY_CURVE_EXPONENT", "2.0"))
+    # "Kipppunkt": der Cash-Anteil (% der Equity), bei dem der Aufschlag bereits
+    # die HÄLFTE von max_adj erreicht hat. Kleinerer Wert → Kurve fällt schneller
+    # ab (schon bei mehr Cash spürbar), größerer Wert → Kurve bleibt länger flach.
+    # Default 0.10 = an cash_reserve_pct verankert (dort ist der Aufschlag schon
+    # halb da, bevor der Soft-Reserve-Boden überhaupt erreicht ist).
+    capital_scarcity_pivot_pct: float = field(
+        default_factory=lambda: float(os.getenv("CAPITAL_SCARCITY_PIVOT_PCT", "0.10"))
     )
 
     # ── Selbstlern-Filter (analyzers/entry_filter.py) ───────────────────────
@@ -525,17 +520,12 @@ def validate_config() -> None:
         errors.append(f"MAX_POSITION_PCT={config.max_position_pct} ungültig.")
     if not (0.0 < config.buy_threshold <= 1.0):
         errors.append(f"BUY_THRESHOLD={config.buy_threshold} ungültig (muss 0–1 sein).")
-    if not (0.0 <= config.capital_scarcity_cash_pct_empty < config.capital_scarcity_cash_pct_full):
-        errors.append(
-            f"CAPITAL_SCARCITY_CASH_PCT_EMPTY={config.capital_scarcity_cash_pct_empty} muss "
-            f"kleiner sein als CAPITAL_SCARCITY_CASH_PCT_FULL={config.capital_scarcity_cash_pct_full}."
-        )
     if not (0.0 <= config.capital_scarcity_max_adj <= 0.5):
         errors.append(f"CAPITAL_SCARCITY_MAX_ADJ={config.capital_scarcity_max_adj} ungültig (0–0,5 sinnvoll).")
-    if not (0.0 < config.capital_scarcity_curve_exponent <= 10.0):
+    if not (0.0 < config.capital_scarcity_pivot_pct <= 1.0):
         errors.append(
-            f"CAPITAL_SCARCITY_CURVE_EXPONENT={config.capital_scarcity_curve_exponent} "
-            f"ungültig (0–10 sinnvoll; 1.0=linear, 2–3 typisch exponentiell)."
+            f"CAPITAL_SCARCITY_PIVOT_PCT={config.capital_scarcity_pivot_pct} ungültig "
+            f"(muss > 0 und <= 1 sein; 0,10 = 10 % Cash als Kipppunkt)."
         )
     if config.initial_capital <= 0:
         errors.append(f"INITIAL_CAPITAL={config.initial_capital} ungültig.")
