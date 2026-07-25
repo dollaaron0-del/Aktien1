@@ -48,6 +48,11 @@ class _FakeIB:
         self.placed = []          # alle placeOrder-Aufrufe (trade)
         self.cancelled = []       # gecancelte Orders
         self.open = []            # ruhende (nicht gefüllte/gecancelte) Trades
+        # Market-Orders sofort ablehnen statt füllen – so verhält sich der echte
+        # Gateway bei geschlossener Börse (Error 10349 → Cancelled).
+        self.reject_market_orders = False
+        # >0: Market-Order füllt nur diese Stückzahl (Teilausführung).
+        self.partial_fill_qty = 0.0
 
     def isConnected(self):
         return True
@@ -62,9 +67,17 @@ class _FakeIB:
         tr = _FakeTrade(contract, order)
         self.placed.append(tr)
         if getattr(order, "orderType", "MKT") == "MKT":
-            tr.orderStatus.status = "Filled"
-            tr.orderStatus.filled = order.totalQuantity
-            tr.orderStatus.avgFillPrice = self.market_fill_price
+            if self.reject_market_orders:
+                tr.orderStatus.status = "Cancelled"
+            elif self.partial_fill_qty:
+                tr.orderStatus.status = "Submitted"
+                tr.orderStatus.filled = self.partial_fill_qty
+                tr.orderStatus.avgFillPrice = self.market_fill_price
+                self.open.append(tr)
+            else:
+                tr.orderStatus.status = "Filled"
+                tr.orderStatus.filled = order.totalQuantity
+                tr.orderStatus.avgFillPrice = self.market_fill_price
         else:
             self.open.append(tr)
         return tr
@@ -82,11 +95,26 @@ class _FakeIB:
     def openTrades(self):
         return list(self.open)
 
+    # ── Tick-Staffel (MiFID): Börsen ticken kursabhängig gröber ──────────────
+    # Default entspricht XETRA-Rule 1874 (SAP/RHM): ab 100 € → 0,02, ab 500 € → 0,10.
+    market_rule = [(0.0, 0.0001), (50.0, 0.01), (100.0, 0.02),
+                   (200.0, 0.05), (500.0, 0.1), (1000.0, 0.2)]
+
+    def reqContractDetails(self, contract):
+        return [types.SimpleNamespace(minTick=0.0001, marketRuleIds="1874")]
+
+    def reqMarketRule(self, _rule_id):
+        return [types.SimpleNamespace(lowEdge=le, increment=inc)
+                for le, inc in self.market_rule]
+
 
 def _broker(monkeypatch, fill_price=100.0):
     monkeypatch.setattr(IBKRBroker, "_connect", lambda self: False)
     monkeypatch.setattr(ibm, "_ORDER_TIMEOUT", 0.05)
     monkeypatch.setattr(ibm, "_SERVER_STOPS", True)
+    # Handelszeiten-Gate aus: diese Tests prüfen die Stop-Mechanik, nicht den
+    # Börsenkalender – sonst wären sie am Wochenende rot.
+    monkeypatch.setattr(ibm, "_MARKET_HOURS_GATE", False)
     b = IBKRBroker()
     b._ib = _FakeIB(market_fill_price=fill_price)
     b._connected = True
@@ -127,6 +155,122 @@ def test_sell_cancels_resting_stop_first(monkeypatch):
     assert res["status"] == "filled"
     assert _stops(b._ib) == []          # Stop wurde geräumt
     assert len(b._ib.cancelled) == 1
+
+
+def test_stop_price_is_rounded_to_valid_tick(monkeypatch):
+    """Regression 25.7.2026: IBKR lehnt Stop-Preise ab, die die kursabhängige
+    Tick-Staffel verletzen (Error 110). Real gingen dadurch die Stops für DWS
+    (66,13 bei Tick 0,05) und RHM (955,98 bei Tick 0,10) still verloren."""
+    b = _broker(monkeypatch, fill_price=1000.0)
+    assert b.buy("RHM.DE", 35, 1017.0, stop_loss=955.98)["stop_placed"] is True
+    stops = _stops(b._ib)
+    assert len(stops) == 1
+    # Band "ab 500 → 0.1": abgerundet auf 955.90 (nie nach oben – ein Stop
+    # darf lieber später auslösen als zu früh).
+    assert stops[0].order.auxPrice == pytest.approx(955.90)
+
+
+def test_already_conforming_stop_price_is_left_alone(monkeypatch):
+    """Gegenprobe: ein konformer Preis darf nicht durch Float-Rundung wandern.
+    130.32 liegt im Band 'ab 100 → 0.02' und ist gültig – so kam SAP durch."""
+    b = _broker(monkeypatch, fill_price=138.64)
+    b.buy("SAP.DE", 406, 138.64, stop_loss=130.32)
+    assert _stops(b._ib)[0].order.auxPrice == pytest.approx(130.32)
+
+
+def test_tick_size_lookup_fails_open(monkeypatch):
+    """Ohne Marktregel-Antwort bleibt es beim alten Verhalten (Tick 0.01)."""
+    b = _broker(monkeypatch)
+
+    def _boom(_c):
+        raise RuntimeError("keine ContractDetails")
+
+    b._ib.reqContractDetails = _boom
+    b.buy("AAPL", 10, 100.0, stop_loss=92.53)
+    assert _stops(b._ib)[0].order.auxPrice == pytest.approx(92.53)
+
+
+def test_rejected_stop_is_reported_as_failure(monkeypatch):
+    """Regression: _place_stop meldete Erfolg direkt nach placeOrder. Lehnte
+    IBKR ab, log der Bot "Schutz-Stop platziert" und meldete beim Start
+    "N Positionen abgesichert" – während real keine Order lag."""
+    b = _broker(monkeypatch)
+    real_place = b._ib.placeOrder
+
+    def _reject_stops(contract, order):
+        tr = real_place(contract, order)
+        if getattr(order, "orderType", "MKT") == "STP":
+            tr.orderStatus.status = "Cancelled"
+            b._ib.open = [t for t in b._ib.open if t is not tr]
+        return tr
+
+    b._ib.placeOrder = _reject_stops
+    res = b.buy("AAPL", 10, 100.0, stop_loss=92.5)
+    assert res["status"] == "filled"
+    assert res["stop_placed"] is False, "abgelehnter Stop darf nicht als Erfolg gelten"
+    assert _stops(b._ib) == []
+
+
+def test_sync_protective_stops_reports_rejection(monkeypatch):
+    """Der Start-Heilungslauf muss die Lücke ebenfalls ehrlich melden –
+    er ist die Quelle der 'N Positionen abgesichert'-Meldung."""
+    b = _broker(monkeypatch)
+    real_place = b._ib.placeOrder
+
+    def _reject_stops(contract, order):
+        tr = real_place(contract, order)
+        if getattr(order, "orderType", "MKT") == "STP":
+            tr.orderStatus.status = "Cancelled"
+            b._ib.open = [t for t in b._ib.open if t is not tr]
+        return tr
+
+    b._ib.placeOrder = _reject_stops
+    res = b.sync_protective_stops({"DWS.DE": (612, 66.13)})
+    assert res == {"DWS.DE": False}
+
+
+def test_failed_sell_restores_protective_stop(monkeypatch):
+    """Regression 25.7.2026: sell() räumt den Stop VOR dem Verkauf weg. Wurde
+    der Verkauf danach abgelehnt (geschlossene Börse), blieb die Position
+    dauerhaft ohne Broker-Stop — real passiert mit 406 Stück SAP.DE."""
+    b = _broker(monkeypatch)
+    b.buy("AAPL", 10, 100.0, stop_loss=92.5)
+    assert len(_stops(b._ib)) == 1
+
+    b._ib.reject_market_orders = True       # Gateway lehnt ab
+    res = b.sell("AAPL", 10, 105.0)
+    assert res["status"] == "cancelled"
+
+    stops = _stops(b._ib)
+    assert len(stops) == 1, "Schutz-Stop muss nach gescheitertem SELL zurück sein"
+    assert stops[0].order.totalQuantity == 10
+    assert stops[0].order.auxPrice == 92.5
+    assert stops[0].order.tif == "GTC"
+
+
+def test_partially_filled_sell_restores_stop_for_remainder(monkeypatch):
+    """Teilverkauf: der Rest der Position braucht wieder einen Stop – über die
+    Restmenge, nicht über die ursprüngliche."""
+    b = _broker(monkeypatch)
+    b.buy("AAPL", 10, 100.0, stop_loss=92.5)
+    b._ib.partial_fill_qty = 4.0            # nur 4 von 10 füllen
+    res = b.sell("AAPL", 10, 105.0)
+    assert res["status"] == "filled" and res.get("partial") is True
+
+    stops = _stops(b._ib)
+    assert len(stops) == 1
+    assert stops[0].order.totalQuantity == 6, "Stop muss auf die Restmenge lauten"
+    assert stops[0].order.auxPrice == 92.5
+
+
+def test_fully_filled_sell_leaves_no_stop_behind(monkeypatch):
+    """Gegenprobe: bei vollem Fill ist die Position leer – der Stop darf NICHT
+    wiederhergestellt werden, sonst shortet er auf leerer Position."""
+    b = _broker(monkeypatch)
+    b.buy("AAPL", 10, 100.0, stop_loss=92.5)
+    res = b.sell("AAPL", 10, 105.0)
+    assert res["status"] == "filled"
+    assert _stops(b._ib) == []
 
 
 def test_update_stop_replaces_qty_and_price(monkeypatch):

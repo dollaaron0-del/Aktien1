@@ -97,6 +97,25 @@ _MKT_DATA_TYPE   = int(os.getenv("IBKR_MARKET_DATA_TYPE", "3"))
 # Fail-open: bei jedem Fehler (Flag aus, kein Connect, leere Antwort) fällt
 # get_history() auf yfinance zurück.
 _HISTORICAL_DATA = os.getenv("IBKR_HISTORICAL_DATA", "true").strip().lower() in ("1", "true", "yes")
+# Handelszeiten-Gate: Market-Orders nur einreichen, wenn die zuständige Börse
+# offen ist. Ohne das Gate cancelt IBKR die Order sofort, der Bot deutet das als
+# Fill-Timeout und meldet einen Fehlschlag – bei SELL zusätzlich nachdem der
+# Schutz-Stop schon weggeräumt war. Gilt nur für Aktien; Krypto (PAXOS) läuft
+# 24/7 über buy_crypto/sell_crypto und wird bewusst nicht gegated.
+_MARKET_HOURS_GATE = os.getenv("IBKR_MARKET_HOURS_GATE", "true").strip().lower() in ("1", "true", "yes")
+
+
+def _closed_market_reason(ticker: str) -> Optional[str]:
+    """Grund, falls die Börse für `ticker` gerade zu ist. Fail-open: kann der
+    Kalender nicht befragt werden, blockiert das Gate nichts."""
+    if not _MARKET_HOURS_GATE:
+        return None
+    try:
+        from analyzers.market_schedule import market_closed_reason
+        return market_closed_reason(ticker)
+    except Exception as e:
+        log.debug("Handelszeiten-Gate übersprungen [%s]: %s", ticker, e)
+        return None
 
 # ── Ticker-Suffix → (Exchange, Currency) ─────────────────────────────────────
 _SUFFIX_MAP: Dict[str, tuple] = {
@@ -178,6 +197,9 @@ class IBKRBroker:
         self._connected = False
         self._active_account: str = _ACCOUNT
         self._lock = threading.RLock()
+        # conId/Symbol → [(lowEdge, increment), …] aus reqMarketRule; die
+        # Tick-Staffel einer Aktie ändert sich nicht innerhalb einer Session.
+        self._market_rule_cache: Dict = {}
         self._connect()
 
     # ── Verbindungsmanagement ─────────────────────────────────────────────────
@@ -566,6 +588,10 @@ class IBKRBroker:
         if not self._ensure_connected():
             log.error("IBKR: keine Verbindung – BUY %s nicht ausgeführt", ticker)
             return OrderResult.error(reason="IBKR nicht verbunden", mode="ibkr")
+        _closed = _closed_market_reason(ticker)
+        if _closed:
+            log.info("IBKR: BUY %s nicht eingereicht – %s", ticker, _closed)
+            return OrderResult.error(ticker=ticker, reason=_closed, mode="ibkr")
         try:
             contract = self._stock_contract(ticker)
             qualified = self._ib.qualifyContracts(contract)
@@ -595,6 +621,13 @@ class IBKRBroker:
         if not self._ensure_connected():
             log.error("IBKR: keine Verbindung – SELL %s nicht ausgeführt", ticker)
             return OrderResult.error(reason="IBKR nicht verbunden", mode="ibkr")
+        # VOR dem Stop-Cancel prüfen: bei geschlossener Börse würde die Order
+        # ohnehin sofort gecancelt – der Schutz-Stop bliebe dann grundlos weg.
+        _closed = _closed_market_reason(ticker)
+        if _closed:
+            log.info("IBKR: SELL %s nicht eingereicht – %s (Schutz-Stop bleibt liegen)",
+                     ticker, _closed)
+            return OrderResult.error(ticker=ticker, reason=_closed, mode="ibkr")
         try:
             contract = self._stock_contract(ticker)
             qualified = self._ib.qualifyContracts(contract)
@@ -609,11 +642,18 @@ class IBKRBroker:
                            f"(Dust ggf. manuell im Desktop schließen)")
             # Ruhenden Schutz-Stop VOR dem Verkauf räumen: bliebe er liegen,
             # würde er nach dem Exit auf leerer Position auslösen → Short.
-            # (Schlägt der Verkauf danach fehl, ist die Position kurz ohne
-            # Broker-Stop – der Bot lebt aber gerade und alarmiert/retryt.)
+            # Vorher die Parameter sichern: geht der Verkauf NICHT (voll) durch,
+            # wird der Stop unten auf die verbliebene Menge wiederhergestellt.
+            # (Ohne das stand SAP.DE am 25.7.2026 nach drei gescheiterten SELL-
+            # Versuchen dauerhaft ohne Broker-Stop da.)
+            stop_backup: List[tuple] = []
             if _SERVER_STOPS:
+                stop_backup = self._snapshot_stops(contract.symbol)
                 self._cancel_stops(contract.symbol)
-            return self._place_order(contract, "SELL", whole)
+            result = self._place_order(contract, "SELL", whole)
+            if _SERVER_STOPS and stop_backup:
+                self._restore_stops(contract, stop_backup, result)
+            return result
         except Exception as e:
             log.exception("IBKR sell %s: %s", ticker, e)
             return OrderResult.error(reason=str(e), mode="ibkr")
@@ -667,22 +707,138 @@ class IBKRBroker:
             log.info("IBKR: %d Schutz-Stop(s) für %s gecancelt", n, symbol)
         return n
 
+    def _snapshot_stops(self, symbol: str) -> List[tuple]:
+        """Parameter der ruhenden Schutz-Stops als [(shares, stop_price), …].
+        Grundlage für die Wiederherstellung, falls ein Verkauf scheitert."""
+        out: List[tuple] = []
+        for tr in self._open_stop_orders(symbol):
+            try:
+                qty  = float(getattr(tr.order, "totalQuantity", 0) or 0)
+                aux  = float(getattr(tr.order, "auxPrice", 0) or 0)
+                if qty > 0 and aux > 0:
+                    out.append((qty, aux))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def _restore_stops(self, contract, backup: List[tuple], result: Dict) -> None:
+        """Stellt nach einem nicht (voll) ausgeführten SELL den Schutz-Stop für
+        die verbliebene Menge wieder her. Bei vollem Fill bleibt die Position
+        leer – dann ist der weggeräumte Stop korrekt und es passiert nichts."""
+        try:
+            sold = 0.0
+            if result.get("status") == "filled":
+                sold = float(result.get("shares") or 0)
+            for qty, stop_price in backup:
+                remaining = qty - sold
+                if remaining < 1:
+                    continue
+                if self._place_stop(contract, remaining, stop_price):
+                    log.info("IBKR: Schutz-Stop für %s nach nicht ausgeführtem SELL "
+                             "wiederhergestellt (%d Stück @ %.2f)",
+                             contract.symbol, int(remaining), stop_price)
+                else:
+                    log.error("IBKR: Schutz-Stop für %s nach gescheitertem SELL NICHT "
+                              "wiederhergestellt – Position ist broker-seitig ungeschützt!",
+                              contract.symbol)
+        except Exception as e:
+            log.error("IBKR: Schutz-Stop-Wiederherstellung %s fehlgeschlagen: %s",
+                      getattr(contract, "symbol", "?"), e)
+
+    def _tick_size(self, contract, price: float) -> float:
+        """Gültige Kursschrittweite für `contract` bei `price`.
+
+        Börsen staffeln die Tick-Größe nach Kurshöhe (MiFID-Regime): eine
+        XETRA-Aktie tickt bei 66 € in 0,05er-Schritten, bei 956 € in 0,10er.
+        `contractDetails.minTick` gibt dafür nur den kleinsten Wert des
+        gesamten Bandes zurück (0,0001) und ist damit nutzlos – die echten
+        Stufen liefert reqMarketRule. Ergebnis wird je Kontrakt gecacht.
+        Fail-open: ohne Regel-Antwort 0.01 (bisheriges Verhalten)."""
+        default = 0.01
+        try:
+            key = (getattr(contract, "conId", None) or contract.symbol)
+            rule = self._market_rule_cache.get(key)
+            if rule is None:
+                details = self._ib.reqContractDetails(contract)
+                if not details:
+                    return default
+                rule_id = str(details[0].marketRuleIds).split(",")[0].strip()
+                rule = sorted(
+                    ((float(i.lowEdge), float(i.increment))
+                     for i in self._ib.reqMarketRule(int(rule_id))),
+                    key=lambda x: x[0],
+                )
+                self._market_rule_cache[key] = rule
+            tick = default
+            for low_edge, increment in rule:
+                if price >= low_edge:
+                    tick = increment
+            return tick or default
+        except Exception as e:
+            log.debug("IBKR: Tick-Size für %s nicht ermittelbar (%s) – nutze %.2f",
+                      getattr(contract, "symbol", "?"), e, default)
+            return default
+
+    def _conform_price(self, contract, price: float) -> float:
+        """Stop-Preis auf eine gültige Kursschrittweite bringen.
+
+        Nicht konforme Preise lehnt IBKR mit Error 110 ab ("does not conform to
+        the minimum price variation") – am 24.7.2026 blieben dadurch die Stops
+        für DWS (66,13 bei Tick 0,05) und RHM (955,98 bei Tick 0,10) still auf
+        der Strecke. Es wird ABGERUNDET: ein Schutz-Stop darf lieber minimal
+        tiefer liegen als zu früh auslösen."""
+        tick = self._tick_size(contract, price)
+        steps = price / tick
+        if abs(steps - round(steps)) < 1e-6:
+            return round(price, 6)          # schon konform – nicht verschieben
+        return round(math.floor(steps) * tick, 6)
+
+    # Stop-Orders ruhen (kein Fill-Warten), aber die ANNAHME muss bestätigt
+    # sein. Sekunden, die auf einen belastbaren Order-Status gewartet wird.
+    _STOP_ACK_TIMEOUT = 5
+
     def _place_stop(self, contract, shares: float, stop_price: float) -> bool:
-        """Platziert einen GTC-Stop (SELL). Kein Fill-Warten – die Order ruht."""
+        """Platziert einen GTC-Stop (SELL) und verifiziert die Annahme.
+
+        Früher wurde direkt nach placeOrder True gemeldet. Lehnte IBKR den Stop
+        danach ab, blieb das unsichtbar: der Bot loggte "Schutz-Stop platziert"
+        und meldete beim Start "N Positionen abgesichert", während real keine
+        Order lag (25.7.2026: 3 von 23 Positionen ungeschützt, ohne jede
+        Warnung). Ein nicht bestätigter Stop gilt jetzt als Fehlschlag."""
         try:
             from ib_insync import StopOrder
             whole = math.floor(float(shares))
-            stop_price = round(float(stop_price), 2)
-            if whole <= 0 or stop_price <= 0:
+            if whole <= 0 or not stop_price or float(stop_price) <= 0:
+                return False
+            stop_price = self._conform_price(contract, float(stop_price))
+            if stop_price <= 0:
                 return False
             order = StopOrder("SELL", whole, stop_price, tif="GTC")
             account = getattr(self, "_active_account", _ACCOUNT) or _ACCOUNT
             if account:
                 order.account = account
-            self._ib.placeOrder(contract, order)
-            log.info("IBKR: GTC-Schutz-Stop platziert: SELL %d %s @ %.2f",
-                     whole, contract.symbol, stop_price)
-            return True
+            trade = self._ib.placeOrder(contract, order)
+
+            deadline = time.monotonic() + self._STOP_ACK_TIMEOUT
+            status = getattr(trade.orderStatus, "status", "")
+            while time.monotonic() < deadline:
+                status = getattr(trade.orderStatus, "status", "")
+                if status in ("PreSubmitted", "Submitted", "Filled",
+                              "Cancelled", "Inactive", "ApiCancelled"):
+                    break
+                self._ib.sleep(0.5)
+
+            if status in ("PreSubmitted", "Submitted", "Filled"):
+                log.info("IBKR: GTC-Schutz-Stop platziert: SELL %d %s @ %s",
+                         whole, contract.symbol, stop_price)
+                return True
+
+            why = "; ".join(
+                e.message for e in getattr(trade, "log", []) if getattr(e, "message", "")
+            ) or f"Status {status or 'unbekannt'}"
+            log.error("IBKR: Schutz-Stop für %s NICHT angenommen (SELL %d @ %s): %s",
+                      contract.symbol, whole, stop_price, why)
+            return False
         except Exception as e:
             log.error("IBKR: Schutz-Stop für %s NICHT platziert: %s", contract.symbol, e)
             return False
