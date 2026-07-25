@@ -110,6 +110,33 @@ class Config:
     )
     min_sources: int = field(default_factory=lambda: int(os.getenv("MIN_SOURCES", "1")))
 
+    # ── Kapitalknappheits-Schwelle (25.7.2026) ──────────────────────────────
+    # Sinkt das frei verfügbare Cash (% der Equity), steigt die Kaufschwelle -
+    # asymmetrisch wie der Makro-Aufschlag (nur strenger, nie lockerer).
+    # Grund: eine Kaufwelle band Ende Juli das Kapital für 6+ Tage, weil auch
+    # mittelmäßige Signale noch durchgingen, bis das Cash-Polster hart am
+    # Reserve-Boden aufschlug und der Bot abrupt komplett handlungsunfähig
+    # wurde. Diese Schwelle wirkt VORHER: je knapper das Cash, desto höher die
+    # Latte, sodass nur noch die stärksten Signale das restliche Pulver bekommen.
+    capital_scarcity_threshold_enabled: bool = field(
+        default_factory=lambda: os.getenv("CAPITAL_SCARCITY_THRESHOLD_ENABLED", "true").lower() == "true"
+    )
+    # Ab diesem Cash-Anteil (% der Equity) gilt "genug Pulver" - Schwelle bleibt
+    # unverändert (100 % Normalbetrieb im Sinne des Users).
+    capital_scarcity_cash_pct_full: float = field(
+        default_factory=lambda: float(os.getenv("CAPITAL_SCARCITY_CASH_PCT_FULL", "0.20"))
+    )
+    # Bei/unter diesem Cash-Anteil (nahe cash_reserve_hard_pct) greift der volle
+    # Aufschlag - hier wird ohnehin kaum noch Positionsgröße zugelassen.
+    capital_scarcity_cash_pct_empty: float = field(
+        default_factory=lambda: float(os.getenv("CAPITAL_SCARCITY_CASH_PCT_EMPTY", "0.05"))
+    )
+    # Maximaler Aufschlag auf buy_threshold bei komplett knappem Cash (linear
+    # interpoliert zwischen full und empty).
+    capital_scarcity_max_adj: float = field(
+        default_factory=lambda: float(os.getenv("CAPITAL_SCARCITY_MAX_ADJ", "0.15"))
+    )
+
     # ── Selbstlern-Filter (analyzers/entry_filter.py) ───────────────────────
     # Konsultiert das gelernte Kalibrierungsmodell (data/calibration.json) beim
     # Kauf. AVOID → SKIP, CAUTION → kleinere Position. Fail-open: fehlt das Modell
@@ -160,7 +187,7 @@ class Config:
 
     # Claude model
     claude_model: str = field(
-        default_factory=lambda: os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
+        default_factory=lambda: os.getenv("CLAUDE_MODEL", "claude-haiku-4-5")
     )
     # Leichtes Modell für Nebenaufrufe (Thesis-/Exit-Check offener Positionen).
     # Haiku kostet ~1/3 von Sonnet bei In+Out – die finale Katalysator-Analyse
@@ -490,6 +517,13 @@ def validate_config() -> None:
         errors.append(f"MAX_POSITION_PCT={config.max_position_pct} ungültig.")
     if not (0.0 < config.buy_threshold <= 1.0):
         errors.append(f"BUY_THRESHOLD={config.buy_threshold} ungültig (muss 0–1 sein).")
+    if not (0.0 <= config.capital_scarcity_cash_pct_empty < config.capital_scarcity_cash_pct_full):
+        errors.append(
+            f"CAPITAL_SCARCITY_CASH_PCT_EMPTY={config.capital_scarcity_cash_pct_empty} muss "
+            f"kleiner sein als CAPITAL_SCARCITY_CASH_PCT_FULL={config.capital_scarcity_cash_pct_full}."
+        )
+    if not (0.0 <= config.capital_scarcity_max_adj <= 0.5):
+        errors.append(f"CAPITAL_SCARCITY_MAX_ADJ={config.capital_scarcity_max_adj} ungültig (0–0,5 sinnvoll).")
     if config.initial_capital <= 0:
         errors.append(f"INITIAL_CAPITAL={config.initial_capital} ungültig.")
 

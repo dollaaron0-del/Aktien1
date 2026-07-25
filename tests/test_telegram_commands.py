@@ -245,9 +245,15 @@ class _FakePaperBroker:
 
 
 def test_build_status_text_includes_portfolio_summary(monkeypatch):
+    # build_status_text() holt den Broker seit 25.7.2026 über
+    # broker.factory.get_readonly_broker() (dieselbe Quelle wie der Live-Bot,
+    # siehe [[broker-readonly-factory]]) statt fest PaperBroker() zu
+    # instanziieren. Hier direkt an der Aufrufstelle mocken – der Test soll
+    # unabhängig davon sein, ob config.broker_mode gerade "paper" oder "ibkr"
+    # ist (in dieser Repo-Umgebung production-typisch "ibkr").
     monkeypatch.setattr("portfolio.portfolio.Portfolio", _FakePortfolio)
     monkeypatch.setattr("portfolio.circuit_breaker.CircuitBreaker", _FakeCircuitBreaker)
-    monkeypatch.setattr("broker.paper_broker.PaperBroker", _FakePaperBroker)
+    monkeypatch.setattr("broker.factory.get_readonly_broker", _FakePaperBroker)
     text = tgc.build_status_text()
     assert "🟢 Circuit-Breaker" in text
     assert "Positionen: 1" in text
@@ -257,6 +263,6 @@ def test_build_status_text_includes_portfolio_summary(monkeypatch):
 def test_build_status_text_flags_triggered_circuit_breaker(monkeypatch):
     monkeypatch.setattr("portfolio.portfolio.Portfolio", _FakePortfolio)
     monkeypatch.setattr("portfolio.circuit_breaker.CircuitBreaker", _FakeCircuitBreakerTriggered)
-    monkeypatch.setattr("broker.paper_broker.PaperBroker", _FakePaperBroker)
+    monkeypatch.setattr("broker.factory.get_readonly_broker", _FakePaperBroker)
     text = tgc.build_status_text()
     assert "AUSGELÖST" in text

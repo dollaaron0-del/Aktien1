@@ -332,6 +332,34 @@ class SwingStrategy:
         except Exception as _e:
             log.debug("Makro-Bias-Threshold übersprungen [%s]: %s", ticker, _e)
 
+        # Kapitalknappheits-Aufschlag: sinkt das frei verfügbare Cash (% der
+        # Equity), steigt die Kaufschwelle - asymmetrisch wie der Makro-
+        # Aufschlag (nur strenger, nie lockerer). Bei vollem Cash-Polster
+        # (>= capital_scarcity_cash_pct_full) unverändert; darunter linear bis
+        # zum vollen Aufschlag bei capital_scarcity_cash_pct_empty. Verhindert,
+        # dass eine Kaufwelle das Kapital für Tage komplett bindet, weil auch
+        # mittelmäßige Signale noch durchgehen, bis das Cash-Polster abrupt am
+        # Reserve-Boden aufschlägt (Auslöser 25.7.2026: 6+ Tage handlungsunfähig
+        # nach einer Kaufwoche).
+        if getattr(config, "capital_scarcity_threshold_enabled", True):
+            try:
+                equity = self.portfolio.total_value({})
+                cash_pct = (self.portfolio.cash / equity) if equity > 0 else 0.0
+                full  = float(getattr(config, "capital_scarcity_cash_pct_full", 0.20))
+                empty = float(getattr(config, "capital_scarcity_cash_pct_empty", 0.05))
+                max_adj = float(getattr(config, "capital_scarcity_max_adj", 0.15))
+                if full > empty:
+                    scarcity = max(0.0, min(1.0, (full - cash_pct) / (full - empty)))
+                    if scarcity > 0:
+                        threshold += scarcity * max_adj
+                        log.info(
+                            "[%s] Kapitalknappheit (Cash %.1f%% der Equity) → "
+                            "Schwelle +%.3f auf %.3f",
+                            ticker, cash_pct * 100, scarcity * max_adj, threshold,
+                        )
+            except Exception as _e:
+                log.debug("Kapitalknappheits-Schwelle übersprungen [%s]: %s", ticker, _e)
+
         # Direction must be bullish
         if direction not in ("BULLISH",) or recommendation not in ("BUY",):
             # Check conditional entry
