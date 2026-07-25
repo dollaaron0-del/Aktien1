@@ -361,12 +361,21 @@ class SwingStrategy:
         # Kapitalknappheits-Aufschlag: sinkt das frei verfügbare Cash (% der
         # Equity), steigt die Kaufschwelle - asymmetrisch wie der Makro-
         # Aufschlag (nur strenger, nie lockerer). Bei vollem Cash-Polster
-        # (>= capital_scarcity_cash_pct_full) unverändert; darunter linear bis
-        # zum vollen Aufschlag bei capital_scarcity_cash_pct_empty. Verhindert,
-        # dass eine Kaufwelle das Kapital für Tage komplett bindet, weil auch
-        # mittelmäßige Signale noch durchgehen, bis das Cash-Polster abrupt am
-        # Reserve-Boden aufschlägt (Auslöser 25.7.2026: 6+ Tage handlungsunfähig
-        # nach einer Kaufwoche).
+        # (>= capital_scarcity_cash_pct_full) unverändert; darunter exponentiell
+        # (Potenzkurve) bis zum vollen Aufschlag bei capital_scarcity_cash_pct_
+        # empty. Verhindert, dass eine Kaufwelle das Kapital für Tage komplett
+        # bindet, weil auch mittelmäßige Signale noch durchgehen, bis das
+        # Cash-Polster abrupt am Reserve-Boden aufschlägt (Auslöser 25.7.2026:
+        # 6+ Tage handlungsunfähig nach einer Kaufwoche).
+        #
+        # Exponentiell statt linear (User-Wunsch 25.7.2026): bei reichlich Cash
+        # bleibt die Latte fast unverändert (flexibel, kein Aufschlag-Vorgriff),
+        # erst nahe am Boden zieht sie merklich an - "klare Richtlinie am Ende
+        # der Kurve, Flexibilität in der Mitte" statt eines über die ganze
+        # Spanne gleichmäßigen Anstiegs. Umsetzung: linearer Knappheits-Anteil
+        # (0 bei full, 1 bei empty) wird mit capital_scarcity_curve_exponent
+        # potenziert, bevor er mit max_adj skaliert wird. Exponent 1.0 = alte
+        # lineare Kurve; >1.0 macht sie zunehmend konvex (flach→steil).
         if getattr(config, "capital_scarcity_threshold_enabled", True):
             try:
                 equity = self.portfolio.total_value({})
@@ -374,14 +383,17 @@ class SwingStrategy:
                 full  = float(getattr(config, "capital_scarcity_cash_pct_full", 0.20))
                 empty = float(getattr(config, "capital_scarcity_cash_pct_empty", 0.05))
                 max_adj = float(getattr(config, "capital_scarcity_max_adj", 0.15))
+                exponent = float(getattr(config, "capital_scarcity_curve_exponent", 2.0))
                 if full > empty:
-                    scarcity = max(0.0, min(1.0, (full - cash_pct) / (full - empty)))
+                    scarcity_linear = max(0.0, min(1.0, (full - cash_pct) / (full - empty)))
+                    scarcity = scarcity_linear ** exponent if exponent > 0 else scarcity_linear
                     if scarcity > 0:
                         threshold += scarcity * max_adj
                         log.info(
-                            "[%s] Kapitalknappheit (Cash %.1f%% der Equity) → "
-                            "Schwelle +%.3f auf %.3f",
-                            ticker, cash_pct * 100, scarcity * max_adj, threshold,
+                            "[%s] Kapitalknappheit (Cash %.1f%% der Equity, Kurvenanteil "
+                            "%.2f^%.1f=%.2f) → Schwelle +%.3f auf %.3f",
+                            ticker, cash_pct * 100, scarcity_linear, exponent, scarcity,
+                            scarcity * max_adj, threshold,
                         )
             except Exception as _e:
                 log.debug("Kapitalknappheits-Schwelle übersprungen [%s]: %s", ticker, _e)

@@ -131,10 +131,18 @@ class Config:
     capital_scarcity_cash_pct_empty: float = field(
         default_factory=lambda: float(os.getenv("CAPITAL_SCARCITY_CASH_PCT_EMPTY", "0.05"))
     )
-    # Maximaler Aufschlag auf buy_threshold bei komplett knappem Cash (linear
-    # interpoliert zwischen full und empty).
+    # Maximaler Aufschlag auf buy_threshold bei komplett knappem Cash (zwischen
+    # full und empty interpoliert, Kurvenform via capital_scarcity_curve_exponent).
     capital_scarcity_max_adj: float = field(
         default_factory=lambda: float(os.getenv("CAPITAL_SCARCITY_MAX_ADJ", "0.15"))
+    )
+    # Kurvenform der Interpolation: 1.0 = linear (alter Verlauf), >1.0 macht sie
+    # exponentiell/konvex - bei reichlich Cash bleibt die Latte fast unverändert
+    # (flexibel), erst nahe am Boden zieht sie merklich an (klare Richtlinie am
+    # Ende der Kurve statt gleichmäßigem Anstieg über die ganze Spanne).
+    # 2.0 = quadratisch, 3.0 = spürbar steiler nur im letzten Drittel.
+    capital_scarcity_curve_exponent: float = field(
+        default_factory=lambda: float(os.getenv("CAPITAL_SCARCITY_CURVE_EXPONENT", "2.0"))
     )
 
     # ── Selbstlern-Filter (analyzers/entry_filter.py) ───────────────────────
@@ -524,6 +532,11 @@ def validate_config() -> None:
         )
     if not (0.0 <= config.capital_scarcity_max_adj <= 0.5):
         errors.append(f"CAPITAL_SCARCITY_MAX_ADJ={config.capital_scarcity_max_adj} ungültig (0–0,5 sinnvoll).")
+    if not (0.0 < config.capital_scarcity_curve_exponent <= 10.0):
+        errors.append(
+            f"CAPITAL_SCARCITY_CURVE_EXPONENT={config.capital_scarcity_curve_exponent} "
+            f"ungültig (0–10 sinnvoll; 1.0=linear, 2–3 typisch exponentiell)."
+        )
     if config.initial_capital <= 0:
         errors.append(f"INITIAL_CAPITAL={config.initial_capital} ungültig.")
 

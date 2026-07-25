@@ -141,16 +141,84 @@ def test_scarce_cash_still_buys_on_strong_signal(tmp_path, monkeypatch):
     assert res.action == "BUY"
 
 
-def test_linear_interpolation_between_full_and_empty(tmp_path, monkeypatch):
-    """Cash genau in der Mitte (12,5 % von 20/5) → halber Aufschlag (+0.075)."""
+def test_pure_linear_interpolation_with_exponent_one(tmp_path, monkeypatch):
+    """exponent=1.0 reproduziert die ursprüngliche lineare Kurve (Backward-
+    Kompat): Cash genau in der Mitte (12,5 % von 20/5) → halber Aufschlag
+    (+0.075)."""
     p = make_portfolio(tmp_path, monkeypatch, capital=100_000.0)
     p.open_position(make_position("AAPL", 875, 100.0))    # Cash 12_500 (12.5%)
     strat = make_strategy(p)
-    cfg = _config()
+    cfg = _config(capital_scarcity_curve_exponent=1.0)
 
     res = _evaluate(strat, 0.70, cfg)   # 0.65+0.075=0.725 < 0.70 < ohne Aufschlag würde kaufen
     assert res.action == "SKIP"
     assert "0.72" in res.reason or "0.73" in res.reason  # 0.725 gerundet
+
+
+def test_default_exponential_curve_is_more_lenient_at_midpoint(tmp_path, monkeypatch):
+    """Kern der 25.7.-Umstellung auf eine Exponentialkurve: beim selben
+    Cash-Stand (12,5 %, Kurvenmitte) ist der Aufschlag mit dem Default-
+    Exponenten (2.0) NUR EIN VIERTEL des Maximums (+0.0375), nicht die
+    Hälfte wie bei linear (+0.075) - "flexibel in der Mitte, strikt erst
+    am Ende der Kurve"."""
+    p = make_portfolio(tmp_path, monkeypatch, capital=100_000.0)
+    p.open_position(make_position("AAPL", 875, 100.0))    # Cash 12_500 (12.5%)
+    strat = make_strategy(p)
+    cfg = _config()   # capital_scarcity_curve_exponent Default = 2.0
+
+    # 0.65 + 0.0375 = 0.6875: ein Signal, das bei linear (0.725) geskippt
+    # worden wäre, kauft jetzt.
+    res = _evaluate(strat, 0.70, cfg)
+    assert res.action == "BUY"
+
+    # Etwas oberhalb der neuen (niedrigeren) Schwelle greift die Sizing-Logik normal.
+    res2 = _evaluate(strat, 0.68, cfg)
+    assert res2.action == "SKIP"
+    assert "Sentiment" in res2.reason
+
+
+def _sub_portfolio(tmp_path, name, monkeypatch, capital=100_000.0):
+    """Wie make_portfolio, aber mit eigenem Unterverzeichnis – für Tests, die
+    mehrere unabhängige Portfolios innerhalb derselben tmp_path brauchen."""
+    sub = tmp_path / name
+    sub.mkdir(parents=True, exist_ok=True)
+    return make_portfolio(sub, monkeypatch, capital=capital)
+
+
+def test_curve_endpoints_independent_of_exponent(tmp_path, monkeypatch):
+    """Egal welcher Exponent: bei full-Cash bleibt der Aufschlag exakt 0, bei
+    empty-Cash exakt max_adj - nur die Kurvenform dazwischen ändert sich."""
+    for exponent in (1.0, 2.0, 3.0, 5.0):
+        cfg = _config(capital_scarcity_curve_exponent=exponent)
+
+        p_full = _sub_portfolio(tmp_path, f"full_{exponent}", monkeypatch)
+        strat_full = make_strategy(p_full)
+        res_full = _evaluate(strat_full, 0.66, cfg)
+        assert res_full.action == "BUY", f"exponent={exponent}: full-Cash muss unverändert kaufen"
+
+        p_empty = _sub_portfolio(tmp_path, f"empty_{exponent}", monkeypatch)
+        p_empty.open_position(make_position("AAPL", 950, 100.0))   # 5% Cash
+        strat_empty = make_strategy(p_empty)
+        res_empty = _evaluate(strat_empty, 0.79, cfg)
+        assert res_empty.action == "SKIP", f"exponent={exponent}: 0.79 < 0.80 muss überall skippen"
+        res_empty2 = _evaluate(strat_empty, 0.81, cfg)
+        assert res_empty2.action == "BUY", f"exponent={exponent}: 0.81 > 0.80 muss überall kaufen"
+
+
+def test_higher_exponent_is_more_lenient_before_the_end(tmp_path, monkeypatch):
+    """Größerer Exponent → flachere Kurve über einen größeren Teil der Spanne,
+    steilerer Endspurt: bei 75 % der Strecke (10,25 % Cash) muss exponent=3
+    einen kleineren Aufschlag liefern als exponent=2."""
+    def _adj_at(exponent):
+        p = _sub_portfolio(tmp_path, f"steep_{exponent}", monkeypatch)
+        p.open_position(make_position("AAPL", 897.5, 100.0))   # Cash 10_250 (10.25%)
+        equity = p.total_value({})
+        cash_pct = p.cash / equity
+        full, empty, max_adj = 0.20, 0.05, 0.15
+        linear = max(0.0, min(1.0, (full - cash_pct) / (full - empty)))
+        return (linear ** exponent) * max_adj
+
+    assert _adj_at(3.0) < _adj_at(2.0) < _adj_at(1.0)
 
 
 def test_disabled_flag_ignores_cash_level(tmp_path, monkeypatch):
