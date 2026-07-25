@@ -307,6 +307,32 @@ class SwingStrategy:
 
         return StrategyResult("HOLD", ticker, "Position läuft, keine Änderung")
 
+    def _enqueue_signal(self, ticker, analysis, sentiment, confidence, direction, n_src) -> None:
+        """Merkt ein an sich gültiges BUY-Signal vor, das nur an einer
+        aktuellen Kapazitätsgrenze scheitert (Max-Positionen ODER Cash-Reserve-
+        Boden erreicht) - nicht an der Sentiment-Schwelle selbst. Gemeinsamer
+        Helper für beide Fälle, damit ein starkes Signal nicht ersatzlos
+        verpufft: die Queue drained automatisch stündlich und sofort nach
+        jedem SL/TP-Exit (bot/scheduler_risk.py: sl_tp_check_job →
+        signal_queue_job), also genau dann, wenn wieder Slots/Kapital frei
+        werden. enqueue() dedupliziert selbst (überschreibt einen älteren
+        pending-Eintrag desselben Tickers)."""
+        if not self.signal_queue:
+            return
+        self.signal_queue.enqueue(
+            ticker=ticker,
+            sentiment_score=sentiment,
+            confidence=confidence,
+            target_price=getattr(analysis, "target_price", None),
+            direction=direction,
+            entry_rationale=getattr(analysis, "entry_rationale", "") or "",
+            key_catalysts=list(getattr(analysis, "key_catalysts", []) or []),
+            risk_factors=list(getattr(analysis, "risk_factors", []) or []),
+            sources_used=n_src,
+            sources_breakdown=getattr(analysis, "sources_breakdown", {}) or {},
+            suggested_hold_days=int(getattr(analysis, "suggested_hold_days", 0) or 0),
+        )
+
     def _evaluate_new(
         self, ticker, analysis, current_price, params, regime,
         market_is_ranging, rl_agent, config
@@ -407,21 +433,7 @@ class SwingStrategy:
         except Exception:
             max_pos = 12
         if n_pos >= max_pos:
-            # Queue the signal (vormerken bis ein Slot frei wird)
-            if self.signal_queue:
-                self.signal_queue.enqueue(
-                    ticker=ticker,
-                    sentiment_score=sentiment,
-                    confidence=confidence,
-                    target_price=getattr(analysis, "target_price", None),
-                    direction=direction,
-                    entry_rationale=getattr(analysis, "entry_rationale", "") or "",
-                    key_catalysts=list(getattr(analysis, "key_catalysts", []) or []),
-                    risk_factors=list(getattr(analysis, "risk_factors", []) or []),
-                    sources_used=n_src,
-                    sources_breakdown=getattr(analysis, "sources_breakdown", {}) or {},
-                    suggested_hold_days=int(getattr(analysis, "suggested_hold_days", 0) or 0),
-                )
+            self._enqueue_signal(ticker, analysis, sentiment, confidence, direction, n_src)
             return StrategyResult("SKIP", ticker, f"Max Positionen ({max_pos}) erreicht – Signal in Queue")
 
         # Earnings filter
@@ -454,7 +466,16 @@ class SwingStrategy:
         position_value = self._calc_position_size(
             analysis, current_price, params, config, confluence, sentiment, threshold)
         if position_value <= 0:
-            return StrategyResult("SKIP", ticker, "Positionsgröße = 0")
+            # Kapitalmangel (Cash-Reserve-Boden erreicht), nicht ein schwaches
+            # Signal – Grund, warum Position sizing = 0 werden kann, obwohl das
+            # Signal die Schwelle bereits übersprungen hat. Ohne Queue verpufft
+            # ein starkes Signal (z.B. Score 0.9) hier ersatzlos: anders als der
+            # Max-Positionen-Fall wurde dieser Skip bislang NICHT vorgemerkt.
+            # In die Queue statt zu verlieren – dieselbe Infrastruktur wie beim
+            # Max-Positionen-Fall drained automatisch stündlich UND sofort nach
+            # jedem SL/TP-Exit (also genau dann, wenn Kapital frei wird).
+            self._enqueue_signal(ticker, analysis, sentiment, confidence, direction, n_src)
+            return StrategyResult("SKIP", ticker, "Positionsgröße = 0 (Kapital knapp) – Signal in Queue")
 
         # Correlation check
         if self.correlation_checker:
