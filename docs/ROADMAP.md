@@ -555,6 +555,25 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       typischen Hold-Zeiten von Wochen bei dieser Strategie), beide Studien
       bleiben also mangels Live-Daten unverändert offen. Kein Code
       angefasst, reiner Re-Lauf bestehender, getesteter Tools.
+      RE-CHECK 9.8.2026 (Roadmap 6.9d "Skip-Kontrafaktik XXL" — Kandidatenpool
+      ist inzwischen groß genug, dass eine Hochskalierung reiner Zeit-/
+      Datenverlauf ist, kein Code-Bedarf): Pool auf 2485 SKIPs gewachsen,
+      352 simulierbar (vorher 4). ERSTMALS ZWEI Buckets über dem Mindest-n
+      mit klarem Verdikt: **max_positionen** (n=335, Win-Rate 69%,
+      Ø-Kante +1,63%, 95%-CI [+1,24%,+2,02%], P(≤0)=0%) und
+      **unter_schwelle** (n=13, Win-Rate 69%, Ø-Kante +3,30%, 95%-CI
+      [+1,26%,+5,32%], P(≤0)=0%) — beide STATISTISCH SIGNIFIKANT POSITIV.
+      Nach der eigenen Interpretationsregel (s.o.): buy_threshold filtert zu
+      aggressiv, die Max-Positionen-Kappung lässt echte Rendite liegen.
+      AUFFÄLLIGER GEGENSATZ zum 1.1-Befund: tatsächlich AUSGEFÜHRTE Käufe
+      lagen bei −1,94%/Trade (schlägt B&H nicht), während genau die wegen
+      Positions-Kappung NICHT gekauften BUY/SELL-Signale hier positiv
+      abschneiden — beide CIs schließen 0 klar aus, kein Zufallsrauschen.
+      lernfilter_avoid bleibt mit n=2 weiterhin unzureichend. Kein Code
+      angefasst (reiner Re-Lauf); Konsequenz ist eine Config-Entscheidung
+      (buy_threshold/MAX_POSITIONS lockern?), keine automatische Änderung —
+      bewusst nicht eigenmächtig am Live-Handelspfad vorgenommen, siehe
+      User-Entscheidungen unten.
 
 ## Block 4 — Meta-Ebene & Robustheit
 
@@ -1218,14 +1237,30 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
 - [ ] Point-in-Time-Daten kaufen? (Norgate/Sharadar/EODHD) → schaltet
       Survivorship-Mechanik scharf.
 - [ ] Push-Token mit Contents:write? (→ 0.2)
-- [ ] Bot-Reaktivierung wann? → Voraussetzung für Block 3 + Ziel 1/2.
-- [ ] GPU-Server-Sizing VOR dem Kauf gemeinsam durchgehen (→ Block 6):
+- [x] Bot-Reaktivierung wann? → am 17.7.2026 reaktiviert, läuft seitdem
+      (Neustart 24.7., Server-Umzug 8./9.8.), 35 echte Live-Trades bis 9.8.
+      Nie hier abgehakt, mit dem 9.8.-Server-Umzugs-Check nachgetragen.
+- [x] GPU-Server-Sizing VOR dem Kauf gemeinsam durchgehen (→ Block 6):
       entscheidende Größe ist VRAM, nicht CPU/RAM — bestimmt, welches
       lokale Modell läuft (8B ≈ 8–12 GB, 32B ≈ ~24 GB, 70B ≈ 48 GB+/
       quantisiert) und ob Whisper (6.9a) parallel passt. Dazu grobe
-      Strom-vs-API-Kosten-Rechnung (6.5a nicht blind glauben).
+      Strom-vs-API-Kosten-Rechnung (6.5a nicht blind glauben). Praktisch
+      erledigt mit dem Umzug 9.8.: RTX 2070 8GB ist da (14b-Modelle laufen
+      GPU-beschleunigt, 6.5a-VRAM-Fix greift), Frage nur noch relevant,
+      falls künftig größere Modelle (32b+) angestrebt werden.
 - [x] Erfolgs-/Abbruchkriterien je These festlegen (→ 6.10) — 150 Trades /
       24 Monate, 12.7. Abend entschieden & kodiert.
+- [ ] **NEU 9.8.2026 (6.9d-Fund):** buy_threshold lockern und/oder
+      MAX_POSITIONS erhöhen? Skip-Kontrafaktik zeigt jetzt statistisch
+      signifikant positive Kante bei genau den Signalen, die diese beiden
+      Schranken aktuell blockieren (unter_schwelle +3,30%, 95%-CI
+      [+1,26%,+5,32%]; max_positionen +1,63%, 95%-CI [+1,24%,+2,02%] —
+      beide P(≤0)=0%, n=13/335). Steht im Gegensatz zum 1.1-Befund über
+      tatsächlich ausgeführte Käufe (−1,94%/Trade). Bewusst NICHT
+      automatisch geändert (echte Config-/Risiko-Entscheidung). Vor einer
+      Änderung lohnt sich ein Blick, ob mehr gleichzeitige Positionen das
+      Portfolio-Risikoprofil (Korrelation, Klumpenrisiko) spürbar
+      verändern würden.
 
 **Vor Live-Relevanz außerdem**: Registry neu generieren (aktuell
 Spielzeug-Lauf; schlank fahren: `--total 12 --max-combos 24`, sonst
