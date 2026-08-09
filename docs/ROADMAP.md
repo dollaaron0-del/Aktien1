@@ -775,6 +775,30 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       fine-grained PAT (Contents:write) + Credential-Storage ein, damit
       „Code holen" am Umzugstag ein einfacher git clone wird (aktuell
       294 Commits nicht auf origin).
+      UMZUG VOLLZOGEN 9.8.2026 — Freigabe-Regel greift: User bestätigt
+      Programm läuft auf dem neuen Server (AMD Ryzen 5 3600X 6C/12T, 15GB
+      RAM, NVIDIA RTX 2070 8GB VRAM). Beim ersten Rundgang zwei echte Funde:
+      (i) SICHERHEITS-REGRESSION: die installierte aktien_dashboard.service
+      band auf 0.0.0.0 statt 127.0.0.1 (0.4-Fix nicht mit umgezogen) UND kein
+      DASHBOARD_PASSWORD gesetzt — dashboard.log zeigte eine öffentliche
+      External URL, Settings-Tab kann .env-Keys lesen/schreiben. Braucht
+      sudo (in der Ausführungs-Sandbox nicht verfügbar) — Fix an User
+      übergeben: scripts/aktien_dashboard.service nach
+      /etc/systemd/system/ kopieren, daemon-reload, restart,
+      DASHBOARD_PASSWORD setzen, ufw gegenchecken. Noch nicht verifiziert,
+      dass der Fix angewendet wurde. (ii) SYSTEMD-DRIFT-NACHZUG (Muster
+      6.1e, 22.7.): aktien_bot.service im Repo lief noch auf User=root,
+      während der Server ihn korrekt als aaron fährt — bei einem künftigen
+      Restore hätte das den Bot als root gestartet. Auf User=aaron
+      vereinheitlicht (bot/dashboard/backup/nightly_research/
+      premarket_ibkr/source_health); aktien_monday_check.service/.timer
+      fehlten komplett im Repo, nachgezogen. (iii) NEBENFUND: beim
+      Investigieren ein großes, seit 24.7.–1.8. gestagtes aber nie
+      committetes Änderungspaket auf dem Server entdeckt (Handelspfad:
+      scheduler_risk/executor/portfolio-integrity/signal_queue +
+      dashboard/factory-Canvas-Feature, ~1800 Zeilen) — der laufende
+      Bot-Prozess (seit 8.8.) handelt bereits live damit, war aber bis
+      dahin nirgends gesichert. User bestätigt: bekannt, committen.
 - [ ] **6.2 Daten-Ausbau** (Voraussetzung, dass mehr Compute überhaupt lohnt).
       Das Nadelöhr konkret: (1) nur 10/42 Ticker = zu wenige unabhängige
       Stichproben, (2) Survivorship-Bias — yfinance kennt nur heutige
@@ -911,6 +935,23 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
           Erfolg/-Timeout/-Fehlen/Falsy-Override), netzfrei (subprocess
           gemockt). Direkt messbarer Euro-Effekt sobald GPU da ist, null
           Overfit-Risiko — reine Infrastruktur.
+          ⚠ LÜCKE GEFUNDEN + GEFIXT 9.8.2026 (echter Umzug, RTX 2070 8GB):
+          Presence-only reichte nicht — die Karte galt als "GPU vorhanden"
+          und bekam denselben qwen2.5:32b-Default wie ein Mac Mini M4 mit
+          32GB Unified Memory. 32b war weder lokal gepullt noch VRAM-mäßig
+          ladbar (braucht ~20GB+) → reale 60s-Ollama-Timeouts im Live-
+          Betrieb seit dem Umzug (bot.log-Warnungen ab 30.7.). Neue
+          _detect_nvidia_vram_gb() + reine _select_default_models()-Funktion
+          stufen jetzt nach tatsächlichem VRAM (≥20GB→32b, ≥6GB→14b, sonst
+          CPU-Fallback statt zu raten); Apple Silicon unverändert, explizite
+          OLLAMA_MODEL_*-Env weiterhin Vorrang. 11 neue Tests
+          (test_resource_manager_vram.py, reine Funktion statt
+          Modul-Reload — ein erster Anlauf mit importlib.reload() hat
+          test_resource_manager_tier_override.py verschmutzt, da
+          ResourceManager.update() TIER_MODELS dynamisch über die
+          Modul-__globals__ auflöst). Live auf dem Server verifiziert:
+          8.0GB erkannt → PERFORMANCE/BALANCED jetzt qwen2.5:14b (lokal
+          vorhanden) statt qwen2.5:32b.
       (b) ✅ ML-Meta-Labeling GEBAUT 12.7.: strategy_lab/meta_label.py + CLI
           scripts/meta_label.py. Modell lernt NICHT Kurse vorherzusagen,
           sondern WELCHE der mechanischen Signale (Donchian/RSI/…) im

@@ -79,6 +79,54 @@ def _has_inference_gpu() -> bool:
         return False
 
 
+def _detect_nvidia_vram_gb() -> float:
+    """Kleinster erkannter NVIDIA-VRAM in GB, 0.0 wenn nicht ermittelbar.
+
+    Presence-only (_has_inference_gpu) reicht nicht für die Modellwahl: eine
+    8GB-Karte (z.B. RTX 2070) meldet sich als GPU-fähig, kann aber qwen2.5:32b
+    (braucht ~20GB+) nicht laden — das Ergebnis waren reale 60s-Timeouts in
+    der Produktion nach dem Server-Umzug (Fund 9.8.2026, bot.log ab 30.7.).
+    Bei mehreren Karten zählt die kleinste (konservativ, Ollama plant nicht
+    automatisch über mehrere GPUs)."""
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            stderr=subprocess.DEVNULL, timeout=3,
+        )
+        values = [float(v) for v in out.decode().split() if v.strip()]
+        return min(values) / 1024.0 if values else 0.0
+    except Exception:
+        return 0.0
+
+
+def _select_default_models(
+    *, cpu_only: bool, is_darwin: bool, vram_gb: float, model_cpu: str
+) -> tuple[str, str, str]:
+    """Reine Auswahlfunktion (PERFORMANCE, BALANCED, MINIMAL) — ohne I/O,
+    direkt testbar ohne Modul-Reload.
+
+    Apple Silicon (Unified Memory, kein separates VRAM-Limit) behält die
+    großen Mac-Mini-M4-Defaults. NVIDIA-Karten werden nach tatsächlichem
+    VRAM gestuft, statt pauschal die größten Modelle anzunehmen (Fund
+    9.8.2026: eine RTX 2070 8GB wählte sonst qwen2.5:32b — weder lokal
+    vorhanden noch ladbar, Ergebnis waren reale Ollama-Timeouts im
+    Live-Betrieb nach dem Server-Umzug)."""
+    if cpu_only:
+        return model_cpu, model_cpu, model_cpu
+    if is_darwin:
+        return "qwen2.5:32b", "qwen2.5:14b", "llama3.1:8b"
+    if vram_gb >= 20.0:
+        # genug VRAM für qwen2.5:32b am Stück (Q4-Quantisierung ≈ 20GB)
+        return "qwen2.5:32b", "qwen2.5:14b", "llama3.1:8b"
+    if vram_gb >= 6.0:
+        # z.B. RTX 2070 8GB: 14b passt (≈9GB), 32b nicht
+        return "qwen2.5:14b", "qwen2.5:14b", "llama3.1:8b"
+    # GPU erkannt, aber zu wenig/unbekannt VRAM (z.B. nvidia-smi ohne
+    # --query-gpu-Unterstützung) → auf der sicheren, CPU-tauglichen Seite
+    # bleiben statt zu raten
+    return model_cpu, model_cpu, model_cpu
+
+
 _CPU_ONLY = not _has_inference_gpu()
 
 # Schnelles Modell für reine CPU-Hosts. Große Modelle erzeugen die ~240 Output-
@@ -86,15 +134,14 @@ _CPU_ONLY = not _has_inference_gpu()
 # kleines 1b/3b-Modell bleibt zuverlässig darunter und liefert überhaupt Signale.
 _MODEL_CPU = os.getenv("OLLAMA_MODEL_CPU", "llama3.2:3b")
 
-# Ollama-Modell je Tier (via .env überschreibbar).
-# GPU-Defaults (Mac Mini M4, 32 GB Unified Memory):
-#   PERFORMANCE → qwen2.5:32b · BALANCED → qwen2.5:14b · MINIMAL → llama3.1:8b
-# Auf reiner CPU greift stattdessen das schnelle _MODEL_CPU als Default – eine
-# explizite OLLAMA_MODEL_*-Env hat weiterhin Vorrang (Achtung Tier-Override:
-# ein dort gepinntes 8b/14b macht den CPU-Schutz wirkungslos).
-_DEF_PERFORMANCE = _MODEL_CPU if _CPU_ONLY else "qwen2.5:32b"
-_DEF_BALANCED    = _MODEL_CPU if _CPU_ONLY else "qwen2.5:14b"
-_DEF_MINIMAL     = _MODEL_CPU if _CPU_ONLY else "llama3.1:8b"
+_IS_DARWIN = __import__("platform").system() == "Darwin"
+_NVIDIA_VRAM_GB = 0.0 if (_CPU_ONLY or _IS_DARWIN) else _detect_nvidia_vram_gb()
+
+# Ollama-Modell je Tier (via .env überschreibbar) — eine explizite
+# OLLAMA_MODEL_*-Env hat weiterhin Vorrang vor jeder berechneten Stufe.
+_DEF_PERFORMANCE, _DEF_BALANCED, _DEF_MINIMAL = _select_default_models(
+    cpu_only=_CPU_ONLY, is_darwin=_IS_DARWIN, vram_gb=_NVIDIA_VRAM_GB, model_cpu=_MODEL_CPU,
+)
 
 _MODEL_PERFORMANCE = os.getenv("OLLAMA_MODEL_PERFORMANCE", _DEF_PERFORMANCE)
 _MODEL_BALANCED    = os.getenv("OLLAMA_MODEL_BALANCED",    _DEF_BALANCED)
@@ -107,6 +154,12 @@ if _CPU_ONLY:
         "Falls hier 8b/14b steht, ist es per OLLAMA_MODEL_* gepinnt – auf CPU "
         "zu langsam, bitte auf %s setzen.",
         _MODEL_PERFORMANCE, _MODEL_BALANCED, _MODEL_MINIMAL, _MODEL_CPU, _MODEL_CPU,
+    )
+elif not _IS_DARWIN:
+    log.info(
+        "Resource-Manager: NVIDIA-GPU erkannt, VRAM≈%.1fGB → Ollama-Modelle: "
+        "PERFORMANCE=%s BALANCED=%s MINIMAL=%s.",
+        _NVIDIA_VRAM_GB, _MODEL_PERFORMANCE, _MODEL_BALANCED, _MODEL_MINIMAL,
     )
 
 TIER_MODELS = {

@@ -4,5 +4,6 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+User=aaron
 WorkingDirectory=/opt/Aktien
 ExecStart=/opt/Aktien/venv/bin/python /opt/Aktien/scripts/source_health_report.py --days 7

@@ -4,6 +4,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+User=aaron
 WorkingDirectory=/opt/Aktien
 # BACKUP_REMOTE optional setzen (rsync-Ziel) für Off-Server-Kopie, z.B.:
 #   Environment=BACKUP_REMOTE=user@host:/pfad/aktien-backups

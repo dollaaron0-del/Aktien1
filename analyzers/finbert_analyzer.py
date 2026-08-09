@@ -7,10 +7,11 @@ Deutlich besser als generische Modelle für Finanznachrichten:
   - Unterscheidet positives Wachstum von "positiven" Verlusten ("only lost $2M")
   - ~438MB Download, einmalig gecacht in ~/.cache/huggingface/
 
-Setup (automatisch beim ersten Aufruf):
-    pip3 install transformers torch --break-system-packages
+Setup:
+    pip install transformers torch
 
-Geschwindigkeit CPU: ~50–100ms für 10 Headlines im Batch.
+Geschwindigkeit: ~50–100ms CPU / <10ms GPU für 10 Headlines im Batch.
+Nutzt CUDA automatisch wenn verfügbar (siehe torch.cuda.is_available()).
 """
 from __future__ import annotations
 
@@ -33,17 +34,22 @@ def _get_pipeline():
         return _pipeline_instance if _available else None
     try:
         from transformers import pipeline as hf_pipeline
+        try:
+            import torch
+            device = 0 if torch.cuda.is_available() else -1
+        except ImportError:
+            device = -1
         _pipeline_instance = hf_pipeline(
             "text-classification",
             model=_MODEL_NAME,
-            device=-1,          # CPU
+            device=device,
             top_k=None,         # return all three labels per item
             batch_size=_BATCH_SIZE,
             truncation=True,
             max_length=_MAX_LEN,
         )
         _available = True
-        log.info("FinBERT geladen: %s (CPU)", _MODEL_NAME)
+        log.info("FinBERT geladen: %s (%s)", _MODEL_NAME, "GPU" if device == 0 else "CPU")
     except Exception as e:
         _available = False
         log.debug("FinBERT nicht verfügbar (pip install transformers torch): %s", e)
