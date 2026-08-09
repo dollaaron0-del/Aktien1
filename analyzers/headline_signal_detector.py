@@ -72,9 +72,17 @@ class HeadlineSignalDetector:
     # Very strong threshold → immediate Telegram alert
     VERY_STRONG_THRESHOLD = 0.85
 
-    def __init__(self, newsapi_key: str = "", telegram_notifier=None):
+    def __init__(self, newsapi_key: str = "", telegram_notifier=None, llm_prescreener=None):
         self.newsapi_key = newsapi_key
         self.notifier   = telegram_notifier
+        # Roadmap 6.9f: zweite Triage-Stufe für Schlagzeilen, die der feste
+        # Keyword-/Regex-Katalog nicht erkennt. Default None = unverändertes
+        # Verhalten – der Live-Aufrufer (bot/scheduler_scanners.py::
+        # headline_scan_job) übergibt bewusst noch keinen, das ist ein
+        # separater, offener Wiring-Schritt (Muster wie 5.3/6.9e: erst bauen
+        # + messen, bevor eine LLM-Schlagzeilenbewertung live Eskalationen
+        # auslöst). Erwartet eine analyzers.ollama_prescreener.OllamaPrescreener.
+        self.llm_prescreener = llm_prescreener
         self._state: Dict = self._load_state()
 
     def scan(self, bench_list: Optional[List[str]] = None) -> List[HeadlineSignal]:
@@ -174,6 +182,10 @@ class HeadlineSignalDetector:
                     best_type  = sig_type
 
         if best_type is None:
+            # Keyword-Katalog kennt kein Muster – optionale LLM-Zweitstufe
+            # (Roadmap 6.9f), sonst wie bisher kein Signal.
+            if self.llm_prescreener is not None:
+                return self._classify_llm(article)
             return None
 
         # Extract ticker
@@ -185,6 +197,38 @@ class HeadlineSignalDetector:
             ticker=ticker,
             signal_type=best_type,
             score=best_score,
+            headline=article.get("title", "")[:200],
+            source=article.get("source", ""),
+            detected_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+        )
+
+    def _classify_llm(self, article: Dict) -> Optional[HeadlineSignal]:
+        """Zweite Triage-Stufe für Schlagzeilen ohne Regex-Treffer (6.9f):
+        lokales LLM statt eines starren Musterkatalogs – auf der alten
+        CPU-only-Hardware bei ~1,7 tok/s unmöglich, mit GPU (6.5a) machbar.
+
+        Nur BULLISH-Richtung wird als Signal gewertet: die bestehenden
+        Eskalations-Schwellen (STRONG/VERY_STRONG_THRESHOLD) sind auf hohe
+        Scores für Kauf-Kandidaten kalibriert – die Regex-BEARISH-Muster
+        (DOWNGRADE/EARNINGS_MISS/RECALL) tragen ohnehin absichtlich niedrige
+        Scores und lösen praktisch nie eine Eskalation aus; dasselbe gilt
+        hier bewusst für NEUTRAL/BEARISH-LLM-Urteile (kein Signal statt
+        eines erfundenen Gegenteil-Scores)."""
+        ticker = self._extract_ticker(article.get("title", ""))
+        if not ticker:
+            return None
+        news_items = [{
+            "title": article.get("title", "") or "",
+            "source": article.get("source", "") or "",
+            "published_at": "",
+        }]
+        result = self.llm_prescreener.prescreen(ticker, news_items)
+        if not result.ollama_used or result.direction != "BULLISH":
+            return None
+        return HeadlineSignal(
+            ticker=ticker,
+            signal_type="LLM_SCORED",
+            score=result.score,
             headline=article.get("title", "")[:200],
             source=article.get("source", ""),
             detected_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),

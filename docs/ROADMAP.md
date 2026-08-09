@@ -1126,10 +1126,29 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
           NICHT in send_to_claude-Entscheid oder Kalibrierung (1.2)
           verdrahtet (Muster wie 2.1/2.5/4.3: erst bauen + messen, Wiring
           erst nach belegtem Effekt auf echte Entscheidungen).
-      (f) HEADLINE-MASSEN-TRIAGE: jede Schlagzeile lokal scoren statt
-          Keyword-Filter (bei 1,7 tok/s unmöglich) → bessere
-          Eskalations-Qualität + weniger Claude-Calls (verzahnt
-          Frugal-/Quiet-Mode).
+      (f) ✅ HEADLINE-MASSEN-TRIAGE GEBAUT 9.8.2026: zweite Triage-Stufe für
+          Schlagzeilen, die der feste Regex-Katalog (_SIGNAL_PATTERNS)
+          nicht erkennt — auf der alten CPU-only-Hardware bei ~1,7 tok/s
+          unmöglich, mit der GPU (6.5a) machbar.
+          analyzers/headline_signal_detector.py::HeadlineSignalDetector
+          bekommt einen optionalen llm_prescreener-Parameter (Default None
+          = unverändertes Regex-only-Verhalten); nur wenn KEIN Regex-Muster
+          greift UND ein llm_prescreener übergeben wurde, klassifiziert
+          _classify_llm() über OllamaPrescreener.prescreen() (Wieder-
+          verwendung, keine neue Prompt-Logik). Nur BULLISH-Richtung zählt
+          als Signal — dieselbe praktische Wirkung wie die bereits
+          niedrig-score'd BEARISH-Regex-Muster (DOWNGRADE/EARNINGS_MISS/
+          RECALL), die die Eskalations-Schwellen (STRONG/VERY_STRONG)
+          ohnehin nie erreichen; NEUTRAL/Ollama-offline liefert bewusst
+          KEIN erfundenes Signal. 8 neue Tests
+          (test_headline_signal_detector.py, u.a.: Regex-Treffer konsultiert
+          das LLM gar nicht erst, Ticker-Extraktion schlägt fehl → kein
+          LLM-Aufruf verschwendet), netzfrei. Suite weiterhin grün.
+          Bewusst NICHT live verkabelt: bot/scheduler_scanners.py::
+          headline_scan_job() instanziiert HeadlineSignalDetector() weiterhin
+          ohne llm_prescreener — genau wie bei 5.3/6.9e erst bauen + messen,
+          bevor eine LLM-Schlagzeilenbewertung live Fokus-Analysen (und
+          potenziell echte Trades) auslösen darf.
       (g) TEURE STATISTIK ALS STANDARD: purged CPCV, Deflated Sharpe,
           Permutation-Importance der Meta-Labeling-Features — heute
           Sonderläufe, künftig fester Teil jedes 6.7-Nachtlaufs (macht
