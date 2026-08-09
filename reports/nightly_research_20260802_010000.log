@@ -1,0 +1,80 @@
+=== Nightly Research Start: So 2. Aug 01:00:00 UTC 2026 ===
+Deadline: So 2. Aug 05:30:00 UTC 2026
+=== Meta-Backtest (Zeitbudget 180min) ===
+Meta-Backtest des Allokators über 10 Ticker | Familien: baseline_swing, 
+donchian_breakout, gap_meanrev, rsi_meanrev, ts_momentum, w52_high | Kapital 
+$100,000
+Survivorship-Hinweis: yfinance liefert nur Überlebende — Renditen aller Arme 
+sind nach oben verzerrt; der PAARWEISE Vergleich der Arme (gleiche Daten, 
+gleiche Verzerrung) bleibt davon weitgehend unberührt.
+
+                          OOS-Ergebnis je Meta-Fenster                          
+╭───────────┬───────────┬──────────┬────────┬───────────┬──────────┬───────────╮
+│           │           │          │        │ allokator │ allokat… │ gleichge… │
+│ Stichtag  │ OOS bis   │ Regime   │ ACTIVE │    Ret/DD │   Ret/DD │    Ret/DD │
+├───────────┼───────────┼──────────┼────────┼───────────┼──────────┼───────────┤
+│ 2014-07-… │ 2016-07-… │ BULL_CA… │      0 │      flat │     flat │  +53.5% / │
+│           │           │          │        │           │          │     -8.6% │
+│ 2015-07-… │ 2017-07-… │ BULL_CA… │      0 │      flat │     flat │  +32.1% / │
+│           │           │          │        │           │          │     -8.1% │
+│ 2016-07-… │ 2018-07-… │ BULL_CA… │      0 │      flat │     flat │  +42.3% / │
+│           │           │          │        │           │          │     -9.8% │
+│ 2017-07-… │ 2019-07-… │ BULL_CA… │      0 │      flat │     flat │  +11.8% / │
+│           │           │          │        │           │          │    -13.0% │
+│ 2018-07-… │ 2020-07-… │ BULL_CA… │      0 │      flat │     flat │  +50.7% / │
+│           │           │          │        │           │          │    -13.8% │
+│ 2019-07-… │ 2021-07-… │ BULL_VO… │      0 │      flat │     flat │ +105.1% / │
+│           │           │          │        │           │          │     -8.6% │
+│ 2020-07-… │ 2022-07-… │ BULL_VO… │      0 │      flat │     flat │  +29.1% / │
+│           │           │          │        │           │          │    -12.3% │
+│ 2021-07-… │ 2023-07-… │ BULL_VO… │      0 │      flat │     flat │  +28.6% / │
+│           │           │          │        │           │          │    -26.3% │
+│ 2022-07-… │ 2024-07-… │ BULL_VO… │      0 │      flat │     flat │  +98.2% / │
+│           │           │          │        │           │          │    -15.1% │
+│ 2023-07-… │ 2025-07-… │ SIDE_VO… │      0 │      flat │     flat │  +16.2% / │
+│           │           │          │        │           │          │    -17.4% │
+│ 2024-07-… │ 2026-07-… │ BULL_VO… │      0 │      flat │     flat │  +15.5% / │
+│           │           │          │        │           │          │    -13.8% │
+╰───────────┴───────────┴──────────┴────────┴───────────┴──────────┴───────────╯
+                        Aggregat über alle Meta-Fenster                         
+╭────────────────┬──────────┬─────────┬─────────┬─────────────┬───────┬────────╮
+│ Arm            │ Ø Return │  Median │ Ø MaxDD │ Worst MaxDD │  flat │ Trades │
+├────────────────┼──────────┼─────────┼─────────┼─────────────┼───────┼────────┤
+│ allokator      │   +0.00% │  +0.00% │   0.00% │       0.00% │ 11/11 │      0 │
+│ allokator_reg… │   +0.00% │  +0.00% │   0.00% │       0.00% │ 11/11 │      0 │
+│ gleichgewicht… │  +43.92% │ +32.06% │ -13.34% │     -26.34% │  0/11 │   1106 │
+╰────────────────┴──────────┴─────────┴─────────┴─────────────┴───────┴────────╯
+
+Paired-Differenzen (je Meta-Fenster, Bootstrap-90%-CI):
+  Allokator − Gleichgewichtung (hilft die Selektion?): Ø -43.92%  CI [-60.61%, 
+-30.40%]  P(≤0)=100%
+  Regime-Faktor − Allokator (bringt Regime zusätzlich was?): Ø +0.00%  CI 
+[+0.00%, +0.00%]  P(≤0)=100%
+
+Lesart: CI-Untergrenze > 0 → Arm ist signifikant besser. CI um 0 → keine belegte
+Kante, Verdikt offen.
+=== Meta-Backtest Ende: So 2. Aug 01:17:00 UTC 2026 ===
+=== CPCV (Zeitbudget 180min) ===
+CPCV über 10 Ticker | 6 Blöcke, 2 als Test je Pfad | Purge 10d / Embargo 5d | 
+Historie 20J
+Zweite Validierungs-Achse neben Walk-Forward — prüft Robustheit über VIELE 
+Test-Block-Kombinationen statt nur einer Zeitrichtung.
+NUR Überlebende — Survivorship-Bias NICHT gemildert (Kennzahlen nach oben 
+verzerrt).
+                        CPCV-Robustheit (OOS über Pfade)                        
+╭───────┬───────┬───────┬───────┬───────┬───────┬──────┬───────┬───────┬───────╮
+│       │       │     Ø │       │       │ OOS-… │      │       │       │       │
+│ Stra… │ Pfade │  Test │ Medi… │ Worst │   90% │ %pos │ WF-E… │ Stab… │ Verd… │
+├───────┼───────┼───────┼───────┼───────┼───────┼──────┼───────┼───────┼───────┤
+│ base… │    15 │ +1.11 │ +0.79 │ +0.45 │ [+0.… │ 100% │  0.25 │   40% │ FRAG… │
+│ donc… │    15 │ +0.86 │ +0.72 │ +0.35 │ [+0.… │ 100% │  0.26 │   60% │ FRAG… │
+│ gap_… │    15 │ -0.02 │ -0.01 │ -0.10 │ [-0.… │  20% │ -0.26 │   47% │ OVER… │
+│ rsi_… │    15 │ +0.13 │ +0.13 │ +0.00 │ [+0.… │ 100% │  0.46 │   80% │ FRAG… │
+│ ts_m… │    15 │ +0.60 │ +0.43 │ +0.22 │ [+0.… │ 100% │  0.28 │   73% │ FRAG… │
+│ w52_… │    15 │ +0.25 │ +0.14 │ +0.02 │ [+0.… │ 100% │  0.21 │   33% │ FRAG… │
+╰───────┴───────┴───────┴───────┴───────┴───────┴──────┴───────┴───────┴───────╯
+ROBUST verlangt hier dieselben Šidák/Bootstrap-Gates wie Walk-Forward — nur über
+Test-Block-Kombinationen statt Zeitfenstern. Zwei robuste Achsen sind ein 
+deutlich stärkeres Signal als eine.
+=== CPCV Ende: So 2. Aug 01:41:14 UTC 2026 ===
+=== Nightly Research Ende: So 2. Aug 01:41:14 UTC 2026 ===
