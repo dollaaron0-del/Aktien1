@@ -1105,7 +1105,9 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
           nur Scheinkanten. Genau dafür einsetzen.
       (e) GRENZE KLAR BENENNEN: Kurse delisteter Aktien kann kein Compute
           rekonstruieren — Survivorship-Fix bleibt Kauf-Entscheid 6.2-(c).
-- [ ] **6.9 Weitere Compute-Hebel** (gesammelt 12.7., User wählt bei Umzug aus) —
+- [~] **6.9 Weitere Compute-Hebel** (gesammelt 12.7., User wählt bei Umzug aus) —
+      (b)–(g) erledigt 9.8.2026, nur (a) Whisper-Transkription bewusst noch
+      offen (braucht vorab Audio-Quellen-Recherche, s.u.).
       Aufgaben, die heute zu rechenintensiv sind, auf dem GPU-Server aber
       einmalig oder als Routine laufen können.
       EINMALIG (Backfill):
@@ -1155,9 +1157,15 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
           kleiner Modelle bei Kategorisierungs-Aufgaben) — ein
           aussagekräftiger Lauf braucht eher qwen2.5:14b. Voller Lauf mit
           größerem Modell + höherem --limit noch nicht gemacht.
-      (d) SKIP-KONTRAFAKTIK XXL: 3.2 hochskaliert — ALLE historischen SKIPs
-          + großes Universum durchsimulieren → EntryFilter-Schwellen mit
-          echten Gegenproben statt kleiner Stichprobe validieren.
+      (d) ✅ SKIP-KONTRAFAKTIK XXL — ERLEDIGT PER RE-CHECK 9.8.2026 (Detail
+          bei 3.2 oben, dort dokumentiert statt hier dupliziert): reiner
+          Zeit-/Datenverlauf, kein neuer Code nötig — derselbe getestete
+          `scripts/skip_counterfactual.py` lief einfach mit gewachsenem
+          Pool erneut. Pool 2485 SKIPs (352 simulierbar, vorher 4)
+          erstmals über dem Mindest-n: max_positionen (n=335, +1,63%,
+          CI [+1,24%,+2,02%]) und unter_schwelle (n=13, +3,30%,
+          CI [+1,26%,+5,32%]) beide statistisch signifikant positiv —
+          siehe User-Entscheidung unten (buy_threshold/MAX_POSITIONS).
       REGELMÄSSIG (im Zyklus / nächtlich):
       (e) ✅ LLM-ENSEMBLE/SELBST-KONSISTENZ GEBAUT 9.8.2026: n Samples je
           Analyse statt 1, Streuung der Antworten = ehrliches Unsicherheits-
