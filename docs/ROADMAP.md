@@ -1184,10 +1184,27 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
           ohne llm_prescreener — genau wie bei 5.3/6.9e erst bauen + messen,
           bevor eine LLM-Schlagzeilenbewertung live Fokus-Analysen (und
           potenziell echte Trades) auslösen darf.
-      (g) TEURE STATISTIK ALS STANDARD: purged CPCV, Deflated Sharpe,
-          Permutation-Importance der Meta-Labeling-Features — heute
-          Sonderläufe, künftig fester Teil jedes 6.7-Nachtlaufs (macht
-          6.4 vom Einmal-Protokoll zum Dauer-Gate).
+      (g) TEURE STATISTIK ALS STANDARD — ✅ GRÖSSTENTEILS ERLEDIGT 9.8.2026:
+          purged CPCV lief bereits seit 6.7 (17./18.7.) sonntags im
+          Nachtlauf (nightly_research.sh) — beim Bauen entdeckt, war hier
+          nie abgehakt. Neu ergänzt: Permutation-Importance der Meta-
+          Labeling-Features. Neues strategy_lab/feature_importance.py::
+          evaluate_feature_importance() — identischer expandierender
+          Block-Aufbau wie evaluate_meta_labeling() (make_blocks/
+          _design_matrix, kein neuer Split-Stil, gleiches Holdout-
+          Protokoll), sklearn.inspection.permutation_importance je Block,
+          über Blöcke gemittelt statt eines einzelnen Splits. CLI
+          scripts/feature_importance_study.py. 9 neue Tests
+          (test_feature_importance.py, u.a. Positivkontrolle: das
+          künstlich signaltragende Feature landet zuverlässig auf Platz 1),
+          netzfrei. Smoke-Test gegen echte Cache-Daten (5 Ticker/10J):
+          trailing_vol/trailing_ret dominieren klar vor den Regime-/
+          Strategie-One-Hot-Spalten (kleine Stichprobe, kein finales
+          Verdikt). In nightly_research.sh sonntags nach CPCV verkabelt.
+          Deflated Sharpe BEWUSST WEITERHIN NICHT gebaut — bereits in 6.4a
+          begründet verworfen (DSR braucht Skew/Kurtosis-Schätzungen, die
+          auf so wenigen OOS-Fenstern nicht tragen); diese Begründung hat
+          sich seither nicht geändert, deshalb hier nicht neu aufgerollt.
       LEITPLANKE: LLM-Annotationen sind verrauscht und alles daraus
       Gelernte läuft durch die 6.4-Gates; (e)/(f) verbessern KALIBRIERUNG
       und KOSTEN, nicht automatisch die Kante.

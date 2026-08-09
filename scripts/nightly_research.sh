@@ -3,7 +3,10 @@
 #
 # Orchestriert die rechenintensiven Strategie-Lab-Läufe als feste nächtliche
 # Routine statt Hand-Anstoß: jede Nacht Walk-Forward (Registry-Refresh),
-# sonntags zusätzlich Meta-Backtest + CPCV, am 1. des Monats zusätzlich
+# sonntags zusätzlich Meta-Backtest + CPCV + Permutation-Importance
+# (Roadmap 6.9g: "teure Statistik als Standard" statt Sonderlauf — Deflated
+# Sharpe bewusst NICHT hier, s. 6.4a: DSR braucht Skew/Kurtosis-Schätzungen,
+# die auf so wenigen OOS-Fenstern nicht tragen), am 1. des Monats zusätzlich
 # Quellen-Ablation + Stress-Test. Harte Sicherheits-Deadline (05:30), damit
 # nichts in den täglichen Bot-Betrieb (06:00 IPO-Check, 08:30 Morgenbericht)
 # hineinläuft — ein Schritt, der die Deadline reißt, wird übersprungen statt
@@ -60,6 +63,8 @@ if [ "$DOW" = "7" ]; then
     --step-years 1 --max-combos 60 --workers 0
   run_with_deadline "CPCV" venv/bin/python -m scripts.cpcv \
     --total 20 --n-blocks 6 --test-blocks 2 --max-combos 60 --workers 0
+  run_with_deadline "Feature-Importance" venv/bin/python -m scripts.feature_importance_study \
+    --total-years 20 --n-blocks 6 --holdout 2 --n-repeats 10
 else
   # Täglich (6.7a): Registry-Refresh.
   run_with_deadline "Walk-Forward" venv/bin/python -m scripts.walk_forward \
