@@ -28,9 +28,16 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
 - [ ] **0.2 Push-Frage klären** (User-Entscheidung) — origin/main hängt beim
       21.5. hinterher; Token bräuchte Contents:write. Code+Daten liegen sonst
       auf einer Platte.
-- [ ] **0.3 Demo-Daten-Rücktausch** — Pflicht vor Bot-Reaktivierung; echte
-      `data/` liegt im Backup, aktuell Demo-Kopie für Präsentation aktiv.
-      Danach `python -m scripts.backfill_regime` auf der echten DB.
+- [x] **0.3 Demo-Daten-Rücktausch** — ERLEDIGT 14.7.2026 (Detail-Log in
+      docs/REAKTIVIERUNG.md Schritt 1), hier nur nie abgehakt. Content-
+      Vergleich ergab: nur portfolio.db/trade_journal.db/performance.db/
+      bot_score.json trugen Demo-Werte (4 Fake-Positionen), alle Lern-DBs
+      (experience.db/decision_log.db/analysis_log.db/calibration.json)
+      waren vom Swap unberührt. Gezielt zurückkopiert, verifiziert (0
+      Positionen, echtes Cash). Re-verifiziert 9.8.2026: decision_log.db
+      läuft durchgängig 17.7.–7.8. (5989 Einträge), experience.db hat
+      inzwischen 35 echte label_source='live'-Trades (0 beim letzten
+      Roadmap-Check 22.7.) — echte Daten, kein Demo-Rest.
 - [x] **0.4 Dashboard/Ports absichern** (11.7. Netzwerk-Teil, 12.7. Login-Rest).
       Befund: manuell gestartete Streamlit-Instanz auf :8503 (0.0.0.0, XSRF
       aus), ufw ließ 8503 weltweit rein, kein Login, Settings-Tab kann echte
@@ -708,7 +715,29 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       (test_each_family_runs_on_dense_7day_calendar, freq='D' statt 'B'
       synthetisch) verhindern künftig, dass Family-Code je einen
       Business-Day-Kalender voraussetzt.
-- [ ] **5.3 Slippage-Kalibrierung** aus echten IBKR-Paper-Fills.
+- [~] **5.3 Slippage-Kalibrierung** aus echten IBKR-Paper-Fills — Instrumentierung
+      FERTIG 9.8.2026, Kalibrierung selbst noch offen (braucht neue Fills).
+      Befund beim Bauen: order_log.db (1.5f) hatte fill_price, aber nie den
+      Referenzpreis zum Entscheidungszeitpunkt — Slippage war aus den 78
+      bisherigen echten IBKR-Fills retroaktiv NICHT berechenbar. broker/
+      ibkr_broker.py::_place_order() bekommt jetzt einen reference_price-
+      Parameter (buy()/sell() reichen ihren price-Parameter durch, rein
+      additiv, keine Änderung an Order-Logik/Menge/Typ — weiterhin
+      MarketOrder ohne Limit), landet vorzeichenrein in OrderResult.
+      extra["market_price"]; order_log.py migriert eine neue market_price-
+      Spalte (Muster: cost_eur/git_hash in analyzers/decision_log.py).
+      Neues scripts/slippage_calibration.py liest mode='ibkr'+status='filled'
+      +market_price-Zeilen, signiert BUY/SELL korrekt (>0 = immer
+      schlechter als erwartet), Bootstrap-CI (reuse
+      scripts.track_record._bootstrap_mean_ci) gegen die bisher pauschale
+      Backtest-Annahme (0,1%, analyzers/backtester.py). PaperBroker bewusst
+      ausgeklammert (simuliert Slippage bereits selbst über _calc_slippage,
+      andere Fragestellung). 16 neue Tests (test_ibkr_fill.py-Ergänzung,
+      test_order_log.py-Ergänzung inkl. Migrationstest, neues
+      test_slippage_calibration.py), volle Suite grün. Ehrlicher Erstlauf:
+      0 verwertbare Fills (Instrumentierung ist neu, Alt-Fills haben kein
+      market_price) — Skript meldet das statt ein Verdikt zu erfinden;
+      erneut laufen lassen, sobald der Bot neue Fills gemacht hat.
 
 ## Block 6 — Server-Umzug + Intensiv-Lab (GPU-Server, geplant ~Ende Juli/Aug. 2026)
 
@@ -1077,9 +1106,26 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
           + großes Universum durchsimulieren → EntryFilter-Schwellen mit
           echten Gegenproben statt kleiner Stichprobe validieren.
       REGELMÄSSIG (im Zyklus / nächtlich):
-      (e) LLM-ENSEMBLE/SELBST-KONSISTENZ: n Samples je Analyse statt 1,
-          Streuung der Antworten = ehrliches Unsicherheitsmaß → speist die
-          Kalibrierung; lokal ~kostenlos, via API n-facher Preis.
+      (e) ✅ LLM-ENSEMBLE/SELBST-KONSISTENZ GEBAUT 9.8.2026: n Samples je
+          Analyse statt 1, Streuung der Antworten = ehrliches Unsicherheits-
+          maß; lokal ~kostenlos, via API n-facher Preis (bewusst nicht für
+          Claude gebaut). analyzers/ollama_prescreener.py::
+          OllamaPrescreener.sample_consistency() — dieselbe Prescreen-
+          Prompt-/Pars-Logik wie prescreen() (kein Duplikat), ruft
+          _call_ollama() n-mal mit erhöhter Temperature (Default 0.7 statt
+          des Live-Werts 0.1), aggregiert score_mean/score_std,
+          direction_agreement (Mehrheits-Richtung), confidence_mix.
+          _call_ollama() bekam dafür einen optionalen temperature-Parameter
+          (Default weiterhin 0.1 — bestehende Aufrufer/prescreen()
+          unverändert). CLI scripts/ensemble_consistency_study.py für
+          Feldtests (Schlagzeilen aus Textdatei statt vollem Live-Collector-
+          Stack, um das Verfahren isoliert zu prüfen). 7 neue Tests
+          (test_ollama_ensemble.py, netzfrei, requests.post gemockt), Suite
+          weiterhin grün. Smoke-Test gegen echtes lokales Ollama (llama3.2:3b,
+          3 Samples) lief Ende-zu-Ende durch. Bewusst NUR Messung — noch
+          NICHT in send_to_claude-Entscheid oder Kalibrierung (1.2)
+          verdrahtet (Muster wie 2.1/2.5/4.3: erst bauen + messen, Wiring
+          erst nach belegtem Effekt auf echte Entscheidungen).
       (f) HEADLINE-MASSEN-TRIAGE: jede Schlagzeile lokal scoren statt
           Keyword-Filter (bei 1,7 tok/s unmöglich) → bessere
           Eskalations-Qualität + weniger Claude-Calls (verzahnt

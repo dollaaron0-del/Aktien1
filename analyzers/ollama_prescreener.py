@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import json
 import os
+import statistics
 import time
+from collections import Counter
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Tuple
 
@@ -155,6 +157,24 @@ class PrescreenResult:
     skip_reason: str        # Warum Claude übersprungen wird (für Logging)
     ollama_used: bool       # False wenn Ollama offline (Fallback)
     latency_ms: int
+
+
+@dataclass
+class EnsembleResult:
+    """Selbst-Konsistenz-Ensemble (Roadmap 6.9e): n Samples derselben Analyse
+    bei erhöhter Temperature statt einem einzigen deterministischen Aufruf.
+    Streuung der Antworten ist ein ehrliches Unsicherheitsmaß – hohe
+    Uneinigkeit unter den Samples deutet auf eine Grenzfall-Einschätzung hin,
+    die ein Einzel-Sample nicht zeigen würde."""
+    ticker:              str
+    n_requested:         int
+    n_valid:             int      # erfolgreich geparste Samples (≤ n_requested)
+    score_mean:          float
+    score_std:           float    # Populationsstandardabweichung der Scores
+    direction_agreement: float    # Anteil der Samples mit der häufigsten Richtung (0..1)
+    majority_direction:  str
+    confidence_mix:      Dict[str, int]
+    samples:             List[Dict]
 
 
 class OllamaPrescreener:
@@ -330,6 +350,73 @@ class OllamaPrescreener:
             latency_ms=latency_ms,
         )
 
+    # ── Selbst-Konsistenz-Ensemble (Roadmap 6.9e) ────────────────────────────────
+
+    def sample_consistency(
+        self,
+        ticker: str,
+        news_items: List[Dict],
+        n: int = 5,
+        temperature: float = 0.7,
+    ) -> EnsembleResult:
+        """Dieselbe Prescreen-Analyse n-mal bei erhöhter Temperature abfragen,
+        Streuung als Unsicherheitsmaß. Bewusst NUR Messung – speist noch NICHT
+        live die Kalibrierung (1.2) oder den send_to_claude-Entscheid; das ist
+        ein separater, noch offener Wiring-Schritt (Muster wie 2.1/2.5/4.3:
+        erst bauen + messen, wiring nur nach belegtem Effekt). Lokal ~kostenlos
+        (Ollama) – deshalb bewusst nicht für Claude gebaut (n-facher API-Preis,
+        vgl. Roadmap-Leitplanke zu 6.9)."""
+        if not self.is_available():
+            return EnsembleResult(
+                ticker=ticker, n_requested=n, n_valid=0,
+                score_mean=float("nan"), score_std=float("nan"),
+                direction_agreement=float("nan"), majority_direction="",
+                confidence_mix={}, samples=[],
+            )
+
+        max_items = 25 if self.capability == "HIGH" else 15
+        headlines = self._extract_headlines(news_items, max_items=max_items)
+        if self.capability == "HIGH":
+            prompt = _PRESCREEN_PROMPT_32B.format(ticker=ticker, headlines=headlines)
+        else:
+            prompt = _PRESCREEN_PROMPT.format(ticker=ticker, headlines=headlines)
+
+        samples: List[Dict] = []
+        for _ in range(n):
+            raw = self._call_ollama(prompt, temperature=temperature)
+            if raw is None:
+                continue
+            parsed = self._parse_ollama_response(raw)
+            if parsed is None:
+                continue
+            samples.append(parsed)
+
+        if not samples:
+            return EnsembleResult(
+                ticker=ticker, n_requested=n, n_valid=0,
+                score_mean=float("nan"), score_std=float("nan"),
+                direction_agreement=float("nan"), majority_direction="",
+                confidence_mix={}, samples=[],
+            )
+
+        scores = [s["score"] for s in samples]
+        directions = [s["direction"] for s in samples]
+        confidences = [s["confidence"] for s in samples]
+        dir_counts = Counter(directions)
+        majority_direction, majority_n = dir_counts.most_common(1)[0]
+
+        return EnsembleResult(
+            ticker=ticker,
+            n_requested=n,
+            n_valid=len(samples),
+            score_mean=statistics.fmean(scores),
+            score_std=statistics.pstdev(scores) if len(scores) > 1 else 0.0,
+            direction_agreement=majority_n / len(samples),
+            majority_direction=majority_direction,
+            confidence_mix=dict(Counter(confidences)),
+            samples=samples,
+        )
+
     # ── Entscheidungslogik ────────────────────────────────────────────────────
 
     def _decide(self, score: float, direction: str, confidence: str) -> Tuple[bool, str]:
@@ -401,7 +488,8 @@ class OllamaPrescreener:
         Gibt None bei Fehler/Timeout zurück."""
         return self._call_ollama(prompt, max_tokens=max_tokens)
 
-    def _call_ollama(self, prompt: str, max_tokens: int = 120) -> Optional[str]:
+    def _call_ollama(self, prompt: str, max_tokens: int = 120,
+                     temperature: float = 0.1) -> Optional[str]:
         try:
             resp = requests.post(
                 f"{self.base_url}/api/generate",
@@ -410,7 +498,7 @@ class OllamaPrescreener:
                     "prompt": prompt,
                     "stream": False,
                     "options": {
-                        "temperature": 0.1,
+                        "temperature": temperature,
                         "num_predict": max_tokens,
                     },
                 },
