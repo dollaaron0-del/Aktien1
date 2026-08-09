@@ -141,16 +141,25 @@ def build_training_rows(
     return pd.DataFrame(rows)
 
 
-def _design_matrix(train_df: pd.DataFrame, test_df: pd.DataFrame):
+def _encode(df: pd.DataFrame, categorical: tuple,
+           columns: Optional[List[str]] = None) -> pd.DataFrame:
+    """One-Hot der Kategorie-Spalten + numerische Spalten. `columns` fixiert
+    die Zielspalten (Vorhersagezeit: exakt die Trainingsspalten — fehlende
+    Dummy-Spalten werden 0, unbekannte Kategorien fallen weg, kein Leck
+    künftiger Labels als neue Spalte)."""
+    cat = pd.get_dummies(df[list(categorical)], prefix=list(categorical))
+    x = pd.concat([df[_FEATURE_NUMERIC].reset_index(drop=True), cat.reset_index(drop=True)], axis=1)
+    if columns is not None:
+        x = x.reindex(columns=columns, fill_value=0)
+    return x
+
+
+def _design_matrix(train_df: pd.DataFrame, test_df: pd.DataFrame,
+                   categorical: tuple = _FEATURE_CATEGORICAL):
     """One-Hot über die Train-Kategorien; Test-Kategorien, die im Train nicht
     vorkamen, fallen weg (kein Leck künftiger Regime-Labels als neue Spalte)."""
-    cat_train = pd.get_dummies(train_df[_FEATURE_CATEGORICAL], prefix=_FEATURE_CATEGORICAL)
-    cat_test = pd.get_dummies(test_df[_FEATURE_CATEGORICAL], prefix=_FEATURE_CATEGORICAL)
-    cat_test = cat_test.reindex(columns=cat_train.columns, fill_value=0)
-    x_train = pd.concat([train_df[_FEATURE_NUMERIC].reset_index(drop=True),
-                         cat_train.reset_index(drop=True)], axis=1)
-    x_test = pd.concat([test_df[_FEATURE_NUMERIC].reset_index(drop=True),
-                        cat_test.reset_index(drop=True)], axis=1)
+    x_train = _encode(train_df, categorical)
+    x_test = _encode(test_df, categorical, columns=list(x_train.columns))
     return x_train, x_test
 
 

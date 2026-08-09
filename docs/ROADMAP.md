@@ -1061,7 +1061,7 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Bedarf. Multiple-Testing-Korrektur (6.4a) und Holdout-Aussparung
       (6.4b) sind in den zugrunde liegenden CLI-Tools bereits aktiv, hier
       nichts extra nötig.
-- [ ] **6.8 Datenlücke mit Compute schließen** — was der GPU-Server GEGEN
+- [~] **6.8 Datenlücke mit Compute schließen** — was der GPU-Server GEGEN
       das Daten-Nadelöhr (6.2) tun kann, statt nur schneller zu rechnen.
       Kernidee: Compute erzeugt keine neuen Kurs-Informationen, aber es
       kann FREIE ROH-ARCHIVE in nutzbare Zeitreihen verwandeln, für die
@@ -1098,6 +1098,36 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
           BACKTEST-Signalausgängen über das große Universum (Features:
           Regime/Vola/Breadth zum Signalzeitpunkt; Label: simulierter
           Ausgang). Echte Trades bleiben Validierung, nicht Training.
+          ✅ VALIDIERUNGS-SEITE GEBAUT 9.8.2026 (Trainings-Seite war bereits
+          6.5b): neues strategy_lab/meta_label_validation.py — trainiert EIN
+          Modell auf dem GESAMTEN Backtest-Pool (kein Block-Split nötig,
+          echte Trades SIND bereits der zeitliche/quellen-getrennte Holdout)
+          und wendet es auf entry_features() der echten Trades an
+          (ExperienceStore.iter_labeled(label_source='live')). KATEGORIE-
+          LÜCKE bewusst gelöst statt ignoriert: mechanische Signalfamilien
+          (Donchian/RSI/…) haben kein Live-Analogon (echte Trades kommen aus
+          der KI-Analyse) → strategy_lab/meta_label.py::_design_matrix bekam
+          einen categorical-Parameter (Default unverändert = Rückwärtskompa-
+          tibel), Validierung nutzt bewusst NUR das strategie-freie
+          Kontext-Set (Regime/Vola/Rendite/Breadth — exakt das hier
+          benannte). Store-Konvention pnl_pct in PROZENT vs. Backtests
+          return_pct als FRAKTION erkannt und explizit umgerechnet (sonst
+          Größenordnungsfehler ×100 in jedem Vergleich). Mindest-n-Gate wie
+          reanalysis_judge (15) → ZU_WENIG_DATEN statt erzwungenem Verdikt.
+          CLI scripts/meta_label_validate.py. 9 neue Tests
+          (test_meta_label_validation.py, u.a. Prozent→Fraktion-Umrechnung,
+          Mindest-n-Gate, Positivkontrolle mit künstlichem Signal, reines
+          Rauschen bleibt NO_SIGNAL), netzfrei. Suite weiterhin grün.
+          SMOKE-TEST GEGEN ECHTE DATEN (9.8.2026, ehrlicher Nullbefund):
+          ExperienceStore.stats() zeigt 35 label_source='live'-Zeilen, aber
+          ALLE noch mit outcome IS NULL (offene Positionen) — 0 über
+          iter_labeled(label_source='live') verwertbar. record_live_entry/
+          record_live_exit sind korrekt in bot/cycle_analysis.py verdrahtet;
+          deckt sich mit dem 3.1/3.2-Befund vom 22.7. (typische Halte-
+          zeiten von Wochen, seit der 17.7.-Reaktivierung noch keine
+          einzige echte Position geschlossen) — kein Bug, reine
+          Zeitfrage. Läuft automatisch scharf, sobald die ersten echten
+          Positionen schließen.
       (d) RESAMPLING STATT SYNTHETIK: Block-Bootstrap/Monte-Carlo-Pfade
           machen die VALIDIERUNG härter (Verteilungen statt Punktwerte,
           verzahnt mit 6.4) — ehrlich bleiben: synthetische Kurse enthalten
