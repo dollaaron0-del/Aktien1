@@ -157,6 +157,17 @@ def _norm_symbol(sym: str) -> str:
     return (sym or "").split(".")[0].upper()
 
 
+def _market_price_extra(reference_price: Optional[float]) -> Optional[Dict]:
+    """OrderResult.extra-Fragment für die Slippage-Kalibrierung (Roadmap 5.3).
+
+    None (nicht leeres Dict) wenn kein Referenzpreis vorliegt, damit
+    OrderResult.__init__ das `if extra:`-Update sauber überspringt statt ein
+    leeres market_price=None zu speichern."""
+    if reference_price is None:
+        return None
+    return {"market_price": reference_price}
+
+
 def _valid_price(p) -> bool:
     """True nur für eine echte, positive Zahl. marketPrice() liefert bei
     fehlendem Abo/Tick NaN – und NaN ist truthy, NaN>0 jedoch False, weshalb
@@ -551,11 +562,18 @@ class IBKRBroker:
             return None
 
     def _place_order(self, contract, action: str, shares: float,
-                     cash_qty: Optional[float] = None) -> Dict:
+                     cash_qty: Optional[float] = None,
+                     reference_price: Optional[float] = None) -> Dict:
         from ib_insync import MarketOrder
         # Hinweis: _place_order wird auch von buy_crypto/sell_crypto genutzt –
         # die brauchen Bruchteile. Aktien werden VORHER über _whole_shares()
         # auf ganze Stück gerundet (siehe buy()/sell()).
+        # reference_price (Roadmap 5.3): der Preis, mit dem der Aufrufer die
+        # Order-Entscheidung getroffen hat (Kurs zum Analysezeitpunkt, keine
+        # Live-Quote unmittelbar vor Order-Einreichung) – landet unverändert
+        # in OrderResult.extra["market_price"], rein zu Diagnose-/Kalibrierungs-
+        # zwecken (order_log.py persistiert es). Beeinflusst NICHT die Order
+        # selbst (weiterhin MarketOrder ohne Limit).
         order = MarketOrder(action, shares)
         # IBKR-Krypto-Orders (PAXOS) lehnen sonst mit Error 10289 ab
         # ("You must set Cash Quantity for this order") – cash_qty wird nur
@@ -606,6 +624,7 @@ class IBKRBroker:
                 return OrderResult.filled(
                     contract.symbol, shares, fill_price,
                     order_id=trade.order.orderId, mode="ibkr",
+                    extra=_market_price_extra(reference_price),
                 )
             if status in ("Cancelled", "Inactive"):
                 log.warning("IBKR Order %s %s: %s", action, contract.symbol, status)
@@ -631,6 +650,7 @@ class IBKRBroker:
             return OrderResult.filled(
                 contract.symbol, shares, fill_price,
                 order_id=trade.order.orderId, mode="ibkr",
+                extra=_market_price_extra(reference_price),
             )
 
         # Teilausführung: den gefüllten Teil buchen, Rest wurde gecancelt.
@@ -642,6 +662,7 @@ class IBKRBroker:
             return OrderResult.filled(
                 contract.symbol, filled_qty, fill_price,
                 order_id=trade.order.orderId, mode="ibkr", partial=True,
+                extra=_market_price_extra(reference_price),
             )
 
         # Nichts gefüllt – Order gecancelt, kein offener Rest.
@@ -677,7 +698,7 @@ class IBKRBroker:
                 return OrderResult.error(
                     ticker=ticker, mode="ibkr",
                     reason=f"Positionsgröße {shares:.4f} < 1 Stück – IBKR-API kann keine Teilaktien handeln")
-            result = self._place_order(contract, "BUY", whole)
+            result = self._place_order(contract, "BUY", whole, reference_price=price)
             # Schutz-Stop (GTC) direkt nach dem Fill hinterlegen – überlebt
             # Bot-Ausfälle. stop_placed=False signalisiert dem Aufrufer, dass
             # die Position NUR bot-seitig überwacht ist (Executor alarmiert).
@@ -724,7 +745,7 @@ class IBKRBroker:
             if _SERVER_STOPS:
                 stop_backup = self._snapshot_stops(contract.symbol)
                 self._cancel_stops(contract.symbol)
-            result = self._place_order(contract, "SELL", whole)
+            result = self._place_order(contract, "SELL", whole, reference_price=price)
             if _SERVER_STOPS and stop_backup:
                 self._restore_stops(contract, stop_backup, result)
             return result

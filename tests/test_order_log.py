@@ -14,7 +14,54 @@ def test_init_creates_table(tmp_path):
     log = make_log(tmp_path)
     cols = {r[1] for r in log._conn.execute("PRAGMA table_info(orders)")}
     assert cols == {"id", "ts", "ticker", "action", "mode", "status",
-                     "shares", "fill_price", "order_id", "partial", "reason"}
+                     "shares", "fill_price", "order_id", "partial", "reason",
+                     "market_price"}
+
+
+def test_migration_adds_market_price_to_pre_existing_db(tmp_path):
+    """Alte order_log.db ohne market_price-Spalte (Stand vor Roadmap 5.3)
+    muss beim nächsten Start klaglos migriert werden, Alt-Zeilen bleiben
+    erhalten mit market_price=NULL statt eines Fehlers."""
+    import sqlite3
+    db_path = str(tmp_path / "legacy_order_log.db")
+    con = sqlite3.connect(db_path)
+    con.executescript("""
+        CREATE TABLE orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
+            ticker TEXT, action TEXT, mode TEXT, status TEXT,
+            shares REAL, fill_price REAL, order_id INTEGER,
+            partial INTEGER, reason TEXT
+        );
+    """)
+    con.execute(
+        "INSERT INTO orders (ts, ticker, action, mode, status, shares, fill_price) "
+        "VALUES ('2026-01-01T00:00:00', 'ALT', 'BUY', 'ibkr', 'filled', 1, 10.0)"
+    )
+    con.commit()
+    con.close()
+
+    log = OrderLog(db_path=db_path)
+    rows = log.recent(10)
+    assert len(rows) == 1
+    assert rows[0]["ticker"] == "ALT"
+    assert rows[0]["market_price"] is None
+
+
+def test_record_persists_market_price(tmp_path):
+    log = make_log(tmp_path)
+    result = OrderResult.filled(
+        "AAPL", 3, 101.05, mode="ibkr", extra={"market_price": 100.50}
+    )
+    log.record(result, "BUY")
+    rows = log.recent(10)
+    assert rows[0]["market_price"] == 100.50
+
+
+def test_record_without_market_price_stores_null(tmp_path):
+    log = make_log(tmp_path)
+    log.record(OrderResult.filled("AAPL", 3, 101.05, mode="paper"), "BUY")
+    rows = log.recent(10)
+    assert rows[0]["market_price"] is None
 
 
 def test_record_and_recent_filled_order(tmp_path):

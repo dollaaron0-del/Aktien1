@@ -49,6 +49,20 @@ class OrderLog:
             CREATE INDEX IF NOT EXISTS idx_orders_ts ON orders(ts);
         """)
         self._conn.commit()
+        self._migrate_locked()
+
+    def _migrate_locked(self) -> None:
+        """Idempotente Spalten-Migration (Muster: analyzers/decision_log.py).
+
+        market_price (Roadmap 5.3): Referenzpreis zum Entscheidungszeitpunkt,
+        von ibkr_broker._place_order() durchgereicht – Basis für die
+        Slippage-Kalibrierung aus echten Fills. NULL bei Alt-Zeilen und beim
+        PaperBroker (der berechnet Slippage bereits intern anders, s.
+        _calc_slippage)."""
+        have = {r["name"] for r in self._conn.execute("PRAGMA table_info(orders)")}
+        if "market_price" not in have:
+            self._conn.execute("ALTER TABLE orders ADD COLUMN market_price REAL")
+        self._conn.commit()
 
     def record(self, order_result: Dict, action: str) -> Optional[int]:
         try:
@@ -56,8 +70,8 @@ class OrderLog:
             cur = self._conn.execute(
                 """INSERT INTO orders
                    (ts, ticker, action, mode, status, shares, fill_price,
-                    order_id, partial, reason)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    order_id, partial, reason, market_price)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                     d.get("ticker"),
@@ -69,6 +83,7 @@ class OrderLog:
                     d.get("order_id"),
                     1 if d.get("partial") else 0,
                     d.get("reason"),
+                    d.get("market_price"),
                 ),
             )
             self._conn.commit()
