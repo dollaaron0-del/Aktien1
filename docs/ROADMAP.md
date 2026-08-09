@@ -1113,10 +1113,28 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
           zugänglich) auf der GPU transkribieren → Ton-/Sentiment-Zeitreihe
           je Ticker; der tote earn_transcripts-Collector (2.4-Befund) bekäme
           damit erstmals eine echte Quelle.
-      (b) EMBEDDING-INDEX über alles Archivierte (analysis_log ~1620
-          Einträge, News-Snapshots, 6.8a-Filings): lokales Embedding-Modell
-          + Vektorsuche → "ähnliche historische Situationen" als
-          Analyse-Kontext (Präzedenzfall-Abruf statt nur aktueller Daten).
+      (b) ✅ EMBEDDING-INDEX GEBAUT 9.8.2026 (Basis; News-Snapshots/6.8a-
+          Filings noch nicht mit einbezogen — die brauchen 6.8a-Backfill
+          erst, s.u.): analyzers/embedding_index.py::EmbeddingIndex.
+          Kein Ollama-Embeddings-Endpoint (der laufende Server hat kein
+          `--embeddings`-Flag, Neustart bräuchte sudo) — stattdessen
+          sentence-transformers/all-MiniLM-L6-v2 direkt über
+          transformers.AutoModel + Mean-Pooling (torch/transformers seit
+          der FinBERT-Anbindung 7.8. bereits gepinnt, keine neue
+          Abhängigkeit), verifiziert gegen echte Sätze (sim(beat,miss)=0,91
+          vs. sim(beat,unrelated)=0,03 — sinnvoll trennscharf). Kein
+          Vektor-DB-Unterbau: bei ~1620 analysis_log-Einträgen ist die
+          volle Kosinus-Matrix trivial (reines numpy). Encoder injizierbar
+          (Tests nutzen einen deterministischen Fake statt das echte
+          Modell zu laden). CLI scripts/build_embedding_index.py indexiert
+          entry_rationale+bull_case+bear_case+key_catalysts+risk_factors
+          aus analysis_log.db, persistiert nach data/embedding_index.*,
+          --query für Präzedenzfall-Suche. 8 neue Tests
+          (test_embedding_index.py, netzfrei). Smoke-Test gegen echte
+          analysis_log.db (50 Einträge, Query "FDA approval delay
+          biotech") lief durch, plausible Treffer. Bewusst NUR Retrieval-
+          Baustein — kein Wiring in den Live-Analyse-Prompt (Muster wie
+          2.1/2.5/4.3/6.9e/6.9f: erst bauen + messen).
       (c) ✅ RE-ANALYSE-STUDIE GEBAUT 9.8.2026: gelabelte Entscheidungen
           (analyzers/experience_store.py::iter_labeled() — bereits mit
           echtem Outcome, kein neuer Join über prompt_archive/analysis_log
