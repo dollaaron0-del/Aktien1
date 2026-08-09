@@ -76,14 +76,55 @@ LEARNING=(
     "data/thesis_registry.json"   # These-Verdikte PENDING/PROVEN/ABANDONED (6.10)
     "data/holdout_access.json"    # Anti-Overfit-Holdout-Zugriffslog (6.4b)
     "data/calibration_monitor.json"  # Kalibrierungs-Monitor-Snapshot-Verlauf (1.2)
+    # Nachgezogen 28.7. (Umzugsvorbereitung) – Whitelist-Audit gegen echten
+    # data/-Ordner fand diese fehlenden, nicht trivial reproduzierbaren Dateien:
+    "data/current_regime.json"    # gelernter Marktregime-Zustand
+    "data/sector_rotation.json"   # berechnete Sektor-Rotation
+    "data/sharpe_stats.json"      # berechnete Performance-Kennzahlen
+    "data/ipo_tracker.db"         # Collector-Verlauf
+    "data/recession_detector.db"  # Collector-Verlauf
+    "data/position_notes.db"      # Notizen zu offenen/vergangenen Positionen
+    "data/dynamic_watchlist.json" # aufgebaute Watchlist
+    "data/earnings_predictions.json"
+    "data/ticker_profiles.json"   # gelernte Ticker-Profile
+    "data/stock_relations.json"   # Themen/Cross-Listing-Zuordnung
+    "data/sp500_membership.csv"   # PIT-Universum (6.2a) – war mal komplett tot,
+                                   # aufwändiger Neuaufbau am 22.7.
 )
 
-# Optional: Social-Daten, News-Archiv (groß, aber nützlich)
+# Betriebs-/Risikozustand: kein "gelerntes Wissen", aber für ein 1:1-identisches
+# Programm auf dem Zielsystem relevant (sonst startet der Bot dort mit leerem
+# Cooldown-/Sperr-Zustand statt dem echten aktuellen Stand).
+STATE=(
+    "data/circuit_breaker.json"
+    "data/daily_loss.json"
+    "data/sl_cooldown.json"
+    "data/momentum_cooldown.json"
+    "data/headline_cooldown.json"
+    "data/headline_scanner_state.json"
+    "data/notify_throttle.json"
+    "data/buy_blocked.json"
+    "data/conditional_entries.json"
+    "data/bot_status.json"
+    "data/bot_paused.json"
+    "data/geopolitical_radar_state.json"
+    "data/sector_sampler_state.json"
+    "data/source_monitor.json"
+)
+
+# Optional: Social-Daten, News-Archiv, Caches (groß/rebuildbar, aber nützlich)
 OPTIONAL=(
     "data/social_pulse.db"
     "data/weekly_briefing.db"
     "data/signal_queue.db"
     "data/news_archive.db"
+    "data/activity_feed.db"
+    "data/achievements.json"
+    "data/factory_history.jsonl"
+    "data/backfill_prices/"
+    "data/earnings_cache/"
+    "data/short_interest_cache/"
+    "data/strategy_cards/"
     "logs/"
 )
 
@@ -131,6 +172,7 @@ echo ""
 for f in "${CRITICAL[@]}";  do check_and_add "KRITISCH" "$f"; done
 for f in "${LEARNING[@]}";  do check_and_add "LERN"     "$f"; done
 for f in "${IMPORTANT[@]}"; do check_and_add "WICHTIG"  "$f"; done
+for f in "${STATE[@]}";     do check_and_add "STATUS"   "$f"; done
 for f in "${OPTIONAL[@]}";  do check_and_add "OPTIONAL" "$f"; done
 echo ""
 

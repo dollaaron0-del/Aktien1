@@ -324,7 +324,8 @@ class SwingStrategy:
 
         return StrategyResult("HOLD", ticker, "Position läuft, keine Änderung")
 
-    def _enqueue_signal(self, ticker, analysis, sentiment, confidence, direction, n_src) -> None:
+    def _enqueue_signal(self, ticker, analysis, sentiment, confidence, direction, n_src,
+                        reason: str = "capital_scarcity") -> None:
         """Merkt ein an sich gültiges BUY-Signal vor, das nur an einer
         aktuellen Kapazitätsgrenze scheitert (Max-Positionen ODER Cash-Reserve-
         Boden erreicht) - nicht an der Sentiment-Schwelle selbst. Gemeinsamer
@@ -348,6 +349,7 @@ class SwingStrategy:
             sources_used=n_src,
             sources_breakdown=getattr(analysis, "sources_breakdown", {}) or {},
             suggested_hold_days=int(getattr(analysis, "suggested_hold_days", 0) or 0),
+            reason=reason,
         )
 
     def _evaluate_new(
@@ -461,7 +463,8 @@ class SwingStrategy:
         except Exception:
             max_pos = 12
         if n_pos >= max_pos:
-            self._enqueue_signal(ticker, analysis, sentiment, confidence, direction, n_src)
+            self._enqueue_signal(ticker, analysis, sentiment, confidence, direction, n_src,
+                                 reason="max_positions")
             return StrategyResult("SKIP", ticker, f"Max Positionen ({max_pos}) erreicht – Signal in Queue")
 
         # Earnings filter

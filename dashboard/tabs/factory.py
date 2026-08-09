@@ -804,14 +804,33 @@ def render(ctx) -> None:
     @st.fragment(run_every="60s")
     def _scene() -> None:
         state = read_state()
-        svg = build_scene_svg(state)
-        # W8.1: der Vollbild-Rahmen ist eine reine Pixel-Theme-Zutat (die
-        # CSS-Klasse existiert nur in _base_css) — Plain bekommt weiterhin
-        # exakt das nackte SVG-Markup (D6.2-Prinzip: Notausstieg bleibt
-        # wortwörtlich das alte Verhalten).
+        # Vision-Transfer 24.7.2026: das animierte Canvas (factory/canvas.py)
+        # ersetzt die statische SVG-Szene im Pixel-Theme. Es läuft in einem
+        # components.html-iframe (st.markdown würde die Skripte strippen) und
+        # ist an denselben read_state() gebunden. Die SVG-Szene (scene.py)
+        # bleibt als Notausstieg: Plain-Theme, Canvas-Fehler, sowie
+        # unverändert Archiv-Replay/Report/Mobile (D6.2-Prinzip).
+        rendered = False
         if _theme.is_enabled():
-            svg = f'<div class="px-scene-wrap">{svg}</div>'
-        st.markdown(svg, unsafe_allow_html=True)
+            try:
+                import streamlit.components.v1 as _components
+                from dashboard.factory.canvas import (
+                    SCENE_EMBED_HEIGHT as _scene_h,
+                )
+                from dashboard.factory.canvas import build_scene_html as _scene_html
+                _components.html(_scene_html(state), height=_scene_h, scrolling=False)
+                rendered = True
+            except Exception:
+                rendered = False  # Fail-open: SVG-Fallback unten greift
+        if not rendered:
+            svg = build_scene_svg(state)
+            # W8.1: der Vollbild-Rahmen ist eine reine Pixel-Theme-Zutat (die
+            # CSS-Klasse existiert nur in _base_css) — Plain bekommt weiterhin
+            # exakt das nackte SVG-Markup (D6.2-Prinzip: Notausstieg bleibt
+            # wortwörtlich das alte Verhalten).
+            if _theme.is_enabled():
+                svg = f'<div class="px-scene-wrap">{svg}</div>'
+            st.markdown(svg, unsafe_allow_html=True)
         _maybe_snapshot(state)
 
         if state.paused:

@@ -581,6 +581,16 @@ def run_bot_loop(
         scheduler_risk.sl_tp_check_job(portfolio, broker, strategy, _executor, _signal_queue_job)
     schedule.every(30).minutes.do(_sl_tp_check_job)
 
+    # ── Broker-Abgleich + Schutz-Stop-Sync alle 30 Minuten ──────────────────
+    # Bis 27.7.2026 lief diese Heilung nur beim Bot-Start (main.py) – ein
+    # broker-seitig gefeuerter GTC-Stop blieb dem Bot sonst bis zum nächsten
+    # Neustart verborgen (META-Vorfall). Gleiche Funktion wie beim Start,
+    # siehe bot/scheduler_risk.py::broker_healing_pass.
+    def _broker_healing_job():
+        """Broker-Abgleich + Schutz-Stop-Sync (ausgelagert nach bot/scheduler_risk.py)."""
+        scheduler_risk.broker_healing_pass(portfolio, broker, TelegramNotifier, context="periodisch")
+    schedule.every(30).minutes.do(_broker_healing_job)
+
     # ── Positions-Aging-Check alle 4 Stunden ────────────────────────────────
     def _position_aging_job():
         """Position-Aging-Warnung (ausgelagert nach bot/scheduler_risk.py,
@@ -605,6 +615,18 @@ def run_bot_loop(
             tickers, portfolio, broker, strategy, tracker, phase_ctrl,
             archive, reflection, weekend_prep_inst, hedge_strategy_inst,
             earnings_strategy, safe_run_analysis_cycle, reason=reason)
+
+    # ── Markt-geschlossen-Queue: alle 15 Minuten ────────────────────────────
+    # BUY-Signale, die nur an geschlossener Börse gescheitert sind (Order
+    # während des vorbörslichen Zyklus, NYSE noch zu – 27.7.2026-Befund),
+    # werden bei Marktöffnung über _escalate_ticker frisch neu geprüft statt
+    # das alte Signal blind nachzukaufen.
+    def _market_closed_signal_job():
+        """Markt-geschlossen-Queue-Drain (ausgelagert nach
+        bot/scheduler_risk.py, analog zu _signal_queue_job)."""
+        scheduler_risk.market_closed_signal_job(signal_queue, _escalate_ticker)
+
+    schedule.every(15).minutes.do(_market_closed_signal_job)
 
     # ── Headline-Signal-Scanner: stündlich ──────────────────────────────────
     _headline_last_queued: dict = scheduler_scanners.load_headline_cooldown()

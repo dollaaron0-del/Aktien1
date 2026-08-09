@@ -288,6 +288,46 @@ def test_short_guard_blocks_sell_when_broker_flat(tmp_path, monkeypatch):
     assert p.get_position("MSFT") is not None            # Position unangetastet
 
 
+class MarketClosedBroker(FakeBrokerWithPositions):
+    """Simuliert einen SELL, der jedes Mal an der geschlossenen Börse scheitert
+    – der Fehlertext enthält wie market_closed_reason() eine wechselnde
+    Uhrzeit ('jetzt HH:MM'), um den Throttle-Bug (28.7.2026) nachzustellen."""
+    def __init__(self, held: dict):
+        super().__init__(held=held, fill=False)
+        self._call = 0
+
+    def sell(self, ticker, shares, price):
+        self.sells.append((ticker, shares, price))
+        self._call += 1
+        return {"status": "rejected",
+                "error": f"NYSE außerhalb der Handelszeit (jetzt 0{self._call}:1{self._call})"}
+
+
+def test_sell_fail_throttled_despite_changing_timestamp_in_reason(tmp_path, monkeypatch):
+    """Bug 28.7.2026: market_closed_reason() bettet die aktuelle Minute in den
+    Fehlertext ein, wodurch die Throttle-Signatur nie zweimal gleich war und
+    der 12h-Cooldown wirkungslos blieb (4 Spam-Alerts für einen dauerhaft
+    vorbörslich fehlschlagenden SELL). Muss nach dem Fix nur 1x alarmieren."""
+    p = make_portfolio(tmp_path, monkeypatch)
+    p.open_position(Position(
+        ticker="NVDA", shares=5, entry_price=207.35,
+        entry_date="2026-07-01T00:00:00", stop_loss=194.91, take_profit=252.97,
+        target_hold_days=14,
+    ))
+    broker = MarketClosedBroker(held={"NVDA": 5})
+    notifier = RecordingNotifier()
+    ex = TradeExecutor(p, broker, journal=None, notifier=notifier)
+    import strategy.executor as ex_mod
+    monkeypatch.setattr(ex_mod, "_THROTTLE_FILE", tmp_path / "throttle.json")
+
+    for _ in range(4):
+        out = ex.execute(StrategyResult("SELL", "NVDA", "Stop-Loss", shares=5, price=194.0))
+        assert "fehlgeschlagen" in out
+
+    assert len(notifier.sent) == 1                 # nur der erste Alert ging raus
+    assert p.get_position("NVDA") is not None       # Position weiterhin offen
+
+
 def test_sell_proceeds_when_broker_covers(tmp_path, monkeypatch):
     """IBKR deckt die Buch-Position → SELL läuft normal durch."""
     p = make_portfolio(tmp_path, monkeypatch)

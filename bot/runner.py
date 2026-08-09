@@ -549,20 +549,21 @@ def collect_news(ticker: str, archive: NewsArchive, collectors: Dict) -> tuple:
         if name not in active_collectors:
             sources_breakdown[name] = 0
 
-    _max_workers = min(8, len(active_collectors))
-    with ThreadPoolExecutor(max_workers=_max_workers) as _pool:
-        futures = {
-            _pool.submit(_safe_collect, name, col.collect, ticker): name
-            for name, col in active_collectors.items()
-        }
-        for future in as_completed(futures):
-            name = futures[future]
-            try:
-                items = future.result()
-            except Exception:
-                items = []
-            sources_breakdown[name] = len(items)
-            all_items.extend(items)
+    if active_collectors:
+        _max_workers = min(8, len(active_collectors))
+        with ThreadPoolExecutor(max_workers=_max_workers) as _pool:
+            futures = {
+                _pool.submit(_safe_collect, name, col.collect, ticker): name
+                for name, col in active_collectors.items()
+            }
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    items = future.result()
+                except Exception:
+                    items = []
+                sources_breakdown[name] = len(items)
+                all_items.extend(items)
 
     # Live-Quellen-Health: Artikel-Counts je Quelle für die Zyklus-Auswertung
     # melden (nur tatsächlich aktive Collector – nicht konfigurierte zählen nicht).
@@ -658,6 +659,29 @@ def safe_run_analysis_cycle(*args, **kwargs) -> None:
                 )
                 return
         _last_cycle_start = now
+
+        # Zeitplan-gesteuerter Modellwechsel für die Dauer des Zyklus: die
+        # automatische Idle-/RAM-Tier-Erkennung (system/resource_manager.py)
+        # erreicht PERFORMANCE auf diesem headless Server nie (keine Idle-
+        # Erkennung ohne Desktop-Session) - für die geplanten Analysezyklen
+        # wird der Tier deshalb hier explizit erzwungen, statt sich auf die
+        # wirkungslose Automatik zu verlassen. Timeout wird passend zum
+        # größeren Modell angehoben (gemessen: ~25-30s/Ticker warm auf der
+        # RTX 2070, vorher 60s Timeout war für das große Modell zu knapp).
+        _prev_prescreener_timeout = None
+        try:
+            from system.resource_manager import get_resource_manager, ResourceTier
+            import analyzers.ollama_prescreener as _op_mod
+            _rm = get_resource_manager()
+            _rm.force_tier(ResourceTier.PERFORMANCE)
+            _prescreener = getattr(_op_mod, "_prescreener_instance", None)
+            if _prescreener is not None:
+                _rm.apply_to_ollama(_prescreener)
+                _prev_prescreener_timeout = _prescreener.timeout
+                _prescreener.timeout = max(_prescreener.timeout, 120)
+        except Exception as _rm_err:
+            log.debug("Resource-Tier-Erzwingung für Analysezyklus fehlgeschlagen: %s", _rm_err)
+
         try:
             run_analysis_cycle(*args, **kwargs)
         except Exception as _fatal:
@@ -669,6 +693,21 @@ def safe_run_analysis_cycle(*args, **kwargs) -> None:
                     f"Fehler: <code>{str(_fatal)[:400]}</code>\n\n"
                     f"Details: <code>journalctl -u aktien_bot -n 80</code>"
                 )
+            except Exception:
+                pass
+        finally:
+            # Tier + Timeout wieder freigeben, damit die normale Idle-/RAM-
+            # Logik (→ MINIMAL, außerhalb der Analysezyklen) wieder greift.
+            try:
+                from system.resource_manager import get_resource_manager
+                import analyzers.ollama_prescreener as _op_mod
+                _rm = get_resource_manager()
+                _rm.clear_forced_tier()
+                _prescreener = getattr(_op_mod, "_prescreener_instance", None)
+                if _prescreener is not None:
+                    if _prev_prescreener_timeout is not None:
+                        _prescreener.timeout = _prev_prescreener_timeout
+                    _rm.apply_to_ollama(_prescreener)
             except Exception:
                 pass
     finally:

@@ -21,7 +21,7 @@ das ist die häufigste Fehlerquelle bei einem Umzug ("hab ich das vergessen?").
 | Was | Mechanismus | Deckt ab |
 |---|---|---|
 | **Code** | `git clone`/`pull` (Schritt 2) | Gesamtes Repo, versioniert |
-| **Trading-/Lern-Daten** | `backup.sh` → `restore.sh` (Schritt 3) | `.env`, `data/*.db`/`.json` (Portfolio, Trades, Lern-DBs — siehe `scripts/backup.sh` CRITICAL/IMPORTANT/LEARNING-Arrays) |
+| **Trading-/Lern-Daten** | `backup.sh` → `restore.sh` (Schritt 3) | `.env`, `data/*.db`/`.json` (Portfolio, Trades, Lern-DBs, Betriebs-/Risikozustand — siehe `scripts/backup.sh` CRITICAL/IMPORTANT/LEARNING/STATE/OPTIONAL-Arrays) |
 | **IB-Gateway-Zugangsdaten + -Installation** | **manuell**, NICHT Git, NICHT Backup | `/opt/ibgateway/` komplett (inkl. `autologin.sh` mit den Login-Daten) — direkt scp/verschlüsselt übertragen (Schritt 5) |
 
 Check vor dem eigentlichen Umzugstag: `bash scripts/backup.sh --verify` zeigt,

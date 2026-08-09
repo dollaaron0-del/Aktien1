@@ -195,9 +195,41 @@ class ResourceManager:
         self._current_tier: Optional[ResourceTier] = None
         self._last_check    = 0.0
         self._check_interval = 60   # Sekunden zwischen Updates
+        self._forced_tier: Optional[ResourceTier] = None
+
+    def force_tier(self, tier: ResourceTier) -> None:
+        """Erzwingt einen Tier unabhängig von Idle-/RAM-Berechnung, bis
+        clear_forced_tier() aufgerufen wird.
+
+        Grund: Die Idle-Erkennung (get_idle_seconds) liefert auf einem
+        headless Linux-Server ohne Desktop-Session immer None → idle wird
+        als 0 angenommen → PERFORMANCE wird über die normale Idle/RAM-Logik
+        NIE erreicht (_IDLE_PERFORMANCE_SEC=300 kann nie erfüllt werden).
+        Für die zeitplan-gesteuerten Analysezyklen (bot/runner.py) wird der
+        Tier deshalb explizit für die Dauer des Zyklus erzwungen, statt sich
+        auf die (hier wirkungslose) automatische Erkennung zu verlassen."""
+        self._forced_tier = tier
+        self._current_tier = tier
+
+    def clear_forced_tier(self) -> None:
+        """Hebt force_tier() wieder auf – die nächste update()-Berechnung
+        nutzt wieder die normale Idle-/RAM-Logik."""
+        self._forced_tier = None
 
     def update(self, force: bool = False) -> ResourceState:
         """Recomputes resource tier. Returns current state."""
+        if self._forced_tier is not None:
+            tier = self._forced_tier
+            free_pct, free_gb, total_gb = get_ram_state()
+            return ResourceState(
+                tier=tier,
+                idle_seconds=0.0,
+                ram_free_pct=free_pct,
+                ram_free_gb=free_gb,
+                ram_total_gb=total_gb,
+                ollama_model=TIER_MODELS[tier],
+            )
+
         now = time.time()
         if not force and (now - self._last_check) < self._check_interval:
             # Return cached tier without re-reading

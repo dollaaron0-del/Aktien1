@@ -172,7 +172,10 @@ def signal_queue_job(signal_queue, strategy, executor, broker) -> None:
     Signale ("Max Positionen erreicht") liefen deshalb immer nur ab
     (historisch 0 von 144 ausgeführt). Jeder Eintrag wird beim Drain über
     strategy.evaluate() komplett neu geprüft (Slots, Schwelle, Korrelation,
-    Liquidität, Sizing) — es kauft nur, was aktuell noch gültig ist."""
+    Liquidität, Sizing) — es kauft nur, was aktuell noch gültig ist.
+
+    'market_closed'-Einträge laufen NICHT hier durch (process_signal_queue
+    überspringt sie bewusst) — die drained market_closed_signal_job unten."""
     try:
         if signal_queue.count_pending() == 0:
             return
@@ -181,6 +184,35 @@ def signal_queue_job(signal_queue, strategy, executor, broker) -> None:
             console.print(f"  [bold green]{_msg}[/bold green]")
     except Exception as _e:
         log.warning("Signal-Queue-Drain fehlgeschlagen: %s", _e)
+
+
+def market_closed_signal_job(signal_queue, escalate_fn) -> None:
+    """Drained BUY-Signale, die NUR an geschlossener Börse gescheitert sind
+    (z.B. Order während des vorbörslichen Analyse-Zyklus, NYSE noch zu –
+    27.7.2026-Befund: so ein Signal verpuffte bislang ersatzlos, anders als
+    der Kapitalmangel-/Max-Positionen-Fall).
+
+    Bewusst KEINE Wiederverwendung des alten, ggf. stunden-/tagealten
+    Sentiments: sobald die zuständige Börse wieder offen ist, wird der
+    Ticker über escalate_fn() komplett NEU analysiert (frische News/Sentiment/
+    Kaufthese, gleicher Pfad wie Headline-/Momentum-Eskalation). Nur was JETZT
+    noch gilt, wird gekauft — der Queue-Eintrag gilt danach als 'rechecked',
+    nicht als 'executed' (das würde einen Kauf suggerieren, den es evtl.
+    gar nicht gab)."""
+    try:
+        pending = [s for s in signal_queue.get_pending() if s.get("reason") == "market_closed"]
+        if not pending:
+            return
+        from analyzers.market_schedule import market_closed_reason
+        for sig in pending:
+            ticker = sig["ticker"]
+            if market_closed_reason(ticker) is not None:
+                continue  # Börse noch zu – weiter warten
+            console.print(f"  [bold yellow]⏳→🔍 {ticker}: Marktöffnung – frische Neu-Analyse[/bold yellow]")
+            escalate_fn([ticker], reason="Marktöffnung (zurückgestelltes BUY-Signal)")
+            signal_queue.mark_rechecked(sig["id"])
+    except Exception as _e:
+        log.warning("Markt-geschlossen-Queue-Drain fehlgeschlagen: %s", _e)
 
 
 def sl_tp_check_job(portfolio, broker, strategy, executor, signal_queue_job_fn) -> None:
@@ -208,6 +240,70 @@ def sl_tp_check_job(portfolio, broker, strategy, executor, signal_queue_job_fn) 
             signal_queue_job_fn()
     except Exception as _e:
         log.warning("SL/TP-Check fehlgeschlagen: %s", _e)
+
+
+def broker_healing_pass(portfolio, broker, telegram_notifier_cls, context: str = "periodisch") -> None:
+    """Broker-Abgleich (Phantome ausbuchen) + Schutz-Stop-Sync in einem Rutsch.
+
+    Bis 27.7.2026 lief diese Heilung NUR einmalig beim Bot-Start (main.py) –
+    schließt ein broker-seitig gefeuerter GTC-Stop während laufendem Betrieb
+    eine Position, bemerkt der Bot das erst beim nächsten Neustart (Stunden
+    bis Tage später, META-Vorfall). Single-Source-of-Truth-Funktion, von
+    main.py (context='Start') UND periodisch aus bot/scheduler.py
+    (context='periodisch') aufgerufen, damit Start- und Laufzeit-Heilung
+    nie auseinanderlaufen. reconcile_against_broker() selbst bucht den
+    Gegen-SELL inzwischen zum vermuteten SL-/TP-Preis mit echtem PnL statt
+    pauschal 0 (portfolio/integrity.py) – dieser Job sorgt nur noch dafür,
+    dass diese Korrektur zeitnah statt erst beim Neustart greift."""
+    try:
+        _pos_fn = getattr(broker, "positions", None)
+        if not callable(_pos_fn):
+            return
+        _bpos = _pos_fn()
+        if _bpos is None:
+            log.info("Broker-Abgleich (%s) übersprungen – IBKR-Positionen nicht ermittelbar (offline?).", context)
+        else:
+            from portfolio.integrity import reconcile_against_broker
+            _br = reconcile_against_broker(portfolio._conn, _bpos)
+            if _br.ok:
+                log.info("Broker-Abgleich (%s): %s", context, _br.summary())
+            else:
+                log.warning("Broker-Abgleich (%s): %s", context, _br.summary())
+                try:
+                    telegram_notifier_cls().send(f"🔄 <b>Broker-Abgleich ({context})</b>\n" + _br.summary())
+                except Exception:
+                    pass
+    except Exception as _be:
+        log.debug("Broker-Abgleich (%s) übersprungen: %s", context, _be)
+
+    try:
+        _sync_stops = getattr(broker, "sync_protective_stops", None)
+        if not callable(_sync_stops):
+            return
+        _stop_book = {t: (p.shares, p.stop_loss)
+                      for t, p in portfolio.all_positions().items()
+                      if p.stop_loss and p.shares > 0}
+        if not _stop_book:
+            return
+        _sres = _sync_stops(_stop_book)
+        if _sres is None:
+            log.info("Schutz-Stop-Sync (%s) übersprungen (offline/deaktiviert).", context)
+            return
+        _missing = [t for t, ok in _sres.items() if not ok]
+        if _missing:
+            log.warning("Schutz-Stop-Sync (%s): NICHT platziert für %s", context, ", ".join(_missing))
+            try:
+                telegram_notifier_cls().send(
+                    f"⚠️ <b>Schutz-Stops ({context}) unvollständig</b>\n"
+                    "Kein Broker-Stop platzierbar für: " + ", ".join(_missing),
+                    level="critical",
+                )
+            except Exception:
+                pass
+        else:
+            log.info("Schutz-Stop-Sync (%s): %d Position(en) broker-seitig abgesichert.", context, len(_sres))
+    except Exception as _se:
+        log.debug("Schutz-Stop-Sync (%s) übersprungen: %s", context, _se)
 
 
 def position_aging_job(portfolio, broker, telegram_notifier_cls) -> None:

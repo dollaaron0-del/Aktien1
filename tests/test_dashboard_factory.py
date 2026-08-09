@@ -32,7 +32,7 @@ def test_read_state_returns_all_twelve_machine_ids():
     # zwölfte Maschine dazugekommen.
     state = read_state()
     assert set(state.machines.keys()) == set(MACHINE_IDS)
-    assert len(MACHINE_IDS) == 12
+    assert len(MACHINE_IDS) == 20
 
 
 def test_read_state_has_paused_bool_and_timestamp():

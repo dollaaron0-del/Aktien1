@@ -23,6 +23,12 @@ from typing import Dict, List
 MACHINE_IDS = (
     "docks", "analyzer_claude", "analyzer_ollama", "conveyor", "warehouse",
     "breaker", "gate", "weather", "lab", "backup_bot", "clock", "control_room",
+    # Stufe 3 (24.7.2026): granulare Entscheidungs-Ketten-Maschinen, je an eine
+    # echte Datenquelle gebunden (Decision-Funnel / Portfolio / User-Queue).
+    "risk_check", "position_limit", "ausschuss", "queue",
+    # Stufe 4 (24.7.2026): restliche Ketten-Stationen der freigegebenen
+    # Baumstruktur (Daten-Kontrolle → Katalysator-Weiche → Bestands-/Signal-Prüfung).
+    "data_gate", "catalyst_check", "position_check", "signal_check",
 )
 
 # H2.2: History-Zeilen (snapshot()) speichern bewusst KEIN Label (klein
@@ -42,6 +48,14 @@ MACHINE_LABELS: Dict[str, str] = {
     "backup_bot": "Nachtschicht-Roboter",
     "clock": "Werksuhr",
     "control_room": "Kontrollraum",
+    "risk_check": "Risiko-Kontrolle",
+    "position_limit": "Positions-Limit",
+    "ausschuss": "Ausschuss-Sammelstelle",
+    "queue": "Signal-Warteschlange",
+    "data_gate": "Daten-Kontrolle",
+    "catalyst_check": "Katalysator-Weiche",
+    "position_check": "Bestands-Prüfung",
+    "signal_check": "Signal-Prüfung",
 }
 
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")
@@ -387,6 +401,166 @@ def _read_control_room() -> MachineState:
         return _off("control_room", "Kontrollraum")
 
 
+# ── Stufe 3 (24.7.2026): granulare Entscheidungs-Ketten-Maschinen ───────────
+# Alle netzfrei + fail-open, gebunden an den echten Decision-Funnel
+# (analyzers.decision_log), das Portfolio und die User-Analyse-Queue.
+_RISK_BUCKETS = ("korrelation", "positionsgroesse", "liquiditaet", "tagesverlust")
+
+
+def _funnel_today() -> dict:
+    from analyzers.decision_log import DecisionLog
+    today = datetime.now(timezone.utc).date().isoformat()
+    return DecisionLog().funnel(today)
+
+
+def _read_risk_check() -> MachineState:
+    """Risiko-Kontrolle — heutige risiko-bedingte Ablehnungen aus dem
+    Decision-Funnel (Korrelation/Positionsgröße/Liquidität/Tagesverlust)."""
+    try:
+        f = _funnel_today()
+        sr = f.get("skip_reasons") or {}
+        rejected = sum(int(sr.get(b, 0)) for b in _RISK_BUCKETS)
+        status = "ok" if f.get("total") else "off"
+        return MachineState(
+            id="risk_check", label="Risiko-Kontrolle", status=status,
+            tooltip=[f"heute {rejected} Risiko-Ablehnungen"],
+            payload={"rejected": rejected, "total": f.get("total", 0),
+                     "reasons": {b: int(sr.get(b, 0)) for b in _RISK_BUCKETS if sr.get(b)}},
+        )
+    except Exception:
+        return _off("risk_check", "Risiko-Kontrolle")
+
+
+def _read_position_limit() -> MachineState:
+    """Positions-Limit — offene Positionen + heutige "Max Positionen"-
+    Abweisungen aus dem Funnel; voll = es gab heute solche Abweisungen."""
+    try:
+        from portfolio.portfolio import Portfolio
+        open_n = len(Portfolio().all_positions())
+        f = _funnel_today()
+        full_hits = int((f.get("skip_reasons") or {}).get("max_positionen", 0))
+        status = "warn" if full_hits else ("ok" if f.get("total") else "off")
+        return MachineState(
+            id="position_limit", label="Positions-Limit", status=status,
+            tooltip=[f"offen: {open_n}", f"heute {full_hits}× voll abgewiesen"],
+            payload={"open": open_n, "full_hits": full_hits},
+        )
+    except Exception:
+        return _off("position_limit", "Positions-Limit")
+
+
+def _read_ausschuss() -> MachineState:
+    """Ausschuss-Sammelstelle — heute abgelehnte (SKIP) Kisten + Grund-
+    Aufschlüsselung aus dem Decision-Funnel."""
+    try:
+        f = _funnel_today()
+        rejected = int((f.get("actions") or {}).get("SKIP", 0))
+        status = "ok" if f.get("total") else "off"
+        return MachineState(
+            id="ausschuss", label="Ausschuss-Sammelstelle", status=status,
+            tooltip=[f"heute {rejected} abgelehnt"],
+            payload={"rejected": rejected, "reasons": f.get("skip_reasons") or {}},
+        )
+    except Exception:
+        return _off("ausschuss", "Ausschuss-Sammelstelle")
+
+
+def _read_queue() -> MachineState:
+    """Signal-Warteschlange — vorgemerkte Ticker in der User-Analyse-Queue
+    (analyzers.user_request_queue), die auf den nächsten Zyklus warten."""
+    try:
+        from analyzers.user_request_queue import peek
+        waiting = [str(t) for t in (peek() or [])]
+        status = "warn" if waiting else "off"
+        return MachineState(
+            id="queue", label="Signal-Warteschlange", status=status,
+            tooltip=[f"wartend: {len(waiting)}"] + waiting[:6],
+            payload={"waiting": waiting, "count": len(waiting)},
+        )
+    except Exception:
+        return _off("queue", "Signal-Warteschlange")
+
+
+# ── Stufe 4 (24.7.2026): fehlende Ketten-Stationen der freigegebenen
+# Baumstruktur (Daten-Kontrolle → Katalysator-Weiche → … → Signal-Prüfung).
+# Ebenfalls netzfrei + fail-open, an denselben Decision-Funnel / Routing /
+# Portfolio gebunden wie die übrigen. ───────────────────────────────────────
+_DATA_BUCKETS = ("daten_gate", "kein_kurs", "zu_wenige_quellen")
+_SIGNAL_BUCKETS = ("kein_kaufsignal", "unter_schwelle")
+
+
+def _read_data_gate() -> MachineState:
+    """Daten-Kontrolle — heute wegen schlechter/fehlender Daten abgewiesen
+    (Daten-Gate / kein Kurs / zu wenige Quellen aus dem Decision-Funnel)."""
+    try:
+        f = _funnel_today()
+        sr = f.get("skip_reasons") or {}
+        rejected = sum(int(sr.get(b, 0)) for b in _DATA_BUCKETS)
+        status = "ok" if f.get("total") else "off"
+        return MachineState(
+            id="data_gate", label="Daten-Kontrolle", status=status,
+            tooltip=[f"heute {rejected} Datenfehler abgewiesen"],
+            payload={"rejected": rejected, "total": f.get("total", 0),
+                     "reasons": {b: int(sr.get(b, 0)) for b in _DATA_BUCKETS if sr.get(b)}},
+        )
+    except Exception:
+        return _off("data_gate", "Daten-Kontrolle")
+
+
+def _read_catalyst_check() -> MachineState:
+    """Katalysator-Weiche — Routing-Split der letzten Analysen: Ollama
+    (Standard) vs. Claude (Katalysator/force_claude). Zahlen wie die
+    Analysator-Leser, hier als Weiche/Verteiler zusammengefasst."""
+    try:
+        from analyzers.analysis_log import AnalysisLog
+        rows = AnalysisLog().get_recent(limit=50)
+        routes = [str((r.get("provenance") or {}).get("model_route") or "") for r in rows]
+        claude_n = sum(1 for r in routes if r.startswith("claude"))
+        ollama_n = sum(1 for r in routes if r.startswith("ollama"))
+        status = "active" if (claude_n or ollama_n) else "off"
+        return MachineState(
+            id="catalyst_check", label="Katalysator-Weiche", status=status,
+            tooltip=[f"Claude {claude_n} / Ollama {ollama_n} (letzte {len(rows)})"],
+            payload={"claude_n": claude_n, "ollama_n": ollama_n, "total": len(rows)},
+        )
+    except Exception:
+        return _off("catalyst_check", "Katalysator-Weiche")
+
+
+def _read_position_check() -> MachineState:
+    """Bestands-Prüfung — liest das Lager (offene Positionen); markiert, was
+    schon im Depot ist (kein Nachkauf). Gehaltene Ticker = held-Set."""
+    try:
+        from portfolio.portfolio import Portfolio
+        held = sorted(Portfolio().all_positions().keys())
+        status = "ok" if held else "off"
+        return MachineState(
+            id="position_check", label="Bestands-Prüfung", status=status,
+            tooltip=[f"im Depot: {len(held)}"] + held[:6],
+            payload={"held": held, "n": len(held)},
+        )
+    except Exception:
+        return _off("position_check", "Bestands-Prüfung")
+
+
+def _read_signal_check() -> MachineState:
+    """Signal-Prüfung — heute wegen zu schwachem Score abgewiesen (unter
+    Kaufschwelle / kein Kaufsignal aus dem Decision-Funnel)."""
+    try:
+        f = _funnel_today()
+        sr = f.get("skip_reasons") or {}
+        rejected = sum(int(sr.get(b, 0)) for b in _SIGNAL_BUCKETS)
+        status = "ok" if f.get("total") else "off"
+        return MachineState(
+            id="signal_check", label="Signal-Prüfung", status=status,
+            tooltip=[f"heute {rejected}× unter Schwelle"],
+            payload={"rejected": rejected, "total": f.get("total", 0),
+                     "reasons": {b: int(sr.get(b, 0)) for b in _SIGNAL_BUCKETS if sr.get(b)}},
+        )
+    except Exception:
+        return _off("signal_check", "Signal-Prüfung")
+
+
 # ── Entdeckungs-Ebene (Vision W4) — jede Requisite an einen echten Zustand
 # gebunden, kein Zufalls-Deko-Generator. Jeder Leser einzeln fail-open. ────
 
@@ -491,6 +665,14 @@ _READERS = {
     "backup_bot": _read_backup_bot,
     "clock": _read_clock,
     "control_room": _read_control_room,
+    "risk_check": _read_risk_check,
+    "position_limit": _read_position_limit,
+    "ausschuss": _read_ausschuss,
+    "queue": _read_queue,
+    "data_gate": _read_data_gate,
+    "catalyst_check": _read_catalyst_check,
+    "position_check": _read_position_check,
+    "signal_check": _read_signal_check,
 }
 
 

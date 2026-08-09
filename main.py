@@ -273,60 +273,19 @@ def main():
             log.info(_ir.summary())
     except Exception as _ie:
         log.debug("Portfolio-Integritätscheck übersprungen: %s", _ie)
-    # Broker-Abgleich (IBKR): Buch gegen TATSÄCHLICHE Broker-Positionen prüfen –
-    # bucht Phantome aus, die nie real ausgeführt wurden, und verhindert so, dass
-    # ein Exit-Signal einen ungewollten Short eröffnet. Nur wenn der Broker eine
-    # positions()-API hat (IBKR) und einen echten Stand liefert (None = offline →
-    # NICHT als 'flach' werten, Abgleich überspringen).
+    # Broker-Abgleich (IBKR) + Schutz-Stop-Sync: Buch gegen TATSÄCHLICHE
+    # Broker-Positionen prüfen (bucht Phantome aus, verhindert dass ein
+    # Exit-Signal einen ungewollten Short eröffnet) und GTC-Schutz-Stops für
+    # alle Buch-Positionen sicherstellen (greifen auch bei Bot-Ausfall).
+    # Gleiche Funktion wie der periodische Job in bot/scheduler.py (alle
+    # 30 Min) – single source of truth seit 27.7.2026 (META-Vorfall: diese
+    # Heilung lief vorher nur hier, beim Start, nicht laufend).
     try:
-        _pos_fn = getattr(broker, "positions", None)
-        if callable(_pos_fn):
-            _bpos = _pos_fn()
-            if _bpos is None:
-                log.info("Broker-Abgleich übersprungen – IBKR-Positionen nicht ermittelbar (offline?).")
-            else:
-                from portfolio.integrity import reconcile_against_broker
-                _br = reconcile_against_broker(portfolio._conn, _bpos)
-                if _br.ok:
-                    log.info(_br.summary())
-                else:
-                    log.warning(_br.summary())
-                    try:
-                        from notifier.telegram_notifier import TelegramNotifier
-                        TelegramNotifier().send("🔄 <b>Broker-Abgleich beim Start</b>\n"
-                                                + _br.summary())
-                    except Exception:
-                        pass
+        from bot.scheduler_risk import broker_healing_pass
+        from notifier.telegram_notifier import TelegramNotifier
+        broker_healing_pass(portfolio, broker, TelegramNotifier, context="Start")
     except Exception as _be:
-        log.debug("Broker-Abgleich übersprungen: %s", _be)
-    # Broker-seitige Schutz-Stops (GTC) für alle Buch-Positionen sicherstellen –
-    # greifen auch bei Bot-Ausfall. Heilt Positionen aus der Zeit vor dem Feature
-    # und nach verlorenen Orders; bestehende Stops bleiben unangetastet.
-    try:
-        _sync_stops = getattr(broker, "sync_protective_stops", None)
-        if callable(_sync_stops):
-            _stop_book = {t: (p.shares, p.stop_loss)
-                          for t, p in portfolio.all_positions().items()
-                          if p.stop_loss and p.shares > 0}
-            if _stop_book:
-                _sres = _sync_stops(_stop_book)
-                if _sres is None:
-                    log.info("Schutz-Stop-Sync übersprungen (offline/deaktiviert).")
-                else:
-                    _missing = [t for t, ok in _sres.items() if not ok]
-                    if _missing:
-                        log.warning("Schutz-Stop-Sync: NICHT platziert für %s", ", ".join(_missing))
-                        try:
-                            from notifier.telegram_notifier import TelegramNotifier
-                            TelegramNotifier().send(
-                                "⚠️ <b>Schutz-Stops beim Start unvollständig</b>\n"
-                                "Kein Broker-Stop platzierbar für: " + ", ".join(_missing),
-                                level="critical",
-                            )
-                        except Exception:
-                            pass
-                    else:
-                        log.info("Schutz-Stop-Sync: %d Position(en) broker-seitig abgesichert.", len(_sres))
+        log.debug("Broker-Abgleich/Schutz-Stop-Sync beim Start übersprungen: %s", _be)
     except Exception as _se:
         log.debug("Schutz-Stop-Sync übersprungen: %s", _se)
     tracker = PerformanceTracker()

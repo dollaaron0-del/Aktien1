@@ -257,3 +257,81 @@ def test_position_aging_job_notes_runner():
     sr.position_aging_job(portfolio, _FakeBroker(prices={"AAPL": 110.0}), _FakeNotifier)
     assert len(_FakeNotifier.sent) == 1
     assert "Läufer" in _FakeNotifier.sent[0]
+
+
+# ── broker_healing_pass ──────────────────────────────────────────────────────
+# Bis 27.7.2026 lief Broker-Abgleich + Schutz-Stop-Sync nur beim Bot-Start
+# (main.py) – ein broker-seitig gefeuerter GTC-Stop blieb sonst bis zum
+# nächsten Neustart unbemerkt (META-Doppelkauf-Vorfall). Diese Tests laufen
+# gegen ein echtes Portfolio (wie tests/test_integrity.py), weil
+# reconcile_against_broker() direkt auf der sqlite-Verbindung arbeitet.
+
+class _FakeBrokerRecon:
+    def __init__(self, positions=None, sync_result=None):
+        self._positions = positions
+        self._sync_result = {} if sync_result is None else sync_result
+        self.sync_calls = []
+
+    def positions(self):
+        return self._positions
+
+    def sync_protective_stops(self, book):
+        self.sync_calls.append(book)
+        return self._sync_result
+
+
+def _make_real_portfolio(tmp_path, monkeypatch, capital=100_000.0):
+    import portfolio.portfolio as port_mod
+    from portfolio.portfolio import Portfolio
+    db_file = str(tmp_path / "data" / "portfolio.db")
+    (tmp_path / "data").mkdir(exist_ok=True)
+    monkeypatch.setattr(port_mod, "PORTFOLIO_DB", db_file)
+    return Portfolio(initial_capital=capital)
+
+
+def _make_real_position(ticker="AAPL", shares=10, entry_price=150.0):
+    from portfolio.portfolio import Position
+    return Position(
+        ticker=ticker, shares=shares, entry_price=entry_price,
+        entry_date=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+        stop_loss=entry_price * 0.9, take_profit=entry_price * 1.2,
+        target_hold_days=14,
+    )
+
+
+def test_broker_healing_pass_books_real_sl_loss_for_phantom(tmp_path, monkeypatch):
+    """Kern des Fixes: ein von IBKR verschwundener Titel wird zum vermuteten
+    SL-Preis mit echtem Verlust gebucht, nicht mehr zum Einstiegspreis mit
+    pnl=0 (das hätte den realen Verlust verschleiert)."""
+    p = _make_real_portfolio(tmp_path, monkeypatch)
+    p.open_position(_make_real_position("MSFT", 10, 400.0))  # SL=360.0
+    broker = _FakeBrokerRecon(positions={})  # IBKR hält nichts mehr
+    sr.broker_healing_pass(p, broker, _FakeNotifier, context="Test")
+
+    assert p.get_position("MSFT") is None
+    row = p._conn.execute(
+        "SELECT price, pnl FROM trades WHERE ticker='MSFT' AND action='SELL'"
+    ).fetchone()
+    assert row[0] == pytest.approx(360.0)
+    assert row[1] == pytest.approx(-400.0)
+
+
+def test_broker_healing_pass_syncs_missing_stops_and_notifies(tmp_path, monkeypatch):
+    p = _make_real_portfolio(tmp_path, monkeypatch)
+    p.open_position(_make_real_position("AAPL", 10, 150.0))
+    broker = _FakeBrokerRecon(positions={"AAPL": 10.0}, sync_result={"AAPL": False})
+    _FakeNotifier.sent = []
+    sr.broker_healing_pass(p, broker, _FakeNotifier, context="Test")
+
+    assert broker.sync_calls, "Schutz-Stop-Sync sollte für die gedeckte Position versucht werden"
+    assert any("Schutz-Stops" in m for m in _FakeNotifier.sent)
+
+
+def test_broker_healing_pass_offline_broker_is_noop(tmp_path, monkeypatch):
+    """Broker offline (positions() liefert None) → NICHT als 'flach' werten,
+    sonst würde jede Buch-Position fälschlich als Phantom ausgebucht."""
+    p = _make_real_portfolio(tmp_path, monkeypatch)
+    p.open_position(_make_real_position("AAPL", 10, 150.0))
+    broker = _FakeBrokerRecon(positions=None)
+    sr.broker_healing_pass(p, broker, _FakeNotifier, context="Test")
+    assert p.get_position("AAPL") is not None

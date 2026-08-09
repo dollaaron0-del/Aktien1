@@ -377,13 +377,17 @@ def test_collect_news_none_collector_counted_as_zero():
     assert breakdown["yahoo"] == 1
 
 
-def test_collect_news_empty_collectors_raises_valueerror():
-    """Charakterisiert einen ECHTEN Bug (kein Testfehler): ThreadPoolExecutor(
-    max_workers=0) wirft ValueError, wenn active_collectors leer ist – das
-    passiert nicht nur bei einem leeren Dict, sondern auch wenn ALLE Collector-
-    Inits fehlschlagen (_make_collectors() setzt sie dann auf None) oder für
-    einen Crypto-Ticker keiner der Collectors in _CRYPTO_ALLOWED verfügbar ist.
-    Separat an den User gemeldet – hier nur das aktuelle Verhalten dokumentiert."""
+def test_collect_news_empty_collectors_returns_empty():
+    """Regressionstest für einen echten Bug: ThreadPoolExecutor(max_workers=0)
+    warf ValueError, wenn active_collectors leer ist – passierte nicht nur bei
+    einem leeren Dict, sondern auch wenn ALLE Collector-Inits fehlschlagen
+    (_make_collectors() setzt sie dann auf None) oder für einen Crypto-Ticker
+    keiner der Collectors in _CRYPTO_ALLOWED verfügbar ist. Gefixt in
+    collect_news() (bot/runner.py) durch Guard um den ThreadPoolExecutor-Block."""
     archive = _FakeArchive()
-    with pytest.raises(ValueError, match="max_workers"):
-        collect_news("AAPL", archive, {})
+
+    unique, breakdown = collect_news("AAPL", archive, {})
+
+    assert unique == []
+    assert breakdown == {}
+    assert archive.stored[0] == ("AAPL", [])

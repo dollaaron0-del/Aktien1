@@ -199,6 +199,7 @@ def test_run_bot_loop_registers_expected_interval_jobs(monkeypatch, fresh_portfo
 
     by_name = {getattr(j.job_func, "__name__", ""): j for j in schedule.jobs}
     assert by_name["_sl_tp_check_job"].interval == 30 and by_name["_sl_tp_check_job"].unit == "minutes"
+    assert by_name["_broker_healing_job"].interval == 30 and by_name["_broker_healing_job"].unit == "minutes"
     assert by_name["_position_aging_job"].interval == 4 and by_name["_position_aging_job"].unit == "hours"
     assert by_name["_headline_scan_job"].interval == 20 and by_name["_headline_scan_job"].unit == "minutes"
     assert by_name["_cb_monitor_job"].interval == 15 and by_name["_cb_monitor_job"].unit == "minutes"

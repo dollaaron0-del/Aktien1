@@ -23,6 +23,7 @@ Wichtige Ausführungs-Feinheiten der Engine-Ergebnisse:
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -32,6 +33,17 @@ from portfolio.portfolio import Position
 from strategy.swing_strategy import StrategyResult
 
 log = get_logger(__name__)
+
+# market_closed_reason() (analyzers/market_schedule.py) bettet die aktuelle
+# Uhrzeit in den Fehlertext ein ("... jetzt 04:16"). Als Throttle-Signatur
+# verwendet würde das den Cooldown wirkungslos machen, weil sich der Text
+# jede Minute ändert – deshalb vor dem Vergleich rausschneiden (28.7.2026,
+# 4 Spam-Alerts für einen dauerhaft vorbörslich fehlschlagenden NVDA-SELL).
+_TIME_IN_REASON_RE = re.compile(r"jetzt \d{2}:\d{2}")
+
+
+def _stable_signature(text: str) -> str:
+    return _TIME_IN_REASON_RE.sub("jetzt", text)
 
 # Persistenter Throttle gegen wiederholte, wortgleiche Fehlschlag-Alerts.
 # Ohne ihn feuert z.B. eine dauerhaft nicht ausführbare SELL-Order jede ~30 Min
@@ -221,6 +233,47 @@ class TradeExecutor:
         # SKIP (oder unbekannt)
         return f"[{result.ticker}] {result.reason} – übersprungen" if result.reason else None
 
+    def _enqueue_if_market_closed(self, ticker, result, analysis, sources_breakdown) -> bool:
+        """Legt ein gescheitertes BUY nur dann in die Signal-Queue, wenn der
+        Grund GENAU die geschlossene Börse ist (z.B. Order während des
+        vorbörslichen Analyse-Zyklus, NYSE/XETRA noch zu) – andere Fehlschläge
+        (Broker nicht verbunden, Contract nicht qualifizierbar, Fill-Timeout)
+        werden bewusst NICHT vorgemerkt, das wären echte Probleme, keine
+        reine Zeitfrage. market_closed_reason() ist dieselbe Quelle, die der
+        Broker VOR dem Order-Versuch abfragt – ist sie jetzt None, war die
+        Börse offen und der Fehlschlag hatte einen anderen Grund.
+
+        Anders als der Kapitalmangel-/Max-Positionen-Fall (SwingStrategy.
+        _enqueue_signal, dort per evaluate() mit dem alten Signal neu geprüft)
+        wird dieser Eintrag bei Marktöffnung über eine KOMPLETT FRISCHE Analyse
+        re-geprüft (bot/scheduler_risk.py: market_closed_signal_job), nicht
+        blind mit dem stunden-/tagealten Sentiment nachgekauft."""
+        sq = getattr(self._strategy, "signal_queue", None)
+        if not sq:
+            return False
+        try:
+            from analyzers.market_schedule import market_closed_reason
+            if market_closed_reason(ticker) is None:
+                return False
+        except Exception:
+            return False
+        sq.enqueue(
+            ticker=ticker,
+            sentiment_score=float(getattr(analysis, "sentiment_score", 0.0) or 0.0),
+            confidence=getattr(analysis, "confidence", "MEDIUM") or "MEDIUM",
+            target_price=getattr(analysis, "target_price", None),
+            direction=getattr(analysis, "direction", "BULLISH") or "BULLISH",
+            entry_rationale=getattr(analysis, "entry_rationale", "") or "",
+            key_catalysts=list(getattr(analysis, "key_catalysts", []) or []),
+            risk_factors=list(getattr(analysis, "risk_factors", []) or []),
+            sources_used=int(getattr(analysis, "sources_used", 0) or 0),
+            sources_breakdown=sources_breakdown or {},
+            suggested_hold_days=int(result.hold_days or 0),
+            reason="market_closed",
+            ttl_hours=96,  # übersteht ein Wochenende (Freitagabend → Montagöffnung)
+        )
+        return True
+
     # ── BUY ─────────────────────────────────────────────────────────────────
     def _execute_buy(self, result, analysis, sources_breakdown) -> str:
         ticker = result.ticker
@@ -246,6 +299,8 @@ class TradeExecutor:
             fill = self.broker.buy(ticker, shares, result.price)
         if not _is_filled(fill):
             warn = _fail_reason(fill)
+            if self._enqueue_if_market_closed(ticker, result, analysis, sources_breakdown):
+                return f"[{ticker}] ⏳ {warn} – für Marktöffnung vorgemerkt (wird frisch neu geprüft)"
             return f"[{ticker}] ⛔ BUY-Order fehlgeschlagen: {warn}"
         actual_price = _fill_price(fill, result.price)
 
@@ -378,7 +433,7 @@ class TradeExecutor:
             warn = _fail_reason(fill)
             # Throttle: dieselbe Fehlschlag-Meldung höchstens 1×/Cooldown senden,
             # sonst Spam jede ~30 Min bei dauerhaft nicht ausführbarer Order.
-            if _throttle_should_send(f"SELL_FAIL:{ticker}", warn):
+            if _throttle_should_send(f"SELL_FAIL:{ticker}", _stable_signature(warn)):
                 self.notifier.send(
                     f"🚨 <b>{ticker} SELL-Order FEHLGESCHLAGEN</b> ({result.reason})\n"
                     f"Position bleibt offen – bitte manuell im Broker prüfen!\nFehler: {warn}",
@@ -525,6 +580,10 @@ def process_signal_queue(strategy, executor: "TradeExecutor", broker, regime: st
     msgs = []
     for sig in list(sq.get_pending()):
         ticker = sig["ticker"]
+        if sig.get("reason") == "market_closed":
+            # Eigener Drain-Pfad (bot/scheduler_risk.py: market_closed_signal_job)
+            # – re-analysiert frisch statt das alte Sentiment blind zu nutzen.
+            continue
         try:
             price = broker.get_price(ticker)
             if not price:

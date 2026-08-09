@@ -146,6 +146,39 @@ def test_broker_reconcile_sets_sl_cooldown(tmp_path, monkeypatch):
     assert blocked, reason
 
 
+def test_broker_reconcile_books_real_sl_loss(tmp_path, monkeypatch):
+    """META-Vorfall 27.7.2026: Phantom-Ausbuchung darf den vermuteten SL-Exit
+    nicht mehr zum Einstiegspreis mit pnl=0 verstecken – das täuschte einen
+    neutralen Trade vor, obwohl der Stop real unter dem Einstieg lag, und
+    ließ das freigewordene Kapital wie unberührt aussehen."""
+    p = make_portfolio(tmp_path, monkeypatch)
+    p.open_position(make_position("MSFT", 10, 400.0))  # SL=360.0, TP=480.0
+    reconcile_against_broker(p._conn, broker_positions={})  # IBKR flach
+
+    row = p._conn.execute(
+        "SELECT price, pnl, reason FROM trades WHERE ticker='MSFT' AND action='SELL'"
+    ).fetchone()
+    assert row[0] == pytest.approx(360.0)          # Exit zum SL-Preis, nicht Einstieg
+    assert row[1] == pytest.approx(-400.0)          # (360-400)*10 = realer Verlust
+    assert "vermuteter SL-Exit" in row[2]
+
+
+def test_broker_reconcile_books_real_tp_gain_after_partial(tmp_path, monkeypatch):
+    """Nach Partial-TP gilt der Rest-Exit als TP-getrieben → Buchung zum
+    TP-Preis, nicht zum (falschen) Einstiegspreis."""
+    p = make_portfolio(tmp_path, monkeypatch)
+    p.open_position(make_position("MSFT", 10, 400.0))  # SL=360.0, TP=480.0
+    p._conn.execute("UPDATE positions SET partial_tp_taken=1 WHERE ticker='MSFT'")
+    p._conn.commit()
+    reconcile_against_broker(p._conn, broker_positions={})
+
+    row = p._conn.execute(
+        "SELECT price, pnl FROM trades WHERE ticker='MSFT' AND action='SELL'"
+    ).fetchone()
+    assert row[0] == pytest.approx(480.0)
+    assert row[1] == pytest.approx(800.0)           # (480-400)*10
+
+
 def test_broker_reconcile_skips_cooldown_after_partial_tp(tmp_path, monkeypatch):
     """War bereits ein Partial-TP genommen, gilt der Rest-Exit nicht als
     'sauberer' Clean-SL (Pendant zur Bedingung in strategy/executor.py) →

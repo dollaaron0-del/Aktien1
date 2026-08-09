@@ -50,6 +50,20 @@ LAYOUT = {
     # Nachtschicht-Roboter — administrativ, kein Platz im Datenfluss,
     # daher symmetrisch am Fuß der Halle statt in der Pipeline-Reihenfolge.
     "control_room":    (960, 690, 220,  90),
+    # Stufe 3 (24.7.2026): granulare Entscheidungs-Ketten-Maschinen zwischen
+    # Förderband und Verladetor (risk_check → position_limit → gate) plus die
+    # zwei Sammelstellen unten (Ausschuss/Warteschlange). Von Hand auf
+    # Nicht-Überlappung geprüft (test_layout_boxes_do_not_overlap).
+    "risk_check":      (835, 320, 135, 105),
+    "position_limit":  (1030, 450, 150, 140),
+    "ausschuss":       (730, 690, 200,  90),
+    "queue":           (520, 690, 190,  90),
+    # Stufe 4 (24.7.2026): restliche Ketten-Stationen (SVG-Fallback-Positionen;
+    # die animierte Canvas-Szene hat ihr eigenes Hallen-Layout).
+    "data_gate":       (240,  20, 180,  80),
+    "catalyst_check":  (740,  20, 170,  80),
+    "position_check":  (790, 130, 180,  80),
+    "signal_check":    (790, 230, 180,  80),
 }
 
 # Vision W6: Leitungen zwischen Maschinen (Factorio/Mindustry-Optik) — jede
@@ -66,7 +80,13 @@ _CONNECTIONS: List[Tuple[str, str, str]] = [
     ("analyzer_claude", "conveyor", "main"),
     ("analyzer_ollama", "conveyor", "main"),
     ("conveyor", "warehouse", "main"),
-    ("conveyor", "gate", "main"),
+    # Stufe 3: echte Entscheidungs-Kette Förderband → Risiko → Positions-Limit
+    # → Verladetor (ersetzt die frühere Direkt-Leitung conveyor→gate).
+    ("conveyor", "risk_check", "main"),
+    ("risk_check", "position_limit", "main"),
+    ("position_limit", "gate", "main"),
+    ("conveyor", "ausschuss", "utility"),
+    ("queue", "conveyor", "utility"),
     ("warehouse", "breaker", "main"),
     ("warehouse", "lab", "main"),
     ("lab", "analyzer_claude", "feedback"),

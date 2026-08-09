@@ -240,6 +240,35 @@ def render(ctx) -> None:
                 f"· Score {score:.2f} · {conf} · {ts}{_trend} · {_age_badge}"
             )
             with st.expander(label):
+                # Brücke zum Decision-Log: die KI-Empfehlung hier ist NICHT
+                # automatisch die Aktion des Bots — Positions-Limit/
+                # Korrelation/Kapitalknappheit/Cross-Listing/Circuit-Breaker
+                # können ein BUY trotzdem stoppen (strategy/swing_strategy.py
+                # _evaluate_new). Ohne diesen Link sah man hier nur "BUY" und
+                # nirgends verbunden, warum am Ende doch nichts gekauft wurde.
+                try:
+                    from analyzers.decision_log import get_decision_log
+                    _dlog_bridge = get_decision_log()
+                    _strat = None
+                    if _dlog_bridge is not None:
+                        for _de in _dlog_bridge.get_day(_entry_date):
+                            if _de.get("ticker") == entry["ticker"]:
+                                _strat = _de  # get_day(): neueste zuerst
+                                break
+                except Exception:
+                    _strat = None
+                if _strat:
+                    _act = str(_strat.get("action") or "?").upper()
+                    _act_icon = {"BUY": "🟢", "SELL": "🔴", "SKIP": "⏭", "HOLD": "⏸"}.get(_act, "•")
+                    _msg = f"{_act_icon} **Strategie-Entscheidung:** {_act} — {_strat.get('reason') or '–'}"
+                    if rec == "BUY" and _act != "BUY":
+                        st.warning(f"⚠️ KI empfahl BUY, Strategie hat NICHT gekauft.  \n{_msg}")
+                    else:
+                        st.caption(_msg)
+                elif rec == "BUY":
+                    st.caption("⏳ Noch keine Strategie-Entscheidung im Decision-Log dazu gefunden "
+                               "(z. B. wenn der Bot pausiert war).")
+
                 col_l, col_r = st.columns([3, 2])
                 with col_l:
                     st.markdown("**Begründung:**")

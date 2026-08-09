@@ -26,7 +26,7 @@ def _render_kern_zahlen(ctx) -> None:
     except Exception:
         pass
 
-    c5, c6, c7 = st.columns(3)
+    c5, c6, c7, c8 = st.columns(4)
     try:
         if ctx.regime_data:
             c5.metric("Marktregime", ctx.regime_data["regime"],
@@ -45,6 +45,29 @@ def _render_kern_zahlen(ctx) -> None:
             c7.metric("IB-Gateway", "🟢 erreichbar")
     except Exception:
         c7.metric("IB-Gateway", "🔴 nicht erreichbar")
+
+    # Effektive Kauf-Schwelle: Basis-Schwelle + Kapitalknappheits-Aufschlag
+    # (strategy/swing_strategy.py _capital_scarcity_adjustment), damit man
+    # nicht nur die statische Basis (Kontrollraum-Slider), sondern die
+    # tatsächlich gerade wirksame Schwelle sieht.
+    try:
+        if getattr(ctx.config, "capital_scarcity_threshold_enabled", True):
+            from strategy.swing_strategy import _capital_scarcity_adjustment
+            equity = ctx.portfolio.total_value({})
+            cash_pct = (ctx.portfolio.cash / equity) if equity > 0 else 0.0
+            pivot = float(getattr(ctx.config, "capital_scarcity_pivot_pct", 0.10))
+            max_adj = float(getattr(ctx.config, "capital_scarcity_max_adj", 0.15))
+            adj = _capital_scarcity_adjustment(cash_pct, max_adj, pivot)
+            eff_threshold = ctx.config.buy_threshold + adj
+            c8.metric(
+                "Effektive Kauf-Schwelle",
+                f"{eff_threshold:.2f}",
+                f"+{adj:.3f} (Cash {cash_pct * 100:.0f}%)" if adj >= 0.005 else "≈ Basis (Cash reichlich)",
+            )
+        else:
+            c8.metric("Effektive Kauf-Schwelle", f"{ctx.config.buy_threshold:.2f}", "Kapital-Aufschlag deaktiviert")
+    except Exception:
+        pass
 
     try:
         from analyzers.api_cost_tracker import APICostTracker

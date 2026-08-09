@@ -88,8 +88,16 @@ def render(ctx) -> None:
     st.subheader("Ausstehende BUY-Signale")
     st.caption(
         "Wenn ein starkes BUY-Signal eintrifft aber kein Kapital frei ist, "
-        "landet es hier. Sobald ein Trade geschlossen wird, wird das Signal automatisch ausgeführt."
+        "landet es hier. Sobald ein Trade geschlossen wird, wird das Signal automatisch ausgeführt. "
+        "Signale, die nur an geschlossener Börse scheiterten (⏳ Marktöffnung), "
+        "werden stattdessen bei Marktöffnung komplett frisch neu analysiert."
     )
+
+    _reason_label = {
+        "capital_scarcity": "💰 Kapital knapp",
+        "max_positions":    "📊 Max Positionen",
+        "market_closed":    "⏳ Marktöffnung",
+    }
 
     pending = ctx.sig_queue.get_pending()
     if pending:
@@ -99,8 +107,9 @@ def render(ctx) -> None:
             catalysts = sig.get("key_catalysts") or []
             risks     = sig.get("risk_factors") or []
             conf_color = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🔴"}.get(sig["confidence"], "⚪")
+            reason_tag = _reason_label.get(sig.get("reason"), "")
             with st.expander(
-                f"{conf_color} **{sig['ticker']}** · Score {sig['sentiment_score']:.2f} "
+                f"{conf_color} **{sig['ticker']}** · {reason_tag} · Score {sig['sentiment_score']:.2f} "
                 f"· Erstellt {created} · Verfällt {expires}"
             ):
                 c1, c2 = st.columns(2)
@@ -129,6 +138,7 @@ def render(ctx) -> None:
             "executed":   "✅",
             "expired":    "⏰",
             "superseded": "🔄",
+            "rechecked":  "🔍",
         }
         df_q = pd.DataFrame([{
             "Status":      status_icon.get(s["status"], "?") + " " + s["status"].capitalize(),

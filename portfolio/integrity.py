@@ -289,9 +289,12 @@ def reconcile_against_broker(
     Phantome ausgebucht). `broker.positions()` liefert dafür None statt {}.
 
     Voll-Phantome (Broker hält ~0 des Symbols) werden cash-neutral ausgebucht:
-    Position gelöscht + Gegen-SELL zum Einstiegspreis (pnl=0, Buchungs-Reason),
-    sodass das Trade-Log netto flach bleibt und der Cash-Stand (durch Reset
-    bewusst gesetzt) unangetastet bleibt. Teil-Abweichungen werden nur GEMELDET,
+    Position gelöscht + Gegen-SELL, sodass das Trade-Log netto flach bleibt und
+    der Cash-Stand (kommt separat über den Broker-Cash-Sync) unangetastet
+    bleibt. Der Gegen-SELL wird zum vermuteten SL-/TP-Preis gebucht (nicht mehr
+    pauschal zum Einstiegspreis mit pnl=0 – das verschleierte reale Verluste,
+    s. META-Vorfall 27.7.2026), nur ohne Referenzpreis fällt er auf
+    Einstiegspreis/pnl=0 zurück. Teil-Abweichungen werden nur GEMELDET,
     nicht automatisch verändert (zu selten/riskant für Auto-Repair).
     """
     from datetime import datetime, timezone
@@ -305,7 +308,7 @@ def reconcile_against_broker(
     try:
         rows = conn.execute(
             "SELECT ticker, shares, entry_price, currency, fx_rate_at_entry, "
-            "stop_loss, partial_tp_taken FROM positions"
+            "stop_loss, partial_tp_taken, take_profit FROM positions"
         ).fetchall()
         book_bases = {_norm(r[0]) for r in rows}
         now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
@@ -317,31 +320,52 @@ def reconcile_against_broker(
                 if held + _SHARE_EPS >= shares:
                     continue  # voll gedeckt – ok
                 if held <= _SHARE_EPS:
-                    # Voll-Phantom → ausbuchen (cash-neutral)
+                    # Voll-Phantom → ausbuchen (cash-neutral: die reale
+                    # Kassenwirkung kommt über den nächsten Broker-Cash-Sync,
+                    # hier würde eine zweite Verbuchung doppelt zählen).
+                    #
+                    # Verschwindet eine Position komplett aus IBKR, ohne dass der
+                    # Bot sie selbst verkauft hat, ist der broker-seitige
+                    # GTC-Schutz-Stop (analyzers/sl_cooldown.py-Docstring) die
+                    # einzige plausible Erklärung – der Bot bekommt dessen Fill
+                    # sonst nie mit. Bug bis 27.7.2026 (META-Doppelkauf-Vorfall):
+                    # der Gegen-SELL wurde trotzdem IMMER zum Einstiegspreis mit
+                    # pnl=0 gebucht, obwohl genau in diesem Zweig ein realer
+                    # Stop/TP-Exit angenommen wird – der reale Verlust/Gewinn
+                    # verschwand spurlos aus Trade-Log, Win-Rate und Lern-Daten,
+                    # und die freigewordene Position sah für neue Signale wie
+                    # unberührtes Kapital aus. Jetzt: Exit-Preis konservativ vom
+                    # vermuteten Auslöser ableiten (TP falls Partial-TP schon
+                    # lief, sonst SL; fail-open auf Einstiegspreis/pnl=0 nur wenn
+                    # gar kein Referenzpreis vorliegt) und den Grund im Trade-Log
+                    # klar als Schätzung kennzeichnen.
+                    entry_price = float(r[2] or 0.0)
+                    stop_loss = float(r[5] or 0.0)
+                    take_profit = float(r[7] or 0.0) if len(r) > 7 else 0.0
+                    partial_tp_taken = int(r[6] or 0)
+                    assumed_trigger = "TP" if partial_tp_taken else "SL"
+                    exit_price = (take_profit if partial_tp_taken else stop_loss) or entry_price
+                    pnl = round((exit_price - entry_price) * shares, 4)
+                    booked_reason = (
+                        f"{reason} – vermuteter {assumed_trigger}-Exit "
+                        f"(Fill unbestätigt, Preis geschätzt)"
+                        if exit_price != entry_price else reason
+                    )
                     conn.execute("DELETE FROM positions WHERE ticker=?", (ticker,))
                     conn.execute(
                         """
                         INSERT INTO trades
                             (ticker, action, shares, price, timestamp, pnl, reason, currency, fx_rate)
-                        VALUES (?, 'SELL', ?, ?, ?, 0.0, ?, ?, ?)
+                        VALUES (?, 'SELL', ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (ticker, shares, float(r[2] or 0.0), now, reason,
+                        (ticker, shares, exit_price, now, pnl, booked_reason,
                          (r[3] or "USD"), float(r[4] or 1.0)),
                     )
                     rep.reconciled[ticker] = round(shares, 4)
-                    # Verschwindet eine Position komplett aus IBKR, ohne dass der
-                    # Bot sie selbst verkauft hat, ist der broker-seitige
-                    # GTC-Schutz-Stop (analyzers/sl_cooldown.py-Docstring) die
-                    # einzige plausible Erklärung – der Bot bekommt dessen Fill
-                    # sonst nie mit, also lief bislang auch nie record() für die
-                    # SL-Cooldown-Sperre. Ohne vorherigen Partial-TP als
-                    # Exit-Preis konservativ den Stop-Preis annehmen (fail-open,
-                    # wie in strategy/executor.py).
-                    partial_tp_taken = int(r[6] or 0)
                     if not partial_tp_taken:
                         try:
                             from analyzers.sl_cooldown import StopLossCooldown
-                            StopLossCooldown().record(ticker, float(r[5] or 0.0))
+                            StopLossCooldown().record(ticker, stop_loss)
                         except Exception as e:
                             log.debug("[%s] SL-Cooldown record (Broker-Abgleich) fehlgeschlagen: %s",
                                       ticker, e)
