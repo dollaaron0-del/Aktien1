@@ -1117,10 +1117,26 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
           Einträge, News-Snapshots, 6.8a-Filings): lokales Embedding-Modell
           + Vektorsuche → "ähnliche historische Situationen" als
           Analyse-Kontext (Präzedenzfall-Abruf statt nur aktueller Daten).
-      (c) RE-ANALYSE-STUDIE: alle archivierten Analysen per lokalem LLM
-          gegen die echten Ausgänge nachbewerten (LLM-as-Judge) →
-          systematische Analysefehler finden, Kalibrierung (1.2) schärfen;
-          via Claude-API unbezahlbar, lokal ~0 €.
+      (c) ✅ RE-ANALYSE-STUDIE GEBAUT 9.8.2026: gelabelte Entscheidungen
+          (analyzers/experience_store.py::iter_labeled() — bereits mit
+          echtem Outcome, kein neuer Join über prompt_archive/analysis_log
+          nötig, iter_labeled() liefert recommendation/confidence/
+          key_catalysts/risk_factors + pnl_pct/outcome direkt) per lokalem
+          LLM im Nachhinein beurteilen. Neues analyzers/reanalysis_judge.py:
+          feste 5er-Taxonomie (KORREKT/UEBERKONFIDENT/RISIKO_UEBERSEHEN/
+          PECH/UNKLAR) statt Freitext-Auswertung — macht die Urteile
+          aggregierbar (Muster wie track_record.py-Buckets). CLI
+          scripts/reanalysis_study.py (Default --limit 30, jedes Urteil ist
+          ein Ollama-Aufruf), Mindest-n=15 vor einem Muster-Verdikt. 10
+          neue Tests (test_reanalysis_judge.py, netzfrei). Bewusst NUR
+          Diagnose — kein Wiring in Kalibrierung (1.2) oder Live-Pfad, LLM-
+          Urteile sind selbst verrauscht. Smoke-Test gegen echte
+          experience.db + echtes lokales Ollama (llama3.2:3b, 5 Urteile)
+          lief durch — ehrlicher Befund dabei: das kleine 3b-Modell
+          kollabiert stark auf "PECH" für fast jeden Fall (bekannte Schwäche
+          kleiner Modelle bei Kategorisierungs-Aufgaben) — ein
+          aussagekräftiger Lauf braucht eher qwen2.5:14b. Voller Lauf mit
+          größerem Modell + höherem --limit noch nicht gemacht.
       (d) SKIP-KONTRAFAKTIK XXL: 3.2 hochskaliert — ALLE historischen SKIPs
           + großes Universum durchsimulieren → EntryFilter-Schwellen mit
           echten Gegenproben statt kleiner Stichprobe validieren.
