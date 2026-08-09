@@ -13,7 +13,8 @@ import json
 import numpy as np
 import pandas as pd
 
-from strategy_lab.anti_overfit import (BASE_ALPHA, holdout_access_count,
+from strategy_lab.anti_overfit import (BASE_ALPHA, block_bootstrap_ci,
+                                       holdout_access_count,
                                        passes_multiple_testing, sidak_alpha)
 from strategy_lab.walkforward import (WindowEval, _aggregate_report,
                                       run_holdout, run_walk_forward)
@@ -124,3 +125,46 @@ def test_run_holdout_evaluates_tail_and_logs(tmp_path, monkeypatch):
     run_holdout("donchian_breakout", ["AAA"], params={}, holdout_years=2,
                 total_years=12, loader=_loader)
     assert holdout_access_count("donchian_breakout") == 2
+
+
+# ── Block-Bootstrap (Roadmap 6.8d) ───────────────────────────────────────────
+
+def test_block_bootstrap_ci_empty_and_single_value_edge_cases():
+    assert block_bootstrap_ci([]) == (0.0, 0.0, 1.0)
+    lo, hi, p = block_bootstrap_ci([0.03])
+    assert lo == hi == 0.03 and p == 0.0
+    lo, hi, p = block_bootstrap_ci([-0.01])
+    assert lo == hi == -0.01 and p == 1.0
+
+
+def test_block_bootstrap_ci_mean_matches_input_on_iid_data():
+    rng = np.random.default_rng(1)
+    values = list(rng.normal(0.01, 0.02, 500))
+    lo, hi, _ = block_bootstrap_ci(values, block_size=5, iters=1000, seed=2)
+    assert lo < np.mean(values) < hi
+
+
+def test_block_bootstrap_ci_wider_than_iid_bootstrap_on_autocorrelated_data():
+    """Positivkontrolle: bei künstlich eingebauten Gewinn-/Verlust-Serien
+    (Blöcke gleichen Vorzeichens) muss die Block-CI breiter sein als die
+    i.i.d.-CI auf denselben Werten — genau die 'härtere Validierung', die
+    6.8d verlangt, nicht nur eine andere Zahl."""
+    from strategy_lab.walkforward import _bootstrap_ci
+
+    rng = np.random.default_rng(3)
+    # 40 Blöcke à 10 Werte mit stark korreliertem Blockvorzeichen (Regime-Serien).
+    blocks = []
+    for _ in range(40):
+        sign = rng.choice([-1, 1])
+        blocks.extend(sign * rng.uniform(0.005, 0.03, 10))
+    values = blocks
+
+    iid_lo, iid_hi, _ = _bootstrap_ci(values, iters=1000)
+    blk_lo, blk_hi, _ = block_bootstrap_ci(values, block_size=10, iters=1000, seed=4)
+    assert (blk_hi - blk_lo) > (iid_hi - iid_lo)
+
+
+def test_block_bootstrap_ci_block_size_capped_at_n():
+    lo, hi, p_le0 = block_bootstrap_ci([0.01, 0.02, -0.01], block_size=100, iters=200)
+    assert lo <= hi
+    assert 0.0 <= p_le0 <= 1.0

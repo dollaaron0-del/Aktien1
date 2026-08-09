@@ -1128,11 +1128,28 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
           einzige echte Position geschlossen) — kein Bug, reine
           Zeitfrage. Läuft automatisch scharf, sobald die ersten echten
           Positionen schließen.
-      (d) RESAMPLING STATT SYNTHETIK: Block-Bootstrap/Monte-Carlo-Pfade
-          machen die VALIDIERUNG härter (Verteilungen statt Punktwerte,
-          verzahnt mit 6.4) — ehrlich bleiben: synthetische Kurse enthalten
-          keine neue Information, sie finden keine Kante, sie zerstören
-          nur Scheinkanten. Genau dafür einsetzen.
+      (d) ✅ RESAMPLING-PRIMITIV GEBAUT 9.8.2026: Block-Bootstrap statt
+          Synthetik — bewusst KEINE künstlichen Kurse erfunden (der Bullet-
+          Titel wörtlich genommen: Resampling STATT Synthetik), sondern
+          reines Moving-Block-Resampling der TATSÄCHLICH beobachteten,
+          chronologisch sortierten Trade-Renditen. Neu
+          strategy_lab/anti_overfit.py::block_bootstrap_ci() — zieht
+          zusammenhängende Blöcke statt Einzelwerten (erhält lokale
+          Autokorrelation aus Gewinn-/Verlust-Serien, die eine i.i.d.-Ziehung
+          wegmitteln würde), sonst identische Signatur/Randfälle wie
+          walkforward._bootstrap_ci. 4 neue Tests (test_anti_overfit.py,
+          u.a. Positivkontrolle: auf künstlich block-korrelierten Daten IST
+          die Block-CI nachweislich breiter als die i.i.d.-CI, nicht nur
+          anders), netzfrei. CLI scripts/block_bootstrap_check.py vergleicht
+          beide Verfahren auf echten Backtest-Trade-Renditen nebeneinander.
+          SMOKE-TEST GEGEN ECHTE DATEN (5 Ticker/15J, 1527 Trades): i.i.d.-CI
+          [+2,27%,+3,20%] vs. Block-CI [+1,88%,+3,56%] — Block-CI 79% breiter
+          (0,0167 vs. 0,0094), Verdikt blieb in diesem Fall bei beiden
+          SIGNIFIKANT (kein Kipp-Fall gefunden, aber die härtere CI ist
+          messbar echt, keine Behauptung). Bewusst NICHT automatisch in
+          ROBUST/SIGNAL-Verdikte verdrahtet (würde bestehende Verdikte
+          rückwirkend verschärfen — eigene Entscheidung, kein Nebeneffekt
+          dieses Baustein-Commits).
       (e) GRENZE KLAR BENENNEN: Kurse delisteter Aktien kann kein Compute
           rekonstruieren — Survivorship-Fix bleibt Kauf-Entscheid 6.2-(c).
 - [~] **6.9 Weitere Compute-Hebel** (gesammelt 12.7., User wählt bei Umzug aus) —

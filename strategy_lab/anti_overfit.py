@@ -21,6 +21,19 @@ GARANTIERT Scheinkanten. Zwei Werkzeuge dagegen:
    Zugriff — das Fenster nutzt sich durch Anfassen ab (Ziel: ≤1×/Quartal).
 
 Reine numpy/stdlib-Statistik, kein LLM, kein Live-Eingriff.
+
+3. Block-Bootstrap (Roadmap 6.8d, "Resampling statt Synthetik"): die
+   bisherigen Bootstrap-CIs (walkforward._bootstrap_ci, track_record.
+   _bootstrap_mean_ci, …) resamplen EINZELNE Werte unabhängig (i.i.d.) — bei
+   seriell korrelierten Trade-Renditen (gemeinsame Regime-/Whipsaw-Phasen,
+   Gewinn-/Verlust-Serien) unterschätzt das die wahre Unsicherheit, die CI
+   wirkt enger als sie ist. block_bootstrap_ci() resampelt stattdessen
+   ZUSAMMENHÄNGENDE Blöcke (Moving-Block-Bootstrap) und macht die Validierung
+   dadurch strenger (breitere CI), OHNE künstliche Kurse zu erfinden — reines
+   Resampling der tatsächlich beobachteten, chronologisch sortierten Werte.
+   Bewusst NICHT automatisch in die bestehenden ROBUST/SIGNAL-Verdikte
+   verdrahtet (würde bestehende Verdikte rückwirkend verschärfen können) —
+   siehe scripts/block_bootstrap_check.py für den Vergleich auf echten Daten.
 """
 from __future__ import annotations
 
@@ -29,6 +42,9 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import List, Tuple
+
+import numpy as np
 
 log = logging.getLogger(__name__)
 
@@ -96,3 +112,35 @@ def holdout_access_count(strategy: str | None = None) -> int:
         return sum(1 for e in entries if e.get("strategy") == strategy)
     except Exception:
         return 0
+
+
+def block_bootstrap_ci(values: List[float], block_size: int = 5, ci: float = 0.90,
+                       iters: int = 2000, seed: int = 20260809) -> Tuple[float, float, float]:
+    """Moving-Block-Bootstrap-CI auf den Mittelwert (Roadmap 6.8d) — härtere
+    Alternative zum i.i.d.-Bootstrap bei seriell korrelierten Werten
+    (chronologische Reihenfolge in `values` ist Voraussetzung, NICHT vorher
+    shuffeln). Zieht wiederholt zusammenhängende Blöcke der Länge
+    `block_size` (zirkulär, Wraparound am Ende) statt Einzelwerten, bis die
+    Ziellänge n erreicht ist — erhält so lokale Autokorrelation (Gewinn-/
+    Verlust-Serien), die eine i.i.d.-Ziehung wegmitteln würde.
+
+    Randfälle wie _bootstrap_ci (walkforward.py): n=0 → (0,0,1); n=1 →
+    degeneriert auf den Einzelwert. block_size wird auf höchstens n gekappt.
+    """
+    x = np.asarray([v for v in values if v is not None], dtype=float)
+    n = len(x)
+    if n == 0:
+        return (0.0, 0.0, 1.0)
+    if n == 1:
+        return (float(x[0]), float(x[0]), 1.0 if x[0] <= 0 else 0.0)
+    bs = max(1, min(block_size, n))
+    n_blocks = -(-n // bs)                                  # ceil(n / bs)
+    rng = np.random.default_rng(seed)
+    starts = rng.integers(0, n, size=(iters, n_blocks))
+    means = np.empty(iters, dtype=float)
+    for i in range(iters):
+        pieces = [x[np.arange(s, s + bs) % n] for s in starts[i]]
+        means[i] = np.concatenate(pieces)[:n].mean()
+    lo = float(np.quantile(means, (1 - ci) / 2))
+    hi = float(np.quantile(means, 1 - (1 - ci) / 2))
+    return (lo, hi, float((means <= 0).mean()))
