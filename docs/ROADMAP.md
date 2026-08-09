@@ -1253,14 +1253,32 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       Eskalations-Schwellen werden NICHT gesenkt, eher verschärft (Multiple-
       Testing im Live-Funnel: wer täglich 500 statt 10 Aktien prüft, findet
       garantiert zufällig "starke" — 6.4-Logik gilt auch hier).
-      (a) BEOBACHTUNGS-RADAR: täglich hunderte Aktien LOKAL analysieren
-          (GPU-Ollama, Grenzkosten ~0). Wert: Score-ZEITREIHE je Aktie
-          (Signal-Halbwertszeit, Kalibrierung je Titel/Sektor messbar) +
-          jede Analyse+Ausgang = Trainingsbeispiel (löst das 78-Label-
-          Problem über Zeit; speist 1.2/6.5b). Gehandelt wird weiter nur,
-          was den strengen Funnel übersteht — Radar ≠ Trade-Kandidat.
-          Praktische Grenze sind Datenquellen-Limits, nicht Compute:
-          braucht Parquet-Cache 6.2(a) + gestaffelte Abrufe.
+      (a) ✅ BEOBACHTUNGS-RADAR GEBAUT 9.8.2026 (Speicher-/Scoring-Schicht;
+          Hochskalieren auf "hunderte Ticker täglich" bewusst NICHT mit
+          erledigt, s.u.): täglich Aktien LOKAL analysieren (Ollama,
+          Grenzkosten ~0). Neues analyzers/observation_radar.py::
+          ObservationRadar — Score-ZEITREIHE je Aktie
+          (observed_at/score/direction/confidence/model), observe_ticker()
+          ruft OllamaPrescreener.prescreen() (Wiederverwendung) + speichert
+          fail-open. CLI scripts/observation_radar_scan.py mit zwei
+          Nachrichtenquellen: --headlines-file (netzfrei, zum Prüfen des
+          Mechanismus) oder --tickers gegen den ECHTEN Live-Collector-Stack
+          (bot.runner.collect_news — beim Nachschauen: ~30 externe APIs mit
+          je eigenen Rate-Limits/Kosten PRO TICKER, _make_collectors()).
+          8 neue Tests (test_observation_radar.py, netzfrei), Suite grün.
+          Smoke-Test (Headlines-Datei, 2 Ticker) lief Ende-zu-Ende durch.
+          KERN-TRENNUNG durchgesetzt: Radar-Ergebnisse fließen nirgends in
+          den Handels-Funnel, jede Ausgabe trägt den Hinweis
+          "kein Trade-Kandidat".
+          BEWUSST NICHT MIT ERLEDIGT: "hunderte Ticker täglich" gegen den
+          echten Collector-Stack fahren. Genau die von der Roadmap selbst
+          benannte Grenze (Datenquellen-Limits, nicht Compute) ist real —
+          Dutzende externe APIs mit unbekannten Rate-Limits/Kosten-Budgets
+          auf einmal gegen hunderte Ticker zu fahren ist eine
+          Betriebsentscheidung, kein Code-Freibrief. CLI erzwingt deshalb
+          einen kleinen Ticker-Default (10, --force zum Übersteuern) gegen
+          Live-Collectors. Parquet-Cache/PIT-Universum (6.2a, 501 Ticker)
+          steht bereit, sobald diese Entscheidung getroffen ist.
       (b) ANALYSE-TIEFE ALS A/B-EXPERIMENT: mehrstufige Analyse (Technik/
           News/Fundamental getrennt + expliziter CONTRA-Pass gegen die
           bekannte Überkonfidenz aus 1.2, dann Synthese), mehr Kontext
