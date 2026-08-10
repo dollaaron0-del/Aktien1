@@ -25,9 +25,15 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       systemctl daemon-reload
       systemctl enable --now aktien_backup.timer
       ```
-- [ ] **0.2 Push-Frage klären** (User-Entscheidung) — origin/main hängt beim
-      21.5. hinterher; Token bräuchte Contents:write. Code+Daten liegen sonst
-      auf einer Platte.
+- [x] **0.2 Push-Frage klären** — ERLEDIGT 10.8.2026. Fine-grained PAT hatte
+      trotz gesetzter Contents:write-Berechtigung weiter mit 403 abgelehnt —
+      Ursache: GitHub erzwingt bei fine-grained PATs mit "Repository access:
+      Public Repositories (read-only)" IMMER Read-only auf öffentlichen Repos
+      (Aktien1 ist public), unabhängig von den gewählten Permissions. Nach
+      Korrektur auf "Only select repositories" griff Contents:write. Beide
+      Branches gepusht: `claude/bot-improvements-duWvU` (14 Commits) und
+      `claude/stock-trading-sentiment-bot-Meacb` (135 Commits) sind jetzt
+      synchron mit origin.
 - [x] **0.3 Demo-Daten-Rücktausch** — ERLEDIGT 14.7.2026 (Detail-Log in
       docs/REAKTIVIERUNG.md Schritt 1), hier nur nie abgehakt. Content-
       Vergleich ergab: nur portfolio.db/trade_journal.db/performance.db/
@@ -635,7 +641,7 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       dieselbe Zurückhaltung wie 2.5 (reanchor): Wiring erst, wenn ein
       Effekt auf echte Entscheidungen belegt ist, nicht nur auf die
       Signal-Stabilität selbst.
-- [~] **4.4 Code-Gesundheit + lokale CI** — (b) lokale CI GEBAUT 12.7.:
+- [x] **4.4 Code-Gesundheit + lokale CI** — (b) lokale CI GEBAUT 12.7.:
       scripts/git-hooks/pre-commit (Testsuite vor jedem Commit, bricht bei
       Rot ab) + scripts/install_git_hooks.sh (verlinkt nach .git/hooks/,
       das Verzeichnis ist nie Git-getrackt); installiert und live mit dem
@@ -654,9 +660,25 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       BUY-related_tickers, SKIP-Conditional-Entry, Earnings-Strategy,
       TradingView-SELL, Multi-Agent-Konsens). Funktionskörper bei der
       Kern-Schleife wortwörtlich verschoben (diff-verifiziert) statt von
-      Hand transkribiert. cycle_analysis.py selbst (661 Zeilen) bleibt
-      ehrlich über der 500-Zeilen-Regel — weitere Aufteilung wäre ein
-      eigener Folge-Task. Suite durchgehend grün (725→740).
+      Hand transkribiert. cycle_analysis.py selbst (661 Zeilen) blieb
+      zunächst ehrlich über der 500-Zeilen-Regel — Folge-Task NACHGEHOLT
+      10.8.2026: war inzwischen auf 709 Zeilen gewachsen, zwei weitere klar
+      abgrenzbare Blöcke je Ticker-Iteration ausgelagert (gleiches Prinzip,
+      Körper wortwörtlich verschoben, diff-verifiziert): lokale Signal-
+      Anreicherung VOR Claude (bot/cycle_analysis_signals.py::
+      resolve_local_signals — FinBERT/Insider-Cluster/Signal-Expander/News-
+      Geschwindigkeit/MTF-Sentiment/Re-Entry/Earnings-Prognose/Chart-Muster/
+      On-Chain) und Handelsentscheidung+Ausführung+Tracking NACH Claude
+      (bot/cycle_analysis_execute.py::execute_and_track — RL-Veto-
+      evaluate()+Executor, Decision-Log, Prediction-Tracker, Experience-
+      Store, Earnings-Strategy, Korrektur-Follow-Up). Der eigentliche
+      Claude-Aufruf samt Cache/Log/Prompt-Archiv bleibt bewusst in
+      cycle_analysis.py (riskantester Teil, keine reine Vor-/Nachbereitung).
+      cycle_analysis.py jetzt 426 Zeilen. Volle Suite vorher/nachher
+      verglichen: identische 1651 passed / 8 failed (alle 8 vorbestehend
+      und unabhängig — 4× PermissionError durch Sandbox-User≠aaron bei
+      data/signal_tickers.json, 4× Dashboard-Kiosk/HUD-Tests unabhängig
+      reproduziert). Suite durchgehend grün.
       bot/scheduler.py FERTIG (2419→1008 Zeilen, −58 %): 6 Nähte, alle
       37 Job-Closures aus run_bot_loop ausgelagert — scheduler_maintenance.py
       (3 unabhängige Jobs), scheduler_risk.py (5 Jobs, davon 2 gekoppelt
