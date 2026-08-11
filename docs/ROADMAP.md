@@ -1109,8 +1109,18 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
           Submissions-API inkl. Archiv-Pagination, 5 req/s-Drossel,
           Manifest-Parquet (data/edgar/), idempotent wiederaufsetzbar,
           Abbruch ohne SEC_CONTACT_EMAIL; netzfreie Tests
-          (test_edgar_download.py, Suite 567). OFFEN: .env-Eintrag (User)
-          + erster Nachtlauf über die Watchlist.
+          (test_edgar_download.py, Suite 567).
+          ✅ ERSTER NACHTLAUF 11.8.2026: SEC_CONTACT_EMAIL in .env gesetzt.
+          Dabei Bug gefunden & gefixt: die Abbruch-Prüfung in main() lief
+          VOR dem einzigen Import, der .env lädt (config wurde nur lazy
+          in _universe() importiert, also NACH der Prüfung) — die Prüfung
+          schlug deshalb immer fehl, unabhängig vom .env-Inhalt. Fix:
+          load_dotenv() jetzt direkt beim Modul-Import (Muster config.py).
+          Realer Lauf über die 10-Ticker-Watchlist seit 2005: 1632
+          8-K-Dokumente geladen, 0 Fehlschläge, Manifest 1662 Einträge,
+          55 MB unter data/edgar/. Annotations-Gate (Doppel-Labeling
+          ~200 Filings lokales LLM vs. Claude vs. Kursausgang) bleibt
+          offen — braucht die GPU-Phase, jetzt vorhanden.
       (b) EIGENES PIT-ARCHIV VORWÄRTS: Dauer-Collector auf dem neuen Server
           schreibt ab Tag 1 alles versioniert weg (Quotes, News-Snapshots,
           Alt-Data, Prompts) → selbstgebautes Point-in-Time-Archiv, das
