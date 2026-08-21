@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
 import yfinance as yf
@@ -37,13 +37,15 @@ SCAN_UNIVERSE = [
     # Konsum
     "WMT", "COST", "HD", "MCD", "NKE", "DIS", "NFLX",
     # Wachstum / Momentum
-    "PLTR", "COIN", "SHOP", "UBER", "ABNB", "SOFI",
+    "PLTR", "COIN", "MSTR", "RIOT", "MARA", "CLSK", "SHOP", "UBER", "ABNB", "SOFI",
     # Halbleiter
     "ASML", "TSM", "AMAT", "MU", "MRVL", "ARM",
 ]
 
-_DATA_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "dynamic_watchlist.json")
-_REFRESH_HOURS = 24  # Watchlist alle 24h neu berechnen
+_DATA_FILE      = os.path.join(os.path.dirname(__file__), "..", "data", "dynamic_watchlist.json")
+_DB_FILE        = os.path.join(os.path.dirname(__file__), "..", "data", "analysis_log.db")
+_REFRESH_HOURS  = 24   # Watchlist alle 24h neu berechnen
+_CLAUDE_LOOKBACK = 5   # Letzte N Analysen pro Ticker für Durchschnitt
 
 
 class DynamicWatchlist:
@@ -84,12 +86,14 @@ class DynamicWatchlist:
             age_h = self._cache_age_hours(cached)
             print(f"📋 Watchlist geladen (vor {age_h:.1f}h aktualisiert): {', '.join(tickers)}")
 
-        # Signal-Ticker (Insider, Social, Options, Contracts) anhängen
-        signal_tickers = self.expander.get_active_tickers()
+        # Signal-Ticker anhängen – NUR eskalierte (genug Signal-Gewicht gesammelt).
+        # Passiv sammelnde Ticker bleiben im Radar, werden aber nicht jeden Zyklus
+        # teuer analysiert (siehe SignalDrivenExpander.get_ready_tickers).
+        signal_tickers = self.expander.get_ready_tickers()
         for t in signal_tickers:
             if t not in tickers:
                 tickers.append(t)
-                print(f"  📡 Signal-Ticker hinzugefügt: {t}")
+                print(f"  📡 Signal-Ticker (eskaliert) hinzugefügt: {t}")
 
         # Immer aktive Positionen einfügen
         for t in active_tickers:
@@ -120,13 +124,41 @@ class DynamicWatchlist:
         return [s["ticker"] for s in scored[: self.max_picks]]
 
     def _score_universe(self) -> List[Dict]:
+        claude_scores = self._load_claude_scores()
         results = []
         for ticker in self.universe:
             score_data = self._score_ticker(ticker)
             if score_data:
+                avg = claude_scores.get(ticker)
+                if avg is not None:
+                    m = 0.25 if avg < 0.40 else (0.65 if avg < 0.55 else 1.0)
+                    score_data["total_score"] = round(score_data["total_score"] * m, 2)
+                    score_data["claude_avg"] = round(avg, 3)
                 results.append(score_data)
         results.sort(key=lambda x: x["total_score"], reverse=True)
         return results
+
+    def _load_claude_scores(self) -> Dict[str, float]:
+        """Reads recent Claude sentiment scores per ticker from analysis_log.db."""
+        import sqlite3
+        from collections import defaultdict
+        scores: Dict[str, float] = {}
+        try:
+            conn = sqlite3.connect(_DB_FILE)
+            rows = conn.execute(
+                "SELECT ticker, sentiment_score FROM analysis_log "
+                "ORDER BY analyzed_at DESC LIMIT 1000"
+            ).fetchall()
+            conn.close()
+            ticker_hist: Dict[str, list] = defaultdict(list)
+            for ticker, score in rows:
+                if len(ticker_hist[ticker]) < _CLAUDE_LOOKBACK:
+                    ticker_hist[ticker].append(float(score))
+            for t, sc in ticker_hist.items():
+                scores[t] = sum(sc) / len(sc)
+        except Exception:
+            pass
+        return scores
 
     def _score_ticker(self, ticker: str) -> Optional[Dict]:
         try:
@@ -222,7 +254,7 @@ class DynamicWatchlist:
         import tempfile, os as _os
         data = {
             "tickers":    tickers,
-            "updated_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         }
         _os.makedirs(_os.path.dirname(_DATA_FILE), exist_ok=True)
         with tempfile.NamedTemporaryFile(
@@ -236,6 +268,6 @@ class DynamicWatchlist:
     def _cache_age_hours(cache: Dict) -> float:
         try:
             updated = datetime.fromisoformat(cache["updated_at"])
-            return (datetime.utcnow() - updated).total_seconds() / 3600
+            return (datetime.now(timezone.utc).replace(tzinfo=None) - updated).total_seconds() / 3600
         except Exception:
             return 999.0

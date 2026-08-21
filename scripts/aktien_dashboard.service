@@ -6,10 +6,11 @@
 #   systemctl enable aktien_dashboard
 #   systemctl start aktien_dashboard
 #
-# Dashboard erreichbar unter: http://<server-ip>:8501
-#
-# UFW-Port öffnen (einmalig):
-#   ufw allow 8501/tcp
+# Dashboard lauscht NUR auf localhost (127.0.0.1) — Settings-Tab kann echte
+# API-Keys lesen/schreiben, daher kein direkter Netzwerk-Zugriff (Roadmap 0.4).
+# Zugriff von außen per SSH-Tunnel:
+#   ssh -L 8503:localhost:8503 <server>
+#   dann im Browser: http://localhost:8503
 [Unit]
 Description=Aktien Bot Web-Dashboard
 After=network-online.target aktien_bot.service
@@ -17,15 +18,15 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
-WorkingDirectory=/home/user/Aktien
-ExecStart=/usr/local/bin/streamlit run /home/user/Aktien/dashboard/app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --browser.gatherUsageStats=false
+User=aaron
+WorkingDirectory=/opt/Aktien
+ExecStart=/opt/Aktien/venv/bin/streamlit run /opt/Aktien/dashboard/app.py --server.port=8503 --server.address=127.0.0.1 --server.headless=true --browser.gatherUsageStats=false --server.runOnSave=true --server.fileWatcherType=poll
 Restart=always
 RestartSec=15
 Environment=PYTHONUNBUFFERED=1
 
-StandardOutput=append:/home/user/Aktien/data/logs/dashboard.log
-StandardError=append:/home/user/Aktien/data/logs/dashboard.log
+StandardOutput=append:/opt/Aktien/logs/dashboard.log
+StandardError=append:/opt/Aktien/logs/dashboard.log
 
 [Install]
 WantedBy=multi-user.target

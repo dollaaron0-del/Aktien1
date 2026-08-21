@@ -30,6 +30,8 @@ class TechnicalSnapshot:
     volume_ratio: Optional[float]    # current volume / 20-day avg volume
     trend: str                       # "UPTREND" | "DOWNTREND" | "SIDEWAYS"
     price: Optional[float]
+    vwap: Optional[float] = None          # Intraday VWAP (heute)
+    vwap_distance_pct: Optional[float] = None  # (price - vwap) / vwap * 100
 
     def to_prompt_block(self) -> str:
         """Formatiert die Indikatoren als lesbarer Text-Block für Claude."""
@@ -62,6 +64,13 @@ class TechnicalSnapshot:
             ema_parts.append(f"EMA50={self.ema_50:.2f}")
         if ema_parts:
             lines.append("EMAs: " + "  ".join(ema_parts))
+
+        if self.vwap is not None:
+            dist_str = ""
+            if self.vwap_distance_pct is not None:
+                sign = "+" if self.vwap_distance_pct >= 0 else ""
+                dist_str = f"  ({sign}{self.vwap_distance_pct:.1f}% vs VWAP)"
+            lines.append(f"VWAP (heute): {self.vwap:.2f}{dist_str}")
 
         if self.atr_14 is not None and self.price:
             atr_pct = self.atr_14 / self.price * 100
@@ -96,12 +105,8 @@ class TechnicalSnapshot:
 
 class TechnicalIndicators:
 
-    def calculate(self, ticker: str, period: str = "3mo") -> Optional[TechnicalSnapshot]:
-        try:
-            df = yf.Ticker(ticker).history(period=period)
-        except Exception:
-            return None
-
+    def calculate(self, ticker: str, period: str = "3mo", broker=None) -> Optional[TechnicalSnapshot]:
+        df = self._history(ticker, period, broker)
         if df is None or len(df) < 26:
             return None
 
@@ -120,6 +125,10 @@ class TechnicalIndicators:
         ema50 = self._ema(close, 50) if len(close) >= 50 else None
         atr = self._atr(high, low, close, 14)
         vol_ratio = self._volume_ratio(volume, 20)
+        vwap = self._vwap(ticker)
+        vwap_dist = None
+        if vwap and price:
+            vwap_dist = round((price - vwap) / vwap * 100, 2)
 
         # Trend determination from EMA stack
         trend = "SIDEWAYS"
@@ -150,7 +159,30 @@ class TechnicalIndicators:
             atr_14=round(float(atr), 2) if atr is not None else None,
             volume_ratio=round(float(vol_ratio), 2) if vol_ratio is not None else None,
             trend=trend,
+            vwap=vwap,
+            vwap_distance_pct=vwap_dist,
         )
+
+    @staticmethod
+    def _history(ticker: str, period: str, broker) -> Optional[pd.DataFrame]:
+        """Kursreihe für die Indikator-Berechnung. Bevorzugt IBKR
+        (Roadmap 1.13, reduziert die yfinance-Abhängigkeit im Live-Pfad),
+        wenn ein Broker mit get_history()-API übergeben wird – dessen
+        eigener yfinance-Fallback greift schon bei Verbindungsfehlern.
+        Ohne Broker (z.B. Dashboard, Backtests) unverändert nur yfinance."""
+        if broker is not None:
+            getter = getattr(broker, "get_history", None)
+            if callable(getter):
+                try:
+                    df = getter(ticker, yf_period=period)
+                    if df is not None and len(df) >= 26:
+                        return df
+                except Exception:
+                    pass
+        try:
+            return yf.Ticker(ticker).history(period=period)
+        except Exception:
+            return None
 
     # ── Indicator helpers ────────────────────────────────────────────────────
 
@@ -214,3 +246,19 @@ class TechnicalIndicators:
         if avg == 0:
             return None
         return float(volume.iloc[-1] / avg)
+
+    @staticmethod
+    def _vwap(ticker: str) -> Optional[float]:
+        """VWAP für den heutigen Handelstag aus 1-Minuten-Daten."""
+        try:
+            df = yf.Ticker(ticker).history(period="1d", interval="1m")
+            if df is None or len(df) < 10:
+                return None
+            typical = (df["High"] + df["Low"] + df["Close"]) / 3
+            cum_vol = df["Volume"].sum()
+            if cum_vol == 0:
+                return None
+            vwap = (typical * df["Volume"]).sum() / cum_vol
+            return round(float(vwap), 2) if pd.notna(vwap) else None
+        except Exception:
+            return None

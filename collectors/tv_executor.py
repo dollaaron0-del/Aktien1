@@ -58,11 +58,13 @@ def _execute_cycle(strategy: "SwingStrategy") -> None:
     portfolio = strategy.portfolio
 
     # ── Globaler Drawdown-Check (Circuit Breaker) ────────────────────────────
+    # Nutzt die Tagesverlust-Logik der Strategie (_circuit_breaker_active);
+    # ein strategy.circuit_breaker-Objekt existiert in der neuen Engine nicht.
     try:
-        prices = broker.get_prices(list(portfolio.all_positions().keys()))
-        portfolio_value = portfolio.total_value(prices)
-        strategy.circuit_breaker.register_day_open(portfolio_value)
-        cb_ok, cb_reason = strategy.circuit_breaker.check_buy_allowed(portfolio_value)
+        from config import config as _cb_cfg
+        cb_blocked = strategy._circuit_breaker_active(_cb_cfg)
+        cb_ok = not cb_blocked
+        cb_reason = "Circuit-Breaker aktiv (Tagesverlust-Limit)" if cb_blocked else ""
         if not cb_ok:
             log.warning("TV-Executor: %s", cb_reason)
             # SELLs trotzdem ausführen – nur BUYs blockiert
@@ -72,16 +74,20 @@ def _execute_cycle(strategy: "SwingStrategy") -> None:
         cb_reason = ""
 
     # ── SELL-Signale sofort ausführen ─────────────────────────────────────────
+    from strategy.executor import TradeExecutor
+    from strategy.swing_strategy import StrategyResult
+    _executor = TradeExecutor(portfolio, broker, getattr(strategy, "journal", None), strategy=strategy)
     for sig in get_pending_sells():
         ticker = sig["ticker"]
         pos    = portfolio.get_position(ticker)
         if not pos:
             continue
         price = broker.get_price(ticker) or pos.entry_price
-        strategy._do_close(
-            ticker, pos, price,
+        _executor.execute(StrategyResult(
+            "SELL", ticker,
             f"TradingView SELL ({sig.get('strategy', 'TV')})",
-        )
+            shares=pos.shares, price=price,
+        ))
         log.info("TV-Executor [%s]: Position sofort geschlossen @ $%.2f", ticker, price)
 
     # ── BUY-Phase: beide Sperren prüfen ─────────────────────────────────────
@@ -110,6 +116,7 @@ def _execute_cycle(strategy: "SwingStrategy") -> None:
                 log.info("TV-Executor [%s]: BUY blockiert – %s", ticker, reason)
                 strategy.signal_queue.mark_expired(sig["id"])
                 continue
-        results = strategy.process_signal_queue()
+        from strategy.executor import process_signal_queue
+        results = process_signal_queue(strategy, _executor, broker)
         for msg in results:
             log.info("TV-Executor: %s", msg)

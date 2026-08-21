@@ -38,6 +38,7 @@ _WEIGHTS_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "rl_weight
 # ── Hyperparameter ─────────────────────────────────────────────────────────────
 
 _N_FEATURES          = 6
+_DECAY_FACTOR        = 0.995  # Decay für Online-Learning (ältere Trades weniger Gewicht)
 _EPSILON_INITIAL     = 0.10   # 10% Exploration zu Beginn
 _EPSILON_REDUCED     = 0.05   # 5% nach >= 50 Trades (mehr Exploitation)
 _EPSILON_THRESHOLD   = 50     # Anzahl Trades bis zur Epsilon-Reduktion
@@ -410,6 +411,102 @@ class RLAgent:
             log.warning("RLAgent.train_on_history Fehler: %s", exc)
 
         return trained
+
+    # ── Online-Learning Erweiterungen ─────────────────────────────────────────
+
+    def update_online(self, state: RLState, reward: float, decay: float = _DECAY_FACTOR) -> None:
+        """
+        Wie record_outcome, aber mit Decay-Faktor für kontinuierliches Online-Lernen.
+
+        Ältere Trades bekommen weniger Gewicht:
+          effective_lr = lr * decay^trade_count
+
+        Dies ermöglicht dass der Agent sich schneller an neue Marktbedingungen anpasst,
+        ohne historische Erfahrungen vollständig zu vergessen.
+
+        Args:
+            state:  Marktbeschreibung zum Kaufzeitpunkt
+            reward: Normalisierte Belohnung -1.0 bis +1.0
+            decay:  Decay-Faktor pro Trade (Standard: _DECAY_FACTOR = 0.995)
+        """
+        self._trade_count += 1
+        self._reward_history.append(reward)
+
+        # Erst nach _min_trades_for_learning aktiv lernen
+        if self._trade_count < self._min_trades_for_learning:
+            log.debug(
+                "RLAgent.update_online: Trade %d/%d – Warm-up (kein Update)",
+                self._trade_count, self._min_trades_for_learning,
+            )
+            self._save_weights()
+            return
+
+        # Epsilon-Reduktion nach Schwellwert
+        if self._trade_count == _EPSILON_THRESHOLD:
+            self._epsilon = _EPSILON_REDUCED
+            log.info(
+                "RLAgent: %d Trades erreicht – Epsilon → %.2f (Online-Learning)",
+                _EPSILON_THRESHOLD, self._epsilon,
+            )
+
+        try:
+            import numpy as np
+            state_arr = state.to_array()
+            w = np.array(self._weights, dtype=float)
+
+            # Effektive Lernrate mit Decay: neuere Trades haben höheres Gewicht
+            effective_lr = self._lr * (decay ** self._trade_count)
+
+            delta = effective_lr * reward * state_arr
+            w_new = w + delta
+
+            self._weights = w_new.tolist()
+            log.info(
+                "RL Online-Update: reward=%+.4f effective_lr=%.6f w_delta=%s",
+                reward,
+                effective_lr,
+                [f"{d:+.5f}" for d in delta.tolist()],
+            )
+
+        except Exception as exc:
+            log.warning("RLAgent.update_online Fehler: %s", exc)
+
+        self._save_weights()
+
+    def get_feature_importance(self) -> List[Tuple[str, float]]:
+        """
+        Gibt alle Features sortiert nach absolutem Gewicht zurück.
+
+        Je höher der absolute Gewichtswert, desto stärker beeinflusst das Feature
+        die Kaufentscheidung des Agenten.
+
+        Returns:
+            Liste von (feature_name, weight) Tupeln, absteigend nach |weight| sortiert.
+        """
+        sorted_features = sorted(
+            zip(_FEATURE_NAMES, self._weights),
+            key=lambda x: abs(x[1]),
+            reverse=True,
+        )
+        return [(name, round(w, 5)) for name, w in sorted_features]
+
+    def reset_exploration(self, epsilon: float = 0.10) -> None:
+        """
+        Setzt Epsilon zurück für Neustarts oder Regime-Wechsel.
+
+        Nützlich wenn sich Marktbedingungen stark verändert haben und der Agent
+        wieder mehr explorieren soll, um sich neu anzupassen.
+
+        Args:
+            epsilon: Neuer Epsilon-Wert (Standard: 0.10 = 10% Exploration)
+        """
+        old_epsilon = self._epsilon
+        self._epsilon = max(0.0, min(1.0, epsilon))
+        log.info(
+            "RLAgent.reset_exploration: Epsilon %.2f → %.2f",
+            old_epsilon, self._epsilon,
+        )
+        self._save_weights()
 
     # ── Hilfsmethoden ─────────────────────────────────────────────────────────
 

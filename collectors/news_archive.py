@@ -1,6 +1,6 @@
 import sqlite3
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 
 ARCHIVE_DB = os.path.join(os.path.dirname(__file__), "..", "data", "news_archive.db")
@@ -37,7 +37,7 @@ class NewsArchive:
 
     def store(self, ticker: str, items: List[Dict]):
         """Saves new items; silently ignores duplicates (same ticker+title)."""
-        collected_at = datetime.utcnow().isoformat()
+        collected_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         for item in items:
             try:
                 self._conn.execute(
@@ -63,7 +63,7 @@ class NewsArchive:
         Returns up to 80 archived items for the given ticker from the last `days` days.
         Optionally excludes titles that are already in the current news batch.
         """
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         cursor = self._conn.execute(
             """SELECT source, title, text, published_at
                FROM news_items
@@ -78,6 +78,6 @@ class NewsArchive:
         return rows
 
     def cleanup_old(self, keep_days: int = 32):
-        cutoff = (datetime.utcnow() - timedelta(days=keep_days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=keep_days)).isoformat()
         self._conn.execute("DELETE FROM news_items WHERE collected_at < ?", (cutoff,))
         self._conn.commit()

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import yfinance as yf
@@ -71,6 +71,11 @@ EU_UNIVERSE: Dict[str, tuple] = {
     "BAYN.DE":   ("Bayer AG",           "DE", "Healthcare"),
     "ADS.DE":    ("Adidas AG",          "DE", "Konsum"),
     "HEN3.DE":   ("Henkel",             "DE", "Konsum"),
+    "RHM.DE":    ("Rheinmetall AG",     "DE", "Rüstung"),
+    "MTX.DE":    ("MTU Aero Engines",   "DE", "Luftfahrt"),
+    "ENR.DE":    ("Siemens Energy",     "DE", "Energie"),
+    "DHER.DE":   ("Delivery Hero",      "DE", "Technologie"),
+    "ZAL.DE":    ("Zalando SE",         "DE", "Konsum"),
     # Niederlande (AEX .AS)
     "ASML.AS":   ("ASML Holding",       "NL", "Halbleiter"),
     "HEIA.AS":   ("Heineken",           "NL", "Konsum"),
@@ -100,6 +105,46 @@ EU_UNIVERSE: Dict[str, tuple] = {
     "NOVO-B.CO": ("Novo Nordisk",      "DK", "Healthcare"),
     # Spanien (BME .MC)
     "ITX.MC":    ("Inditex (Zara)",    "ES", "Konsum"),
+    # ── MDAX (Deutschland Mid-Cap) ────────────────────────────────────────────
+    "SHL.DE":    ("Siemens Healthineers", "DE", "Healthcare"),
+    "LEG.DE":    ("LEG Immobilien",      "DE", "Immobilien"),
+    "HNR1.DE":   ("Hannover Rück SE",    "DE", "Versicherung"),
+    "PUM.DE":    ("Puma SE",             "DE", "Konsum"),
+    "WCH.DE":    ("Wacker Chemie AG",    "DE", "Chemie"),
+    "SY1.DE":    ("Symrise AG",          "DE", "Chemie"),
+    "TMV.DE":    ("TeamViewer AG",       "DE", "Technologie"),
+    "NEM.DE":    ("Nemetschek SE",       "DE", "Technologie"),
+    "G24.DE":    ("Scout24 SE",          "DE", "Technologie"),
+    "EVD.DE":    ("CTS Eventim AG",      "DE", "Unterhaltung"),
+    "FRA.DE":    ("Fraport AG",          "DE", "Infrastruktur"),
+    "BOSS.DE":   ("Hugo Boss AG",        "DE", "Luxus"),
+    "KBX.DE":    ("Knorr-Bremse AG",     "DE", "Automobil"),
+    "HAG.DE":    ("Hensoldt AG",         "DE", "Rüstung"),
+    "WAF.DE":    ("Siltronic AG",        "DE", "Halbleiter"),
+    "VNA.DE":    ("Vonovia SE",          "DE", "Immobilien"),
+    "BEI.DE":    ("Beiersdorf AG",       "DE", "Konsum"),
+    "CON.DE":    ("Continental AG",      "DE", "Automobil"),
+    "GXI.DE":    ("Gerresheimer AG",     "DE", "Healthcare"),
+    "SDAX.DE":   ("Schaeffler AG Vz",    "DE", "Automobil"),
+    # ── TecDAX (Deutschland Tech) ─────────────────────────────────────────────
+    "AIXA.DE":   ("Aixtron SE",          "DE", "Halbleiter"),
+    "BC8.DE":    ("Bechtle AG",          "DE", "IT-Services"),
+    "JEN.DE":    ("Jenoptik AG",         "DE", "Technologie"),
+    "SRT3.DE":   ("Sartorius AG Vz",     "DE", "Healthcare"),
+    "FNTN.DE":   ("freenet AG",          "DE", "Telekommunikation"),
+    "S92.DE":    ("SMA Solar Technology","DE", "Energie"),
+    "DWS.DE":    ("DWS Group",           "DE", "Finanzen"),
+    # ── Niederlande – Ergänzungen ─────────────────────────────────────────────
+    "ADYEN.AS":  ("Adyen NV",            "NL", "Fintech"),
+    "ING.AS":    ("ING Groep NV",        "NL", "Finanzen"),
+    "WKL.AS":    ("Wolters Kluwer",      "NL", "Technologie"),
+    # ── Italien (Borsa Italiana .MI) ──────────────────────────────────────────
+    "RACE.MI":   ("Ferrari NV",          "IT", "Automobil"),
+    "ENI.MI":    ("ENI SpA",             "IT", "Energie"),
+    "ISP.MI":    ("Intesa Sanpaolo",     "IT", "Finanzen"),
+    # ── Schweden (OMX Stockholm .ST) ─────────────────────────────────────────
+    "ERIC-B.ST": ("Ericsson",            "SE", "Telekommunikation"),
+    "VOLV-B.ST": ("Volvo AB",            "SE", "Industrie"),
 }
 
 
@@ -198,7 +243,7 @@ class EUStockScanner:
         )
 
         return EUScanResult(
-            scan_date=datetime.utcnow().isoformat(),
+            scan_date=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             candidates=candidates,
             by_country=by_country,
             by_sector=by_sector,

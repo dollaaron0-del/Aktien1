@@ -107,8 +107,6 @@ def check_env() -> List[CheckResult]:
     results.append(_check_key("TELEGRAM_BOT_TOKEN",  config.telegram_bot_token,  required=True))
     results.append(_check_key("TELEGRAM_CHAT_ID",    config.telegram_chat_id,    required=True))
     results.append(_check_key("NEWSAPI_KEY",         config.newsapi_key,         required=False))
-    results.append(_check_key("REDDIT_CLIENT_ID",    config.reddit_client_id,    required=False))
-    results.append(_check_key("REDDIT_CLIENT_SECRET",config.reddit_client_secret,required=False))
     # Broker-Mode
     if config.broker_mode == "ibkr":
         results.append(_ok("  Broker-Mode", f"ibkr @ {config.ibkr_host}:{config.ibkr_port}"))

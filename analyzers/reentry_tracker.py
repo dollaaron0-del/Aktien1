@@ -15,7 +15,7 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass, asdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from logger import get_logger
@@ -78,7 +78,7 @@ class ReEntryTracker:
             return
 
         data = self._load()
-        now_iso = datetime.utcnow().date().isoformat()
+        now_iso = datetime.now(timezone.utc).replace(tzinfo=None).date().isoformat()
 
         # Update existing entry or create new one
         existing = next((d for d in data if d["ticker"] == ticker.upper()), None)
@@ -117,7 +117,7 @@ class ReEntryTracker:
         Called periodically (e.g. once per trading session).
         """
         data = self._load()
-        today = datetime.utcnow().date()
+        today = datetime.now(timezone.utc).replace(tzinfo=None).date()
         surviving: List[Dict] = []
 
         for entry in data:

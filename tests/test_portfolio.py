@@ -22,12 +22,12 @@ def make_portfolio(tmp_path, monkeypatch, capital=10_000.0):
 
 def make_position(ticker="AAPL", shares=10, entry_price=150.0,
                   stop_loss=138.0, take_profit=180.0, target_hold_days=14):
-    from datetime import datetime
+    from datetime import datetime, timezone
     return Position(
         ticker=ticker,
         shares=shares,
         entry_price=entry_price,
-        entry_date=datetime.utcnow().isoformat(),
+        entry_date=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         stop_loss=stop_loss,
         take_profit=take_profit,
         target_hold_days=target_hold_days,

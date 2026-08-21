@@ -1,5 +1,29 @@
 # Ruflo — Claude Code Configuration
 
+> ## ✅ STATUS: BOT LÄUFT (Pause vom 21.6. am 17.7.2026 aufgehoben)
+>
+> Der Trading-Bot ist **aktiv**. `aktien_bot`, `aktien_dashboard` und die drei Timer
+> (`aktien_monday_check`, `aktien_premarket_ibkr`, `aktien_source_health`) sind
+> `active` **und** `enabled` (reboot-fest). Die frühere bewusste Pause (21.6.2026)
+> wurde am 17.7. komplett rückgängig gemacht; zuletzt neu gestartet am 24.7.2026.
+>
+> **Änderungen sind live-wirksam.** Weil der Bot echt handelt (IBKR), gilt:
+> - Code-Änderungen am Handelspfad greifen erst nach `systemctl restart aktien_bot` —
+>   Neustart bewusst und nur mit klarem Grund.
+> - **Nicht eigenmächtig stoppen/`disable`n** — den Bot anzuhalten ist wie ihn zu
+>   reaktivieren eine ausdrückliche User-Entscheidung.
+>
+> **Stoppen (nur auf Anweisung):**
+> ```bash
+> sudo systemctl disable --now aktien_bot.service aktien_dashboard.service \
+>   aktien_monday_check.timer aktien_premarket_ibkr.timer aktien_source_health.timer
+> ```
+>
+> ### Separates Projekt — nicht verwechseln
+> `/opt/Aktien` = **dieser** Trading-Bot (Python, Remote `Aktien1.git`).
+> `/root/KI-Nachhilfe` = **anderes** Projekt (Node/Express-Lernapp, Remote `KI-Nachhilfe`,
+> läuft unter PM2 als `nachhilfe`, via nginx:8080 → :3000). Bewusst getrennt — nicht anfassen.
+
 ## Rules
 
 - Do what has been asked; nothing more, nothing less

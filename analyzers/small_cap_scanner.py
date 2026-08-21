@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional
 
 import yfinance as yf
@@ -117,7 +117,7 @@ class SmallCapScanner:
         candidates = candidates[:self.max_results]
 
         return SmallCapScanResult(
-            scan_date=datetime.utcnow().isoformat(),
+            scan_date=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             trending_sectors=[s for etf, (s, _) in _SECTOR_MAP.items()
                               if any(e == etf for e, _ in trending)],
             candidates=candidates,

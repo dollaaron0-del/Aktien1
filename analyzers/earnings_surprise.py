@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 import json
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from typing import Optional, Dict, Tuple
 
 import yfinance as yf
@@ -73,7 +73,7 @@ class EarningsSurprise:
             "days_ago": None,
             "eps_actual": None,
             "eps_estimate": None,
-            "checked_at": datetime.utcnow().isoformat(),
+            "checked_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         }
         try:
             stock = yf.Ticker(ticker)
@@ -129,7 +129,7 @@ class EarningsSurprise:
                 "eps_actual":           float(eps_actual),
                 "eps_estimate":         float(eps_estimate),
                 "earnings_date":        earnings_date.isoformat(),
-                "checked_at":           datetime.utcnow().isoformat(),
+                "checked_at":           datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             }
         except Exception:
             return base
@@ -143,7 +143,7 @@ class EarningsSurprise:
                 data = json.load(f)
             checked = datetime.fromisoformat(data["checked_at"])
             # Cache 6 Stunden gültig
-            if (datetime.utcnow() - checked).total_seconds() < 6 * 3600:
+            if (datetime.now(timezone.utc).replace(tzinfo=None) - checked).total_seconds() < 6 * 3600:
                 return data
         except Exception:
             pass

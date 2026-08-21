@@ -6,9 +6,10 @@ SEC8KCollector – lädt aktuelle 8-K Meldungen von SEC EDGAR RSS in Echtzeit.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 import requests
+from system.http import http_get, sec_user_agent
 
 
 _EDGAR_RSS = "https://efts.sec.gov/LATEST/search-index?q=%22{ticker}%22&dateRange=custom&startdt={start}&enddt={end}&forms=8-K"
@@ -36,16 +37,16 @@ _HIGH_IMPACT_ITEMS = {
 class SEC8KCollector:
     """Sammelt 8-K Meldungen von SEC EDGAR (kostenlos, keine API-Key nötig)."""
 
-    HEADERS = {"User-Agent": "StockSentimentBot research@example.com"}
+    HEADERS = {"User-Agent": sec_user_agent()}
 
     def collect(self, ticker: str, lookback_days: int = 14) -> List[Dict]:
         results = []
-        start = (datetime.utcnow() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-        end   = datetime.utcnow().strftime("%Y-%m-%d")
+        start = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+        end   = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
 
         try:
             url = f"https://efts.sec.gov/LATEST/search-index?q=%22{ticker}%22&forms=8-K&dateRange=custom&startdt={start}&enddt={end}"
-            resp = requests.get(url, headers=self.HEADERS, timeout=15)
+            resp = http_get(url, headers=self.HEADERS, timeout=15)
             if resp.status_code != 200:
                 return []
             data = resp.json()
@@ -83,13 +84,13 @@ class SEC8KCollector:
         try:
             # CIK lookup
             cik_url = f"https://www.sec.gov/cgi-bin/browse-edgar?company=&CIK={ticker}&type=8-K&dateb=&owner=include&count=10&search_text=&action=getcompany&output=atom"
-            resp = requests.get(cik_url, headers=self.HEADERS, timeout=15)
+            resp = http_get(cik_url, headers=self.HEADERS, timeout=15)
             if resp.status_code != 200:
                 return []
 
             root = ET.fromstring(resp.content)
             ns = {"atom": "http://www.w3.org/2005/Atom"}
-            cutoff = datetime.utcnow() - timedelta(days=lookback_days)
+            cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)
 
             for entry in root.findall("atom:entry", ns)[:8]:
                 title   = (entry.findtext("atom:title", "", ns) or "").strip()
@@ -103,7 +104,7 @@ class SEC8KCollector:
                     if pub < cutoff:
                         continue
                 except Exception:
-                    pub = datetime.utcnow()
+                    pub = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 results.append({
                     "source":       "SEC 8-K",

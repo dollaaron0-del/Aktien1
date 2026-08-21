@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from config import config
@@ -50,6 +50,10 @@ _FUTURES: Dict[str, str] = {
 # Mindest-Bewegung (%) für einen Pre-Market Mover
 _MOVER_THRESHOLD = 2.0
 
+# Index-Futures die in die Ton-Wertung einfließen (Gewicht ×2).
+# Gold/Öl/EUR-USD sind nur Anzeige, nicht direktional für den Aktien-Ton.
+_TONE_FUTURES = ("S&P 500 Fut", "Nasdaq Fut", "DAX Fut")
+
 
 @dataclass
 class PreMarketMover:
@@ -76,6 +80,8 @@ class PreMarketBriefing:
     futures: List[IndexSnapshot] = field(default_factory=list)
     macro_events_today: List[str] = field(default_factory=list)
     overall_tone: str = "NEUTRAL"    # BULLISH | NEUTRAL | BEARISH
+    german_headlines: List[str] = field(default_factory=list)       # ARD/Handelsblatt
+    intl_headlines: List[str] = field(default_factory=list)         # Reuters/BBC/CNBC
 
     def to_telegram(self) -> str:
         lines = [
@@ -121,6 +127,20 @@ class PreMarketBriefing:
             lines.append("📊 Keine signifikanten Pre-Market-Bewegungen")
             lines.append("")
 
+        # Internationale Schlagzeilen (Reuters / BBC / CNBC)
+        if self.intl_headlines:
+            lines.append("🌐 *International (Reuters/BBC/CNBC):*")
+            for hl in self.intl_headlines[:4]:
+                lines.append(f"  • {hl}")
+            lines.append("")
+
+        # Deutsche Schlagzeilen (ARD / Handelsblatt)
+        if self.german_headlines:
+            lines.append("🗞 *Schlagzeilen (DE):*")
+            for hl in self.german_headlines[:4]:
+                lines.append(f"  • {hl}")
+            lines.append("")
+
         # Ton
         tone_emoji = {"BULLISH": "🟢", "BEARISH": "🔴", "NEUTRAL": "⚪"}.get(self.overall_tone, "⚪")
         lines.append(f"Markt-Ton: {tone_emoji} *{self.overall_tone}*")
@@ -137,10 +157,16 @@ class PreMarketBriefing:
                 for m in self.movers[:5]
             ]
             lines.append(f"  🚀 Pre-Market Movers: {', '.join(mover_strs)}")
-        bull = sum(1 for i in self.indices if i.trend == "UP")
-        bear = sum(1 for i in self.indices if i.trend == "DOWN")
-        if self.indices:
-            lines.append(f"  🌍 Indizes: {bull} bullisch / {bear} bärisch | Ton: {self.overall_tone}")
+        # VIX ist ein Angst-Index, nicht direktional bullisch/bärisch – aus der Zählung raus
+        bull = sum(1 for i in self.indices if i.trend == "UP" and i.name != "VIX")
+        bear = sum(1 for i in self.indices if i.trend == "DOWN" and i.name != "VIX")
+        fut_bull = sum(1 for f in self.futures if f.name in _TONE_FUTURES and f.trend == "UP")
+        fut_bear = sum(1 for f in self.futures if f.name in _TONE_FUTURES and f.trend == "DOWN")
+        if self.indices or self.futures:
+            lines.append(
+                f"  🌍 Indizes: {bull}↑/{bear}↓ | Futures: {fut_bull}↑/{fut_bear}↓ "
+                f"| Ton: {self.overall_tone}"
+            )
         return lines
 
 
@@ -161,7 +187,7 @@ class PreMarketScanner:
 
         briefing = PreMarketBriefing(
             exchange=exchange,
-            generated_at=datetime.utcnow(),
+            generated_at=datetime.now(timezone.utc).replace(tzinfo=None),
         )
 
         # 1. Makro-Kalender für heute
@@ -176,7 +202,13 @@ class PreMarketScanner:
         # 4. Pre-Market Movers aus Watchlist
         briefing.movers = self._get_premarket_movers(watchlist)
 
-        # 5. Gesamt-Ton berechnen
+        # 5. Deutsche Schlagzeilen (ARD Tagesschau / Handelsblatt)
+        briefing.german_headlines = self._get_german_headlines()
+
+        # 6. Internationale Schlagzeilen (Reuters / BBC / CNBC)
+        briefing.intl_headlines = self._get_intl_headlines()
+
+        # 7. Gesamt-Ton berechnen
         briefing.overall_tone = self._calc_tone(briefing)
 
         dur = time.monotonic() - t0
@@ -214,6 +246,32 @@ class PreMarketScanner:
             pass
 
         return events or ["Keine High-Impact Events heute"]
+
+    # ── Deutsche Schlagzeilen ─────────────────────────────────────────────────
+
+    def _get_german_headlines(self) -> List[str]:
+        try:
+            from collectors.german_media_collector import GermanMediaCollector
+            items = GermanMediaCollector(lookback_hours=24).collect_market_context()
+            return [
+                f"{it['source']}: {it['title']}"
+                for it in items[:5]
+            ]
+        except Exception as e:
+            log.debug("Deutsche Schlagzeilen fehlgeschlagen: %s", e)
+            return []
+
+    def _get_intl_headlines(self) -> List[str]:
+        try:
+            from collectors.international_media_collector import InternationalMediaCollector
+            items = InternationalMediaCollector(lookback_hours=24).collect_market_context()
+            return [
+                f"{it['source']}: {it['title']}"
+                for it in items[:4]
+            ]
+        except Exception as e:
+            log.debug("Internationale Schlagzeilen fehlgeschlagen: %s", e)
+            return []
 
     # ── Index-Snapshots ───────────────────────────────────────────────────────
 
@@ -280,8 +338,11 @@ class PreMarketScanner:
         bull_pts = 0
         bear_pts = 0
 
-        # Indizes
+        # Indizes – VIX ausgenommen (steigender Angst-Index ist bärisch, nicht bullisch;
+        # die Makro-Engine führt den VIX ohnehin korrekt)
         for idx in briefing.indices:
+            if idx.name == "VIX":
+                continue
             if idx.trend == "UP":
                 bull_pts += 1
             elif idx.trend == "DOWN":
@@ -289,7 +350,7 @@ class PreMarketScanner:
 
         # Futures
         for fut in briefing.futures:
-            if fut.name in ("S&P 500 Fut", "Nasdaq Fut", "DAX Fut"):
+            if fut.name in _TONE_FUTURES:
                 if fut.trend == "UP":
                     bull_pts += 2
                 elif fut.trend == "DOWN":

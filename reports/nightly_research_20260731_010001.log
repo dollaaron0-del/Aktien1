@@ -1,0 +1,65 @@
+=== Nightly Research Start: Fr 31. Jul 01:00:01 UTC 2026 ===
+Deadline: Fr 31. Jul 05:30:00 UTC 2026
+=== Walk-Forward (Zeitbudget 180min) ===
+Walk-Forward über 10 Ticker | Train 4J / Test 2J / Schritt 2J / Historie 20J
+Out-of-Sample-Validierung – technisch, kein News-Sentiment.
+NUR Überlebende — Survivorship-Bias NICHT gemildert (Kennzahlen nach oben 
+verzerrt).
+                         Walk-Forward-Robustheit (OOS)                          
+╭──────┬──────┬──────┬──────┬──────┬──────┬──────┬───────┬──────┬───────┬──────╮
+│      │      │    Ø │      │      │ OOS… │      │       │      │ robu… │      │
+│ Str… │ Fen… │ Test │ Med… │ Wor… │  90% │ %pos │ WF-E… │ Sta… │ Regi… │ Ver… │
+├──────┼──────┼──────┼──────┼──────┼──────┼──────┼───────┼──────┼───────┼──────┤
+│ bas… │    7 │ +0.… │ +0.… │ +0.… │ [+0… │ 100% │  0.34 │  29% │ BULL… │ FRA… │
+│      │      │      │      │      │      │      │       │      │ BULL… │      │
+│ don… │    7 │ +0.… │ +0.… │ +0.… │ [+0… │ 100% │  0.40 │  29% │ BULL… │ FRA… │
+│      │      │      │      │      │      │      │       │      │ BULL… │      │
+│ gap… │    7 │ +0.… │ +0.… │ -0.… │ [-0… │  57% │  0.13 │  29% │ BULL… │ FRA… │
+│ rsi… │    7 │ +0.… │ +0.… │ -0.… │ [+0… │  71% │  0.29 │  71% │ BULL… │ FRA… │
+│ ts_… │    7 │ +0.… │ +0.… │ -0.… │ [+0… │  57% │  0.28 │  29% │ BULL… │ FRA… │
+│ w52… │    7 │ +0.… │ +0.… │ +0.… │ [+0… │   0% │  0.00 │  29% │ —     │ OVE… │
+╰──────┴──────┴──────┴──────┴──────┴──────┴──────┴───────┴──────┴───────┴──────╯
+Multiple-Testing (6.4): 60 Kombos getestet → Šidák-Schwelle p ≤ 0.0009 für 
+ROBUST.
+Holdout: jüngste 2J ausgespart — nie durchsucht; Bewertung nur via run_holdout()
+(protokolliert).
+ROBUST = OOS-Kante signifikant > 0 (Bootstrap-CI-Untergrenze, Šidák-korrigiert 
+für die Suchraum-Größe) & stabil · OVERFIT = Train gut, Test schlecht.
+                       Promotion-Registry (Survivorship)                        
+╭───────────────────┬──────────┬─────────┬─────────────────────────────────────╮
+│ Strategie         │   Status │ Gewicht │ modale Parameter                    │
+├───────────────────┼──────────┼─────────┼─────────────────────────────────────┤
+│ baseline_swing    │    WATCH │       — │ atr_mult=2.5, max_hold_days=60,     │
+│                   │          │         │ rsi_max=60.0, sl_mode=regime,       │
+│                   │          │         │ sl_pct=0.1, time_stop_mode=hard,    │
+│                   │          │         │ tp1_pct=0.2, tp2_pct=0.4,           │
+│                   │          │         │ tp_mode=reanchor                    │
+│ donchian_breakout │    WATCH │       — │ atr_mult=3.0, breakout_window=20,   │
+│                   │          │         │ max_hold_days=60, sl_mode=fixed,    │
+│                   │          │         │ sl_pct=0.1, time_stop_mode=hard,    │
+│                   │          │         │ tp1_pct=0.2, tp_mode=fixed          │
+│ gap_meanrev       │    WATCH │       — │ atr_mult=2.0, gap_down_pct=-0.03,   │
+│                   │          │         │ max_hold_days=10, sl_mode=regime,   │
+│                   │          │         │ sl_pct=0.07, time_stop_mode=soft,   │
+│                   │          │         │ tp1_pct=0.12, tp_mode=fixed,        │
+│                   │          │         │ trend_ma=100                        │
+│ rsi_meanrev       │    WATCH │       — │ atr_mult=3.0, max_hold_days=30,     │
+│                   │          │         │ rsi_buy=35.0, sl_mode=fixed,        │
+│                   │          │         │ sl_pct=0.05, time_stop_mode=soft,   │
+│                   │          │         │ tp1_pct=0.08, tp_mode=fixed,        │
+│                   │          │         │ trend_ma=200                        │
+│ ts_momentum       │    WATCH │       — │ atr_mult=2.0, lookback=252,         │
+│                   │          │         │ max_hold_days=60, sl_mode=fixed,    │
+│                   │          │         │ sl_pct=0.07, time_stop_mode=soft,   │
+│                   │          │         │ tp1_pct=0.2, tp_mode=fixed,         │
+│                   │          │         │ trend_ma=100                        │
+│ w52_high          │ REJECTED │       — │ atr_mult=2.5, max_hold_days=60,     │
+│                   │          │         │ near_pct=0.92, sl_mode=regime,      │
+│                   │          │         │ sl_pct=0.1, time_stop_mode=hard,    │
+│                   │          │         │ tp1_pct=0.15, tp_mode=reanchor      │
+╰───────────────────┴──────────┴─────────┴─────────────────────────────────────╯
+0 aktiv · modale (stabilste) Parameter, Gewicht nach Robustheit · Phase 5 
+Meta-Allokator liest diese Registry.
+→ gespeichert: /home/aaron/Aktien1/strategy_lab/../data/strategy_registry.json
+=== Walk-Forward Ende: Fr 31. Jul 01:03:08 UTC 2026 ===
+=== Nightly Research Ende: Fr 31. Jul 01:03:08 UTC 2026 ===

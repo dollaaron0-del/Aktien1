@@ -25,7 +25,7 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Tuple
 
 import requests
@@ -69,7 +69,7 @@ class GeoEvent:
     headline:    str
     source:      str
     impacts:     List[MarketImpact]
-    detected_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    detected_at: str = field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
 
 
 _GEO_CATEGORIES: List[Dict] = [
@@ -298,8 +298,9 @@ class GeopoliticalRadar:
         if not headlines:
             return []
 
-        seen = self._load_seen()
+        seen, cat_cooldowns = self._load_seen()
         events: List[GeoEvent] = []
+        now_iso = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
         for title, source in headlines:
             key = title.lower()[:90]
@@ -308,17 +309,18 @@ class GeopoliticalRadar:
             seen.add(key)
 
             event = self._classify(title, source)
-            if event:
-                events.append(event)
+            if not event:
+                continue
+            if event.category in cat_cooldowns:
+                log.debug("GeoRadar: '%s' 7-Tage-Cooldown, übersprungen", event.category)
+                continue
+            events.append(event)
+            cat_cooldowns[event.category] = now_iso
 
-        self._save_seen(seen)
+        self._save_seen(seen, cat_cooldowns)
 
         if events:
-            log.info(
-                "GeopoliticalRadar: %d neue Events erkannt: %s",
-                len(events),
-                ", ".join(e.category for e in events),
-            )
+            log.info("GeopoliticalRadar: %d neue Events: %s", len(events), ", ".join(e.category for e in events))
         return events
 
     def process_events(
@@ -341,6 +343,15 @@ class GeopoliticalRadar:
         for event in events:
             buy_tickers = []
             sell_tickers = []
+            sell_reasons = []
+
+            # Geo-Kontext der für Claude mitgegeben wird
+            geo_ctx = {
+                "kategorie":  event.category,
+                "schwere":    event.severity,
+                "schlagzeile": event.headline[:200],
+                "quelle":     event.source,
+            }
 
             for impact in event.impacts:
                 if impact.direction == "BUY":
@@ -350,24 +361,40 @@ class GeopoliticalRadar:
                                 t,
                                 score=impact.score,
                                 reason=f"Geo:{event.category} – {impact.reason}",
+                                geo_context={**geo_ctx, "marktthese": impact.reason},
                             )
                             added.append(t)
                             buy_tickers.append(t)
                 elif impact.direction == "SELL":
                     sell_tickers.extend(impact.tickers)
+                    sell_reasons.append(impact.reason)
 
             if event.severity >= _MIN_SEVERITY_FOR_NOTIFY and notify_fn:
                 severity_emoji = {1: "🌐", 2: "⚠️", 3: "🚨"}.get(event.severity, "📡")
-                severity_label = {1: "Niedrig", 2: "Mittel", 3: "Kritisch"}.get(event.severity, "")
-                buy_str  = f"📈 KAUF:    {', '.join(buy_tickers[:5])}"  if buy_tickers  else ""
-                sell_str = f"📉 VERKAUF: {', '.join(sell_tickers[:5])}" if sell_tickers else ""
-                impact_str = "\n".join(filter(None, [buy_str, sell_str]))
+                severity_label = {1: "Gering", 2: "Mittel", 3: "Kritisch"}.get(event.severity, "")
+
+                buy_lines = []
+                for t, impact in zip(
+                    buy_tickers[:5],
+                    [i for i in event.impacts if i.direction == "BUY"][:5]
+                ):
+                    buy_lines.append(f"  • {t} – {impact.reason}")
+                sell_lines = []
+                for t, reason in zip(sell_tickers[:3], sell_reasons[:3]):
+                    sell_lines.append(f"  • {t} – {reason}")
+
+                abschnitte = []
+                if buy_lines:
+                    abschnitte.append("📈 <b>Kaufkandidaten:</b>\n" + "\n".join(buy_lines))
+                if sell_lines:
+                    abschnitte.append("📉 <b>Verkaufsrisiken:</b>\n" + "\n".join(sell_lines))
 
                 alerts.append(
-                    f"{severity_emoji} <b>GEOPOLITIK: {event.category}</b>  [{severity_label}]\n"
+                    f"{severity_emoji} <b>Geopolitik: {event.category}</b>  "
+                    f"[Schwere: {severity_label}]\n"
                     f"<i>{event.headline[:140]}</i>\n"
                     f"Quelle: {event.source}\n\n"
-                    f"{impact_str}"
+                    + "\n\n".join(abschnitte)
                 )
 
         if alerts and notify_fn:
@@ -443,25 +470,31 @@ class GeopoliticalRadar:
             impacts=best_match["impacts"],
         )
 
-    # ── State-Persistenz ──────────────────────────────────────────────────────
-
-    def _load_seen(self) -> set:
+    def _load_seen(self) -> tuple:
         try:
             with open(self._state_path, encoding="utf-8") as f:
                 data = json.load(f)
-            cutoff = (datetime.utcnow() - timedelta(hours=48)).isoformat()
-            return {k for k, v in data.items() if v >= cutoff}
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            hl_cut  = (now - timedelta(hours=48)).isoformat()
+            cat_cut = (now - timedelta(days=7)).isoformat()
+            if "headlines" in data:
+                seen = {k for k, v in data["headlines"].items() if v >= hl_cut}
+                cats = {k: v for k, v in data.get("categories", {}).items() if v >= cat_cut}
+            else:
+                seen = {k for k, v in data.items() if v >= hl_cut}
+                cats = {}
+            return seen, cats
         except Exception:
-            return set()
+            return set(), {}
 
-    def _save_seen(self, seen: set) -> None:
+    def _save_seen(self, seen: set, cat_cooldowns: dict) -> None:
         dirpath = os.path.dirname(self._state_path) or "."
         os.makedirs(dirpath, exist_ok=True)
-        now = datetime.utcnow().isoformat()
         try:
             fd, tmp = tempfile.mkstemp(dir=dirpath, suffix=".tmp")
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump({k: now for k in seen}, f)
+                now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+                json.dump({"headlines": {k: now for k in seen}, "categories": cat_cooldowns}, f)
             os.replace(tmp, self._state_path)
         except Exception as e:
             log.debug("GeoRadar: State speichern fehlgeschlagen: %s", e)

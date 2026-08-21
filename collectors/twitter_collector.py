@@ -165,5 +165,5 @@ class TwitterCollector:
             "bear_count": bear_count,
             "sentiment_score": round(score, 3),
             "label": "BULLISH" if score > 0.1 else ("BEARISH" if score < -0.1 else "NEUTRAL"),
-            "sampled_at": datetime.utcnow().isoformat(),
+            "sampled_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         }

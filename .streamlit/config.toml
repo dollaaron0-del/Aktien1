@@ -1,0 +1,9 @@
+[client]
+baseURLPath = "/aktien"
+
+[theme]
+base = "dark"
+primaryColor = "#2E6BE6"
+backgroundColor = "#14171C"
+secondaryBackgroundColor = "#1E232B"
+textColor = "#E8ECF2"

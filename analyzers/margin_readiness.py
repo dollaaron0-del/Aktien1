@@ -6,10 +6,13 @@ Schlechte Phasen führen zur automatischen Rückstufung.
 
 Tiers (USE_MARGIN=true vorausgesetzt):
   Tier 0 – Kein Hebel   (1.00×) – Voraussetzungen nicht erfüllt
-  Tier 1 – Einsteiger   (1.25×) – 20 Trades, 60% Win-Rate
-  Tier 2 – Standard     (1.50×) – 35 Trades, 63% Win-Rate
-  Tier 3 – Fortgeschr.  (1.75×) – 55 Trades, 67% Win-Rate
-  Tier 4 – Experte      (2.00×) – 80 Trades, 72% Win-Rate
+  Tier 1 – Einsteiger   (1.50×) – 20 Trades, 62% Win-Rate, Ø+2.5%
+  Tier 2 – Standard     (2.00×) – 40 Trades, 65% Win-Rate, Ø+3.5%
+  Tier 3 – Fortgeschr.  (2.50×) – 65 Trades, 69% Win-Rate, Ø+5.0%
+  Tier 4 – Experte      (3.00×) – 100 Trades, 74% Win-Rate, Ø+7.0%
+
+0.5× Schritte — jedes Tier entspricht einer klar messbaren Leistungsstufe.
+Bei Tier 4 (3.0×): Ein −4% Trade erzeugt −12% Portfolioverlust → strenge Anforderungen.
 
 Auto-Downgrade:
   - Win-Rate letzte 10 Trades fällt >15% unter Tier-Minimum → ein Tier runter
@@ -39,11 +42,11 @@ class TierSpec:
     max_sl_rate:    float   # SL-Treffer / alle Trades
 
 _TIERS: List[TierSpec] = [
-    TierSpec(0, 1.00, "Kein Hebel",    0,  0.00, 0.0, 99, 1.00),  # immer erreichbar
-    TierSpec(1, 1.25, "Einsteiger",   20,  0.60, 2.5,  3, 0.35),
-    TierSpec(2, 1.50, "Standard",     35,  0.63, 3.5,  3, 0.30),
-    TierSpec(3, 1.75, "Fortgeschr.",  55,  0.67, 4.5,  2, 0.25),
-    TierSpec(4, 2.00, "Experte",      80,  0.72, 6.0,  2, 0.20),
+    TierSpec(0, 1.00, "Kein Hebel",   0,  0.00, 0.0, 99, 1.00),  # immer erreichbar
+    TierSpec(1, 1.50, "Einsteiger",  20,  0.62, 2.5,  3, 0.35),  # 1.5× nach 20 Trades
+    TierSpec(2, 2.00, "Standard",    40,  0.65, 3.5,  3, 0.30),  # 2.0× nach 40 Trades
+    TierSpec(3, 2.50, "Fortgeschr.", 65,  0.69, 5.0,  2, 0.25),  # 2.5× nach 65 Trades
+    TierSpec(4, 3.00, "Experte",    100,  0.74, 7.0,  2, 0.18),  # 3.0× nach 100 Trades
 ]
 
 # Downgrade-Auslöser: Win-Rate letzte 10 Trades fällt um diesen Wert unter Tier-Min

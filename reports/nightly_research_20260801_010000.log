@@ -1,0 +1,132 @@
+=== Nightly Research Start: Sa 1. Aug 01:00:00 UTC 2026 ===
+Deadline: Sa 1. Aug 05:30:00 UTC 2026
+=== Walk-Forward (Zeitbudget 180min) ===
+Walk-Forward über 10 Ticker | Train 4J / Test 2J / Schritt 2J / Historie 20J
+Out-of-Sample-Validierung – technisch, kein News-Sentiment.
+NUR Überlebende — Survivorship-Bias NICHT gemildert (Kennzahlen nach oben 
+verzerrt).
+                         Walk-Forward-Robustheit (OOS)                          
+╭──────┬──────┬──────┬──────┬──────┬──────┬──────┬───────┬──────┬───────┬──────╮
+│      │      │    Ø │      │      │ OOS… │      │       │      │ robu… │      │
+│ Str… │ Fen… │ Test │ Med… │ Wor… │  90% │ %pos │ WF-E… │ Sta… │ Regi… │ Ver… │
+├──────┼──────┼──────┼──────┼──────┼──────┼──────┼───────┼──────┼───────┼──────┤
+│ bas… │    7 │ +0.… │ +0.… │ +0.… │ [+0… │ 100% │  0.36 │  29% │ BULL… │ FRA… │
+│      │      │      │      │      │      │      │       │      │ BULL… │      │
+│ don… │    7 │ +0.… │ +0.… │ +0.… │ [+0… │ 100% │  0.40 │  29% │ BULL… │ FRA… │
+│      │      │      │      │      │      │      │       │      │ BULL… │      │
+│ gap… │    7 │ +0.… │ +0.… │ -0.… │ [-0… │  57% │  0.13 │  29% │ BULL… │ FRA… │
+│ rsi… │    7 │ +0.… │ +0.… │ -0.… │ [+0… │  71% │  0.29 │  71% │ BULL… │ FRA… │
+│ ts_… │    7 │ +0.… │ +0.… │ -0.… │ [+0… │  57% │  0.28 │  29% │ BULL… │ FRA… │
+│ w52… │    7 │ +0.… │ +0.… │ +0.… │ [+0… │   0% │  0.00 │  29% │ —     │ OVE… │
+╰──────┴──────┴──────┴──────┴──────┴──────┴──────┴───────┴──────┴───────┴──────╯
+Multiple-Testing (6.4): 60 Kombos getestet → Šidák-Schwelle p ≤ 0.0009 für 
+ROBUST.
+Holdout: jüngste 2J ausgespart — nie durchsucht; Bewertung nur via run_holdout()
+(protokolliert).
+ROBUST = OOS-Kante signifikant > 0 (Bootstrap-CI-Untergrenze, Šidák-korrigiert 
+für die Suchraum-Größe) & stabil · OVERFIT = Train gut, Test schlecht.
+                       Promotion-Registry (Survivorship)                        
+╭───────────────────┬──────────┬─────────┬─────────────────────────────────────╮
+│ Strategie         │   Status │ Gewicht │ modale Parameter                    │
+├───────────────────┼──────────┼─────────┼─────────────────────────────────────┤
+│ baseline_swing    │    WATCH │       — │ atr_mult=2.0, max_hold_days=45,     │
+│                   │          │         │ rsi_max=70.0, sl_mode=regime,       │
+│                   │          │         │ sl_pct=0.05, time_stop_mode=hard,   │
+│                   │          │         │ tp1_pct=0.2, tp2_pct=0.4,           │
+│                   │          │         │ tp_mode=reanchor                    │
+│ donchian_breakout │    WATCH │       — │ atr_mult=3.0, breakout_window=20,   │
+│                   │          │         │ max_hold_days=60, sl_mode=fixed,    │
+│                   │          │         │ sl_pct=0.1, time_stop_mode=hard,    │
+│                   │          │         │ tp1_pct=0.2, tp_mode=fixed          │
+│ gap_meanrev       │    WATCH │       — │ atr_mult=2.0, gap_down_pct=-0.03,   │
+│                   │          │         │ max_hold_days=10, sl_mode=regime,   │
+│                   │          │         │ sl_pct=0.07, time_stop_mode=soft,   │
+│                   │          │         │ tp1_pct=0.12, tp_mode=fixed,        │
+│                   │          │         │ trend_ma=100                        │
+│ rsi_meanrev       │    WATCH │       — │ atr_mult=3.0, max_hold_days=30,     │
+│                   │          │         │ rsi_buy=35.0, sl_mode=fixed,        │
+│                   │          │         │ sl_pct=0.05, time_stop_mode=soft,   │
+│                   │          │         │ tp1_pct=0.08, tp_mode=fixed,        │
+│                   │          │         │ trend_ma=200                        │
+│ ts_momentum       │    WATCH │       — │ atr_mult=2.0, lookback=252,         │
+│                   │          │         │ max_hold_days=60, sl_mode=fixed,    │
+│                   │          │         │ sl_pct=0.07, time_stop_mode=soft,   │
+│                   │          │         │ tp1_pct=0.2, tp_mode=fixed,         │
+│                   │          │         │ trend_ma=100                        │
+│ w52_high          │ REJECTED │       — │ atr_mult=2.5, max_hold_days=60,     │
+│                   │          │         │ near_pct=0.92, sl_mode=regime,      │
+│                   │          │         │ sl_pct=0.1, time_stop_mode=hard,    │
+│                   │          │         │ tp1_pct=0.15, tp_mode=reanchor      │
+╰───────────────────┴──────────┴─────────┴─────────────────────────────────────╯
+0 aktiv · modale (stabilste) Parameter, Gewicht nach Robustheit · Phase 5 
+Meta-Allokator liest diese Registry.
+→ gespeichert: /home/aaron/Aktien1/strategy_lab/../data/strategy_registry.json
+=== Walk-Forward Ende: Sa 1. Aug 01:03:07 UTC 2026 ===
+=== Quellen-Ablation (Zeitbudget 180min) ===
+Quellen-Ablation — 29 gelabelte Entscheidungen mit Quellen-Breakdown (Mindest-n 
+je Gruppe: 10)
+          Auswertbare Quellen (Bootstrap-Diff Treffer − kein Treffer)           
+╭─────────┬─────────┬─────────┬──────────┬─────────┬────────┬──────────┬───────╮
+│         │       n │       n │        Ø │       Ø │        │          │       │
+│ Quelle  │ Treffer │ Kein-T… │  Treffer │ Kein-T… │   Diff │   95%-CI │ P(≤0) │
+├─────────┼─────────┼─────────┼──────────┼─────────┼────────┼──────────┼───────┤
+│ sec_8k  │      17 │      12 │   -0.92% │  +0.09% │ -1.01% │  [-3.06, │   84% │
+│         │         │         │          │         │        │   +0.85] │       │
+│ analys… │      13 │      16 │   -0.94% │  -0.15% │ -0.79% │  [-2.91, │   77% │
+│         │         │         │          │         │        │   +1.13] │       │
+│ wire    │      10 │      19 │   -0.77% │  -0.36% │ -0.40% │  [-2.47, │   65% │
+│         │         │         │          │         │        │   +1.49] │       │
+│ newsapi │      19 │      10 │   -0.37% │  -0.76% │ +0.40% │  [-1.25, │   32% │
+│         │         │         │          │         │        │   +2.02] │       │
+│ estima… │      15 │      14 │   -0.38% │  -0.64% │ +0.26% │  [-1.76, │   39% │
+│         │         │         │          │         │        │   +2.26] │       │
+╰─────────┴─────────┴─────────┴──────────┴─────────┴────────┴──────────┴───────╯
+
+Unzureichend Daten (< 10 je Gruppe): adhoc_de (3/26), ceo_interviews (8/21), 
+european_news (3/26), fda_calendar (3/26), insider (6/23), institutional_13f 
+(25/4), intl_media (28/1), options_flow (24/5), sec_edgar (6/23), stocktwits 
+(23/6), usaspending (6/23)
+Keine Varianz (feuert immer oder nie in der Stichprobe): aaii_sentiment (0/29), 
+chinese_media (29/0), crypto_news (29/0), earn_transcripts (0/29), econ_calendar
+(0/29), eu_regulation (0/29), german_media (29/0), job_listings (0/29), patents 
+(0/29), quiver (0/29), reddit (0/29), short_interest (29/0), short_volume 
+(0/29), twitter (0/29), web_traffic (0/29), yahoo (29/0)
+
+P(≤0) = Anteil Bootstrap-Differenzen ≤ 0, also Evidenz GEGEN einen positiven 
+Beitrag der Quelle. Kein Kausalitäts-Nachweis (keine Randomisierung) — nur 
+Korrelation zwischen Quellen-Treffer und Ertrag; Sample stammt größtenteils aus 
+backfill_hypo (kontrafaktisch, s. scripts/track_record.py-Hinweis).
+=== Quellen-Ablation Ende: Sa 1. Aug 01:03:07 UTC 2026 ===
+=== Stress-Test (Zeitbudget 180min) ===
+Stress-Test über 10 Ticker | Plan: Gleichgewichtung (Allokator hat 0 ACTIVE 
+Strategien) | Kapital $100,000 | Max-Pos 10 | Max/Thema 3
+Survivorship-Hinweis: yfinance liefert keine Kursdaten für die Graveyard-Ticker 
+(Lehman, WaMu, Bear Stearns, …) – jeder Lauf hier sieht nur Überlebende, 
+unterschätzt also den echten historischen Drawdown, insbesondere für GFC_2008.
+
+                      GFC_2008  (2007-10-01 … 2009-06-01)                       
+╭──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┬───────┬──────┬───────╮
+│ Var… │ Ret… │ Max… │ Sha… │ Gen… │ Ges… │   C… │   M… │   Th… │   D… │ Peak… │
+├──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┼───────┼──────┼───────┤
+│ aus  │ -12… │ -27… │ -0.… │   92 │   39 │    1 │   18 │    20 │    0 │    10 │
+│ bin… │ -16… │ -16… │ -2.… │   34 │   97 │    1 │    0 │     4 │   92 │     8 │
+│ ges… │ -11… │ -15… │ -1.… │   90 │   41 │    0 │   17 │    20 │    4 │    10 │
+╰──────┴──────┴──────┴──────┴──────┴──────┴──────┴──────┴───────┴──────┴───────╯
+                     COVID_2020  (2020-02-01 … 2020-06-01)                      
+╭──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┬───────┬──────┬───────╮
+│ Var… │ Ret… │ Max… │ Sha… │ Gen… │ Ges… │   C… │   M… │   Th… │   D… │ Peak… │
+├──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┼───────┼──────┼───────┤
+│ aus  │ +12… │ -3.… │ 2.14 │   16 │    6 │    0 │    2 │     4 │    0 │    10 │
+│ bin… │ +12… │ -3.… │ 2.14 │   16 │    6 │    0 │    2 │     4 │    0 │    10 │
+│ ges… │ +12… │ -3.… │ 2.14 │   16 │    6 │    0 │    2 │     4 │    0 │    10 │
+╰──────┴──────┴──────┴──────┴──────┴──────┴──────┴──────┴───────┴──────┴───────╯
+                      BEAR_2022  (2022-01-01 … 2022-12-01)                      
+╭──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┬───────┬──────┬───────╮
+│ Var… │ Ret… │ Max… │ Sha… │ Gen… │ Ges… │   C… │   M… │   Th… │   D… │ Peak… │
+├──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┼───────┼──────┼───────┤
+│ aus  │ -11… │ -19… │ -1.… │   71 │   26 │    9 │    0 │    17 │    0 │    10 │
+│ bin… │ -12… │ -15… │ -1.… │   59 │   38 │    9 │    0 │    13 │   16 │    10 │
+│ ges… │ -7.… │ -11… │ -1.… │   73 │   24 │    0 │   16 │     8 │    0 │    10 │
+╰──────┴──────┴──────┴──────┴──────┴──────┴──────┴──────┴───────┴──────┴───────╯
+=== Stress-Test Ende: Sa 1. Aug 01:03:19 UTC 2026 ===
+=== Nightly Research Ende: Sa 1. Aug 01:03:19 UTC 2026 ===

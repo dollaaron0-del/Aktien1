@@ -66,7 +66,6 @@ from portfolio.trade_journal import TradeJournal
 from portfolio.signal_queue import SignalQueue
 from portfolio.goal_risk_assessor import GoalRiskAssessor
 from analyzers.reflection_engine import ReflectionEngine
-from analyzers.turbo_learner import TurboLearner
 from analyzers.earnings_filter import EarningsFilter
 from analyzers.correlation_check import CorrelationChecker
 from analyzers.kelly_sizing import KellySizer
@@ -81,6 +80,7 @@ from collectors.vix_monitor import vix_summary
 from collectors.rl_trainer import start_rl_trainer
 from strategy import SwingStrategy
 from strategy.hedge_strategy import HedgeStrategy
+from strategy.earnings_strategy import EarningsStrategy
 from reporting.exporter import Exporter
 
 from bot.runner import (
@@ -99,7 +99,7 @@ from cli.display import (
 from cli.commands import (
     run_weekend_prep, run_backtest, run_scan,
     run_small_cap_scan, run_crypto_scan, run_eu_scan,
-    _run_optimizer, _handle_exploration_command, _apply_exploration_overrides,
+    _run_optimizer,
 )
 from cli.tax_commands import (
     run_risk_metrics, run_tax_report, run_dividend_overview, run_fx_pnl,
@@ -138,7 +138,6 @@ def main():
     parser.add_argument("--reentry", action="store_true", help="Re-Entry-Kandidaten anzeigen (verkaufte Positionen die sich erholen)")
     parser.add_argument("--velocity", metavar="TICKER", help="News-Geschwindigkeit für einen Ticker anzeigen")
     parser.add_argument("--sentiment-memory", action="store_true", help="Sentiment-Verlässlichkeit pro Ticker anzeigen")
-    parser.add_argument("--exploration", metavar="{on|off|status}", help="Exploration-Mode ein-/ausschalten oder Status anzeigen")
     parser.add_argument("--crash-radar", action="store_true", help="Crash-Wahrscheinlichkeit, Blasen-Detektor und historischer Vergleich")
     parser.add_argument("--refresh", action="store_true", help="Cache ignorieren (zusammen mit --crash-radar)")
     parser.add_argument("--walk-forward", action="store_true", help="Walk-Forward Backtesting: Parameter-Stabilität über Zeitfenster validieren")
@@ -173,10 +172,6 @@ def main():
     if args.check:
         from cli.startup_check import run_startup_check
         run_startup_check()
-        return
-
-    if args.exploration is not None:
-        _handle_exploration_command(args.exploration.lower())
         return
 
     if args.fx_status:
@@ -224,44 +219,6 @@ def main():
     # Konfiguration validieren – bricht bei fatalen Fehlern ab
     validate_config()
 
-    # Turbo-Modus aktiviert Exploration automatisch als Basis-Stufe
-    if config.turbo_mode and config.broker_mode == "paper":
-        config.exploration_mode = True
-
-    # Exploration-Mode: lockere Parameter für Datensammlung (vor allem anderen!)
-    _apply_exploration_overrides()
-    if config.exploration_mode and not config.turbo_mode:
-        console.print(Panel(
-            "[bold yellow]EXPLORATION MODE AKTIV[/bold yellow]  –  "
-            f"Kaufschwelle={config.buy_threshold}  |  "
-            f"MinQuellen={config.min_sources}  |  "
-            f"MaxPos={config.max_position_pct*100:.0f}%  |  "
-            f"CB-Verlust={config.expl_max_daily_loss*100:.0f}%\n"
-            "[dim]Deaktivieren: python main.py --exploration off[/dim]",
-            title="⚠  Exploration Mode", border_style="yellow",
-        ))
-
-    # Turbo-Mode Banner + gelernte Parameter laden
-    if config.turbo_mode and config.broker_mode == "paper":
-        learner = TurboLearner()
-        learned = learner.load()
-        learned_info = ""
-        if learned:
-            changes = learner.apply_to_config(config)
-            if changes:
-                learned_info = "\n[dim]Gelernte Werte aktiv: " + " | ".join(changes) + "[/dim]"
-        console.print(Panel(
-            "[bold red]🚀 TURBO MODE AKTIV[/bold red]  –  Alle Sicherheitsfilter deaktiviert!\n"
-            f"Kaufschwelle={config.turbo_buy_threshold}  |  "
-            f"MaxPos={config.turbo_max_position_pct*100:.0f}%  |  "
-            f"SL={config.turbo_stop_loss_pct*100:.0f}%  |  "
-            f"TP={config.turbo_take_profit_pct*100:.0f}%  |  "
-            f"MaxPositionen={config.turbo_max_positions}\n"
-            f"Exploration-Basis aktiv | Lernauswertung täglich 02:30 UTC"
-            f"{learned_info}",
-            title="⚠  TURBO MODE – NUR PAPER TRADING", border_style="red",
-        ))
-
     # Select broker based on config
     if config.broker_mode == "ibkr":
         broker = IBKRBroker()
@@ -271,13 +228,66 @@ def main():
                 f"({config.ibkr_host}:{config.ibkr_port})[/green]"
             )
         else:
+            # KEIN Paper-Fallback im IBKR-Modus: der IBKRBroker bleibt aktiv.
+            # Preise laufen über seinen yfinance/price_cache-Fallback weiter,
+            # aber buy()/sell() liefern bei fehlender Verbindung {"status":"error"}
+            # → es wird NIE still ein Paper-Trade gebucht. Reconnect erfolgt
+            # automatisch beim nächsten Order-/Preis-Aufruf (_ensure_connected).
             console.print(
-                "[yellow]⚠ IBKR-Verbindung fehlgeschlagen "
-                f"({config.ibkr_host}:{config.ibkr_port}) – Fallback auf Paper-Broker.[/yellow]"
+                "[bold yellow]⚠ IBKR nicht verbunden "
+                f"({config.ibkr_host}:{config.ibkr_port}) – KEIN Paper-Fallback. "
+                "Orders schlagen fehl bis IBKR erreichbar ist (Preise via yfinance).[/bold yellow]"
             )
-            broker = PaperBroker()
+            try:
+                import os as _os, time as _time
+                _cooldown_file = _os.path.join(_os.path.dirname(__file__), "data", "ibkr_error_notified")
+                _cooldown_secs = int(_os.getenv("IBKR_NOTIFY_COOLDOWN_HOURS", "168")) * 3600
+                _cooldown_ok = True
+                if _os.path.exists(_cooldown_file):
+                    if _time.time() - _os.path.getmtime(_cooldown_file) < _cooldown_secs:
+                        _cooldown_ok = False
+                if _cooldown_ok:
+                    from notifier.telegram_notifier import TelegramNotifier
+                    TelegramNotifier().send(
+                        f"⚠️ <b>IBKR-Verbindung fehlgeschlagen</b>\n\n"
+                        f"Host: {config.ibkr_host}:{config.ibkr_port}\n"
+                        f"<b>Kein Paper-Fallback</b> – Orders werden NICHT ausgeführt, "
+                        f"bis IBKR erreichbar ist.\n\n"
+                        f"IB Gateway prüfen (Bot reconnectet automatisch)."
+                    )
+                    open(_cooldown_file, "w").close()
+            except Exception:
+                pass
+            # broker bleibt der IBKRBroker (kein PaperBroker-Ersatz).
     else:
         broker = PaperBroker()
+    portfolio = Portfolio(initial_capital=config.initial_capital)
+    # Buchhaltungs-Integrität prüfen: erkennt Trade-Log/Positions-Drift
+    # (z.B. nach einem Reset, der Positionen löscht aber Trades stehen lässt).
+    try:
+        from portfolio.integrity import check_integrity
+        _ir = check_integrity(portfolio._conn, config.initial_capital)
+        if not _ir.ok:
+            log.warning(_ir.summary())
+        else:
+            log.info(_ir.summary())
+    except Exception as _ie:
+        log.debug("Portfolio-Integritätscheck übersprungen: %s", _ie)
+    # Broker-Abgleich (IBKR) + Schutz-Stop-Sync: Buch gegen TATSÄCHLICHE
+    # Broker-Positionen prüfen (bucht Phantome aus, verhindert dass ein
+    # Exit-Signal einen ungewollten Short eröffnet) und GTC-Schutz-Stops für
+    # alle Buch-Positionen sicherstellen (greifen auch bei Bot-Ausfall).
+    # Gleiche Funktion wie der periodische Job in bot/scheduler.py (alle
+    # 30 Min) – single source of truth seit 27.7.2026 (META-Vorfall: diese
+    # Heilung lief vorher nur hier, beim Start, nicht laufend).
+    try:
+        from bot.scheduler_risk import broker_healing_pass
+        from notifier.telegram_notifier import TelegramNotifier
+        broker_healing_pass(portfolio, broker, TelegramNotifier, context="Start")
+    except Exception as _be:
+        log.debug("Broker-Abgleich/Schutz-Stop-Sync beim Start übersprungen: %s", _be)
+    except Exception as _se:
+        log.debug("Schutz-Stop-Sync übersprungen: %s", _se)
     tracker = PerformanceTracker()
     phase_ctrl = _make_phase_ctrl()
     focus_ctrl = _make_focus_ctrl()
@@ -492,6 +502,7 @@ def main():
         kelly_sizer=kelly_sizer,
         goal_risk_assessor=goal_risk,
     )
+    earnings_strategy = EarningsStrategy(portfolio, broker, strategy=strategy)
 
     # TradingView Sofortausführungs-Thread
     if config.tradingview_webhook_enabled:
@@ -510,17 +521,35 @@ def main():
         except Exception:
             pass
 
-    # RL-Trainer: trainiert alle 24h auf Trade-History
+    # RL-Trainer: trainiert alle 24h auf Trade-History – aber NUR, wenn der RLAgent
+    # auch konsultiert wird (config.rl_veto_enabled). Sonst trainierte er ins Leere:
+    # ohne Veto beeinflusst sein Ergebnis keine Entscheidung (CPU-Verschwendung).
+    if getattr(config, "rl_veto_enabled", False):
+        try:
+            import os as _os
+            journal_db = _os.path.join("data", "trade_journal.db")
+            start_rl_trainer(_rl_agent, journal_db, interval_hours=24)
+            console.print("  [bold cyan]🤖 RL-Agent aktiv[/bold cyan] (Veto + Training alle 24h)")
+            rl_stats = _rl_agent.get_stats()
+            if rl_stats.get("total_trades", 0) > 0:
+                console.print(f"  [dim]   RL: {rl_stats['total_trades']} Trades gelernt, avg_reward={rl_stats.get('avg_reward', 0):.3f}[/dim]")
+        except Exception as e:
+            log.warning("RL-Trainer Start fehlgeschlagen: %s", e)
+    else:
+        console.print("  [dim]🤖 RL-Agent inaktiv (RL_VETO_ENABLED=false) – kein Veto, kein Training[/dim]")
+
+    # Kalibrierungs-Modell aus dem ExperienceStore frisch ziehen, wenn veraltet.
+    # Schließt den Lern-Kreis: gesammelte (Live-)Outcomes fließen automatisch (≤24h)
+    # zurück in data/calibration.json, ohne manuellen scripts/calibrate.py-Lauf.
     try:
-        import os as _os
-        journal_db = _os.path.join("data", "trade_journal.db")
-        start_rl_trainer(_rl_agent, journal_db, interval_hours=24)
-        console.print("  [bold cyan]🤖 RL-Agent aktiv[/bold cyan] (trainiert alle 24h auf Trade-History)")
-        rl_stats = _rl_agent.get_stats()
-        if rl_stats.get("total_trades", 0) > 0:
-            console.print(f"  [dim]   RL: {rl_stats['total_trades']} Trades gelernt, avg_reward={rl_stats.get('avg_reward', 0):.3f}[/dim]")
+        from analyzers.calibration import auto_refit
+        refit = auto_refit(max_age_hours=24)
+        if refit is not None:
+            s = refit.summary()
+            console.print(f"  [dim]📐 Kalibrierung neu gefittet (n={s.get('n_total', 0)}, "
+                          f"Win={s.get('global_win_rate', 0):.0%})[/dim]")
     except Exception as e:
-        log.warning("RL-Trainer Start fehlgeschlagen: %s", e)
+        log.debug("Auto-Re-Fit Kalibrierung übersprungen: %s", e)
 
     # Regime + Cross-Asset Status
     try:
@@ -558,7 +587,7 @@ def main():
     if args.once:
         run_analysis_cycle(
             portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
-            weekend_prep_inst, hedge_strategy_inst,
+            weekend_prep_inst, hedge_strategy_inst, earnings_strategy,
         )
         return
 
@@ -577,6 +606,7 @@ def main():
         goal_risk=goal_risk,
         hedge_strategy_inst=hedge_strategy_inst,
         mkt_schedule=mkt_schedule,
+        earnings_strategy=earnings_strategy,
     )
 
 
@@ -609,7 +639,7 @@ def _run_fill_archive() -> None:
             total_new += len(news)
             console.print(
                 f"[green]{len(news)} Artikel[/green]  "
-                f"(Yahoo:{src.get('yahoo',0)} Reddit:{src.get('reddit',0)} "
+                f"(Yahoo:{src.get('yahoo',0)} "
                 f"NewsAPI:{src.get('newsapi',0)} Wire:{src.get('wire',0)} "
                 f"EU:{src.get('european_news',0)})"
             )

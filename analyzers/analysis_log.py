@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "analysis_log.db")
@@ -21,6 +21,18 @@ class AnalysisLog:
         self._conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._init_db()
+        self._migrate()
+
+    def _migrate(self):
+        """Fügt neue Spalten zu bestehenden DBs hinzu (idempotent)."""
+        have = {r["name"] for r in self._conn.execute("PRAGMA table_info(analyses)")}
+        for col, decl in (("sources_breakdown", "TEXT"),
+                          ("git_hash", "TEXT"),          # Roadmap 1.6
+                          ("config_json", "TEXT"),       # Roadmap 1.6
+                          ("provenance_json", "TEXT")):  # Roadmap 1.4c
+            if col not in have:
+                self._conn.execute(f"ALTER TABLE analyses ADD COLUMN {col} {decl}")
+        self._conn.commit()
 
     def _init_db(self):
         self._conn.executescript("""
@@ -48,19 +60,58 @@ class AnalysisLog:
         """)
         self._conn.commit()
 
-    def store(self, analysis, exchange: str = "") -> None:
+    def store(self, analysis, exchange: str = "",
+              sources_breakdown: Optional[dict] = None,
+              provenance: Optional[dict] = None) -> Optional[int]:
+        """Speichert eine Analyse; gibt die Zeilen-ID zurück (Roadmap 1.4b:
+        der Runner reicht sie ans decision_log weiter → Entscheidung und
+        zugehörige Analyse samt Quellen sind verkettet)."""
         from analyzers.claude_analyzer import AnalysisResult
         if not isinstance(analysis, AnalysisResult):
-            return
-        self._conn.execute(
+            return None
+        # sources_used ist je nach Analyzer-Pfad mal Dict[str,int] (Quelle→Anzahl),
+        # mal int, mal {} (Default). Die Spalte ist INTEGER → hier zu einer Zahl
+        # normalisieren, sonst crasht SQLite ("type 'dict' is not supported") und
+        # reißt den gesamten Analyse-Zyklus ab.
+        # sources_used kann Dict[str,int] (Quelle→Anzahl) oder int sein. Den int-Sum
+        # in sources_used speichern (Spalte ist INTEGER), den vollen Breakdown als
+        # JSON in sources_breakdown – das ermöglicht später eine fundierte Auswertung,
+        # welche Collectors real beitragen (Basis für Abschalt-Entscheidungen).
+        _sources = analysis.sources_used
+        _breakdown = None
+        if isinstance(_sources, dict):
+            _breakdown = json.dumps(_sources) if _sources else None
+            _sources = sum(_sources.values()) if _sources else 0
+        elif not isinstance(_sources, int):
+            try:
+                _sources = int(_sources)
+            except (TypeError, ValueError):
+                _sources = 0
+        # Mehrere Analyzer-Pfade (z.B. multi_agent) setzen sources_used als int und
+        # verlieren so den Quellen-Breakdown. Der Runner kennt das echte Dict und
+        # reicht es hier explizit durch → Vorrang vor dem aus sources_used abgeleiteten.
+        if sources_breakdown:
+            _breakdown = json.dumps(sources_breakdown)
+            if not _sources:
+                _sources = sum(sources_breakdown.values())
+        # Versions-Stempel (Roadmap 1.6), fail-open — Logging darf den Zyklus
+        # nie reißen.
+        try:
+            from analyzers.version_stamp import stamp
+            _git_hash, _config_json = stamp()
+        except Exception:
+            _git_hash, _config_json = None, None
+        _provenance_json = json.dumps(provenance) if provenance else None
+        cur = self._conn.execute(
             """INSERT INTO analyses
                (analyzed_at, ticker, recommendation, direction, sentiment_score,
                 confidence, entry_rationale, bull_case, bear_case, debate_winner,
                 key_catalysts, risk_factors, target_price, suggested_hold,
-                sources_used, exchange)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                sources_used, sources_breakdown, exchange, git_hash, config_json,
+                provenance_json)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 analysis.ticker,
                 analysis.recommendation,
                 analysis.direction,
@@ -74,11 +125,101 @@ class AnalysisLog:
                 json.dumps(analysis.risk_factors or []),
                 analysis.target_price,
                 analysis.suggested_hold_days,
-                analysis.sources_used,
+                _sources,
+                _breakdown,
                 exchange,
+                _git_hash,
+                _config_json,
+                _provenance_json,
             ),
         )
         self._conn.commit()
+        return cur.lastrowid
+
+    def get_by_id(self, analysis_id: int) -> Optional[Dict]:
+        """Einzelne Analyse per ID — für die Verkettung decision_log →
+        analysis_log (Dashboard-Tab "Entscheidungen", Roadmap 1.4b)."""
+        row = self._conn.execute(
+            "SELECT * FROM analyses WHERE id=?", (analysis_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["key_catalysts"] = json.loads(d.get("key_catalysts") or "[]")
+        d["risk_factors"]  = json.loads(d.get("risk_factors")  or "[]")
+        d["provenance"]    = json.loads(d.get("provenance_json") or "{}")
+        return d
+
+    def get_source_contributions(self, days: int = 30) -> List[Dict]:
+        """Aggregiert den Beitrag jedes Collectors über die letzten `days` Tage.
+
+        Liefert pro Quelle: Summe der Treffer, Anzahl Analysen mit >0 Treffern und
+        deren Anteil. Quellen mit 0 Treffern über viele Analysen sind Abschalt-
+        Kandidaten (sofern nicht nur ein fehlender API-Key die Ursache ist).
+        """
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
+        rows = self._conn.execute(
+            "SELECT sources_breakdown FROM analyses "
+            "WHERE analyzed_at > ? AND sources_breakdown IS NOT NULL",
+            (cutoff,),
+        ).fetchall()
+        totals: Dict[str, int] = {}
+        nonzero: Dict[str, int] = {}
+        n = 0
+        for (raw,) in rows:
+            try:
+                d = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            n += 1
+            for src, cnt in d.items():
+                totals[src] = totals.get(src, 0) + int(cnt or 0)
+                if cnt:
+                    nonzero[src] = nonzero.get(src, 0) + 1
+        out = [
+            {
+                "source": src,
+                "total_hits": totals[src],
+                "analyses_with_hits": nonzero.get(src, 0),
+                "pct_analyses": round(100 * nonzero.get(src, 0) / n, 1) if n else 0.0,
+            }
+            for src in sorted(totals, key=lambda s: totals[s], reverse=True)
+        ]
+        return out
+
+    def source_health(self, days: int = 7, min_analyses: int = 20, weak_pct: float = 10.0) -> Dict:
+        """Klassifiziert jede Quelle als tot/schwach/gesund über die letzten `days`.
+
+        - tot:    0 Treffer über alle Analysen (Kandidat: fehlender API-Key oder defekt)
+        - schwach: trägt in < `weak_pct` % der Analysen bei
+        - gesund: darüber
+        `reliable` ist False, wenn weniger als `min_analyses` Analysen vorliegen
+        (dann ist die Aussage statistisch zu dünn – z.B. direkt nach einem Crash).
+        """
+        contribs = self.get_source_contributions(days=days)
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
+        n = self._conn.execute(
+            "SELECT COUNT(*) FROM analyses WHERE analyzed_at > ? AND sources_breakdown IS NOT NULL",
+            (cutoff,),
+        ).fetchone()[0]
+        dead, weak, healthy = [], [], []
+        for c in contribs:
+            if c["total_hits"] == 0:
+                dead.append(c["source"])
+            elif c["pct_analyses"] < weak_pct:
+                weak.append(c["source"])
+            else:
+                healthy.append(c["source"])
+        return {
+            "n_analyses": n,
+            "reliable": n >= min_analyses,
+            "dead": dead,
+            "weak": weak,
+            "healthy": healthy,
+            "days": days,
+        }
 
     def get_recent(self, limit: int = 100, ticker: Optional[str] = None) -> List[Dict]:
         if ticker:
@@ -96,6 +237,7 @@ class AnalysisLog:
             d = dict(r)
             d["key_catalysts"] = json.loads(d.get("key_catalysts") or "[]")
             d["risk_factors"]  = json.loads(d.get("risk_factors")  or "[]")
+            d["provenance"]    = json.loads(d.get("provenance_json") or "{}")
             result.append(d)
         return result
 
@@ -149,6 +291,7 @@ class AnalysisLog:
             d = dict(r)
             d["key_catalysts"] = json.loads(d.get("key_catalysts") or "[]")
             d["risk_factors"]  = json.loads(d.get("risk_factors")  or "[]")
+            d["provenance"]    = json.loads(d.get("provenance_json") or "{}")
             result.append(d)
         return result
 

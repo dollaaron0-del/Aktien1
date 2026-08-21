@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import json
 import requests
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from typing import List, Dict, Optional
 
 _FRED_BASE = "https://api.stlouisfed.org/fred"
@@ -196,7 +196,7 @@ class MacroCalendar:
             with open(_CACHE_FILE) as f:
                 data = json.load(f)
             updated = datetime.fromisoformat(data["updated_at"])
-            if (datetime.utcnow() - updated).total_seconds() > _CACHE_TTL_HOURS * 3600:
+            if (datetime.now(timezone.utc).replace(tzinfo=None) - updated).total_seconds() > _CACHE_TTL_HOURS * 3600:
                 return None
             return [
                 MacroEvent(e["name"], date.fromisoformat(e["date"]), e["impact"])
@@ -208,7 +208,7 @@ class MacroCalendar:
     def _save_cache(self, events: List[MacroEvent]):
         import tempfile, os as _os
         data = {
-            "updated_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "events": [
                 {"name": e.name, "date": e.release_date.isoformat(), "impact": e.impact}
                 for e in events

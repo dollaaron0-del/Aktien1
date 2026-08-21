@@ -1,7 +1,7 @@
 """
 Short Strategy – Profitiert von Kursrückgängen via:
   1. Inverse ETFs (direkt kaufbar, kein Options-Broker nötig)
-  2. ETF Puts via Alpaca Options API (wenn ALPACA_OPTIONS_ENABLED=true)
+  2. ETF Puts (Options-Handel derzeit nicht implementiert – Stub)
 
 Inverse ETF Mapping:
   SPY → SH (1×), SDS (2×)   – S&P 500 short
@@ -25,7 +25,7 @@ import json
 import math
 import os
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from analyzers.claude_analyzer import AnalysisResult
@@ -35,6 +35,7 @@ from portfolio.trade_journal import TradeJournal
 from notifier.telegram_notifier import TelegramNotifier
 from config import config
 from logger import get_logger
+from strategy.executor import _fail_reason, _fill_price, _fill_shares, _is_filled
 
 log = get_logger(__name__)
 
@@ -180,7 +181,7 @@ class ShortStrategy:
                 continue
 
             days_held = (
-                datetime.utcnow() - datetime.fromisoformat(short.entry_date)
+                datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(short.entry_date)
             ).days
 
             reason = None
@@ -193,6 +194,11 @@ class ShortStrategy:
 
             if reason:
                 pnl = self._close_short(ticker, short, inverse_price, reason, days_held)
+                if pnl is None:
+                    actions.append(
+                        f"[SHORT {ticker}/{short.inverse_ticker}] ⛔ Schließen fehlgeschlagen – bleibt offen"
+                    )
+                    continue
                 sign = "+" if pnl >= 0 else ""
                 actions.append(
                     f"[SHORT {ticker}/{short.inverse_ticker}] GESCHLOSSEN – "
@@ -213,9 +219,11 @@ class ShortStrategy:
         if inverse_price is None:
             return None
 
-        days_held = (datetime.utcnow() - datetime.fromisoformat(short.entry_date)).days
+        days_held = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(short.entry_date)).days
         reason = f"Signal dreht auf BUY (Sentiment: {analysis.sentiment_score:.2f})"
         pnl = self._close_short(ticker, short, inverse_price, reason, days_held)
+        if pnl is None:
+            return f"[SHORT {ticker}/{short.inverse_ticker}] ⛔ Schließen fehlgeschlagen – bleibt offen"
         sign = "+" if pnl >= 0 else ""
         return (
             f"[SHORT {ticker}/{short.inverse_ticker}] GESCHLOSSEN – "
@@ -240,7 +248,7 @@ class ShortStrategy:
                 if inverse_price else 0.0
             )
             days_held = (
-                datetime.utcnow() - datetime.fromisoformat(short.entry_date)
+                datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(short.entry_date)
             ).days
             positions.append({
                 "ticker":          ticker,
@@ -281,9 +289,21 @@ class ShortStrategy:
         if shares <= 0:
             return f"[SHORT {ticker}] Positionsgröße zu klein – übersprungen."
 
+        # Broker-Order ZUERST; gebucht wird nur bei bestätigtem Fill, mit echtem
+        # Fill-Preis und tatsächlich gefüllter Stückzahl (IBKR rundet ganze Stück).
+        fill = self.broker.buy(inverse_ticker, shares, price)
+        if not _is_filled(fill):
+            warn = _fail_reason(fill)
+            log.error("[SHORT] %s Kauf %s fehlgeschlagen: %s", ticker, inverse_ticker, warn)
+            return f"[SHORT {ticker}] ⛔ Kauf {inverse_ticker} fehlgeschlagen: {warn}"
+        price  = _fill_price(fill, price)
+        shares = _fill_shares(fill, shares)
+        if shares <= 0:
+            return f"[SHORT {ticker}] ⛔ 0 Stück gefüllt (Teilaktie gerundet) – nicht gebucht"
+
         stop_loss   = round(price * (1 - _SHORT_STOP_LOSS_PCT), 2)
         take_profit = round(price * (1 + _SHORT_TAKE_PROFIT_PCT), 2)
-        entry_date  = datetime.utcnow().isoformat()
+        entry_date  = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
         # Inverse ETF als normale Long-Position im Portfolio kaufen
         position = Position(
@@ -297,7 +317,6 @@ class ShortStrategy:
             rationale=f"[SHORT] {ticker} via {inverse_ticker}: {analysis.entry_rationale}",
             entry_catalysts=analysis.key_catalysts[:5],
         )
-        self.broker.buy(inverse_ticker, shares, price)
         self.portfolio.open_position(position)
 
         # Short-Tracking
@@ -361,9 +380,8 @@ class ShortStrategy:
         analysis: AnalysisResult,
     ) -> Optional[str]:
         """
-        Kauft einen ATM Put via Alpaca Options API.
+        Kauft einen ATM Put (Options-Handel derzeit nicht implementiert).
 
-        Nur aktiv wenn ALPACA_OPTIONS_ENABLED=true in .env.
         Fällt graceful zurück (None) wenn nicht verfügbar.
 
         Strike: 95% des aktuellen Preises (leicht OTM)
@@ -380,14 +398,23 @@ class ShortStrategy:
         inverse_price: float,
         reason: str,
         days_held: int,
-    ) -> float:
-        """Schließt Short-Position (verkauft den Inverse ETF)."""
-        pnl = 0.0
-        try:
-            self.broker.sell(short.inverse_ticker, short.shares, inverse_price)
-            pnl = self.portfolio.close_position(short.inverse_ticker, inverse_price, reason)
-        except Exception as e:
-            log.error("[SHORT] Fehler beim Schließen von %s: %s", short.inverse_ticker, e)
+    ) -> Optional[float]:
+        """Schließt Short-Position (verkauft den Inverse ETF). Buch/Tracking
+        werden nur bei bestätigtem Broker-Fill angefasst. None = Order
+        fehlgeschlagen, Position bleibt offen."""
+        fill = self.broker.sell(short.inverse_ticker, short.shares, inverse_price)
+        if not _is_filled(fill):
+            warn = _fail_reason(fill)
+            log.error("[SHORT] SELL %s fehlgeschlagen (%s) – Position bleibt offen",
+                      short.inverse_ticker, warn)
+            self._notifier.send(
+                f"🚨 SHORT {ticker}: SELL {short.inverse_ticker} FEHLGESCHLAGEN\n"
+                f"Position bleibt offen – bitte Broker manuell prüfen!\nFehler: {warn}",
+                level="critical",
+            )
+            return None
+        inverse_price = _fill_price(fill, inverse_price)
+        pnl = self.portfolio.close_position(short.inverse_ticker, inverse_price, reason)
 
         self.journal.log_exit(
             ticker=short.inverse_ticker,

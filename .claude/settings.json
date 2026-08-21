@@ -170,7 +170,11 @@
     ],
     "deny": [
       "Read(./.env)",
-      "Read(./.env.*)"
+      "Read(./.env.*)",
+      "Bash(rm -rf*)",
+      "Bash(chmod 777*)",
+      "Bash(ssh*)",
+      "Bash(* > /dev/*)"
     ]
   },
   "env": {

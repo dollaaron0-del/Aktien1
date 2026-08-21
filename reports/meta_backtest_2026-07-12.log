@@ -1,0 +1,41 @@
+Meta-Backtest des Allokators über 10 Ticker | Familien: baseline_swing, 
+donchian_breakout, rsi_meanrev, ts_momentum | Kapital $100,000
+Survivorship-Hinweis: yfinance liefert nur Überlebende — Renditen aller Arme 
+sind nach oben verzerrt; der PAARWEISE Vergleich der Arme (gleiche Daten, 
+gleiche Verzerrung) bleibt davon weitgehend unberührt.
+
+                          OOS-Ergebnis je Meta-Fenster                          
+╭───────────┬───────────┬──────────┬────────┬───────────┬──────────┬───────────╮
+│           │           │          │        │ allokator │ allokat… │ gleichge… │
+│ Stichtag  │ OOS bis   │ Regime   │ ACTIVE │    Ret/DD │   Ret/DD │    Ret/DD │
+├───────────┼───────────┼──────────┼────────┼───────────┼──────────┼───────────┤
+│ 2014-06-… │ 2016-06-… │ BULL_CA… │      0 │      flat │     flat │  +75.6% / │
+│           │           │          │        │           │          │    -10.2% │
+│ 2016-06-… │ 2018-06-… │ BULL_CA… │      0 │      flat │     flat │  +76.3% / │
+│           │           │          │        │           │          │     -6.9% │
+│ 2018-06-… │ 2020-06-… │ BULL_CA… │      0 │      flat │     flat │  +76.4% / │
+│           │           │          │        │           │          │    -11.3% │
+│ 2020-06-… │ 2022-06-… │ BULL_VO… │      1 │   +1.5% / │  +1.5% / │  +40.5% / │
+│           │           │          │        │     -7.1% │    -7.1% │    -10.7% │
+│ 2022-06-… │ 2024-06-… │ BULL_VO… │      0 │      flat │     flat │  +94.0% / │
+│           │           │          │        │           │          │    -15.8% │
+│ 2024-06-… │ 2026-06-… │ BULL_VO… │      0 │      flat │     flat │   +7.1% / │
+│           │           │          │        │           │          │    -13.9% │
+╰───────────┴───────────┴──────────┴────────┴───────────┴──────────┴───────────╯
+                        Aggregat über alle Meta-Fenster                         
+╭─────────────────┬──────────┬─────────┬─────────┬─────────────┬──────┬────────╮
+│ Arm             │ Ø Return │  Median │ Ø MaxDD │ Worst MaxDD │ flat │ Trades │
+├─────────────────┼──────────┼─────────┼─────────┼─────────────┼──────┼────────┤
+│ allokator       │   +0.25% │  +0.00% │  -1.19% │      -7.13% │  5/6 │      7 │
+│ allokator_regi… │   +0.25% │  +0.00% │  -1.19% │      -7.13% │  5/6 │      7 │
+│ gleichgewichtu… │  +61.66% │ +75.99% │ -11.47% │     -15.82% │  0/6 │    466 │
+╰─────────────────┴──────────┴─────────┴─────────┴─────────────┴──────┴────────╯
+
+Paired-Differenzen (je Meta-Fenster, Bootstrap-90%-CI):
+  Allokator − Gleichgewichtung (hilft die Selektion?): Ø -61.42%  CI [-79.18%, 
+-40.71%]  P(≤0)=100%
+  Regime-Faktor − Allokator (bringt Regime zusätzlich was?): Ø +0.00%  CI 
+[+0.00%, +0.00%]  P(≤0)=100%
+
+Lesart: CI-Untergrenze > 0 → Arm ist signifikant besser. CI um 0 → keine belegte
+Kante, Verdikt offen.

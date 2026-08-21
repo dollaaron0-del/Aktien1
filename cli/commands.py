@@ -70,76 +70,17 @@ def _send_briefing_telegram(briefing: str, earnings: dict):
 
 def run_weekend_prep(wp: WeekendPrep):
     console.rule("[bold blue]Wochenvorbereitung")
-    console.print("[cyan]Sammle Earnings-Kalender, Marktdaten und Makro-News...[/cyan]")
+    console.print(
+        "[cyan]Sammle Earnings-Kalender, Marktdaten und Makro-News, "
+        "generiere Wochenbriefing mit Claude...[/cyan]"
+    )
 
-    # Show what we find before generating briefing
-    earnings = wp.collect_earnings_calendar()
-    sentiment = wp.collect_market_sentiment()
-
-    # Earnings table (US + EU)
-    wl_earn  = earnings.get("watchlist_earnings", [])
-    brd_earn = earnings.get("broader_earnings", [])
-    eu_earn  = earnings.get("eu_earnings", [])
-    if wl_earn or brd_earn or eu_earn:
-        et = Table(title=f"Quartalszahlen nächste Woche ({earnings['week']})", box=box.ROUNDED)
-        et.add_column("Ticker", style="cyan")
-        et.add_column("Name")
-        et.add_column("Wochentag")
-        et.add_column("Datum")
-        et.add_column("Typ")
-        for e in wl_earn:
-            et.add_row(e["ticker"], "", e["weekday"], e["date"], "[bold yellow]⚠ Watchlist[/bold yellow]")
-        for e in brd_earn[:6]:
-            et.add_row(e["ticker"], "", e["weekday"], e["date"], "[dim]US Mover[/dim]")
-        for e in eu_earn[:6]:
-            flag = "[bold yellow]⚠ EU Watch[/bold yellow]" if e.get("in_watchlist") else "[dim]EU[/dim]"
-            et.add_row(e["ticker"], e.get("name", ""), e["weekday"], e["date"], flag)
-        console.print(et)
-    else:
-        console.print("[dim]Keine bekannten Earnings für nächste Woche gefunden.[/dim]")
-
-    # EZB / BoE Warnung
-    if sentiment.get("ecb_next_week"):
-        console.print(f"  [bold yellow]🏦 EZB Zinsentscheid nächste Woche: {sentiment['ecb_next_week']}[/bold yellow]")
-    if sentiment.get("boe_next_week"):
-        console.print(f"  [bold yellow]🏦 BoE Zinsentscheid nächste Woche: {sentiment['boe_next_week']}[/bold yellow]")
-
-    # Sector & index table (US + EU)
-    if sentiment.get("indices"):
-        it = Table(title="Markt letzte Woche (US + EU + Asien)", box=box.SIMPLE)
-        it.add_column("Index / Indikator")
-        it.add_column("Wert", justify="right")
-        it.add_column("Woche", justify="right")
-        for name, data in sentiment["indices"].items():
-            chg = data["week_change_pct"]
-            chg_str = f"[green]+{chg:.2f}%[/green]" if chg >= 0 else f"[red]{chg:.2f}%[/red]"
-            extra = f"  {sentiment.get('vix_signal', '')}" if name == "VIX (Angst-Index)" else ""
-            it.add_row(name + extra, str(data["value"]), chg_str)
-        console.print(it)
-
-    # Crypto weekend
-    if sentiment.get("crypto"):
-        ct = Table(title="Krypto (7-Tage)", box=box.SIMPLE)
-        ct.add_column("Coin")
-        ct.add_column("Preis", justify="right")
-        ct.add_column("7d", justify="right")
-        for name, data in sentiment["crypto"].items():
-            chg = data["week_change_pct"]
-            chg_str = f"[green]+{chg:.1f}%[/green]" if chg >= 0 else f"[red]{chg:.1f}%[/red]"
-            ct.add_row(name, f"${data['price']:,.0f}", chg_str)
-        console.print(ct)
-
-    vix = sentiment.get("vix")
-    if vix:
-        vix_color = "green" if vix < 20 else ("yellow" if vix < 28 else "red")
-        console.print(f"\n  VIX: [{vix_color}]{vix}[/{vix_color}] – {sentiment.get('vix_signal', '')}")
-
-    # Generate Claude briefing
-    console.print("\n[cyan]Generiere Wochenbriefing mit Claude...[/cyan]")
-    briefing = wp.generate_briefing(newsapi_key=config.newsapi_key)
+    # WeekendPrep.run() sammelt Sektor-Performance, VIX, Earnings-Kalender und
+    # Makro-Events, generiert das Claude-Briefing und speichert es in der DB.
+    briefing = wp.run()
     if briefing:
         console.print(Panel(briefing, title="Wochenbriefing für die nächste Handelswoche", border_style="cyan"))
-        _send_briefing_telegram(briefing, earnings)
+        _send_briefing_telegram(briefing, {})
     else:
         console.print("[red]Briefing konnte nicht generiert werden (API-Fehler oder kein Key).[/red]")
 
@@ -456,76 +397,3 @@ def _run_optimizer(tracker, apply: bool = False) -> None:
         )
 
 
-def _set_env_var(key: str, value: str) -> None:
-    """Schreibt einen Key=Value Eintrag in .env (oder legt ihn an)."""
-    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
-    lines: list = []
-    found = False
-    if os.path.exists(env_path):
-        with open(env_path, encoding="utf-8") as f:
-            lines = f.readlines()
-        for i, line in enumerate(lines):
-            if line.startswith(f"{key}=") or line.startswith(f"{key} ="):
-                lines[i] = f"{key}={value}\n"
-                found = True
-                break
-    if not found:
-        lines.append(f"{key}={value}\n")
-    with open(env_path, "w", encoding="utf-8") as f:
-        f.writelines(lines)
-
-
-def _handle_exploration_command(cmd: str) -> None:
-    """Verarbeitet --exploration on|off|status."""
-    if cmd == "on":
-        _set_env_var("EXPLORATION_MODE", "true")
-        console.print(Panel(
-            "[bold yellow]EXPLORATION MODE AKTIVIERT[/bold yellow]\n\n"
-            "Der Bot handelt jetzt mit lockeren Parametern:\n"
-            f"  • Kaufschwelle:    [cyan]{config.expl_buy_threshold}[/cyan] (normal: {config.buy_threshold})\n"
-            f"  • Min. Quellen:    [cyan]{config.expl_min_sources}[/cyan] (normal: {config.min_sources})\n"
-            f"  • Max. Position:   [cyan]{config.expl_max_position_pct*100:.0f}%[/cyan] (normal: {config.max_position_pct*100:.0f}%)\n"
-            f"  • Tagesverlust-CB: [cyan]{config.expl_max_daily_loss*100:.0f}%[/cyan] (normal: 5%)\n\n"
-            "Ziel: Daten sammeln, Fehler machen, RL-Agent trainieren.\n"
-            "Deaktivieren: [dim]python main.py --exploration off[/dim]",
-            title="Exploration Mode", border_style="yellow",
-        ))
-    elif cmd == "off":
-        _set_env_var("EXPLORATION_MODE", "false")
-        console.print(Panel(
-            "[bold green]EXPLORATION MODE DEAKTIVIERT[/bold green]\n\n"
-            "Der Bot kehrt zu normalen (strengeren) Parametern zurück.\n"
-            "Tipp: [dim]python main.py --optimize[/dim] um aus den gesammelten\n"
-            "Daten optimierte Parameter abzuleiten.",
-            title="Exploration Mode", border_style="green",
-        ))
-    elif cmd == "status":
-        active = config.exploration_mode
-        color  = "yellow" if active else "green"
-        status = "AKTIV" if active else "INAKTIV"
-        lines  = [f"Exploration Mode: [{color}]{status}[/{color}]\n"]
-        if active:
-            lines += [
-                f"  Kaufschwelle:    {config.expl_buy_threshold} (normal: {config.buy_threshold})",
-                f"  Min. Quellen:    {config.expl_min_sources} (normal: {config.min_sources})",
-                f"  Max. Position:   {config.expl_max_position_pct*100:.0f}% (normal: {config.max_position_pct*100:.0f}%)",
-                f"  Tagesverlust-CB: {config.expl_max_daily_loss*100:.0f}% (normal: 5%)",
-            ]
-        console.print(Panel("\n".join(lines), title="Exploration Status", border_style=color))
-    else:
-        console.print(f"[red]Unbekannte Option '{cmd}'. Nutze: on | off | status[/red]")
-
-
-def _apply_exploration_overrides() -> None:
-    """
-    Überschreibt Config-Werte mit Exploration-Parametern wenn EXPLORATION_MODE aktiv.
-    Wird einmal beim Bot-Start aufgerufen – alle Downstream-Komponenten erhalten
-    automatisch die gelockerten Werte.
-    """
-    if not config.exploration_mode:
-        return
-    config.buy_threshold    = config.expl_buy_threshold
-    config.min_sources      = config.expl_min_sources
-    config.max_position_pct = config.expl_max_position_pct
-    # Circuit Breaker liest MAX_DAILY_LOSS_PCT direkt aus env → env var setzen
-    os.environ["MAX_DAILY_LOSS_PCT"] = str(config.expl_max_daily_loss)

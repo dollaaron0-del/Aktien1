@@ -18,10 +18,17 @@ Regime-Schwellen:
 
 import sqlite3
 import json
+import math
 import os
-from datetime import datetime, timedelta
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
+import numpy as np
 import yfinance as yf
+
+from logger import get_logger
+
+log = get_logger(__name__)
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "recession_detector.db")
 
@@ -128,6 +135,18 @@ class RecessionDetector:
         self._conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._init_db()
+        # Budget-Gate + echtes Kosten-Tracking (lief vorher hartcodiert auf Opus,
+        # einmal PRO ZYKLUS, komplett am Tagesbudget vorbei → Guthaben-Fresser).
+        try:
+            from analyzers.api_cost_tracker import APICostTracker
+            self._cost_tracker = APICostTracker()
+        except Exception:
+            self._cost_tracker = None
+        # Das Makro-Regime ändert sich nicht im 20-Minuten-Takt – Claude-Ergebnis
+        # für _MACRO_CACHE_SEC wiederverwenden statt jeden Zyklus neu zu bezahlen.
+        self._macro_cache: Optional[Tuple[float, float, str]] = None  # (ts, score, summary)
+
+    _MACRO_CACHE_SEC = 4 * 3600
 
     def __del__(self):
         try:
@@ -194,9 +213,16 @@ class RecessionDetector:
 
         # 5. Credit spread (HYG vs IEI)
         cs, credit_score = self._credit_spread_signal()
+        _cs_label = (
+            "Eng (niedrig)"   if credit_score < 0.25 else
+            "Leicht erhöht"   if credit_score < 0.45 else
+            "Erhöht ⚠"        if credit_score < 0.65 else
+            "Stress 🚨"
+        )
         components["credit_spread"] = {
             "ratio": round(cs, 4) if cs is not None else None,
             "score": round(credit_score, 3),
+            "label": _cs_label,
         }
 
         # Weighted quantitative score (before Claude)
@@ -263,6 +289,8 @@ class RecessionDetector:
             hist = yf.Ticker("^VIX").history(period="2d")
             if not hist.empty:
                 vix = float(hist["Close"].iloc[-1])
+                if not math.isfinite(vix):
+                    return None, 0.3
                 # 0 at VIX=12, 1 at VIX=45
                 score = max(0.0, min(1.0, (vix - 12) / (45 - 12)))
                 return vix, score
@@ -278,6 +306,8 @@ class RecessionDetector:
             if not t2.empty and not t10.empty:
                 r2  = float(t2["Close"].iloc[-1])
                 r10 = float(t10["Close"].iloc[-1])
+                if not (math.isfinite(r2) and math.isfinite(r10)):
+                    return None, 0.2
                 spread = r10 - r2  # positive = normal, negative = inverted
                 # Score: 0 at spread=+2, 1 at spread=-1
                 score = max(0.0, min(1.0, (-spread + 0.5) / 1.5))
@@ -290,9 +320,13 @@ class RecessionDetector:
         """How far S&P 500 is from its 200-day moving average."""
         try:
             hist = yf.Ticker("^GSPC").history(period="1y")
-            if len(hist) >= 200:
-                current = float(hist["Close"].iloc[-1])
-                ma200   = float(hist["Close"].tail(200).mean())
+            closes = hist["Close"].dropna()  # yfinance hängt manchmal eine NaN-Zeile an
+            if len(closes) >= 200:
+                current = float(closes.iloc[-1])
+                ma200   = float(closes.tail(200).mean())
+                # Kaputte Daten (NaN/0) dürfen NICHT zu Score 1.0 werden
+                if not math.isfinite(current) or not math.isfinite(ma200) or ma200 == 0:
+                    return None, 0.2
                 gap_pct = (current - ma200) / ma200 * 100
                 # 0 at gap=+10%, 1 at gap=-15%
                 score = max(0.0, min(1.0, (-gap_pct + 5) / 20))
@@ -324,16 +358,27 @@ class RecessionDetector:
         return bear_pct, score
 
     def _credit_spread_signal(self) -> Tuple[Optional[float], float]:
-        """HYG (high yield) vs IEI (7-10yr treasury) – flight to safety indicator."""
+        """HYG (high yield) vs IEI (7-10yr treasury) – flight to safety indicator.
+        Score basiert auf 2-Jahres-Perzentil: niedriges HYG/IEI = Stress = hoher Score.
+        2-Jahres-Fenster verhindert, dass ein einzelnes Stressjahr als 'Normal' gilt."""
         try:
-            hyg  = yf.Ticker("HYG").history(period="2d")
-            iei  = yf.Ticker("IEI").history(period="2d")
-            if not hyg.empty and not iei.empty:
-                ratio = float(hyg["Close"].iloc[-1]) / float(iei["Close"].iloc[-1])
-                # Ratio falls in stress (HYG drops, IEI rises)
-                # Approximate normal ~1.0, stressed ~0.85
-                score = max(0.0, min(1.0, (1.05 - ratio) / 0.20))
-                return ratio, score
+            hyg = yf.Ticker("HYG").history(period="2y")
+            iei = yf.Ticker("IEI").history(period="2y")
+            if len(hyg) < 20 or len(iei) < 20:
+                return None, 0.2
+            n = min(len(hyg), len(iei))
+            ratios = hyg["Close"].values[-n:] / iei["Close"].values[-n:]
+            ratios = ratios[~np.isnan(ratios)]  # NaN-Zeilen raus, sonst Score-Verfälschung
+            if len(ratios) < 20:
+                return None, 0.2
+            ratio_now = float(ratios[-1])
+            lo, hi = float(ratios.min()), float(ratios.max())
+            # Kaputte Daten (NaN) dürfen NICHT zu Score 1.0 werden
+            if not (math.isfinite(ratio_now) and math.isfinite(lo) and math.isfinite(hi)) or hi <= lo:
+                return (ratio_now if math.isfinite(ratio_now) else None), 0.2
+            # Invertiert: ratio am 2J-Tief = Score 1.0 (Stress), Hoch = Score 0.0
+            score = max(0.0, min(1.0, 1.0 - (ratio_now - lo) / (hi - lo)))
+            return ratio_now, round(score, 3)
         except Exception:
             pass
         return None, 0.2
@@ -380,6 +425,17 @@ class RecessionDetector:
     def _claude_macro_signal(
         self, macro_news: List[Dict], quant_score: float
     ) -> Tuple[float, str]:
+        # Cache: nicht jeden Zyklus neu bezahlen.
+        if self._macro_cache is not None:
+            ts, score, summary = self._macro_cache
+            if time.time() - ts < self._MACRO_CACHE_SEC:
+                return score, summary
+        # Budget-Gate: respektiert dasselbe Tageslimit wie der Hauptpfad.
+        if self._cost_tracker is not None:
+            allowed, reason = self._cost_tracker.check_daily_limit()
+            if not allowed:
+                log.info("Regime-Claude übersprungen (Budget): %s", reason)
+                return 0.3, ""
         news_text = "\n".join(
             f"- {n.get('title', '')} ({n.get('source', '')})"
             for n in macro_news[:10]
@@ -400,17 +456,25 @@ Antworte NUR mit diesem JSON (kein Text davor/dahinter):
 }}"""
         try:
             import anthropic
+            from config import config as _cfg
             client = anthropic.Anthropic(api_key=self.api_key)
+            model = _cfg.claude_model  # vorher hartcodiert claude-opus-4-7 (≈30× teurer)
             resp = client.messages.create(
-                model="claude-opus-4-7",
+                model=model,
                 max_tokens=400,
                 messages=[{"role": "user", "content": prompt}],
             )
+            if self._cost_tracker is not None:
+                it, ot, cr = self._cost_tracker.usage_from_response(resp)
+                self._cost_tracker.record_claude_usage(model, it, ot, cr)
             raw = resp.content[0].text.strip()
             start = raw.find("{")
             end   = raw.rfind("}") + 1
             data  = json.loads(raw[start:end])
-            return float(data.get("macro_recession_score", 0.3)), data.get("summary", "")
+            score = float(data.get("macro_recession_score", 0.3))
+            summary = data.get("summary", "")
+            self._macro_cache = (time.time(), score, summary)
+            return score, summary
         except Exception:
             return 0.3, ""
 
@@ -551,7 +615,7 @@ Antworte NUR mit diesem JSON (kein Text davor/dahinter):
                 components, macro_summary)
                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 result["recession_score"],
                 result["regime"],
                 result.get("vix"),
@@ -577,7 +641,7 @@ Antworte NUR mit diesem JSON (kein Text davor/dahinter):
         return d
 
     def get_history(self, days: int = 30) -> List[Dict]:
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
         cursor = self._conn.execute(
             """SELECT recorded_at, recession_score, regime, vix, yield_spread
                FROM regime_snapshots WHERE recorded_at > ? ORDER BY recorded_at DESC""",
@@ -587,7 +651,7 @@ Antworte NUR mit diesem JSON (kein Text davor/dahinter):
 
     def cleanup_old_snapshots(self, keep_days: int = 90) -> int:
         """Löscht Regime-Snapshots die älter als keep_days sind. Gibt Anzahl gelöschter Zeilen zurück."""
-        cutoff = (datetime.utcnow() - timedelta(days=keep_days)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=keep_days)).isoformat()
         cursor = self._conn.execute(
             "DELETE FROM regime_snapshots WHERE recorded_at < ?", (cutoff,)
         )

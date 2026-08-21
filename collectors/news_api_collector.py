@@ -1,5 +1,5 @@
 from newsapi import NewsApiClient
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 from config import config
 
@@ -19,7 +19,7 @@ class NewsAPICollector:
             return []
 
         client = self._get_client()
-        cutoff = (datetime.utcnow() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days_back)).strftime("%Y-%m-%d")
         query = f"{ticker} stock" if not company_name else f"{company_name} OR {ticker} stock"
 
         results = []
@@ -53,7 +53,7 @@ class NewsAPICollector:
         if not config.newsapi_key:
             return []
         client = self._get_client()
-        cutoff = (datetime.utcnow() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days_back)).strftime("%Y-%m-%d")
         results = []
         try:
             response = client.get_everything(

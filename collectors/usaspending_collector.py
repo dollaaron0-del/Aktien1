@@ -13,7 +13,8 @@ API: https://api.usaspending.gov – kostenlos, kein API-Key erforderlich.
 """
 
 import requests
-from datetime import datetime, timedelta
+from system.http import http_post
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 import yfinance as yf
 
@@ -37,8 +38,8 @@ class USASpendingCollector:
     def __init__(self, lookback_days: int = 180, min_award_usd: float = 1_000_000):
         self.lookback_days = lookback_days
         self.min_award_usd = min_award_usd
-        self._cutoff = (datetime.utcnow() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-        self._today = datetime.utcnow().strftime("%Y-%m-%d")
+        self._cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+        self._today = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
 
     def collect(self, ticker: str) -> List[Dict]:
         company_name = self._resolve_company_name(ticker)
@@ -90,7 +91,7 @@ class USASpendingCollector:
             "page": 1,
         }
         try:
-            resp = requests.post(
+            resp = http_post(
                 f"{_BASE_URL}/search/spending_by_award/",
                 json=payload,
                 headers=_HEADERS,

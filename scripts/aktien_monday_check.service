@@ -1,0 +1,9 @@
+[Unit]
+Description=Aktien-Bot Montags-Gegencheck (erster Vollzyklus nach Crash-Fix)
+After=network-online.target aktien_bot.service
+
+[Service]
+Type=oneshot
+User=aaron
+WorkingDirectory=/opt/Aktien
+ExecStart=/opt/Aktien/venv/bin/python /opt/Aktien/scripts/monday_cycle_check.py

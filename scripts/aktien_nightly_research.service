@@ -1,0 +1,11 @@
+[Unit]
+Description=Aktien-Bot Nacht-Forschungs-Warteschlange (Roadmap 6.7)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=aaron
+WorkingDirectory=/opt/Aktien
+# DEADLINE_OVERRIDE optional setzen (Test/Trockenlauf), z.B.:
+#   Environment=DEADLINE_OVERRIDE=2026-07-18 00:05:00
+ExecStart=/opt/Aktien/scripts/nightly_research.sh

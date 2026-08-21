@@ -6,9 +6,10 @@ Quellen: CNBC RSS, Bloomberg RSS (öffentlich), Yahoo Finance RSS.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 import requests
+from system.http import http_get
 from email.utils import parsedate_to_datetime
 
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; StockBot/1.0)"}
@@ -44,11 +45,11 @@ class CEOInterviewCollector:
 
     def collect(self, ticker: str, lookback_days: int = 14) -> List[Dict]:
         results = []
-        cutoff  = datetime.utcnow() - timedelta(days=lookback_days)
+        cutoff  = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)
 
         for source in _SOURCES:
             try:
-                resp = requests.get(source["url"], headers=_HEADERS, timeout=10)
+                resp = http_get(source["url"], headers=_HEADERS, timeout=10)
                 if resp.status_code != 200:
                     continue
 
@@ -74,7 +75,7 @@ class CEOInterviewCollector:
                         if pub_dt < cutoff:
                             continue
                     except Exception:
-                        pub_dt = datetime.utcnow()
+                        pub_dt = datetime.now(timezone.utc).replace(tzinfo=None)
 
                     results.append({
                         "source":       f"CEO Interview ({source['name']})",

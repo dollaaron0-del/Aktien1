@@ -2,9 +2,11 @@
 bot/runner.py – Analysis cycle, news collection, and related helpers.
 """
 
+import math
 import os
-from collections import defaultdict
-from datetime import datetime, date
+import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from typing import List, Dict, Optional
 
 from rich.console import Console
@@ -12,22 +14,25 @@ from rich.console import Console
 from config import config
 from logger import get_logger
 from collectors import (
-    RedditCollector, YahooCollector, NewsAPICollector,
+    YahooCollector, NewsAPICollector,
     InsiderCollector, USASpendingCollector,
     SECEdgarCollector, StockTwitsCollector, WireCollector,
     OptionsFlowCollector, EuropeanNewsCollector, TwitterCollector,
     SEC8KCollector, ShortInterestCollector, InstitutionalCollector,
-    AnalystCollector, EarningsTranscriptCollector, PatentCollector,
+    AnalystCollector,
     JobListingsCollector, CEOInterviewCollector, EURegulationCollector,
-    ChineseMediaCollector, WebTrafficCollector,
+    ChineseMediaCollector, WebTrafficCollector, GermanMediaCollector,
+    InternationalMediaCollector, QuiverCollector,
+    EconomicCalendarCollector, AdhocCollector,
+    FDACalendarCollector, EstimateRevisionsCollector, ShortVolumeCollector,
+    GoogleTrendsCollector, WikipediaViewsCollector, OpenFDACollector,
+    NHTSARecallsCollector, SECActivistCollector,
 )
 from collectors.news_archive import NewsArchive
 from collectors.crypto_news_collector import CryptoNewsCollector
 from analyzers import ClaudeAnalyzer, AnalysisResult
 from analyzers.chart_patterns import ChartPatternAnalyzer
-from analyzers.onchain_signals import OnChainSignalAnalyzer
 from analyzers.eu_market_context import EUMarketContext
-from collectors.onchain_collector import OnChainCollector
 from analyzers.reflection_engine import ReflectionEngine
 from analyzers.dynamic_watchlist import DynamicWatchlist
 from analyzers.signal_expander import SignalDrivenExpander
@@ -36,10 +41,10 @@ from analyzers.multi_timeframe_sentiment import MultiTimeframeSentiment
 from analyzers.reentry_tracker import ReEntryTracker
 from analyzers.analysis_cache import AnalysisCache
 from analyzers.analysis_log import AnalysisLog
+from analyzers.prompt_archive import PromptArchive
 import analyzers.user_request_queue as _urq
 from analyzers.rl_agent import RLAgent
 from analyzers.earnings_predictor import EarningsPredictor
-from analyzers.cross_asset import CrossAssetSignals
 from analyzers.multi_agent_analyzer import MultiAgentAnalyzer
 from broker.paper_broker import PaperBroker
 from portfolio import Portfolio
@@ -47,20 +52,141 @@ from portfolio.performance_tracker import PerformanceTracker
 from portfolio.phase_controller import PhaseController
 from strategy import SwingStrategy
 from notifier.telegram_notifier import TelegramNotifier
-from collectors.tradingview_webhook import get_pending_sells, get_pending_macro_events
+from bot import cycle_analysis
+from bot import cycle_checks
+from bot import cycle_close
+from bot import cycle_exits
+from bot import cycle_prefetch
+from bot.cycle_close import print_portfolio_summary as _print_portfolio_summary
+from bot.cycle_close import progress_bar as _progress_bar
 
 console = Console()
 log = get_logger(__name__)
 
+# ── Experience-Store (Selbstlern-Datensatz, lazy Singleton, fail-open) ──
+_experience_store = None
+_experience_store_tried = False
+
+
+def _get_experience_store():
+    """Lädt den ExperienceStore einmalig; None wenn nicht verfügbar (fail-open)."""
+    global _experience_store, _experience_store_tried
+    if _experience_store_tried:
+        return _experience_store
+    _experience_store_tried = True
+    try:
+        from analyzers.experience_store import ExperienceStore
+        _experience_store = ExperienceStore()
+    except Exception as _e:  # pragma: no cover - defensiv
+        log.debug("ExperienceStore nicht verfügbar: %s", _e)
+        _experience_store = None
+    return _experience_store
+
+
+def _valid_price(p) -> bool:
+    """True nur für eine echte, positive Zahl. Yahoo/yfinance liefern bei
+    neuen/illiquiden Titeln (z.B. frische IPOs wie SPCX) NaN als current_price –
+    und NaN ist truthy, sodass `if price` / `not price` es durchrutschen lassen.
+    Ein solcher NaN-BUY läuft dann bis zur Kauf-Empfehlung (inkl. Telegram-
+    Nachricht), scheitert aber zwangsläufig an der Kurs-Schranke vor der Order.
+    Zentral abgesichert (vgl. yfinance-NaN-Score-Falle)."""
+    try:
+        return p is not None and math.isfinite(float(p)) and float(p) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _ensure_current_price(ticker: str, price_data: Optional[dict], broker) -> dict:
+    """Sorgt für einen gültigen current_price in price_data. Liefert die primäre
+    Quelle (Yahoo) keinen (NaN/None/0 – z.B. neue/illiquide IPOs wie SPCX), wird
+    der Broker als Fallback befragt: IBKRBroker.get_price liefert dank Delayed-
+    Marktdaten (IBKR_MARKET_DATA_TYPE=3) einen Kurs und fällt seinerseits auf
+    yfinance zurück. Erst danach greift die NaN-Schranke.
+
+    NUR aus dem seriellen Pfad aufrufen – ib_insync ist nicht thread-safe und der
+    Broker hat keinen Lock; im parallelen Prefetch-Pool wäre das unsicher."""
+    if price_data is None:
+        price_data = {"ticker": ticker}
+    if _valid_price(price_data.get("current_price")):
+        return price_data
+    getter = getattr(broker, "get_price", None)
+    if not callable(getter):
+        return price_data
+    try:
+        bp = getter(ticker)
+    except Exception as e:
+        log.debug("[%s] Broker-Preis-Fallback fehlgeschlagen: %s", ticker, e)
+        return price_data
+    if _valid_price(bp):
+        price_data["current_price"] = round(float(bp), 4)
+        log.info("[%s] Kurs via Broker-Fallback (Primärquelle leer): $%.4f", ticker, float(bp))
+    return price_data
+
+import threading as _threading
+_cycle_lock = _threading.Lock()
+_last_cycle_start: Optional[datetime] = None
+_MIN_CYCLE_GAP_MINUTES = int(os.getenv("MIN_CYCLE_GAP_MINUTES", "20"))
+
 _dynamic_watchlist  = DynamicWatchlist(max_picks=config.scan_max_picks or 12) if config.auto_scan_watchlist else None
 _rl_agent           = RLAgent()
 _earnings_predictor = EarningsPredictor()
-_cross_asset        = CrossAssetSignals()
 _signal_expander    = SignalDrivenExpander()
 _analysis_cache     = AnalysisCache()
 _analysis_log       = AnalysisLog()
+_prompt_archive     = PromptArchive()  # Roadmap 1.4d: KI-Prompt-Archiv
+
+# Semantic dedup – einmal laden, alle Ticker eines Zyklus nutzen dieselbe Instanz
+try:
+    from analyzers.semantic_dedup import SemanticDeduplicator as _SemDedup
+    _semantic_dedup = _SemDedup() if config.ollama_enabled else None
+except Exception:
+    _semantic_dedup = None
 
 _collect_log = get_logger("collectors")
+
+# ── Tages-Aktionen-Speicher ────────────────────────────────────────────────
+# Die Tages-Zusammenfassung wird NICHT mehr pro Zyklus gesendet (das war die
+# Telegram-Flut: 1× je Markt-Slot/Trigger/Watchdog). Stattdessen sammeln alle
+# Zyklen ihre Käufe/Verkäufe hier; die Abend-Summary (_daily_summary_job im
+# Scheduler) liest sie einmal täglich gebündelt aus.
+_DAILY_ACTIONS_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "daily_actions.json")
+
+
+def record_daily_actions(actions: List[str]) -> None:
+    """Hängt die Aktionen eines Zyklus an den heutigen Tagesspeicher an."""
+    if not actions:
+        return
+    import json as _json
+    today = datetime.now().date().isoformat()
+    try:
+        data: Dict = {}
+        if os.path.exists(_DAILY_ACTIONS_PATH):
+            with open(_DAILY_ACTIONS_PATH, "r", encoding="utf-8") as f:
+                data = _json.load(f) or {}
+        if data.get("date") != today:
+            data = {"date": today, "actions": []}
+        data["actions"].extend(actions)
+        with open(_DAILY_ACTIONS_PATH, "w", encoding="utf-8") as f:
+            _json.dump(data, f, ensure_ascii=False)
+    except Exception as _e:
+        log.debug("record_daily_actions fehlgeschlagen: %s", _e)
+
+
+def pop_daily_actions() -> List[str]:
+    """Liest die heutigen Aktionen und leert den Speicher (für die Abend-Summary)."""
+    import json as _json
+    today = datetime.now().date().isoformat()
+    try:
+        if not os.path.exists(_DAILY_ACTIONS_PATH):
+            return []
+        with open(_DAILY_ACTIONS_PATH, "r", encoding="utf-8") as f:
+            data = _json.load(f) or {}
+        actions = data.get("actions", []) if data.get("date") == today else []
+        os.remove(_DAILY_ACTIONS_PATH)
+        return actions
+    except Exception as _e:
+        log.debug("pop_daily_actions fehlgeschlagen: %s", _e)
+        return []
 
 
 def _is_crypto(ticker: str) -> bool:
@@ -105,7 +231,7 @@ def _base_symbol(ticker: str) -> str:
     return upper
 
 
-def _get_watchlist(portfolio: Portfolio) -> List[str]:
+def _get_watchlist(portfolio: Portfolio) -> tuple:
     """Returns watchlist: dynamic/static US + optional EU + optional Crypto."""
     if _dynamic_watchlist:
         active = list(portfolio.all_positions().keys())
@@ -143,13 +269,6 @@ def _get_watchlist(portfolio: Portfolio) -> List[str]:
             if t not in base:
                 base.append(t)
 
-    # Vom Dashboard manuell angeforderte Ticker einmalig analysieren
-    requested = _urq.consume_all()
-    for t in requested:
-        if t not in base:
-            log.info("Nutzeranfrage: %s wird in diesem Zyklus analysiert", t)
-            base.append(t)
-
     # Opportunity-Scan: bei ≥50% freien Slots nach weiteren Kandidaten suchen
     _opportunity_scan(portfolio, base)
 
@@ -175,38 +294,69 @@ def _get_watchlist(portfolio: Portfolio) -> List[str]:
     except Exception as e:
         log.debug("Verwandte-Ticker-Lookup fehlgeschlagen: %s", e)
 
-    # BenchList: Top-Kandidaten immer für Analyse einbeziehen (unabhängig von Slots)
-    try:
-        from analyzers.bench_list import BenchList
-        _bench = BenchList()
-        _bench.cleanup()
-        _bench_candidates = _bench.pop_candidates(_bench_picks, exclude=base)
-        for _bt in _bench_candidates:
-            base.append(_bt)
-        if _bench_candidates:
-            console.print(
-                f"  [magenta]📋 BenchList → Analyse: {', '.join(_bench_candidates)}[/magenta]"
-            )
-    except Exception as e:
-        log.debug("BenchList-Analyse-Pull fehlgeschlagen: %s", e)
+    # BenchList + Sektor-Sampler: im Frugal-Modus deaktiviert (nur Kern-Watchlist)
+    _bench_geo_contexts: dict = {}
+    if not config.frugal_mode:
+        try:
+            from analyzers.bench_list import BenchList
+            _bench = BenchList()
+            _bench.cleanup()
+            _bench_candidates = _bench.pop_candidates(_bench_picks, exclude=base)
+            for _bt in _bench_candidates:
+                base.append(_bt)
+                ctx = _bench.get_context(_bt)
+                if ctx and ctx.get("geo_context"):
+                    _bench_geo_contexts[_bt] = ctx["geo_context"]
+            if _bench_candidates:
+                geo_flagged = [t for t in _bench_candidates if t in _bench_geo_contexts]
+                flag_str = f" (🌍 Geo: {', '.join(geo_flagged)})" if geo_flagged else ""
+                console.print(
+                    f"  [magenta]📋 BenchList → Analyse: {', '.join(_bench_candidates)}{flag_str}[/magenta]"
+                )
+        except Exception as e:
+            log.debug("BenchList-Analyse-Pull fehlgeschlagen: %s", e)
 
-    # Sektor-Stichprobe: rotierende Sektor-Aktien für Netz-Aufbau
+        try:
+            from analyzers.sector_sampler import SectorSampler
+            sector_name, sample = SectorSampler().get_sample(exclude=base)
+            added_sample = [t for t in sample if t not in base]
+            for t in added_sample:
+                base.append(t)
+            if added_sample:
+                console.print(
+                    f"  [blue]🔬 Sektor-Stichprobe ({sector_name}): "
+                    f"{', '.join(added_sample)}[/blue]"
+                )
+        except Exception as e:
+            log.debug("Sektor-Sampler fehlgeschlagen: %s", e)
+    else:
+        log.debug("Frugal-Modus: BenchList + Sektor-Sampler übersprungen")
+
+    # Cross-Listing-Dedup: dieselbe Firma nicht zweimal analysieren (SAP + SAP.DE
+    # liefen am 24.7.2026 parallel durch den Zyklus – doppelte Analysekosten und
+    # zwei widersprüchliche Entscheidungen für eine Firma). Der Ticker, unter dem
+    # eine Position geführt wird, gewinnt; sonst der zuerst aufgenommene.
     try:
-        from analyzers.sector_sampler import SectorSampler
-        sector_name, sample = SectorSampler().get_sample(exclude=base)
-        added_sample = [t for t in sample if t not in base]
-        for t in added_sample:
-            base.append(t)
-        if added_sample:
-            console.print(
-                f"  [blue]🔬 Sektor-Stichprobe ({sector_name}): "
-                f"{', '.join(added_sample)}[/blue]"
-            )
+        from analyzers.stock_relations import canonical
+        _held = {t.upper() for t in portfolio.all_positions()}
+        _by_company: dict = {}
+        for _t in base:
+            _c = canonical(_t)
+            _prev = _by_company.get(_c)
+            if _prev is None or (_t.upper() in _held and _prev.upper() not in _held):
+                _by_company[_c] = _t
+        _deduped = [t for t in base if _by_company.get(canonical(t)) == t]
+        _dropped = [t for t in base if t not in _deduped]
+        if _dropped:
+            log.info("Cross-Listing-Dedup: %s übersprungen (Firma bereits als %s in der Watchlist)",
+                     ", ".join(_dropped),
+                     ", ".join(_by_company[canonical(t)] for t in _dropped))
+            base = _deduped
     except Exception as e:
-        log.debug("Sektor-Sampler fehlgeschlagen: %s", e)
+        log.debug("Cross-Listing-Dedup übersprungen: %s", e)
 
     log.info("Analyse-Watchlist: %d Aktien → %s", len(base), ", ".join(base[:15]))
-    return base
+    return base, _bench_geo_contexts
 
 
 def _opportunity_scan(portfolio: "Portfolio", base: List[str]) -> None:
@@ -309,37 +459,70 @@ def _safe_collect(collector_name: str, fn, *args, **kwargs) -> List[Dict]:
         return fn(*args, **kwargs) or []
     except Exception as e:
         _collect_log.warning("Collector %s fehlgeschlagen: %s", collector_name, e)
+        try:
+            from analyzers.source_monitor import get_monitor
+            get_monitor().note_error(collector_name)
+        except Exception:
+            pass
         return []
 
 
 def _make_collectors() -> Dict:
-    """Build all collector instances once per analysis cycle."""
-    _twitter = TwitterCollector()
-    return {
-        "yahoo":             YahooCollector(),
-        "reddit":            RedditCollector(),
-        "newsapi":           NewsAPICollector(),
-        "insider":           InsiderCollector(lookback_days=90),
-        "usaspending":       USASpendingCollector(lookback_days=180, min_award_usd=1_000_000),
-        "sec_edgar":         SECEdgarCollector(lookback_days=30),
-        "stocktwits":        StockTwitsCollector(lookback_hours=48),
-        "wire":              WireCollector(lookback_days=7),
-        "options_flow":      OptionsFlowCollector(),
-        "european_news":     EuropeanNewsCollector(lookback_hours=72),
-        "twitter":           _twitter if _twitter.available else None,
-        "sec_8k":            SEC8KCollector(),
-        "short_interest":    ShortInterestCollector(),
-        "institutional_13f": InstitutionalCollector(),
-        "analyst_ratings":   AnalystCollector(),
-        "earn_transcripts":  EarningsTranscriptCollector(),
-        "patents":           PatentCollector(),
-        "job_listings":      JobListingsCollector(),
-        "ceo_interviews":    CEOInterviewCollector(),
-        "eu_regulation":     EURegulationCollector(),
-        "chinese_media":     ChineseMediaCollector(),
-        "web_traffic":       WebTrafficCollector(),
-        "crypto_news":       CryptoNewsCollector(),
+    """Build all collector instances once per analysis cycle. Failed inits become None."""
+    _log = get_logger(__name__)
+
+    def _safe(name, fn):
+        try:
+            return fn()
+        except Exception as e:
+            _log.warning("Collector '%s' konnte nicht initialisiert werden: %s", name, e)
+            return None
+
+    _twitter = _safe("twitter", TwitterCollector)
+    out = {
+        "yahoo":             _safe("yahoo",           YahooCollector),
+        "newsapi":           _safe("newsapi",         NewsAPICollector),
+        "insider":           _safe("insider",         lambda: InsiderCollector(lookback_days=90)),
+        "usaspending":       _safe("usaspending",     lambda: USASpendingCollector(lookback_days=180, min_award_usd=1_000_000)),
+        "sec_edgar":         _safe("sec_edgar",       lambda: SECEdgarCollector(lookback_days=30)),
+        "stocktwits":        _safe("stocktwits",      lambda: StockTwitsCollector(lookback_hours=48)),
+        "wire":              _safe("wire",            lambda: WireCollector(lookback_days=7)),
+        "options_flow":      _safe("options_flow",    OptionsFlowCollector),
+        "european_news":     _safe("european_news",   lambda: EuropeanNewsCollector(lookback_hours=72)),
+        "twitter":           _twitter if (_twitter and _twitter.available) else None,
+        "sec_8k":            _safe("sec_8k",          SEC8KCollector),
+        "short_interest":    _safe("short_interest",  ShortInterestCollector),
+        "institutional_13f": _safe("institutional",   InstitutionalCollector),
+        "analyst_ratings":   _safe("analyst",         AnalystCollector),
+        "job_listings":      _safe("jobs",            JobListingsCollector),
+        "ceo_interviews":    _safe("ceo",             CEOInterviewCollector),
+        "eu_regulation":     _safe("eu_reg",          EURegulationCollector),
+        "chinese_media":     _safe("chinese",         ChineseMediaCollector),
+        "web_traffic":       _safe("web_traffic",     WebTrafficCollector),
+        "crypto_news":       _safe("crypto_news",     CryptoNewsCollector),
+        "german_media":      _safe("german",          lambda: GermanMediaCollector(lookback_hours=48)),
+        "intl_media":        _safe("intl",            lambda: InternationalMediaCollector(lookback_hours=48)),
+        "quiver":            _safe("quiver",          lambda: QuiverCollector(lookback_days=90)),
+        "econ_calendar":     _safe("econ_cal",        lambda: EconomicCalendarCollector(lookahead_days=14)),
+        "adhoc_de":          _safe("adhoc",           AdhocCollector),
+        "fda_calendar":      _safe("fda_calendar",    lambda: FDACalendarCollector(lookahead_days=120, lookback_days=21)),
+        "estimate_revisions":_safe("est_revisions",   EstimateRevisionsCollector),
+        "short_volume":      _safe("short_volume",    ShortVolumeCollector),
+        "google_trends":     _safe("google_trends",   GoogleTrendsCollector),
+        "wikipedia_views":   _safe("wikipedia_views", WikipediaViewsCollector),
+        "openfda":           _safe("openfda",         lambda: OpenFDACollector(lookback_days=30)),
+        "nhtsa_recalls":     _safe("nhtsa_recalls",   lambda: NHTSARecallsCollector(lookback_days=30)),
+        "sec_activist":      _safe("sec_activist",    lambda: SECActivistCollector(lookback_days=21)),
     }
+    # Abgeschaltete Quellen (config.collectors_disabled, N3-Befund): auf None
+    # setzen statt entfernen — sie erscheinen weiter mit 0 im sources_breakdown
+    # und bleiben so im Source-Health-Report als "deaktiviert" sichtbar.
+    _disabled = {c.strip().lower() for c in getattr(config, "collectors_disabled", [])}
+    for _name in out:
+        if _name.lower() in _disabled and out[_name] is not None:
+            _log.info("Collector '%s' per Konfiguration deaktiviert", _name)
+            out[_name] = None
+    return out
 
 
 def collect_news(ticker: str, archive: NewsArchive, collectors: Dict) -> tuple:
@@ -354,17 +537,43 @@ def collect_news(ticker: str, archive: NewsArchive, collectors: Dict) -> tuple:
     is_crypto = _is_crypto(ticker)
     # Collectors that make sense for crypto assets; stock-specific ones are skipped.
     _CRYPTO_ALLOWED = {
-        "yahoo", "reddit", "newsapi", "wire", "stocktwits",
-        "twitter", "crypto_news",
+        "yahoo", "newsapi", "wire", "stocktwits",
+        "twitter", "crypto_news", "econ_calendar",
     }
 
-    for name, collector in collectors.items():
-        if is_crypto and name not in _CRYPTO_ALLOWED:
+    active_collectors = {
+        name: col for name, col in collectors.items()
+        if col is not None and (not is_crypto or name in _CRYPTO_ALLOWED)
+    }
+    for name in collectors:
+        if name not in active_collectors:
             sources_breakdown[name] = 0
-            continue
-        items = _safe_collect(name, collector.collect, ticker) if collector is not None else []
-        sources_breakdown[name] = len(items)
-        all_items.extend(items)
+
+    if active_collectors:
+        _max_workers = min(8, len(active_collectors))
+        with ThreadPoolExecutor(max_workers=_max_workers) as _pool:
+            futures = {
+                _pool.submit(_safe_collect, name, col.collect, ticker): name
+                for name, col in active_collectors.items()
+            }
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    items = future.result()
+                except Exception:
+                    items = []
+                sources_breakdown[name] = len(items)
+                all_items.extend(items)
+
+    # Live-Quellen-Health: Artikel-Counts je Quelle für die Zyklus-Auswertung
+    # melden (nur tatsächlich aktive Collector – nicht konfigurierte zählen nicht).
+    try:
+        from analyzers.source_monitor import get_monitor
+        _mon = get_monitor()
+        for _name in active_collectors:
+            _mon.note_result(_name, sources_breakdown.get(_name, 0))
+    except Exception:
+        pass
 
     archive.store(ticker, all_items)
 
@@ -373,13 +582,16 @@ def collect_news(ticker: str, archive: NewsArchive, collectors: Dict) -> tuple:
     except Exception:
         pass
 
-    seen: set = set()
-    unique: List[Dict] = []
-    for item in all_items:
-        key = (item.get("title") or "").lower()[:80]
-        if key and key not in seen:
-            seen.add(key)
-            unique.append(item)
+    if _semantic_dedup is not None:
+        unique = _semantic_dedup.deduplicate(all_items)
+    else:
+        seen: set = set()
+        unique = []
+        for item in all_items:
+            key = (item.get("title") or "").lower()[:80]
+            if key and key not in seen:
+                seen.add(key)
+                unique.append(item)
 
     return unique, sources_breakdown
 
@@ -410,7 +622,8 @@ def _print_analysis(a: AnalysisResult):
     if a.target_price:
         console.print(f"  [bold]Zielkurs: ${a.target_price:.2f}[/bold] – {a.target_price_rationale}")
     if a.thesis_valid is False:
-        console.print(f"  [bold red]⚠ THESE GEBROCHEN: {a.thesis_break_reason}[/bold red]")
+        reason = a.thesis_break_reason or "Ursprüngliche Kaufkatalysatoren nicht mehr gültig"
+        console.print(f"  [bold red]⚠ THESE GEBROCHEN: {reason}[/bold red]")
     elif a.thesis_valid is True:
         console.print(f"  [green]✓ Kaufthese weiterhin gültig[/green]")
     if a.key_catalysts:
@@ -419,61 +632,86 @@ def _print_analysis(a: AnalysisResult):
         console.print(f"  Risiken: {', '.join(a.risk_factors[:3])}")
 
 
-def _print_portfolio_summary(portfolio: Portfolio, broker, phase_ctrl: PhaseController):
-    from rich.table import Table
-    from rich import box
-    from rich.panel import Panel
+def safe_run_analysis_cycle(*args, **kwargs) -> None:
+    """
+    Fehler-sicherer Wrapper um run_analysis_cycle.
+    Fängt alle unbehandelten Exceptions, loggt den vollen Traceback
+    und schickt ihn per Telegram — der Bot-Loop läuft weiter.
+    Enthält einen Lock + Mindestabstand (MIN_CYCLE_GAP_MINUTES, Standard 20 Min)
+    um gleichzeitige und zu schnell aufeinanderfolgende Zyklen zu verhindern.
+    Alle Aufruforte in scheduler.py sollten diesen Wrapper verwenden.
+    """
+    global _last_cycle_start
+    now = datetime.now()
 
-    positions = portfolio.all_positions()
-    prices = broker.get_prices(list(positions.keys())) if positions else {}
-    total = portfolio.total_value(prices)
-    phase_info = phase_ctrl.get_info(total)
+    if not _cycle_lock.acquire(blocking=False):
+        log.info("safe_run_analysis_cycle: Zyklus läuft bereits – Aufruf übersprungen.")
+        return
 
-    table = Table(title="Portfolio-Übersicht", box=box.ROUNDED)
-    table.add_column("Ticker", style="cyan")
-    table.add_column("Stück", justify="right")
-    table.add_column("Einstieg", justify="right")
-    table.add_column("Aktuell", justify="right")
-    table.add_column("P&L", justify="right")
-    table.add_column("SL", justify="right")
-    table.add_column("TP", justify="right")
-    table.add_column("Tage", justify="right")
+    try:
+        if _last_cycle_start is not None:
+            elapsed_min = (now - _last_cycle_start).total_seconds() / 60
+            if elapsed_min < _MIN_CYCLE_GAP_MINUTES:
+                log.info(
+                    "safe_run_analysis_cycle: letzter Zyklus vor %.0f Min – "
+                    "Mindestabstand %d Min nicht erreicht, übersprungen.",
+                    elapsed_min, _MIN_CYCLE_GAP_MINUTES,
+                )
+                return
+        _last_cycle_start = now
 
-    for ticker, pos in positions.items():
-        price = prices.get(ticker, pos.entry_price)
-        pnl = (price - pos.entry_price) * pos.shares
-        days = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
-        pnl_str = f"[green]+${pnl:.2f}[/green]" if pnl >= 0 else f"[red]-${abs(pnl):.2f}[/red]"
-        table.add_row(
-            ticker, f"{pos.shares:.2f}", f"${pos.entry_price:.2f}",
-            f"${price:.2f}", pnl_str, f"${pos.stop_loss:.2f}", f"${pos.take_profit:.2f}", str(days),
-        )
+        # Zeitplan-gesteuerter Modellwechsel für die Dauer des Zyklus: die
+        # automatische Idle-/RAM-Tier-Erkennung (system/resource_manager.py)
+        # erreicht PERFORMANCE auf diesem headless Server nie (keine Idle-
+        # Erkennung ohne Desktop-Session) - für die geplanten Analysezyklen
+        # wird der Tier deshalb hier explizit erzwungen, statt sich auf die
+        # wirkungslose Automatik zu verlassen. Timeout wird passend zum
+        # größeren Modell angehoben (gemessen: ~25-30s/Ticker warm auf der
+        # RTX 2070, vorher 60s Timeout war für das große Modell zu knapp).
+        _prev_prescreener_timeout = None
+        try:
+            from system.resource_manager import get_resource_manager, ResourceTier
+            import analyzers.ollama_prescreener as _op_mod
+            _rm = get_resource_manager()
+            _rm.force_tier(ResourceTier.PERFORMANCE)
+            _prescreener = getattr(_op_mod, "_prescreener_instance", None)
+            if _prescreener is not None:
+                _rm.apply_to_ollama(_prescreener)
+                _prev_prescreener_timeout = _prescreener.timeout
+                _prescreener.timeout = max(_prescreener.timeout, 120)
+        except Exception as _rm_err:
+            log.debug("Resource-Tier-Erzwingung für Analysezyklus fehlgeschlagen: %s", _rm_err)
 
-    console.print()
-    console.print(table)
-
-    phase_color = "green" if phase_info["phase"] == "GROWTH" else "magenta"
-    progress_bar = _progress_bar(phase_info["progress_pct"])
-    summary_lines = [
-        f"Cash: [bold]${portfolio.cash:,.2f}[/bold]  |  Gesamtwert: [bold]${total:,.2f}[/bold]",
-        f"Phase: [{phase_color}]{phase_info['phase']}[/{phase_color}]  |  "
-        f"Ziel: ${phase_info['growth_target']:,.0f}  |  "
-        f"Fortschritt: {progress_bar} {phase_info['progress_pct']:.1f}%",
-    ]
-    if phase_info["phase"] == "DISTRIBUTION":
-        summary_lines.append(
-            f"[bold magenta]Monatliche Ausschüttung: ${phase_info.get('monthly_distribution', 0):,.2f} "
-            f"(Ziel: ${phase_info['monthly_target']:,.2f})[/bold magenta]"
-        )
-    else:
-        summary_lines.append(f"Noch ${phase_info['remaining_to_goal']:,.2f} bis zur Ausschüttungsphase")
-
-    console.print(Panel("\n".join(summary_lines), title="Kapital & Phase", border_style=phase_color))
-
-
-def _progress_bar(pct: float, width: int = 20) -> str:
-    filled = int(pct / 100 * width)
-    return f"[{'█' * filled}{'░' * (width - filled)}]"
+        try:
+            run_analysis_cycle(*args, **kwargs)
+        except Exception as _fatal:
+            _tb = traceback.format_exc()
+            log.error("Analyse-Zyklus FATAL – ungefangene Exception:\n%s", _tb)
+            try:
+                TelegramNotifier().send(
+                    f"❌ <b>Analyse-Zyklus abgebrochen</b>\n\n"
+                    f"Fehler: <code>{str(_fatal)[:400]}</code>\n\n"
+                    f"Details: <code>journalctl -u aktien_bot -n 80</code>"
+                )
+            except Exception:
+                pass
+        finally:
+            # Tier + Timeout wieder freigeben, damit die normale Idle-/RAM-
+            # Logik (→ MINIMAL, außerhalb der Analysezyklen) wieder greift.
+            try:
+                from system.resource_manager import get_resource_manager
+                import analyzers.ollama_prescreener as _op_mod
+                _rm = get_resource_manager()
+                _rm.clear_forced_tier()
+                _prescreener = getattr(_op_mod, "_prescreener_instance", None)
+                if _prescreener is not None:
+                    if _prev_prescreener_timeout is not None:
+                        _prescreener.timeout = _prev_prescreener_timeout
+                    _rm.apply_to_ollama(_prescreener)
+            except Exception:
+                pass
+    finally:
+        _cycle_lock.release()
 
 
 def run_analysis_cycle(
@@ -486,16 +724,73 @@ def run_analysis_cycle(
     reflection: Optional[ReflectionEngine] = None,
     weekend_prep=None,
     hedge_strategy=None,
+    earnings_strategy=None,
+    announce_start: bool = False,
+    only_tickers: Optional[List[str]] = None,
 ):
-    rule_suffix = "  [bold yellow][EXPLORATION][/bold yellow]" if config.exploration_mode else ""
-    console.rule(f"[bold blue]Analyse-Zyklus – {datetime.now().strftime('%Y-%m-%d %H:%M')}{rule_suffix}")
+    _cycle_ts = datetime.now().strftime('%Y-%m-%d %H:%M')
+    console.rule(f"[bold blue]Analyse-Zyklus – {_cycle_ts}")
+
+    # Live-Sichtbarkeit (Roadmap 1.5): Status-Zeile + Aktivitätsfeed. Alle
+    # Funktionen sind fail-open (werfen nie) — nur der Import wird geschützt.
+    try:
+        from system import live_status as _live
+    except Exception:
+        class _live:  # noqa: N801 — Null-Objekt, hält die Aufrufstellen schlank
+            set_phase = set_idle = feed_emit = staticmethod(lambda *a, **k: None)
+    _live.set_phase("Start")
+    _live.feed_emit("cycle_start", detail=_cycle_ts)
+
+    # Makro-Lagebericht einmal pro Lauf bauen – fließt als Kontext in jede
+    # Einzelanalyse und wird hier transparent auf Konsole/Log/Telegram ausgegeben.
+    _macro_brief = ""
+    try:
+        from analyzers.macro_context import get_macro_brief
+        _macro_brief = get_macro_brief()
+    except Exception as _mc_err:
+        log.warning("Makro-Kontext konnte nicht gebaut werden: %s", _mc_err)
+    if _macro_brief:
+        log.info("Makro-Kontext:\n%s", _macro_brief)
+        console.print(f"[cyan]{_macro_brief}[/cyan]")
+
+    # Start-Nachricht nur für die geplante (vorbörsliche) Hauptanalyse – nicht für
+    # jeden intraday/getriggerten Zyklus. "Analyse gestartet"-Spam war zu viel;
+    # die relevanten Nachrichten sind Trades und gefundene Titel (Digest am Ende).
+    if announce_start:
+        try:
+            _start_msg = f"🔄 <b>Vorbörsliche Analyse gestartet</b> – {_cycle_ts}"
+            if _macro_brief:
+                # Erste Zeile ist die Überschrift des Briefs → durch fette Telegram-
+                # Überschrift ersetzen, Rest (Bullet-Zeilen) unverändert anhängen.
+                _body = _macro_brief.split("\n", 1)[1] if "\n" in _macro_brief else _macro_brief
+                _start_msg += f"\n\n📊 <b>Makro-Lage</b>\n{_body}"
+            TelegramNotifier().send(_start_msg)
+        except Exception:
+            pass
 
     # Multi-Agent Konsens wenn aktiviert, sonst Standard-Analyzer
     _multi_agent_enabled = os.getenv("MULTI_AGENT_ENABLED", "false").lower() in ("1", "true", "yes")
-    analyzer = MultiAgentAnalyzer() if _multi_agent_enabled else ClaudeAnalyzer()
+    try:
+        analyzer = MultiAgentAnalyzer() if _multi_agent_enabled else ClaudeAnalyzer()
+    except Exception as _az_err:
+        log.error("Analyzer-Initialisierung fehlgeschlagen: %s", _az_err, exc_info=True)
+        TelegramNotifier().send(f"❌ <b>Analyse-Fehler</b>\nAnalyzer-Init fehlgeschlagen: <code>{_az_err}</code>", level="critical")
+        return
     if _multi_agent_enabled:
         console.print("  [bold magenta]🤝 Multi-Agent Konsens aktiv[/bold magenta] (3 Claude-Analysten)")
-    collectors = _make_collectors()
+    try:
+        collectors = _make_collectors()
+    except Exception as _col_err:
+        log.error("Collector-Initialisierung fehlgeschlagen: %s", _col_err, exc_info=True)
+        TelegramNotifier().send(f"❌ <b>Analyse-Fehler</b>\nCollector-Init fehlgeschlagen: <code>{_col_err}</code>", level="critical")
+        return
+
+    # Live-Quellen-Health: Zyklus-Erfassung zurücksetzen (Counts/Fehler je Quelle).
+    try:
+        from analyzers.source_monitor import get_monitor
+        get_monitor().start_cycle()
+    except Exception:
+        pass
 
     # Inject continuous learning memo into Claude's system prompt
     lessons_memo = reflection.get_active_memo() if reflection else None
@@ -510,70 +805,56 @@ def run_analysis_cycle(
     # Track all material trade actions for the daily summary
     cycle_actions: List[str] = []
 
-    cycle_log = get_logger(__name__)
+    # Führt die StrategyResult-Entscheidungen der (reinen) SwingStrategy aus.
+    from strategy.executor import TradeExecutor
+    executor = TradeExecutor(portfolio, broker, getattr(strategy, "journal", None), strategy=strategy)
 
-    # ── Regime check + hedge evaluation ──────────────────────────────────────
-    if hedge_strategy:
-        macro_news_for_regime = []
-        try:
-            macro_news_for_regime = NewsAPICollector().collect_general("market recession economy", max_results=10)
-        except Exception as e:
-            cycle_log.warning("Hedge-Regime: Macro-News konnten nicht geladen werden – %s", e)
-        regime, hedge_actions = hedge_strategy.evaluate_regime(macro_news_for_regime or None)
-        regime_color = {"BULL": "green", "NEUTRAL": "yellow", "BEAR": "red", "CRISIS": "bold red"}.get(regime, "white")
-        latest = hedge_strategy.regime_summary()
-        score_str = f" (Score: {latest['recession_score']:.2f})" if latest else ""
-        console.print(f"  Marktregime: [{regime_color}]{regime}[/{regime_color}]{score_str}")
-        for action in hedge_actions:
-            console.print(f"  [magenta]{action}[/magenta]")
-            cycle_actions.append(action)
+    # Pre-Analyse-Marktkontext (Roadmap 4.4a, ausgelagert nach bot/cycle_checks.py):
+    # Regime-Check+Hedge-Eval → Makro-Events-Webhook → Earnings-Pre-Exit. Liefert
+    # das Markt-Regime für den Rest des Zyklus (check_exits/evaluate brauchen es).
+    regime = cycle_checks.run_pre_analysis_checks(hedge_strategy, earnings_strategy, cycle_actions)
 
-    # ── Makro-Events aus Webhook anzeigen ────────────────────────────────────
-    if config.tradingview_webhook_enabled:
-        try:
-            macro_events = get_pending_macro_events(since_hours=24)
-            for me in macro_events:
-                surprise_color = "red" if me.get("surprise") == "ABOVE" and me.get("event") in ("CPI", "PPI") \
-                                 else "green" if me.get("surprise") == "BELOW" else "yellow"
-                console.print(
-                    f"  [{surprise_color}]📣 Makro: {me['event']} "
-                    f"(Surprise={me.get('surprise','?')}, Impact={me.get('impact','?')})[/{surprise_color}]"
-                )
-        except Exception:
-            pass
-
-    # Check stop-loss / take-profit first (no Claude needed)
-    exit_actions = strategy.check_open_positions()
-    for action in exit_actions:
-        console.print(f"  [yellow]{action}[/yellow]")
-    cycle_actions.extend(exit_actions)
-
-    # TradingView SELL-Signale verarbeiten (Short/Bearish Engulfing)
-    if config.tradingview_webhook_enabled:
-        tv_sells = get_pending_sells()
-        for sig in tv_sells:
-            tv_ticker = sig["ticker"]
-            pos = portfolio.get_position(tv_ticker)
-            if pos:
-                price = broker.get_price(tv_ticker) or pos.entry_price
-                action = strategy._do_close(
-                    tv_ticker, pos, price,
-                    f"TradingView SELL-Signal ({sig.get('strategy', 'TV')})"
-                )
-                msg = (
-                    f"[{tv_ticker}] 📉 TradingView SELL ({sig.get('strategy', 'TV')}) "
-                    f"@ ${price:.2f}"
-                )
-                console.print(f"  [bold red]{msg}[/bold red]")
-                cycle_actions.append(msg)
-            else:
-                console.print(
-                    f"  [dim]TradingView SELL [{tv_ticker}]: keine offene Position[/dim]"
-                )
+    # Exit-Prüfung (Roadmap 4.4a, ausgelagert nach bot/cycle_exits.py): SL/TP-
+    # Check (kein Claude nötig) → TradingView-SELL-Signale.
+    cycle_exits.run_exit_checks(portfolio, broker, strategy, executor, regime, cycle_actions, _live)
 
     # EU Marktbarometer einmal pro Zyklus laden (cached 2h)
     _eu_market_ctx = None
-    active_watchlist = _get_watchlist(portfolio)
+    # Vom Dashboard / Headline-Signal angeforderte Ticker einsammeln, BEVOR die
+    # Watchlist eingefroren wird – force_claude und headline_meta gelten pro Zyklus.
+    # Bei Fokus-/Einzel-Läufen die Queue NICHT leeren (gehört dem nächsten
+    # geplanten Zyklus) und nichts erzwingen – das Potenzial-Gate hat schon entschieden.
+    _requested = [] if only_tickers else _urq.consume_all()  # List[(ticker, meta)]
+    _force_claude_tickers: set = set()
+    _headline_meta: Dict[str, dict] = {}
+    # Ergebnisse der Headline-Signal-Ticker werden gesammelt und am Zyklus-Ende
+    # in EINER Digest-Nachricht gemeldet – statt einer Einzelnachricht pro Aktie
+    # (sonst Telegram-Flut bei mehreren getriggerten Titeln).
+    _headline_results: List[str] = []
+    active_watchlist, _bench_geo_contexts = _get_watchlist(portfolio)
+
+    # Einzel-Aktien-/Fokus-Lauf: getriggerte Eskalation analysiert NUR die
+    # übergebenen Ticker (plus deren ggf. offene Position), nicht die ganze
+    # Watchlist. Spart Claude-Calls und hält den Bot „vor der Welle" agil.
+    if only_tickers:
+        _focus = [_normalize_ticker(t) for t in only_tickers]
+        active_watchlist = list(dict.fromkeys(_focus))
+        _bench_geo_contexts = {
+            k: v for k, v in (_bench_geo_contexts or {}).items() if k in active_watchlist
+        }
+
+    for _t, _meta in _requested:
+        if _t not in active_watchlist:
+            log.info("Nutzeranfrage: %s wird in diesem Zyklus analysiert", _t)
+            active_watchlist.append(_t)
+        # Claude nur bei EXPLIZITER Anfrage erzwingen (Dashboard = leere Meta).
+        # Auto-Signale der Hintergrund-Scanner (Meta gesetzt) laufen durchs
+        # Frugal-Gate: Ollama prüft vor, nur echte Katalysatoren erreichen Claude.
+        if not _meta:
+            _force_claude_tickers.add(_t)
+        if _meta.get("from_headline"):
+            _headline_meta[_t] = _meta
+
     if any(_is_eu_stock(t) for t in active_watchlist):
         try:
             _eu_market_ctx = EUMarketContext().get_snapshot()
@@ -594,233 +875,80 @@ def run_analysis_cycle(
         except Exception as e:
             log.debug("EU Marktkontext fehlgeschlagen: %s", e)
 
-    for ticker in active_watchlist:
-        ticker = _normalize_ticker(ticker)
-        console.print(f"\n[cyan]Sammle Daten für {ticker}...[/cyan]")
+    # Analyse-Vorladung (Roadmap 4.4a, ausgelagert nach bot/cycle_prefetch.py):
+    # News+Preis für die ganze Watchlist parallel vorladen, danach optional
+    # (mehrere Ticker, PARALLEL_ANALYSIS) die teure Analyse selbst vorab
+    # parallel berechnen. Die serielle Schleife unten greift zuerst auf die
+    # zurückgegebenen Dicts zu (Cache-Hit) und fällt sonst auf ihren eigenen
+    # seriellen Pfad zurück (z.B. wenn PARALLEL_ANALYSIS aus ist).
+    _prefetch = cycle_prefetch.run_prefetch(
+        active_watchlist,
+        broker=broker, strategy=strategy, analyzer=analyzer, archive=archive,
+        collectors=collectors, lessons_memo=lessons_memo, weekly_briefing=weekly_briefing,
+        macro_brief=_macro_brief, eu_market_ctx=_eu_market_ctx,
+        bench_geo_contexts=_bench_geo_contexts, regime=regime,
+        force_claude_tickers=_force_claude_tickers, multi_agent_enabled=_multi_agent_enabled,
+        live=_live, normalize_ticker=_normalize_ticker, is_crypto=_is_crypto,
+        is_eu_stock=_is_eu_stock, collect_news=collect_news,
+        news_velocity_cls=NewsVelocityAnalyzer,
+        multi_timeframe_sentiment_cls=MultiTimeframeSentiment,
+        reentry_tracker_cls=ReEntryTracker,
+        chart_pattern_analyzer_cls=ChartPatternAnalyzer,
+    )
+    _vel_analyzer, _mtf_sentiment   = _prefetch.vel_analyzer, _prefetch.mtf_sentiment
+    _reentry_tracker, _chart_analyzer = _prefetch.reentry_tracker, _prefetch.chart_analyzer
+    _mech_conv, _mech_brief_fn      = _prefetch.mech_conv, _prefetch.mech_brief_fn
+    _prefetch_news, _prefetch_price = _prefetch.news, _prefetch.price
+    _prefetch_analysis              = _prefetch.analysis
 
-        news, sources_breakdown = collect_news(ticker, archive, collectors)
-        if _is_crypto(ticker):
-            crypto_price = broker.get_crypto_price(ticker)
-            price_data = {"current_price": crypto_price, "volume": 0}
-        else:
-            price_data = collectors["yahoo"].get_price_data(ticker)
+    _frugal_cache_hours = 8  # Frugal-Modus: Ticker < 8h alt überspringen
 
-        # Kurs-Check vor Claude: kein Kurs → Claude-Aufruf sparen
-        if not _is_crypto(ticker) and not price_data.get("current_price"):
-            console.print(f"  [dim]Kein Kurs für {ticker} verfügbar – übersprungen[/dim]")
-            continue
+    _wl_total = len(active_watchlist)
+    _hb_every = max(0, int(os.getenv("HEARTBEAT_EVERY", "20")))  # 0 = Heartbeat aus
 
-        # Feed news items to signal expander – detects unknown small-cap tickers
-        new_signal_tickers = _signal_expander.process_news_items(news)
-        if new_signal_tickers:
-            console.print(f"  [magenta]📡 Neue Signal-Ticker entdeckt: {', '.join(new_signal_tickers)}[/magenta]")
+    # Serielle Analyse-Schleife (Roadmap 4.4a, ausgelagert nach
+    # bot/cycle_analysis.py): der eigentliche Kern des Zyklus – pro Ticker
+    # News/Preis auflösen, Daten-Gate, FinBERT/Insider/Signal-Expander,
+    # Claude-Analyse, Cache/Log-Persistenz, Conditional-Entry, Stock-
+    # Relations, RL-Veto-gesteuertes evaluate()+Executor, Decision-Log,
+    # Prediction-Tracker, Experience-Store, Earnings-Strategy. Mutiert
+    # cycle_actions/_headline_results in place.
+    cycle_analysis.run_ticker_loop(
+        active_watchlist,
+        portfolio=portfolio, broker=broker, strategy=strategy, executor=executor,
+        tracker=tracker, reflection=reflection, earnings_strategy=earnings_strategy,
+        archive=archive, collectors=collectors, analyzer=analyzer,
+        cycle_actions=cycle_actions, regime=regime, lessons_memo=lessons_memo,
+        weekly_briefing=weekly_briefing, macro_brief=_macro_brief,
+        eu_market_ctx=_eu_market_ctx, bench_geo_contexts=_bench_geo_contexts,
+        force_claude_tickers=_force_claude_tickers, headline_meta=_headline_meta,
+        headline_results=_headline_results, mech_conv=_mech_conv,
+        mech_brief_fn=_mech_brief_fn, prefetch_analysis=_prefetch_analysis,
+        prefetch_news=_prefetch_news, prefetch_price=_prefetch_price,
+        frugal_cache_hours=_frugal_cache_hours, announce_start=announce_start,
+        wl_total=_wl_total, hb_every=_hb_every, live=_live,
+        vel_analyzer=_vel_analyzer, mtf_sentiment=_mtf_sentiment,
+        reentry_tracker=_reentry_tracker, chart_analyzer=_chart_analyzer,
+        normalize_ticker=_normalize_ticker, is_crypto=_is_crypto,
+        is_eu_stock=_is_eu_stock, collect_news=collect_news,
+        ensure_current_price=_ensure_current_price, valid_price=_valid_price,
+        print_analysis=_print_analysis,
+        news_velocity_cls=NewsVelocityAnalyzer,
+        multi_timeframe_sentiment_cls=MultiTimeframeSentiment,
+        reentry_tracker_cls=ReEntryTracker,
+        chart_pattern_analyzer_cls=ChartPatternAnalyzer,
+        telegram_notifier_cls=TelegramNotifier,
+        analysis_cache=_analysis_cache, analysis_log=_analysis_log,
+        prompt_archive=_prompt_archive,
+        earnings_predictor=_earnings_predictor, signal_expander=_signal_expander,
+        rl_agent=_rl_agent, get_experience_store=_get_experience_store,
+    )
 
-        # Load 30-day history, excluding articles already in current batch
-        current_titles = {item.get("title") or "" for item in news}
-        historical = archive.get_history(ticker, days=30, exclude_titles=current_titles)
-
-        src = sources_breakdown
-        console.print(
-            f"  [bold]{len(news)}[/bold] Artikel total | {len(historical)} historisch | "
-            f"Yahoo:{src['yahoo']} Reddit:{src['reddit']} NewsAPI:{src['newsapi']} "
-            f"SEC:{src['sec_edgar']} Wire:{src['wire']} "
-            f"Twits:{src['stocktwits']} Twitter:{src.get('twitter', 0)} Insider:{src['insider']} "
-            f"Contracts:{src['usaspending']} OptFlow:{src['options_flow']} "
-            f"EU:{src['european_news']} | "
-            f"Kurs: ${price_data.get('current_price', 'N/A')}"
-        )
-
-        if not news:
-            console.print("  [dim]Keine Nachrichten – übersprungen[/dim]")
-            continue
-
-        # News-Geschwindigkeit anzeigen
-        try:
-            vel = NewsVelocityAnalyzer().analyze(ticker)
-            if vel.acceleration in ("SPIKE", "HIGH"):
-                boost_str = f" (Signal-Boost ×{vel.signal_boost:.2f})" if vel.signal_boost > 1.0 else ""
-                color = "bold yellow" if vel.acceleration == "SPIKE" else "yellow"
-                console.print(
-                    f"  [{color}]📡 Nachrichten-{vel.acceleration}: "
-                    f"{vel.articles_24h} Artikel/24h (Basis: {vel.baseline_per_day:.0f}/Tag){boost_str}[/{color}]"
-                )
-        except Exception:
-            pass
-
-        # Multi-Zeitrahmen-Sentiment (1d/7d/30d)
-        try:
-            hist_30d = archive.get_history(ticker, days=30)
-            by_date: dict = defaultdict(list)
-            for item in hist_30d:
-                pub = (item.get("published") or item.get("timestamp") or "")[:10]
-                if pub and item.get("sentiment_score") is not None:
-                    by_date[pub].append(item)
-            for item in news:
-                today_key = date.today().isoformat()
-                if item.get("sentiment_score") is not None:
-                    by_date[today_key].append(item)
-            if len(by_date) >= 2:
-                mtf_result = MultiTimeframeSentiment().analyze(ticker, dict(by_date))
-                mtf_line = MultiTimeframeSentiment().to_text(mtf_result)
-                if mtf_result.trend in ("UPTREND", "DOWNTREND"):
-                    t_color = "green" if mtf_result.trend == "UPTREND" else "red"
-                    console.print(f"  [{t_color}]📈 {mtf_line}[/{t_color}]")
-        except Exception:
-            pass
-
-        # Re-Entry-Tracker: Preise aktualisieren (einmal instanziieren)
-        try:
-            rt = ReEntryTracker()
-            tickers_watched = [c.ticker for c in rt.get_all_watched()]
-            if tickers_watched:
-                watch_prices = broker.get_prices(tickers_watched)
-                rt.update_prices(watch_prices)
-        except Exception:
-            pass
-
-        # Build open-position context for thesis check
-        open_position_ctx = strategy.build_open_position_context(ticker)
-        if open_position_ctx:
-            console.print(f"  [yellow]Offene Position – prüfe Kaufthese...[/yellow]")
-
-        # Earnings Surprise Predictor (Stufe 2) – vor Claude-Analyse
-        try:
-            ep = _earnings_predictor.predict(ticker)
-            if ep.get("prediction") in ("BEAT", "MISS"):
-                ep_color = "green" if ep["prediction"] == "BEAT" else "red"
-                console.print(
-                    f"  [{ep_color}]🔮 Earnings-Prognose: {ep['prediction']} "
-                    f"(Konfidenz: {ep.get('confidence','LOW')}, "
-                    f"Score: {ep.get('score', 0):.2f})[/{ep_color}]"
-                )
-        except Exception:
-            pass
-
-        # Chart-Muster-Analyse (für Krypto primär, für Aktien als Bestätigung)
-        pattern_result = None
-        try:
-            pattern_result = ChartPatternAnalyzer().analyze(ticker)
-            if pattern_result:
-                sig_color = {"STRONG_BUY": "bold green", "BUY": "green",
-                             "STRONG_SELL": "bold red", "SELL": "red"}.get(
-                    pattern_result.primary_signal, "yellow"
-                )
-                patterns_found = ", ".join(p.name for p in pattern_result.patterns) if pattern_result.patterns else "–"
-                console.print(
-                    f"  [{sig_color}]📊 Chart-Signal: {pattern_result.primary_signal} "
-                    f"(Score: {pattern_result.score:.0f}) | Muster: {patterns_found}[/{sig_color}]"
-                )
-        except Exception as e:
-            log.debug("[%s] Chart-Muster-Analyse fehlgeschlagen: %s", ticker, e)
-
-        # On-Chain-Analyse (nur für Krypto-Assets)
-        onchain_snapshot = None
-        if _is_crypto(ticker):
-            try:
-                base = ticker.split("/")[0].upper().removesuffix("-USD")
-                metrics = OnChainCollector().collect(base)
-                onchain_snapshot = OnChainSignalAnalyzer().analyze(metrics)
-                if onchain_snapshot:
-                    oc_color = {
-                        "STRONG_BULLISH": "bold green", "BULLISH": "green",
-                        "STRONG_BEARISH": "bold red",   "BEARISH": "red",
-                    }.get(onchain_snapshot.signal, "yellow")
-                    console.print(
-                        f"  [{oc_color}]⛓ On-Chain: {onchain_snapshot.signal} "
-                        f"(Score: {onchain_snapshot.score:.0f}) "
-                        f"[{onchain_snapshot.source}][/{oc_color}]"
-                    )
-            except Exception as e:
-                log.debug("[%s] On-Chain-Analyse fehlgeschlagen: %s", ticker, e)
-
-        console.print(f"  [cyan]Analysiere mit Claude ({config.claude_model})...[/cyan]")
-        analysis = analyzer.analyze(
-            ticker=ticker,
-            news_items=news,
-            price_data=price_data,
-            historical_news=historical if historical else None,
-            open_position=open_position_ctx,
-            lessons_memo=lessons_memo,
-            weekly_briefing=weekly_briefing,
-            pattern_result=pattern_result,
-            onchain_snapshot=onchain_snapshot,
-            eu_market_snapshot=_eu_market_ctx if _is_eu_stock(ticker) else None,
-        )
-
-        _print_analysis(analysis)
-        _analysis_cache.store(
-            ticker, analysis.direction, analysis.sentiment_score,
-            analysis.confidence, analysis.recommendation,
-        )
-        _analysis_log.store(analysis)
-
-        # Bei BUY: verwandte Aktien ins Netz aufnehmen
-        if analysis.recommendation == "BUY" and analysis.related_tickers:
-            try:
-                from analyzers.stock_relations import StockRelations
-                from analyzers.bench_list import BenchList
-                StockRelations().add_relation(
-                    ticker, analysis.related_tickers, analysis.entry_rationale
-                )
-                bench = BenchList()
-                for rt in analysis.related_tickers:
-                    bench.add(
-                        rt,
-                        score=round(analysis.sentiment_score * 0.85, 3),
-                        reason=f"Verwandt mit {ticker}: {analysis.entry_rationale[:80]}",
-                    )
-                console.print(
-                    f"  [cyan]🔗 Verwandte Aktien → BenchList: "
-                    f"{', '.join(analysis.related_tickers)}[/cyan]"
-                )
-            except Exception as e:
-                log.debug("Stock-Relations Fehler: %s", e)
-
-        action = strategy.evaluate(analysis, sources_breakdown)
-        if action:
-            if "GEKAUFT" in action:
-                color = "bold green"
-            elif "VERKAUFT" in action:
-                color = "bold red"
-            elif "übersprungen" in action or "Limit" in action or "Schwelle" in action or "übersprungen" in action:
-                color = "yellow"
-            else:
-                color = "dim"
-            console.print(f"  [{color}]{action}[/{color}]")
-            # Nur echte Käufe/Verkäufe in die Tages-Zusammenfassung
-            if "GEKAUFT" in action or "VERKAUFT" in action:
-                cycle_actions.append(action)
-                # Lessons-Memo nach jedem Verkauf aktualisieren
-                if reflection and "VERKAUFT" in action:
-                    new_memo = reflection.generate_memo()
-                    if new_memo:
-                        console.print("  [dim]📚 Lessons-Memo aktualisiert[/dim]")
-                        lessons_memo = new_memo
-        elif analysis.recommendation == "BUY":
-            console.print(
-                f"  [dim][{ticker}] BUY-Signal vorhanden, aber kein Trade "
-                f"(Konfidenz/Schwelle/Filter – Logs prüfen)[/dim]"
-            )
-
-    # Record portfolio snapshot
-    prices = broker.get_prices(list(portfolio.all_positions().keys()))
-    total_value = portfolio.total_value(prices)
-    positions_value = total_value - portfolio.cash
-    phase = phase_ctrl.current_phase(total_value)
-    tracker.record_snapshot(total_value, portfolio.cash, positions_value, phase)
-
-    # Clean up news older than 32 days
-    archive.cleanup_old(keep_days=32)
-
-    _print_portfolio_summary(portfolio, broker, phase_ctrl)
-
-    # Send Telegram daily summary
-    notifier = TelegramNotifier()
-    notifier.notify_daily_summary(
-        total_value=total_value,
-        cash=portfolio.cash,
-        open_positions=len(portfolio.all_positions()),
-        phase=phase,
-        progress_pct=phase_ctrl.progress_pct(total_value),
-        actions_today=cycle_actions,
+    # Zyklus-Abschluss (Roadmap 4.4a, ausgelagert nach bot/cycle_close.py):
+    # Headline-Digest, Snapshot, Archiv-Cleanup, Konsolen-Summary, Telegram-
+    # Tagessummary/Quellen-Health, Tages-Aktionen, Live-Idle.
+    cycle_close.finalize_cycle(
+        portfolio, broker, tracker, phase_ctrl, archive,
+        cycle_actions, _headline_results, _wl_total, _live,
+        record_daily_actions,
     )

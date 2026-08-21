@@ -20,7 +20,7 @@ Beide werden mit Claude generiert, gestützt auf:
 import os
 import sqlite3
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
 import anthropic
@@ -76,6 +76,11 @@ class ReflectionEngine:
         self.tracker = tracker
         self.journal = journal
         self._client = anthropic.Anthropic(api_key=config.anthropic_api_key) if config.anthropic_api_key else None
+        try:
+            from analyzers.api_cost_tracker import APICostTracker
+            self._cost_tracker = APICostTracker()
+        except Exception:
+            self._cost_tracker = None
         os.makedirs(os.path.dirname(REFLECTION_DB), exist_ok=True)
         self._conn = sqlite3.connect(REFLECTION_DB, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -93,6 +98,16 @@ class ReflectionEngine:
             );
         """)
         self._conn.commit()
+
+    def _track(self, msg) -> None:
+        """Echte Token-Kosten eines Claude-Aufrufs erfassen (Budget-Sichtbarkeit)."""
+        if self._cost_tracker is None:
+            return
+        try:
+            it, ot, cr = self._cost_tracker.usage_from_response(msg)
+            self._cost_tracker.record_claude_usage(config.claude_model, it, ot, cr)
+        except Exception:
+            pass
 
     # ── Continuous learning memo ──────────────────────────────────────────────
 
@@ -116,6 +131,7 @@ class ReflectionEngine:
                 system=_SYSTEM_PROMPT_MEMO,
                 messages=[{"role": "user", "content": prompt}],
             )
+            self._track(msg)
             content = msg.content[0].text.strip()
             self._save("MEMO", content, period=None, trades_used=len(recent_trades))
             return content
@@ -189,6 +205,7 @@ class ReflectionEngine:
                 system=_SYSTEM_PROMPT_POST_CB,
                 messages=[{"role": "user", "content": prompt}],
             )
+            self._track(msg)
             return msg.content[0].text.strip()
         except Exception:
             return None
@@ -245,7 +262,7 @@ class ReflectionEngine:
             return None
 
         if year_month is None:
-            today = datetime.utcnow().date()
+            today = datetime.now(timezone.utc).replace(tzinfo=None).date()
             first_this_month = today.replace(day=1)
             last_month_end = first_this_month - timedelta(days=1)
             year_month = last_month_end.strftime("%Y-%m")
@@ -262,6 +279,7 @@ class ReflectionEngine:
                 system=_SYSTEM_PROMPT_REVIEW,
                 messages=[{"role": "user", "content": prompt}],
             )
+            self._track(msg)
             content = msg.content[0].text.strip()
             self._save("MONTHLY", content, period=year_month, trades_used=len(trades_in_month))
             return content
@@ -373,6 +391,6 @@ class ReflectionEngine:
         self._conn.execute(
             """INSERT INTO reflections (created_at, kind, period, content, trades_used)
                VALUES (?, ?, ?, ?, ?)""",
-            (datetime.utcnow().isoformat(), kind, period, content, trades_used),
+            (datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), kind, period, content, trades_used),
         )
         self._conn.commit()

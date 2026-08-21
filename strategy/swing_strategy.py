@@ -1,1194 +1,956 @@
-import math
-import os
-from datetime import datetime
-from typing import TYPE_CHECKING, Optional, List, Dict, Tuple
-from analyzers.claude_analyzer import AnalysisResult
+from __future__ import annotations
 
-if TYPE_CHECKING:
-    from strategy.short_strategy import ShortStrategy
+import os
+import threading
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional, Tuple
+
+from logger import get_logger
 from portfolio.portfolio import Portfolio, Position
 from portfolio.performance_tracker import PerformanceTracker
-from portfolio.phase_controller import PhaseController
-from portfolio.focus_mode import FocusController
 from portfolio.trade_journal import TradeJournal
 from portfolio.signal_queue import SignalQueue
-from portfolio.goal_risk_assessor import GoalRiskAssessor, CAUTION, DANGER, UNREACHABLE
-from portfolio.circuit_breaker import CircuitBreaker
-from broker.paper_broker import PaperBroker
-from notifier.telegram_notifier import TelegramNotifier
-from analyzers.earnings_filter import EarningsFilter
-from analyzers.correlation_check import CorrelationChecker
-from analyzers.kelly_sizing import KellySizer
-from analyzers.macro_calendar import MacroCalendar
-from analyzers.sector_rotation import SectorRotation
-from analyzers.earnings_surprise import EarningsSurprise
-from analyzers.bot_scorer import BotScorer, get_modifiers as _get_score_mod
-from analyzers.sentiment_memory import SentimentMemory
-from analyzers.margin_readiness import MarginTierTracker
-from analyzers.reentry_tracker import ReEntryTracker
-from analyzers.regime_adaptive import RegimeAdaptiveConfig, get_adaptive_params
-from analyzers.sharpe_sizer import SharpeSizer
-from analyzers.cross_asset import CrossAssetSignals
-from analyzers.options_intelligence import OptionsIntelligence
-from analyzers.rl_agent import RLAgent, RLState
-from config import config
-from logger import get_logger
+from analyzers.conditional_entry import ConditionalEntry, ConditionalEntryWatcher
 
 log = get_logger(__name__)
 
+# ── Selbstlern-Filter (lazy Singleton, fail-open) ─────────────────────
+_entry_filter = None
+_entry_filter_tried = False
 
-def _is_crypto(ticker: str) -> bool:
-    """True wenn der Ticker ein Krypto-Asset ist (z.B. 'BTC', 'ETH/USD')."""
+
+def _get_entry_filter():
+    """Lädt den EntryFilter einmalig. Gibt None zurück, wenn er nicht verfügbar
+    ist (z.B. kein Kalibrierungsmodell) – der Aufrufer behandelt das fail-open."""
+    global _entry_filter, _entry_filter_tried
+    if _entry_filter_tried:
+        return _entry_filter
+    _entry_filter_tried = True
     try:
-        from analyzers.crypto_universe import CRYPTO_UNIVERSE
-        return ticker.split("/")[0].upper() in CRYPTO_UNIVERSE or ticker.endswith("/USD")
-    except Exception:
-        return False
+        from analyzers.entry_filter import EntryFilter
+        _entry_filter = EntryFilter()
+    except Exception as _e:  # pragma: no cover - defensiv
+        log.debug("EntryFilter nicht verfügbar: %s", _e)
+        _entry_filter = None
+    return _entry_filter
 
+# ── Trailing-Stop-Stufen ──────────────────────────────────────────────
+# Jede Stufe: (Gewinn-Schwelle %, neuer SL als % vom Einstieg)
+_TRAILING_STEPS = [
+    (0.08, 0.02),   # +8%  → SL auf +2%
+    (0.12, 0.06),   # +12% → SL auf +6%
+    (0.18, 0.10),   # +18% → SL auf +10%
+    (0.25, 0.15),   # +25% → SL auf +15%
+]
+_TRAILING_STEPS_BEAR = [
+    (0.05, 0.01),
+    (0.08, 0.04),
+    (0.12, 0.07),
+]
+_TRAILING_STEPS_CRISIS = [
+    (0.04, 0.00),
+    (0.06, 0.02),
+]
 
-_FAILED_STATUSES = {"error", "canceled", "cancelled", "expired", "rejected"}
-
-
-def _check_fill(fill: dict, ticker: str, side: str) -> Tuple[bool, float, str]:
-    """
-    Returns (ok, fill_price, warning_msg).
-    ok=False means the order definitively failed and the position must NOT be recorded.
-    ok=True with warning_msg != '' means 'pending' — position recorded but operator must verify.
-    """
-    status = fill.get("status", "")
-    fill_price = fill.get("fill_price")
-    order_id = fill.get("order_id", "?")
-
-    if status in _FAILED_STATUSES:
-        reason = fill.get("reason", status)
-        log.error("[%s] %s order FAILED: %s (order_id=%s)", ticker, side.upper(), reason, order_id)
-        return False, 0.0, reason
-
-    if status == "pending":
-        msg = (
-            f"⚠️ <b>{ticker} {side.upper()}-Order UNBESTÄTIGT</b>\n"
-            f"Order-ID: <code>{order_id}</code>\n"
-            f"Position wird vorläufig eingebucht — bitte manuell im Broker prüfen!"
-        )
-        log.warning("[%s] %s order pending after timeout (order_id=%s)", ticker, side.upper(), order_id)
-        return True, fill_price or 0.0, msg
-
-    return True, fill_price or 0.0, ""
-
-
-# Confidence → Positionsgröße-Multiplikator
+# Konfidenz-basierte Positionsgrößen
 _CONFIDENCE_SIZING = {"HIGH": 1.0, "MEDIUM": 0.70, "LOW": 0.45}
 
-# Trailing-Stop: Gewinnsicherungs-Stufen
-# (min_gain_pct, new_stop_below_peak_pct)
-_TRAILING_STEPS = [
-    (0.20, 0.10),   # +20% Gewinn → SL auf peak - 10%
-    (0.12, 0.06),   # +12% Gewinn → SL auf peak - 6%
-    (0.06, 0.03),   # +6%  Gewinn → SL auf breakeven + 3%
+
+def _is_fractional_asset(ticker: str) -> bool:
+    """Assets, die in Bruchteilen handelbar sind (Krypto). Aktien nicht: die
+    IBKR-API lehnt Teilaktien ab (Error 10243)."""
+    upper = (ticker or "").upper()
+    return "/" in upper or upper.endswith("-USD")
+
+
+def _capital_scarcity_adjustment(cash_pct: float, max_adj: float, pivot_pct: float) -> float:
+    """Aufschlag auf buy_threshold als durchgehende Exponentialkurve über die
+    GESAMTE Spanne 0-100% Cash (kein Plateau an keinem Ende).
+
+    Formel: max_adj * 2^(-cash_pct / pivot_pct)
+    - cash_pct=0 (kein Cash mehr) → exakt max_adj (asymptotisches Maximum)
+    - cash_pct=pivot_pct ("Kipppunkt") → exakt max_adj/2
+    - cash_pct→∞ → geht glatt gegen 0, nie hart geklemmt
+
+    Reine Funktion (kein self/Portfolio-Zugriff) - macht die Kurvenform
+    unabhängig vom restlichen Strategie-Gerüst testbar."""
+    if pivot_pct <= 0:
+        return 0.0
+    cash_pct = max(0.0, cash_pct)
+    return max_adj * (2.0 ** (-cash_pct / pivot_pct))
+
+# Congress×CEO-Confluence-Overlay: kaufen Exec UND Politiker unabhängig denselben
+# Ticker (analyzers/insider_signal.InsiderScore.confluence), gilt das als seltene,
+# wirklich unabhängige Bestätigung → Kaufschwelle leicht runter + Sizing leicht hoch.
+# Bewusst klein gehalten; per ENV abschaltbar/justierbar. Fail-open (kein Confluence).
+_CONFLUENCE_OVERLAY     = os.getenv("INSIDER_CONFLUENCE_OVERLAY", "1") not in ("0", "false", "False")
+_CONFLUENCE_THR_RELIEF  = float(os.getenv("CONFLUENCE_THR_RELIEF", "0.03"))   # Schwelle −0.03
+_CONFLUENCE_SIZE_MULT   = float(os.getenv("CONFLUENCE_SIZE_MULT", "1.15"))    # Größe ×1.15
+_CONFLUENCE_THR_FLOOR   = float(os.getenv("CONFLUENCE_THR_FLOOR", "0.50"))    # nie unter 0.50
+
+# ATR-Volatilitäts-Sizing: Positionsgröße auf gleiches Tages-Risiko normieren.
+# Ruhige Aktie (kleines ATR%) → größere Position, wilde Aktie → kleinere, sodass
+# der Dollar-Einsatz pro Trade ähnlich riskant ist. Multiplikator = Ziel-ATR% /
+# aktuelles ATR%, hart gedeckelt. Per ENV abschaltbar; fail-open (Faktor 1.0).
+_ATR_VOL_SIZING  = os.getenv("ATR_VOL_SIZING", "1") not in ("0", "false", "False")
+_ATR_TARGET_PCT  = float(os.getenv("ATR_TARGET_PCT", "0.025"))   # "normale" Tages-ATR = 2.5%
+_ATR_SIZE_FLOOR  = float(os.getenv("ATR_SIZE_FLOOR", "0.50"))    # wilde Aktie: nie unter ×0.5
+_ATR_SIZE_CAP    = float(os.getenv("ATR_SIZE_CAP",  "1.50"))     # ruhige Aktie: nie über ×1.5
+
+# Mindest-Haltedauer in Tagen – verhindert Sofort-Exit von Positionen, deren
+# target_hold_days fälschlich 0 ist (gleicher Floor wie der Entry-Pfad, max(3,…)).
+_MIN_HOLD_DAYS = 3
+
+# Partial-TP Stufen: (Gewinn%, Anteil Verkauf)
+_PARTIAL_TP_STAGES = [
+    (0.10, 0.35),   # bei +10%: 35% der Position verkaufen
+    (0.18, 0.35),   # bei +18%: weitere 35% verkaufen
 ]
 
 
+@dataclass
+class StrategyResult:
+    action: str            # BUY | SELL | HOLD | SKIP
+    ticker: str
+    reason: str
+    shares: float = 0.0
+    price: float = 0.0
+    # Lern-Filter-Verdikt zum Einstiegszeitpunkt, für den Hinterher-Vergleich
+    # "hat der Filter recht behalten" beim Exit (analyzers/entry_filter.py).
+    # Leer, wenn der Filter deaktiviert war oder kein Verdikt lieferte.
+    entry_filter_verdict: str = ""
+    entry_filter_p_win: float = 0.0
+    entry_filter_edge: float = 0.0
+    stop_loss: float = 0.0
+    take_profit: float = 0.0
+    hold_days: int = 0
+
+
 class SwingStrategy:
+    """
+    Swing-Trading-Strategie mit:
+    - Regime-adaptiven SL/TP/Hold-Parametern
+    - Trailing-Stop-Loss (3 Stufen)
+    - Konfidenz-basierter Positionsgröße
+    - Partial Take-Profit (2 Stufen)
+    - Dip-Kauf-Logik
+    - Soft-Stop-Extension bei hoher Konfidenz
+    - EMA21 Conditional-Entry
+    - Circuit-Breaker (tägliches Verlust-Limit)
+    - Makro-Kalender + Sektor-Rotations-Filter
+    - RL-Agent Integration
+    """
+
     def __init__(
         self,
         portfolio: Portfolio,
-        broker: PaperBroker,
+        broker,
         tracker: PerformanceTracker,
-        phase_ctrl: PhaseController,
-        focus_ctrl: FocusController,
+        phase_ctrl,
+        focus_ctrl,
         journal: TradeJournal,
         signal_queue: Optional[SignalQueue] = None,
-        earnings_filter: Optional[EarningsFilter] = None,
-        correlation_checker: Optional[CorrelationChecker] = None,
-        kelly_sizer: Optional[KellySizer] = None,
-        goal_risk_assessor: Optional[GoalRiskAssessor] = None,
+        earnings_filter=None,
+        correlation_checker=None,
+        kelly_sizer=None,
+        goal_risk_assessor=None,
     ):
         self.portfolio = portfolio
         self.broker = broker
         self.tracker = tracker
         self.phase_ctrl = phase_ctrl
-        self.focus = focus_ctrl
+        self.focus_ctrl = focus_ctrl
         self.journal = journal
         self.signal_queue = signal_queue
-        self._notifier = TelegramNotifier()
         self.earnings_filter = earnings_filter
-        self.correlation = correlation_checker
-        self.kelly = kelly_sizer
-        self.goal_risk = goal_risk_assessor
-        self.macro_cal       = MacroCalendar()
-        self.sector_rot      = SectorRotation()
-        self.earn_surp       = EarningsSurprise()
-        self.circuit_breaker = CircuitBreaker()
-        self.regime_cfg      = RegimeAdaptiveConfig()
-        self.sharpe_sizer    = SharpeSizer()
-        self.cross_asset     = CrossAssetSignals()
-        self.options_intel   = OptionsIntelligence()
-        self.rl_agent        = RLAgent()
-        # Short-Strategy (optional, wird von main.py gesetzt)
-        self._short_strategy: Optional["ShortStrategy"] = None
+        self.correlation_checker = correlation_checker
+        self.kelly_sizer = kelly_sizer
+        self.goal_risk_assessor = goal_risk_assessor
+        self._lock = threading.Lock()
+        self._conditional_watcher = ConditionalEntryWatcher()
+        self._daily_loss_usd: float = 0.0
+        self._daily_loss_date: str = ""
 
-    def evaluate(self, analysis: AnalysisResult, sources_breakdown: Optional[Dict[str, int]] = None) -> Optional[str]:
-        ticker = analysis.ticker
-        existing_position = self.portfolio.get_position(ticker)
-        current_price = self.broker.get_price(ticker)
+    # ── Public entry points ───────────────────────────────────────────────
 
-        if current_price is None:
-            return f"[{ticker}] Kein Kurs verfügbar – übersprungen."
-
-        if existing_position:
-            # Scale-In: bei starkem Signal bestehende Position aufstocken
-            scale_result = self._try_scale_in(existing_position, current_price, analysis)
-            if scale_result:
-                return scale_result
-            return self._check_exit(existing_position, current_price, analysis)
-
-        # ── Turbo-Modus: Maximale Aggressivität (nur Paper-Trading) ──────────
-        if config.turbo_mode:
-            if config.broker_mode != "paper":
-                log.error("TURBO_MODE ist nur mit BROKER_MODE=paper erlaubt – ignoriert.")
-            else:
-                return self._evaluate_turbo(ticker, current_price, analysis, sources_breakdown)
-
-        if analysis.recommendation != "BUY":
-            # Short-Modus: SELL-Signal mit hoher Konfidenz → Short-Position prüfen
-            if analysis.recommendation == "SELL" and analysis.confidence in ("HIGH", "MEDIUM"):
-                if hasattr(self, '_short_strategy') and self._short_strategy:
-                    short_result = self._short_strategy.evaluate_short(analysis)
-                    if short_result:
-                        return short_result
-            return None
-        if analysis.confidence == "LOW":
-            return f"[{ticker}] BUY-Signal, aber Konfidenz zu niedrig – übersprungen."
-        if analysis.sources_used < config.min_sources:
-            return f"[{ticker}] Zu wenige Quellen ({analysis.sources_used}) – übersprungen."
-
-        portfolio_value = self.portfolio.total_value(
-            self.broker.get_prices(list(self.portfolio.all_positions().keys()) + [ticker])
-        )
-
-        # Score-Modifier für Positions-Limit und Kaufschwelle (einmal laden, mehrfach nutzen)
-        _bot_scorer = BotScorer()
-        _bot_score_state = _bot_scorer.get()
-        _current_score = _bot_score_state.current
-        _smod = _get_score_mod(_current_score)
-
-        # Score-Malus erst nach 10 bewerteten Trades anwenden (frischer Bot soll starten können)
-        _trades_scored = _bot_score_state.trades_scored
-        if _trades_scored < 10 and _smod.threshold_adj > 0:
-            log.debug(
-                "Score-Malus ausgesetzt (erst %d/10 Trades bewertet) – Threshold unverändert",
-                _trades_scored,
-            )
-            from dataclasses import replace as _dc_replace
-            _smod = _dc_replace(_smod, threshold_adj=0.0, position_count_adj=max(0, _smod.position_count_adj))
-
-        # Skalierungs-Check: Positionslimit (Score-adjustiert)
-        open_count  = len(self.portfolio.all_positions())
-        max_allowed = max(1, self.focus.get_max_positions(portfolio_value) + _smod.position_count_adj)
-        if open_count >= max_allowed:
-            return (
-                f"[{ticker}] Positionslimit erreicht ({open_count}/{max_allowed} bei "
-                f"${portfolio_value:,.0f} Portfolio, Score-Mod: {_smod.position_count_adj:+d}) – kein neuer Kauf."
-            )
-        adaptive_threshold = self.tracker.get_adaptive_threshold(config.buy_threshold)
-        phase_modifier = self.phase_ctrl.get_entry_threshold_modifier(portfolio_value)
-
-        # Sentiment-Verlässlichkeit pro Ticker (aus historischen Trades gelernt)
-        sentiment_memory_adj = 0.0
-        try:
-            sentiment_memory_adj = SentimentMemory().get_threshold_adjustment(ticker)
-        except Exception:
-            pass
-
-        # Score-Modifier auf Kaufschwelle anwenden
-        effective_threshold = self.focus.get_effective_threshold(
-            adaptive_threshold + phase_modifier + _smod.threshold_adj + sentiment_memory_adj,
-            portfolio_value
-        )
-
-        if analysis.sentiment_score < effective_threshold:
-            return (
-                f"[{ticker}] Sentiment {analysis.sentiment_score:.2f} unter Schwelle "
-                f"{effective_threshold:.2f} ({self.focus.profile.label}) – übersprungen."
-            )
-
-        # Circuit Breaker: Tagesverlust / Drawdown prüfen
-        self.circuit_breaker.register_day_open(portfolio_value)
-        cb_allowed, cb_reason = self.circuit_breaker.check_buy_allowed(portfolio_value)
-        if not cb_allowed:
-            self._notifier.send(cb_reason)
-            log.warning("CircuitBreaker ausgelöst für %s: %s", ticker, cb_reason)
-            return f"[{ticker}] {cb_reason}"
-
-        # Makro-Kalender: Kauf pausieren vor kritischen Terminen
-        macro_block, macro_reason = self.macro_cal.should_block_buy()
-        if macro_block:
-            return f"[{ticker}] ⏸ Makro-Pause: {macro_reason}"
-
-        # Sektor-Rotation: schwache Sektoren meiden
-        in_strong, sector_reason = self.sector_rot.is_ticker_in_strong_sector(ticker)
-        if not in_strong:
-            return f"[{ticker}] 📉 Sektor schwach: {sector_reason} – übersprungen."
-
-        # Earnings filter: skip buy if earnings imminent
-        if self.earnings_filter:
-            ec = self.earnings_filter.check(ticker)
-            if ec["block"]:
-                return (
-                    f"[{ticker}] Earnings in {ec['days_until']}d ({ec['date']}) – "
-                    f"Kauf übersprungen (Volatilitäts-Risiko)."
-                )
-
-        # Sector correlation: prevent over-concentration
-        if self.correlation:
-            existing_values = {
-                t: p.shares * (self.broker.get_price(t) or p.entry_price)
-                for t, p in self.portfolio.all_positions().items()
-            }
-            tentative_invest = portfolio_value * self.focus.get_max_position_pct(portfolio_value)
-            sec_check = self.correlation.can_open(
-                ticker, tentative_invest, portfolio_value, existing_values
-            )
-            if not sec_check["allowed"]:
-                return f"[{ticker}] {sec_check['reason']} – übersprungen."
-
-        # ── Cross-Asset Risk-Appetite ────────────────────────────────────────
-        try:
-            ca = self.cross_asset.fetch()
-            if ca.recommendation == "RISK_OFF":
-                log.info("[%s] Cross-Asset RISK_OFF (score=%.2f) – Kaufschwelle erhöht", ticker, ca.risk_appetite_score)
-                if analysis.sentiment_score < effective_threshold + 0.08:
-                    return f"[{ticker}] ⚡ Cross-Asset RISK_OFF (Score={ca.risk_appetite_score:.2f}) – Signal zu schwach."
-        except Exception as e:
-            log.debug("Cross-Asset-Check fehlgeschlagen: %s", e)
-
-        # ── Options Intelligence ─────────────────────────────────────────────
-        try:
-            opt = self.options_intel.analyze(ticker)
-            if opt.smart_money_signal == "BEARISH" and opt.signal_strength == "HIGH":
-                return f"[{ticker}] 📊 Options: Smart-Money BEARISH (P/C={opt.put_call_ratio:.2f}) – übersprungen."
-        except Exception as e:
-            log.debug("Options-Intelligence fehlgeschlagen: %s", e)
-
-        # ── RL Agent Entscheidung ────────────────────────────────────────────
-        try:
-            from collectors.vix_monitor import get_vix
-            rl_state = RLState(
-                sentiment_score=analysis.sentiment_score,
-                vix_level=min(1.0, (get_vix() or 20.0) / 50.0),
-                momentum_5d=0.0,   # Wird vom RL aus vergangenen Trades gelernt
-                news_velocity=min(1.0, analysis.sources_used / 20.0),
-                confidence_encoded=RLState.encode_confidence(analysis.confidence),
-                regime_encoded=RLState.encode_regime(
-                    "BULL" if analysis.direction == "BULLISH" else
-                    "BEAR" if analysis.direction == "BEARISH" else "NEUTRAL"
-                ),
-            )
-            rl_buy, rl_modifier = self.rl_agent.should_buy(rl_state)
-            if not rl_buy:
-                log.info("[%s] RL-Agent rät ab (explain: %s)", ticker, self.rl_agent.explain(rl_state))
-                # RL blockiert nur wenn es genug Erfahrung hat (> 10 Trades)
-                stats = self.rl_agent.get_stats()
-                if stats.get("total_trades", 0) >= 10:
-                    return f"[{ticker}] 🤖 RL-Agent: Trade nicht empfohlen (Lernbasis: {stats['total_trades']} Trades)"
-        except Exception as e:
-            log.debug("RL-Agent fehlgeschlagen: %s", e)
-            rl_modifier = 1.0
-
-        result = self._open_position(ticker, current_price, analysis, portfolio_value, sources_breakdown or {},
-                                     score_mod=_smod, current_score=_current_score, rl_modifier=rl_modifier)
-
-        # If capital was insufficient, save signal for later execution
-        if result and "Nicht genug freies Kapital" in result and self.signal_queue:
-            sig_id = self.signal_queue.enqueue(
-                ticker=ticker,
-                sentiment_score=analysis.sentiment_score,
-                confidence=analysis.confidence,
-                target_price=analysis.target_price,
-                direction=analysis.direction,
-                entry_rationale=analysis.entry_rationale,
-                key_catalysts=analysis.key_catalysts,
-                risk_factors=analysis.risk_factors,
-                sources_used=analysis.sources_used,
-                sources_breakdown=sources_breakdown or {},
-                suggested_hold_days=analysis.suggested_hold_days,
-            )
-            return (
-                f"[{ticker}] 📋 Signal in Warteschlange gespeichert "
-                f"(Score: {analysis.sentiment_score:.2f}, ID #{sig_id}) – "
-                f"wird ausgeführt sobald Kapital frei ist."
-            )
-        return result
-
-    def _evaluate_turbo(
+    def evaluate(
         self,
         ticker: str,
+        analysis,  # AnalysisResult
         current_price: float,
-        analysis: AnalysisResult,
-        sources_breakdown: Optional[Dict[str, int]],
-    ) -> Optional[str]:
-        """
-        Turbo-Modus: Maximale Aggressivität für Paper-Trading-Experimente.
-        Alle normalen Filter (Konfidenz, Schwelle, CircuitBreaker, Makro, Sektor)
-        werden umgangen. Ziel: herausfinden ob rücksichtslose Gewinnoptimierung
-        tatsächlich mehr Rendite bringt oder das Kapital vernichtet.
-        """
-        # Kein BUY-Signal → trotzdem prüfen ob SHORT sinnvoll wäre
-        if analysis.recommendation != "BUY":
-            if analysis.recommendation == "SELL" and hasattr(self, '_short_strategy') and self._short_strategy:
-                short_result = self._short_strategy.evaluate_short(analysis)
-                if short_result:
-                    return short_result
-            return None
+        regime: str = "NEUTRAL",
+        market_is_ranging: bool = False,
+        rl_agent=None,
+    ) -> StrategyResult:
+        """Main evaluation: returns BUY/SELL/HOLD/SKIP decision."""
+        with self._lock:
+            return self._evaluate_inner(ticker, analysis, current_price, regime, market_is_ranging, rl_agent)
 
-        portfolio_value = self.portfolio.total_value(
-            self.broker.get_prices(list(self.portfolio.all_positions().keys()) + [ticker])
-        )
-
-        # Positionslimit (Turbo hat eigenes höheres Limit)
-        open_count = len(self.portfolio.all_positions())
-        if open_count >= config.turbo_max_positions:
-            return (
-                f"[TURBO][{ticker}] Positionslimit {config.turbo_max_positions} erreicht – übersprungen."
-            )
-
-        # Kapitalcheck: mind. $50 Cash verfügbar
-        invest = portfolio_value * config.turbo_max_position_pct
-        invest = min(invest, self.portfolio.cash * 0.95)
-        if invest < 50:
-            return f"[TURBO][{ticker}] Nicht genug Kapital (${self.portfolio.cash:.0f}) – übersprungen."
-
-        shares = math.floor(invest / current_price * 100) / 100
-        if shares <= 0:
-            return f"[TURBO][{ticker}] Zu teuer für verfügbares Kapital – übersprungen."
-
-        sl_pct = config.turbo_stop_loss_pct
-        tp_pct = config.turbo_take_profit_pct
-        stop_loss  = round(current_price * (1 - sl_pct), 2)
-        take_profit = round(current_price * (1 + tp_pct), 2)
-        if analysis.target_price and analysis.target_price > current_price:
-            take_profit = max(take_profit, analysis.target_price)
-
-        fill = self.broker.buy(ticker, shares, current_price)
-        ok, actual_price, warn = _check_fill(fill, ticker, "buy")
-        if not ok:
-            return f"[TURBO][{ticker}] ⛔ BUY-Order fehlgeschlagen: {warn}"
-        if not actual_price:
-            actual_price = current_price
-        if warn:
-            self._notifier.send(warn)
-
-        # SL/TP auf tatsächlichen Fill-Preis anpassen
-        stop_loss   = round(actual_price * (1 - sl_pct), 2)
-        take_profit = round(actual_price * (1 + tp_pct), 2)
-        if analysis.target_price and analysis.target_price > actual_price:
-            take_profit = max(take_profit, analysis.target_price)
-
-        position = Position(
-            ticker=ticker,
-            shares=shares,
-            entry_price=actual_price,
-            entry_date=datetime.utcnow().isoformat(),
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            target_hold_days=analysis.suggested_hold_days or 14,
-            rationale=f"[TURBO] {analysis.entry_rationale or ''}",
-            entry_catalysts=analysis.key_catalysts[:5],
-        )
-        self.portfolio.open_position(position)
-
-        self._notifier.notify_buy(
-            ticker=ticker, shares=shares, price=actual_price,
-            stop_loss=stop_loss, take_profit=take_profit,
-            hold_days=analysis.suggested_hold_days or 14,
-            rationale=f"🚀 TURBO-MODUS | {analysis.entry_rationale or ''}",
-            sentiment_score=analysis.sentiment_score,
-            confidence=analysis.confidence,
-            direction=analysis.direction,
-            target_price=analysis.target_price,
-            key_catalysts=analysis.key_catalysts[:4],
-            risk_factors=analysis.risk_factors[:3],
-            sources_breakdown=sources_breakdown or {},
-        )
-        self.tracker.record_prediction(
-            ticker=ticker,
-            entry_price=actual_price,
-            predicted_target_price=analysis.target_price,
-            predicted_hold_days=analysis.suggested_hold_days or 14,
-            predicted_direction=analysis.direction,
-            sentiment_score=analysis.sentiment_score,
-            confidence=analysis.confidence,
-            sources_used=analysis.sources_used,
-            sources_breakdown=sources_breakdown or {},
-            mode="turbo",
-        )
-        self.journal.log_entry(
-            ticker=ticker,
-            price=actual_price,
-            sentiment=analysis.sentiment_score,
-            confidence=analysis.confidence,
-            direction=analysis.direction,
-            rationale=f"[TURBO] {analysis.entry_rationale or ''}",
-            catalysts=analysis.key_catalysts[:5],
-            risks=analysis.risk_factors[:5],
-            sources=sources_breakdown or {},
-            target_price=analysis.target_price,
-            hold_days=analysis.suggested_hold_days or 14,
-        )
-        log.info(
-            "[TURBO][%s] GEKAUFT %.2f Stück @ $%.2f | SL $%.2f | TP $%.2f | Conf: %s | Score: %.2f",
-            ticker, shares, actual_price, stop_loss, take_profit,
-            analysis.confidence, analysis.sentiment_score,
-        )
-        return (
-            f"[TURBO][{ticker}] 🚀 GEKAUFT – {shares} Stück @ ${actual_price:.2f} "
-            f"| SL: ${stop_loss} | TP: ${take_profit} "
-            f"| Investiert: ${shares * actual_price:.2f} "
-            f"| Konfidenz: {analysis.confidence} | Score: {analysis.sentiment_score:.2f}"
-        )
-
-    def check_open_positions(self) -> List[str]:
-        actions = []
-        positions = self.portfolio.all_positions()
-        if not positions:
-            # No open positions → try queued signals directly
-            queued = self.process_signal_queue()
-            return queued
-
-        prices = self.broker.get_prices(list(positions.keys()))
-        for ticker, pos in positions.items():
-            if _is_crypto(ticker):
-                price = self.broker.get_crypto_price(ticker)
-            else:
-                price = prices.get(ticker)
-            if price is None:
-                continue
-
-            days_held = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
-
-            # ── Trailing Stop-Loss aktualisieren ─────────────────────────────
-            trailing_updated = self._update_trailing_stop(pos, price)
-            if trailing_updated:
-                actions.append(
-                    f"[{ticker}] 📈 Trailing-Stop angepasst → ${pos.stop_loss:.2f}"
-                )
-
-            reason = None
-            if price <= pos.stop_loss:
-                reason = f"Stop-Loss ausgelöst bei ${price:.2f}"
-            elif price >= pos.take_profit:
-                reason = f"Take-Profit erreicht bei ${price:.2f}"
-            elif days_held >= pos.target_hold_days:
-                reason = f"Max. Haltedauer ({pos.target_hold_days}d) erreicht"
-
-            if reason:
-                pnl = self._do_close(ticker, pos, price, reason, days_held)
-                pnl_approx = (price - pos.entry_price) * pos.shares
-                actions.append(
-                    f"[{ticker}] VERKAUFT – {reason} | P&L: {'+' if pnl_approx >= 0 else ''}{pnl_approx:.2f} USD"
-                )
-
-        # After closes, try to execute queued signals with freed capital
-        if actions:
-            queued = self.process_signal_queue()
-            actions.extend(queued)
-
-        return actions
-
-    def process_signal_queue(self) -> List[str]:
-        """Tries to execute pending BUY signals with currently available capital."""
-        if not self.signal_queue:
-            return []
-
+    def check_exits(
+        self,
+        prices: Dict[str, float],
+        regime: str = "NEUTRAL",
+    ) -> List[StrategyResult]:
+        """Check all open positions for exit conditions."""
         results = []
-        for signal in self.signal_queue.get_pending():
-            ticker = signal["ticker"]
-
-            # Skip if we now have a position in this ticker
-            if self.portfolio.get_position(ticker):
-                self.signal_queue.mark_expired(signal["id"])
-                continue
-
-            current_price = self.broker.get_price(ticker)
-            if not current_price:
-                continue
-
-            portfolio_value = self.portfolio.total_value(
-                self.broker.get_prices(list(self.portfolio.all_positions().keys()) + [ticker])
-            )
-            max_pos_pct = self.focus.get_max_position_pct(portfolio_value)
-            if self.kelly:
-                kelly_pct = self.kelly.compute(fallback_pct=max_pos_pct)
-                max_pos_pct = min(max_pos_pct, kelly_pct)
-
-            invest = min(portfolio_value * max_pos_pct, self.portfolio.cash * 0.95)
-            if invest < 50:
-                continue  # Still not enough capital, keep in queue
-
-            # Execute the queued signal
-            created_at = signal["created_at"][:10]
-            result = self._open_position_from_signal(ticker, current_price, signal, portfolio_value, invest)
-            self.signal_queue.mark_executed(signal["id"])
-            results.append(
-                f"[{ticker}] 📋 Warteschlangen-Signal ausgeführt (Signal vom {created_at}) "
-                f"| {result}"
-            )
-            self._notifier.notify_buy(
-                ticker=ticker,
-                shares=invest / current_price,
-                price=current_price,
-                stop_loss=round(current_price * (1 - self.focus.get_stop_loss_pct()), 2),
-                take_profit=round(current_price * (1 + self.focus.get_take_profit_pct()), 2),
-                hold_days=self.focus.cap_hold_days(signal["suggested_hold_days"]),
-                rationale=f"[Signal vom {created_at}] {signal.get('entry_rationale', '')}",
-                sentiment_score=signal["sentiment_score"],
-                confidence=signal.get("confidence", "MEDIUM"),
-                direction=signal.get("direction", "BULLISH"),
-                target_price=signal.get("target_price"),
-                key_catalysts=signal.get("key_catalysts", [])[:4],
-                risk_factors=signal.get("risk_factors", [])[:3],
-                sources_breakdown=signal.get("sources_breakdown", {}),
-            )
+        with self._lock:
+            for ticker, pos in list(self.portfolio.all_positions().items()):
+                price = prices.get(ticker)
+                if price is None:
+                    continue
+                result = self._check_exit(ticker, pos, price, regime)
+                if result:
+                    results.append(result)
         return results
 
-    def _open_position_from_signal(
-        self, ticker: str, price: float, signal: Dict, portfolio_value: float, invest: float
-    ) -> str:
-        """Opens a position from a queued signal (no AnalysisResult needed)."""
-        # Liquidität + Gap-Schutz (auch für TV/Queue-Signale)
-        liq_ok, liq_reason = self._check_liquidity_and_gap(ticker, price)
-        if not liq_ok:
-            log.warning("[%s] Queue-Signal abgebrochen: %s", ticker, liq_reason)
-            return f"[{ticker}] ⛔ {liq_reason} – Queue-Signal abgebrochen."
+    def check_conditional_entries(
+        self,
+        prices: Dict[str, float],
+    ) -> List[ConditionalEntry]:
+        """Returns triggered conditional entries."""
+        return self._conditional_watcher.check_triggered(prices)
 
-        shares = math.floor(invest / price * 100) / 100
-        sl_pct = self.focus.get_stop_loss_pct()
-        tp_pct = self.focus.get_take_profit_pct()
-        stop_loss = round(price * (1 - sl_pct), 2)
-        fixed_tp = round(price * (1 + tp_pct), 2)
-        tp = signal.get("target_price")
-        take_profit = min(tp, fixed_tp) if (tp and tp > price) else fixed_tp
-        capped_hold = self.focus.cap_hold_days(signal.get("suggested_hold_days") or 14)
-
-        fill = self.broker.buy(ticker, shares, price)
-        ok, actual_price, warn = _check_fill(fill, ticker, "buy")
-        if not ok:
-            return f"[{ticker}] ⛔ BUY-Order fehlgeschlagen: {warn}"
-        if not actual_price:
-            actual_price = price
-        if warn:
-            self._notifier.send(warn)
-        stop_loss = round(actual_price * (1 - sl_pct), 2)
-        take_profit = min(tp, round(actual_price * (1 + tp_pct), 2)) if (tp and tp > actual_price) else round(actual_price * (1 + tp_pct), 2)
-        position = Position(
-            ticker=ticker,
-            shares=shares,
-            entry_price=actual_price,
-            entry_date=datetime.utcnow().isoformat(),
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            target_hold_days=capped_hold,
-            rationale=signal.get("entry_rationale"),
-            entry_catalysts=signal.get("key_catalysts", []),
-        )
-        self.portfolio.open_position(position)
-        self.tracker.record_prediction(
-            ticker=ticker,
-            entry_price=actual_price,
-            predicted_target_price=signal.get("target_price"),
-            predicted_hold_days=capped_hold,
-            predicted_direction=signal.get("direction", "BULLISH"),
-            sentiment_score=signal["sentiment_score"],
-            confidence=signal["confidence"],
-            sources_used=signal.get("sources_used", 0),
-            sources_breakdown=signal.get("sources_breakdown", {}),
-            mode="exploration" if config.exploration_mode else "normal",
-        )
-        self.journal.log_entry(
-            ticker=ticker,
-            price=actual_price,
-            sentiment=signal["sentiment_score"],
-            confidence=signal["confidence"],
-            direction=signal.get("direction", "BULLISH"),
-            rationale=signal.get("entry_rationale"),
-            catalysts=signal.get("key_catalysts", []),
-            risks=signal.get("risk_factors", []),
-            sources=signal.get("sources_breakdown", {}),
-            target_price=signal.get("target_price"),
-            hold_days=capped_hold,
-        )
-        return (
-            f"{shares} Stück @ ${actual_price:.2f} "
-            f"| SL: ${stop_loss} | TP: ${take_profit} "
-            f"| Investiert: ${shares * actual_price:.2f}"
-        )
-
-    def _check_exit(self, pos: Position, price: float, analysis: AnalysisResult) -> Optional[str]:
-        ticker = pos.ticker
-        days_held = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
-        reason = None
-
-        if analysis.thesis_valid is False and analysis.confidence != "LOW":
-            reason = f"These gebrochen: {analysis.thesis_break_reason or 'Ursprüngliche Kaufkatalysatoren nicht mehr gültig'}"
-        elif price <= pos.stop_loss:
-            reason = f"Stop-Loss bei ${price:.2f}"
-        elif price >= pos.take_profit:
-            reason = f"Take-Profit bei ${price:.2f}"
-        elif days_held >= pos.target_hold_days:
-            reason = f"Haltedauer abgelaufen ({days_held}d)"
-        elif analysis.recommendation == "SELL" and analysis.confidence != "LOW":
-            reason = f"Sentiment-Signal SELL (Score: {analysis.sentiment_score:.2f})"
-
-        if reason:
-            thesis_broken = "gebrochen" in reason.lower()
-            pnl = self._do_close(ticker, pos, price, reason, days_held)
-            sign = "+" if pnl >= 0 else ""
-            thesis_tag = " ⚠️ THESE GEBROCHEN" if thesis_broken else ""
-            self._notifier.notify_sell(
-                ticker=ticker, shares=pos.shares, price=price,
-                entry_price=pos.entry_price, pnl=pnl,
-                reason=reason, thesis_broken=thesis_broken,
-                days_held=days_held,
-                target_hold_days=pos.target_hold_days,
-                entry_catalysts=pos.entry_catalysts,
-                entry_rationale=pos.rationale or "",
-            )
-            return f"[{ticker}] VERKAUFT{thesis_tag} – {reason} | P&L: {sign}{pnl:.2f} USD"
-
-        self.journal.log_daily_check(
-            ticker=ticker, price=price,
-            sentiment=analysis.sentiment_score,
-            confidence=analysis.confidence,
-            thesis_valid=analysis.thesis_valid,
-            rationale=analysis.entry_rationale or analysis.raw_summary,
-            recommendation=analysis.recommendation,
-        )
-        if analysis.thesis_valid is False:
-            self.journal.log_warning(
-                ticker=ticker, price=price,
-                reason=analysis.thesis_break_reason or "These angeschlagen",
-                confidence=analysis.confidence,
-            )
-
-        thesis_note = ""
-        if analysis.thesis_valid is True:
-            thesis_note = " | These: ✓ gültig"
-        elif analysis.thesis_valid is False:
-            thesis_note = " | These: ✗ gebrochen (Konfidenz zu niedrig für Sofortausstieg)"
-
-        return f"[{ticker}] Position gehalten ({days_held}d) | Kurs: ${price:.2f}{thesis_note}"
-
-    # ── Liquiditäts- und Gap-Prüfung ─────────────────────────────────────────
-
-    def _check_liquidity_and_gap(self, ticker: str, current_price: float) -> Tuple[bool, str]:
-        """
-        Prüft zwei Bedingungen vor jedem Kauf:
-        1. Mindest-Tagesvolumen (Standard: 500k Aktien) – illiquide Werte meiden
-        2. Market-Open-Gap (Standard: max. 4 %) – nicht in Gaps hinein kaufen
-
-        Gibt (True, "") zurück wenn alles in Ordnung ist.
-        Gibt (False, Grund) zurück wenn der Kauf übersprungen werden soll.
-        """
-        min_volume = int(os.getenv("MIN_DAILY_VOLUME", "500000"))
-        max_gap_pct = float(os.getenv("MAX_GAP_PCT", "0.04"))
-
+    def build_open_position_context(self, ticker: str) -> Optional[dict]:
+        """Returns a context dict for an open position (for Claude thesis-check), or None."""
+        pos = self.portfolio.all_positions().get(ticker)
+        if pos is None:
+            return None
         try:
-            import yfinance as yf
-            hist = yf.Ticker(ticker).history(period="3d", interval="1d")
-            if hist.empty or len(hist) < 2:
-                return True, ""  # Kein Datenpunkt → nicht blockieren
+            prices = self.broker.get_prices([ticker])
+            current_price = prices.get(ticker) or pos.entry_price
+            gain_pct = (current_price - pos.entry_price) / pos.entry_price * 100
+        except Exception:
+            current_price = pos.entry_price
+            gain_pct = 0.0
+        return {
+            "ticker":        ticker,
+            "entry_price":   pos.entry_price,
+            "current_price": round(current_price, 4),
+            "gain_pct":      round(gain_pct, 2),
+            "entry_date":    pos.entry_date,
+            "stop_loss":     pos.stop_loss,
+            "take_profit":   pos.take_profit,
+            "rationale":     getattr(pos, "rationale", ""),
+        }
 
-            avg_vol = int(hist["Volume"].mean())
-            if avg_vol < min_volume:
-                return False, (
-                    f"Zu geringes Volumen ({avg_vol:,} Ø vs. Minimum {min_volume:,}) – "
-                    f"illiquid, Slippage-Risiko"
-                )
+    # ── Core evaluation logic ───────────────────────────────────────────────
 
-            prev_close = float(hist["Close"].iloc[-2])
-            if prev_close > 0:
-                gap = abs(current_price - prev_close) / prev_close
-                if gap > max_gap_pct:
-                    direction = "hoch" if current_price > prev_close else "runter"
-                    return False, (
-                        f"Gap {gap*100:.1f}% {direction} vs. Vortag ${prev_close:.2f} – "
-                        f"nicht in Gap hinein kaufen"
-                    )
-        except Exception as e:
-            log.debug("Liquiditäts-Check für %s fehlgeschlagen (ignoriert): %s", ticker, e)
-
-        return True, ""
-
-    def _open_position(
+    def _evaluate_inner(
         self,
         ticker: str,
-        price: float,
-        analysis: AnalysisResult,
-        portfolio_value: float,
-        sources_breakdown: Dict[str, int],
-        score_mod=None,
-        current_score: float = 50.0,
-        rl_modifier: float = 1.0,
-    ) -> str:
-        # Score-Modifier ggf. neu laden (z.B. bei direktem Aufruf ohne evaluate())
-        _score_mod = score_mod if score_mod is not None else _get_score_mod(current_score)
+        analysis,
+        current_price: float,
+        regime: str,
+        market_is_ranging: bool,
+        rl_agent,
+    ) -> StrategyResult:
+        from config import config
+        from analyzers.regime_adaptive import get_adaptive_params
 
-        # Regime-adaptive Parameter (BULL/NEUTRAL/BEAR/CRISIS)
+        params = get_adaptive_params(regime, market_is_ranging)
+
+        # 1. Circuit-breaker
+        if self._circuit_breaker_active(config):
+            return StrategyResult("SKIP", ticker, "Circuit-Breaker aktiv (Tagesverlust-Limit)")
+
+        # 2. Existing position → check for add/scale-in or thesis recheck
+        pos = self.portfolio.get_position(ticker)
+        if pos is not None:
+            return self._evaluate_existing(ticker, pos, analysis, current_price, params, regime)
+
+        # 2b. Cross-Listing: dieselbe Firma steht schon unter einem anderen
+        # Börsenkürzel im Buch (SAP vs. SAP.DE, ASML vs. ASML.AS …). Ohne
+        # diesen Check bewertete der Bot das US-ADR als brandneue Firma und
+        # kaufte dieselbe Firma ein zweites Mal – Sizing, Einzelpositions-
+        # Deckel und Korrelations-Check sahen zwei getrennte Werte (real
+        # passiert am 24.7.2026 mit SAP). Aufstocken bleibt möglich, aber
+        # ausschließlich über den Ticker, unter dem die Position geführt wird:
+        # der läuft im selben Zyklus durch _evaluate_existing (Scale-in).
+        alias = self._held_under_other_listing(ticker)
+        if alias:
+            return StrategyResult(
+                "SKIP", ticker,
+                f"Firma bereits im Depot als {alias} (Cross-Listing) – "
+                f"Aufstocken läuft über {alias}")
+
+        # 3. New position evaluation
+        return self._evaluate_new(ticker, analysis, current_price, params, regime, market_is_ranging, rl_agent, config)
+
+    def _held_under_other_listing(self, ticker: str) -> Optional[str]:
+        """Ticker einer offenen Position derselben Firma an einem anderen
+        Handelsplatz – oder None. Fail-open: ohne Mapping kein Block."""
         try:
-            # Seitwärts-Flag aus letztem Detector-Ergebnis holen (kein extra API-Call)
-            _is_ranging = False
-            try:
-                from analyzers.recession_detector import RecessionDetector as _RD
-                _latest = _RD().get_latest()
-                _is_ranging = bool(_latest and _latest.get("market_is_ranging"))
-            except Exception:
-                pass
-            regime_params = get_adaptive_params(market_is_ranging=_is_ranging)
-            regime_sl_pct = regime_params.sl_pct
-            regime_tp_pct = regime_params.tp_pct
-            regime_pos_mult = regime_params.position_size_mult
-        except Exception:
-            regime_params = None
-            regime_sl_pct = config.stop_loss_pct
-            regime_tp_pct = config.take_profit_pct
-            regime_pos_mult = 1.0
+            from analyzers.stock_relations import canonical
+            canon = canonical(ticker)
+            for held in self.portfolio.all_positions():
+                if held.upper() != ticker.upper() and canonical(held) == canon:
+                    return held
+        except Exception as e:
+            log.debug("Cross-Listing-Prüfung übersprungen [%s]: %s", ticker, e)
+        return None
 
-        # Sharpe-basierter Größen-Multiplikator
-        try:
-            sharpe_mult = self.sharpe_sizer.get_size_modifier(ticker)
-        except Exception:
-            sharpe_mult = 1.0
+    def _evaluate_existing(
+        self, ticker, pos, analysis, current_price, params, regime
+    ) -> StrategyResult:
+        """Handle existing position: thesis recheck, scale-in, or hold."""
+        from config import config
 
-        max_pos_pct = self.focus.get_max_position_pct(portfolio_value)
-        if self.kelly:
-            kelly_pct = self.kelly.compute(fallback_pct=max_pos_pct)
-            max_pos_pct = min(max_pos_pct, kelly_pct)
+        # Thesis broken?
+        if hasattr(analysis, "thesis_valid") and analysis.thesis_valid is False:
+            reason = getattr(analysis, "thesis_break_reason", "These gebrochen")
+            return StrategyResult("SELL", ticker, f"These gebrochen: {reason}", price=current_price)
 
-        # Konfidenz-basiertes Positions-Sizing
-        conf_mult    = _CONFIDENCE_SIZING.get(analysis.confidence, 0.70)
-        sector_mult  = self.sector_rot.get_position_size_modifier(ticker)
-        macro_mult   = self.macro_cal.get_position_size_modifier()
-        earn_adj     = self.earn_surp.get_sentiment_adjustment(ticker)
+        # Scale-in: sentiment sehr hoch + position profitable
+        gain_pct = (current_price - pos.entry_price) / pos.entry_price
+        sentiment = getattr(analysis, "sentiment_score", 0.0)
+        confidence = getattr(analysis, "confidence", "MEDIUM")
 
-        # Währungsrisiko für EU-Aktien (GBP/CHF/SEK Gegenwind → kleinere Position)
-        fx_mult = 1.0
-        try:
-            from analyzers.currency_risk import get_currency_modifier
-            fx_mult, fx_note = get_currency_modifier(ticker)
-            if fx_note:
-                log.info("[%s] FX: %s (×%.2f)", ticker, fx_note, fx_mult)
-        except Exception:
-            pass
+        if (
+            sentiment >= 0.85
+            and confidence == "HIGH"
+            and gain_pct >= 0.05
+            and regime not in ("BEAR", "CRISIS")
+        ):
+            # Scale in: add up to 50% of original position size
+            scale_shares = round(pos.shares * 0.50, 4)
+            cost = scale_shares * current_price
+            if cost <= self.portfolio.cash * 0.15:  # max 15% cash for scale-in
+                return StrategyResult(
+                    "BUY", ticker,
+                    f"Scale-in: Sentiment={sentiment:.2f}, Gewinn={gain_pct*100:.1f}%",
+                    shares=scale_shares, price=current_price,
+                )
 
-        total_mult   = conf_mult * sector_mult * macro_mult * _score_mod.position_size_mult * regime_pos_mult * sharpe_mult * rl_modifier * fx_mult
-        max_invest   = portfolio_value * max_pos_pct * total_mult
+        return StrategyResult("HOLD", ticker, "Position läuft, keine Änderung")
 
-        # Margin: nur bei HIGH Confidence und wenn aktiviert
-        margin_factor = 1.0
-        using_margin = False
-        if (config.use_margin
-                and analysis.confidence == config.margin_min_confidence):
-            try:
-                tier_result  = MarginTierTracker(self.tracker).get_active_tier()
-                margin_factor = tier_result.factor
-                using_margin  = margin_factor > 1.0
-                if using_margin:
-                    log.info(
-                        "[%s] Margin Tier %d aktiv: %.2f× (%s)",
-                        ticker, tier_result.active_tier.level,
-                        margin_factor, tier_result.active_tier.label,
-                    )
-            except Exception as e:
-                log.warning("[%s] Margin-Tier-Check fehlgeschlagen: %s", ticker, e)
-
-        cash_limit = self.portfolio.cash * 0.95 * margin_factor
-        invest = min(max_invest * margin_factor, cash_limit)
-
-        if invest < 50:
-            return f"[{ticker}] Nicht genug freies Kapital für neuen Trade."
-
-        # Liquidität + Gap-Schutz
-        liq_ok, liq_reason = self._check_liquidity_and_gap(ticker, price)
-        if not liq_ok:
-            return f"[{ticker}] ⛔ {liq_reason} – Kauf abgebrochen."
-
-        # Krypto: erweiterte SL/TP-Prozentsätze aus Config
-        if _is_crypto(ticker):
-            sl_pct = config.crypto_stop_loss_pct
-            tp_pct = config.crypto_take_profit_pct
-        else:
-            sl_pct = regime_sl_pct
-            tp_pct = regime_tp_pct
-
-        shares = math.floor(invest / price * 100) / 100
-        # Regime-adaptive SL/TP (überschreibt fixe Config-Werte)
-        stop_loss = round(price * (1 - sl_pct), 2)
-        fixed_tp  = round(price * (1 + tp_pct), 2)
-        if analysis.target_price and analysis.target_price > price:
-            take_profit = min(analysis.target_price, fixed_tp)
-            tp_source = f"Claude ${analysis.target_price:.2f} → TP ${take_profit:.2f}"
-        else:
-            take_profit = fixed_tp
-            tp_source = f"Regime {tp_pct*100:.0f}% → TP ${take_profit:.2f}"
-
-        hold_regime_mult = regime_params.hold_days_mult if regime_params else 1.0
-        raw_hold    = round(analysis.suggested_hold_days * _score_mod.hold_days_mult * hold_regime_mult)
-        capped_hold = self.focus.cap_hold_days(raw_hold)
-
-        if _is_crypto(ticker):
-            fill = self.broker.buy_crypto(ticker, invest)
-        else:
-            fill = self.broker.buy(ticker, shares, price)
-        ok, actual_price, warn = _check_fill(fill, ticker, "buy")
-        if not ok:
-            return f"[{ticker}] ⛔ BUY-Order fehlgeschlagen: {warn}"
-        if not actual_price:
-            actual_price = price
-        if warn:
-            self._notifier.send(warn)
-        # Recalculate SL/TP from actual fill price to keep levels accurate
-        if actual_price != price:
-            stop_loss = round(actual_price * (1 - sl_pct), 2)
-            fixed_tp2 = round(actual_price * (1 + tp_pct), 2)
-            if analysis.target_price and analysis.target_price > actual_price:
-                take_profit = min(analysis.target_price, fixed_tp2)
-                tp_source = f"Claude ${analysis.target_price:.2f} → TP ${take_profit:.2f}"
-            else:
-                take_profit = fixed_tp2
-                tp_source = f"Regime {tp_pct*100:.0f}% → TP ${take_profit:.2f}"
-
-        position = Position(
+    def _enqueue_signal(self, ticker, analysis, sentiment, confidence, direction, n_src,
+                        reason: str = "capital_scarcity") -> None:
+        """Merkt ein an sich gültiges BUY-Signal vor, das nur an einer
+        aktuellen Kapazitätsgrenze scheitert (Max-Positionen ODER Cash-Reserve-
+        Boden erreicht) - nicht an der Sentiment-Schwelle selbst. Gemeinsamer
+        Helper für beide Fälle, damit ein starkes Signal nicht ersatzlos
+        verpufft: die Queue drained automatisch stündlich und sofort nach
+        jedem SL/TP-Exit (bot/scheduler_risk.py: sl_tp_check_job →
+        signal_queue_job), also genau dann, wenn wieder Slots/Kapital frei
+        werden. enqueue() dedupliziert selbst (überschreibt einen älteren
+        pending-Eintrag desselben Tickers)."""
+        if not self.signal_queue:
+            return
+        self.signal_queue.enqueue(
             ticker=ticker,
-            shares=shares,
-            entry_price=actual_price,
-            entry_date=datetime.utcnow().isoformat(),
+            sentiment_score=sentiment,
+            confidence=confidence,
+            target_price=getattr(analysis, "target_price", None),
+            direction=direction,
+            entry_rationale=getattr(analysis, "entry_rationale", "") or "",
+            key_catalysts=list(getattr(analysis, "key_catalysts", []) or []),
+            risk_factors=list(getattr(analysis, "risk_factors", []) or []),
+            sources_used=n_src,
+            sources_breakdown=getattr(analysis, "sources_breakdown", {}) or {},
+            suggested_hold_days=int(getattr(analysis, "suggested_hold_days", 0) or 0),
+            reason=reason,
+        )
+
+    def _evaluate_new(
+        self, ticker, analysis, current_price, params, regime,
+        market_is_ranging, rl_agent, config
+    ) -> StrategyResult:
+        """Evaluate potential new position."""
+        sentiment = getattr(analysis, "sentiment_score", 0.0)
+        confidence = getattr(analysis, "confidence", "MEDIUM")
+        direction  = getattr(analysis, "direction", "NEUTRAL")
+        recommendation = getattr(analysis, "recommendation", "SKIP")
+
+        # Buy threshold (adjusted by regime)
+        threshold = config.buy_threshold + params.buy_threshold_adj
+
+        # Makro-Gegenwind erhöht die Kaufschwelle (asymmetrisch: nur strenger,
+        # nie lockerer – Rückenwind soll keine schwachen Signale durchwinken).
+        try:
+            from analyzers.macro_context import get_macro_context
+            macro_bias = get_macro_context().bias_score()
+            if macro_bias <= -0.6:
+                threshold += 0.08
+            elif macro_bias <= -0.3:
+                threshold += 0.05
+        except Exception as _e:
+            log.debug("Makro-Bias-Threshold übersprungen [%s]: %s", ticker, _e)
+
+        # Kapitalknappheits-Aufschlag: sinkt das frei verfügbare Cash (% der
+        # Equity), steigt die Kaufschwelle - asymmetrisch wie der Makro-
+        # Aufschlag (nur strenger, nie lockerer). Verhindert, dass eine
+        # Kaufwelle das Kapital für Tage komplett bindet, weil auch
+        # mittelmäßige Signale noch durchgehen, bis das Cash-Polster abrupt am
+        # Reserve-Boden aufschlägt (Auslöser 25.7.2026: 6+ Tage
+        # handlungsunfähig nach einer Kaufwoche).
+        #
+        # Durchgehende Exponentialkurve ohne harte Stufen (User-Präzisierung
+        # 25.7.2026: "schon ab 100% fängt das an, nur wenig am Anfang, ab
+        # einem Kipppunkt steiler - keine harten Grenzen"). Eine erste Version
+        # hatte noch feste Plateaus (0 oberhalb 20% Cash, Maximum unterhalb 5%)
+        # mit einer Kurve nur dazwischen - genau die harte Grenze, die hier
+        # vermieden werden soll. Jetzt gilt für JEDEN Cash-Stand von 0-100%:
+        #
+        #   Aufschlag = max_adj * 2^(-cash_pct / pivot_pct)
+        #
+        # Exponentieller Zerfall über die GESAMTE Spanne: bei cash_pct=0 exakt
+        # max_adj (asymptotisches Maximum, kein Clamp), bei cash_pct=pivot_pct
+        # ("Kipppunkt") genau die Hälfte von max_adj, bei viel Cash strebt der
+        # Aufschlag glatt gegen 0 (bei 100% Cash + Default-Pivot 10%: ~0,0001 -
+        # praktisch nicht spürbar, aber nie hart auf 0 geklemmt).
+        if getattr(config, "capital_scarcity_threshold_enabled", True):
+            try:
+                equity = self.portfolio.total_value({})
+                cash_pct = (self.portfolio.cash / equity) if equity > 0 else 0.0
+                pivot   = float(getattr(config, "capital_scarcity_pivot_pct", 0.10))
+                max_adj = float(getattr(config, "capital_scarcity_max_adj", 0.15))
+                adj = _capital_scarcity_adjustment(cash_pct, max_adj, pivot)
+                threshold += adj
+                if adj >= 0.005:  # Log-Rauschen vermeiden bei kaum spürbaren Beträgen
+                    log.info(
+                        "[%s] Kapitalknappheit (Cash %.1f%% der Equity) → "
+                        "Schwelle +%.3f auf %.3f",
+                        ticker, cash_pct * 100, adj, threshold,
+                    )
+            except Exception as _e:
+                log.debug("Kapitalknappheits-Schwelle übersprungen [%s]: %s", ticker, _e)
+
+        # Direction must be bullish
+        if direction not in ("BULLISH",) or recommendation not in ("BUY",):
+            # Check conditional entry
+            trigger = getattr(analysis, "entry_trigger_price", None)
+            if trigger and trigger > current_price * 0.98:
+                # build() erfasst Analyse-Kontext (Bull/Bear, Kursziel) und
+                # erzwingt den 3-Tage-Halte-Floor (sonst 0-Tage-Exit beim Trigger).
+                self._conditional_watcher.add(
+                    ConditionalEntryWatcher.build(ticker, trigger, current_price, analysis)
+                )
+            return StrategyResult("SKIP", ticker, f"Kein Kaufsignal: {recommendation}/{direction}")
+
+        # Congress×CEO-Confluence: einmal ziehen (erst hier, nachdem Bullish-Signal
+        # feststeht – kein Netzaufruf für SKIP-Kandidaten). Senkt die Kaufschwelle
+        # leicht ab (asymmetrisch wie der Makro-Aufschlag, nur in Gegenrichtung) und
+        # wird unten ans Sizing weitergereicht. Floor verhindert Über-Absenkung.
+        confluence = self._has_insider_confluence(ticker)
+        if confluence and _CONFLUENCE_THR_RELIEF > 0:
+            threshold = max(_CONFLUENCE_THR_FLOOR, threshold - _CONFLUENCE_THR_RELIEF)
+            log.info("[%s] Insider-Confluence (Exec×Congress) → Schwelle %.2f", ticker, threshold)
+
+        if sentiment < threshold:
+            return StrategyResult("SKIP", ticker, f"Sentiment {sentiment:.2f} < Schwelle {threshold:.2f}")
+
+        # Informationsdichte-Boden: nicht auf zu dünner Quellenlage handeln.
+        # (Beim 7.6.-Umbau verloren gegangen – hier wiederhergestellt.)
+        min_src = config.min_sources
+        _su = getattr(analysis, "sources_used", 0)
+        # sources_used ist je nach Analyzer-Pfad int ODER Dict[str,int] (Quelle→Anzahl).
+        if isinstance(_su, dict):
+            n_src = sum(int(v or 0) for v in _su.values())
+        else:
+            try:
+                n_src = int(_su or 0)
+            except (TypeError, ValueError):
+                n_src = 0
+        if n_src < min_src:
+            return StrategyResult("SKIP", ticker, f"Zu wenige Quellen ({n_src} < {min_src}) – übersprungen")
+
+        # Max positions (dynamisch nach Portfolio-Größe via FocusController –
+        # config.max_positions existiert nicht; früher self.focus.get_max_positions).
+        n_pos = len(self.portfolio.all_positions())
+        try:
+            max_pos = self.focus_ctrl.get_max_positions(self.portfolio.total_value({}))
+        except Exception:
+            max_pos = 12
+        if n_pos >= max_pos:
+            self._enqueue_signal(ticker, analysis, sentiment, confidence, direction, n_src,
+                                 reason="max_positions")
+            return StrategyResult("SKIP", ticker, f"Max Positionen ({max_pos}) erreicht – Signal in Queue")
+
+        # Earnings filter
+        if self.earnings_filter and self.earnings_filter.check(ticker).get("block"):
+            return StrategyResult("SKIP", ticker, "Earnings-Sperre aktiv")
+
+        # SL-Cooldown: nach verlustigem Stop-Loss N Tage keinen Re-Entry
+        # (config.sl_cooldown_days; Pendant zur Backtest-Regel in
+        # backtesting/engine.py). Fail-open bei Lese-/Importfehlern.
+        try:
+            from analyzers.sl_cooldown import StopLossCooldown
+            _sl_blocked, _sl_why = StopLossCooldown().is_blocked(ticker)
+            if _sl_blocked:
+                return StrategyResult("SKIP", ticker, _sl_why)
+        except Exception as _e:
+            log.debug("SL-Cooldown-Check übersprungen [%s]: %s", ticker, _e)
+
+        # Liquiditäts-Gate: nicht in untradeable Small-Caps kaufen (Ø-Dollar-
+        # Volumen). Fail-open bei Datenausfall (siehe analyzers/liquidity).
+        try:
+            from analyzers.liquidity import check_liquidity
+            liq = check_liquidity(ticker, current_price)
+            if not liq.ok:
+                return StrategyResult("SKIP", ticker, liq.reason)
+        except Exception as _e:
+            log.debug("Liquiditäts-Gate übersprungen [%s]: %s", ticker, _e)
+
+        # Position sizing (VOR dem Korrelations-Check nötig: der braucht die
+        # geplante Investitionssumme, die es vorher noch nicht gibt).
+        position_value = self._calc_position_size(
+            analysis, current_price, params, config, confluence, sentiment, threshold)
+        if position_value <= 0:
+            # Kapitalmangel (Cash-Reserve-Boden erreicht), nicht ein schwaches
+            # Signal – Grund, warum Position sizing = 0 werden kann, obwohl das
+            # Signal die Schwelle bereits übersprungen hat. Ohne Queue verpufft
+            # ein starkes Signal (z.B. Score 0.9) hier ersatzlos: anders als der
+            # Max-Positionen-Fall wurde dieser Skip bislang NICHT vorgemerkt.
+            # In die Queue statt zu verlieren – dieselbe Infrastruktur wie beim
+            # Max-Positionen-Fall drained automatisch stündlich UND sofort nach
+            # jedem SL/TP-Exit (also genau dann, wenn Kapital frei wird).
+            self._enqueue_signal(ticker, analysis, sentiment, confidence, direction, n_src)
+            return StrategyResult("SKIP", ticker, "Positionsgröße = 0 (Kapital knapp) – Signal in Queue")
+
+        # Correlation check
+        if self.correlation_checker:
+            positions = self.portfolio.all_positions()
+            existing_value = {t: p.shares * p.entry_price for t, p in positions.items()}
+            corr = self.correlation_checker.can_open(
+                ticker, position_value, self.portfolio.total_value({}), existing_value,
+            )
+            if not corr.get("allowed"):
+                return StrategyResult("SKIP", ticker, corr.get("reason") or "Zu hohe Sektor-Korrelation")
+
+        # Selbstlern-Filter: konsultiert das gelernte Kalibrierungsmodell.
+        # AVOID → SKIP (wenn block aktiv), CAUTION → kleinere Position. Fail-open.
+        # `_ef_verdict`/`_ef_pwin`/`_ef_edge` wandern unten in den StrategyResult,
+        # damit der Executor sie an die Position hängen kann — Grundlage für den
+        # Hinterher-Vergleich "hat der Filter recht behalten" beim Exit.
+        _ef_verdict, _ef_pwin, _ef_edge = "", 0.0, 0.0
+        if getattr(config, "learning_filter_enabled", False):
+            ef = _get_entry_filter()
+            if ef is not None:
+                try:
+                    verdict = ef.evaluate({
+                        "ticker": ticker,
+                        "sentiment_score": sentiment,
+                        "confidence": confidence,
+                        "debate_winner": getattr(analysis, "debate_winner", "") or "",
+                        "regime": str(regime) if regime else "",
+                    })
+                    _ef_verdict, _ef_pwin, _ef_edge = (
+                        verdict.verdict, verdict.p_win, verdict.expected_edge)
+                    if verdict.verdict == "AVOID":
+                        if getattr(config, "learning_filter_block", True):
+                            return StrategyResult(
+                                "SKIP", ticker,
+                                f"Lern-Filter AVOID (Edge {verdict.expected_edge:+.2f}%, "
+                                f"P(Win) {verdict.p_win:.0%})")
+                        # Block deaktiviert (User-Entscheidung 22.7.2026: mehr Trades
+                        # für echte Lern-Daten statt Datenmangel) — AVOID kauft dann
+                        # trotzdem, aber mit derselben verkleinerten Größe wie CAUTION
+                        # (bisher lief AVOID hier ungebremst in VOLLER Größe durch —
+                        # Lücke zwischen Doku-Kommentar oben und Code).
+                        mult = float(getattr(config, "learning_filter_caution_size_mult", 0.5))
+                        position_value *= max(0.0, min(1.0, mult))
+                        log.info("[%s] Lern-Filter AVOID (Block aus) → Position ×%.2f", ticker, mult)
+                    elif verdict.verdict == "CAUTION":
+                        mult = float(getattr(config, "learning_filter_caution_size_mult", 0.5))
+                        position_value *= max(0.0, min(1.0, mult))
+                        log.info("[%s] Lern-Filter CAUTION → Position ×%.2f", ticker, mult)
+                    elif verdict.verdict == "PROCEED":
+                        # Zweiseitig: klar positive gelernte Kante darf die Position auch
+                        # vergrößern (Default 1.0 = aus). Gedeckelt, damit der Filter nie
+                        # exzessiv hebelt.
+                        pmult = float(getattr(config, "learning_filter_proceed_size_mult", 1.0))
+                        if pmult != 1.0:
+                            position_value *= max(1.0, min(2.0, pmult))
+                            log.info("[%s] Lern-Filter PROCEED → Position ×%.2f", ticker, pmult)
+                except Exception as _ef_err:
+                    log.debug("Lern-Filter übersprungen [%s]: %s", ticker, _ef_err)
+
+        # RLAgent-Veto: separat trainierter linearer Policy-Agent (eigenes Paradigma,
+        # parallel zum EntryFilter). Nur aktiv, wenn der Runner einen rl_agent durchreicht
+        # (config.rl_veto_enabled). should_buy → (kaufen?, modifier 0.5–1.25): negativer
+        # Policy-Score ⇒ SKIP, sonst zweiseitige Size-Anpassung. Fail-open.
+        if rl_agent is not None:
+            try:
+                from analyzers.rl_agent import RLState
+                state = RLState(
+                    sentiment_score=max(0.0, min(1.0, float(sentiment or 0.0))),
+                    vix_level=0.3,        # neutraler Default (konsistent mit Trainings-State)
+                    momentum_5d=0.0,
+                    news_velocity=0.5,
+                    confidence_encoded=RLState.encode_confidence(str(confidence or "MEDIUM")),
+                    regime_encoded=RLState.encode_regime(str(regime or "NEUTRAL")),
+                )
+                rl_buy, rl_mod = rl_agent.should_buy(state)
+                if not rl_buy:
+                    return StrategyResult(
+                        "SKIP", ticker, "RL-Agent-Veto (negativer Policy-Score)")
+                position_value *= max(0.25, min(1.5, float(rl_mod)))
+                log.info("[%s] RL-Agent OK → Position ×%.2f", ticker, rl_mod)
+            except Exception as _rl_err:
+                log.debug("RL-Veto übersprungen [%s]: %s", ticker, _rl_err)
+
+        shares = position_value / current_price
+
+        # Aktien-Orders unter 1 Stück kann die IBKR-API nicht ausführen. Ohne
+        # diesen Guard ging die Order trotzdem raus, scheiterte beim Broker und
+        # löste einen lauten "BUY-Order fehlgeschlagen"-Alarm aus, obwohl nur
+        # das Budget zu klein war (24.7.2026: SAP mit 0,86 Stück, weil der
+        # Cash-Reserve-Boden fast erreicht war). Krypto handelt Bruchteile und
+        # bleibt ausgenommen.
+        if shares < 1 and not _is_fractional_asset(ticker):
+            return StrategyResult(
+                "SKIP", ticker,
+                f"Positionsgröße {shares:.2f} Stück < 1 bei Kurs {current_price:.2f} "
+                f"(einsetzbares Budget {position_value:.0f}) – keine Teilaktien handelbar")
+
+        # SL/TP
+        sl_pct = params.sl_pct
+        tp_pct = params.tp_pct
+
+        # Hold days
+        # config.hold_days existiert nicht – Literal-Default (Analyse liefert i.d.R.
+        # suggested_hold_days; greift nur als Fallback). Floor unten via max(3,…).
+        suggested = getattr(analysis, "suggested_hold_days", 14) or 14
+        hold_days = max(3, int(suggested * params.hold_days_mult))
+
+        stop_loss   = round(current_price * (1 - sl_pct), 4)
+        take_profit = round(current_price * (1 + tp_pct), 4)
+
+        # RL agent veto
+        if rl_agent is not None:
+            try:
+                rl_decision = rl_agent.decide(ticker, sentiment, current_price)
+                if rl_decision == "SKIP":
+                    return StrategyResult("SKIP", ticker, "RL-Agent: SKIP")
+            except Exception as _e:
+                log.debug("RL-Agent-Veto übersprungen [%s]: %s", ticker, _e)
+
+        rationale = getattr(analysis, "entry_rationale", "") or getattr(analysis, "recommendation", "")
+        catalysts  = getattr(analysis, "key_catalysts", []) or []
+
+        return StrategyResult(
+            action="BUY",
+            ticker=ticker,
+            reason=rationale,
+            shares=round(shares, 4),
+            price=current_price,
             stop_loss=stop_loss,
             take_profit=take_profit,
-            target_hold_days=capped_hold,
-            rationale=analysis.entry_rationale,
-            entry_catalysts=analysis.key_catalysts[:5],
-        )
-        self.portfolio.open_position(position)
-
-        self._notifier.notify_buy(
-            ticker=ticker, shares=shares, price=actual_price,
-            stop_loss=stop_loss, take_profit=take_profit,
-            hold_days=capped_hold,
-            rationale=analysis.entry_rationale or "",
-            sentiment_score=analysis.sentiment_score,
-            confidence=analysis.confidence,
-            direction=analysis.direction,
-            target_price=analysis.target_price,
-            key_catalysts=analysis.key_catalysts[:4],
-            risk_factors=analysis.risk_factors[:3],
-            sources_breakdown=sources_breakdown,
-        )
-        self.tracker.record_prediction(
-            ticker=ticker,
-            entry_price=actual_price,
-            predicted_target_price=analysis.target_price,
-            predicted_hold_days=capped_hold,
-            predicted_direction=analysis.direction,
-            sentiment_score=analysis.sentiment_score,
-            confidence=analysis.confidence,
-            sources_used=analysis.sources_used,
-            sources_breakdown=sources_breakdown,
-            mode="exploration" if config.exploration_mode else "normal",
-        )
-        self.journal.log_entry(
-            ticker=ticker,
-            price=actual_price,
-            sentiment=analysis.sentiment_score,
-            confidence=analysis.confidence,
-            direction=analysis.direction,
-            rationale=analysis.entry_rationale,
-            catalysts=analysis.key_catalysts[:5],
-            risks=analysis.risk_factors[:5],
-            sources=sources_breakdown,
-            target_price=analysis.target_price,
-            hold_days=capped_hold,
+            hold_days=hold_days,
+            entry_filter_verdict=_ef_verdict,
+            entry_filter_p_win=_ef_pwin,
+            entry_filter_edge=_ef_edge,
         )
 
-        earn_info = self.earn_surp.check(ticker)
-        earn_tag  = f" | {EarningsSurprise.format_surprise(earn_info)}" if earn_info.get("label") not in ("UNKNOWN", "IN_LINE", None) else ""
+    # ── Exit logic ─────────────────────────────────────────────────────────────
 
-        margin_tag = f" | ⚡ MARGIN {margin_factor:.1f}×" if using_margin else ""
-        score_tag  = f" | Score {current_score:.0f} ({_score_mod.score_range})"
-        return (
-            f"[{ticker}] GEKAUFT – {shares} Stück @ ${actual_price:.2f} "
-            f"| SL: ${stop_loss} | {tp_source} "
-            f"| Haltedauer: {capped_hold}d "
-            f"| Investiert: ${shares * actual_price:.2f}"
-            f"{earn_tag}{margin_tag}{score_tag}"
-        )
+    def _check_exit(self, ticker: str, pos: Position, price: float, regime: str) -> Optional[StrategyResult]:
+        """Check one position for exit conditions."""
+        from analyzers.regime_adaptive import get_adaptive_params
+        params = get_adaptive_params(regime)
 
-    def _do_close(self, ticker: str, pos: Position, price: float, reason: str, days_held: int = 0) -> float:
-        if _is_crypto(ticker):
-            fill = self.broker.sell_crypto(ticker, pos.shares)
-        else:
-            fill = self.broker.sell(ticker, pos.shares, price)
-        ok, actual_price, warn = _check_fill(fill, ticker, "sell")
-        if not ok:
-            # SELL failed — log and keep position open; notifier alert so operator can intervene
-            self._notifier.send(
-                f"🚨 <b>{ticker} SELL-Order FEHLGESCHLAGEN</b> ({reason})\n"
-                f"Position bleibt offen — bitte manuell im Broker prüfen!\n"
-                f"Fehler: {warn}"
-            )
-            log.error("[%s] SELL failed (%s) – position kept open", ticker, warn)
-            return 0.0
-        if not actual_price:
-            actual_price = price
-        if warn:
-            self._notifier.send(warn)
-        self.tracker.record_outcome(
-            ticker=ticker,
-            entry_price=pos.entry_price,
-            entry_date=pos.entry_date,
-            sell_price=actual_price,
-            sell_reason=reason,
-        )
-        pnl = self.portfolio.close_position(ticker, actual_price, reason)
-        self.journal.log_exit(
-            ticker=ticker, price=actual_price,
-            entry_price=pos.entry_price,
-            pnl=pnl, reason=reason,
-            days_held=days_held,
-        )
-        # Einmalig letzten Trade lesen – wird an beide Methoden weitergegeben
-        last_trade: Optional[dict] = None
-        try:
-            recent = self.tracker.get_recent_trades(n=1)
-            last_trade = recent[0] if recent else {}
-        except Exception:
-            pass
+        gain_pct = (price - pos.entry_price) / pos.entry_price
 
-        self._run_goal_risk_check()
-        self._run_score_update(ticker, pos.entry_price, price, reason, last_trade)
-        self._run_post_close_learning(ticker, pos.entry_price, price, reason, last_trade)
+        # 1. Hard stop-loss
+        if price <= pos.stop_loss:
+            return StrategyResult("SELL", ticker, f"Stop-Loss ausgelöst @ ${price:.2f}",
+                                  price=price, shares=pos.shares)
 
-        # ── RL Agent: aus Trade-Ergebnis lernen ──────────────────────────────
-        try:
-            rl_state = self.rl_agent._state_from_entry({
-                "sentiment":  last_trade.get("sentiment_score"),
-                "confidence": last_trade.get("confidence"),
-                "direction":  last_trade.get("direction"),
-            })
-            return_pct = (price - pos.entry_price) / pos.entry_price * 100
-            planned_hold = int(last_trade.get("hold_days") or pos.target_hold_days or 14)
-            reward = self.rl_agent.compute_reward(
-                return_pct=return_pct,
-                hold_days=days_held,
-                planned_hold_days=planned_hold,
-                stop_loss_triggered="stop" in reason.lower(),
-            )
-            self.rl_agent.record_outcome(rl_state, reward)
-            log.info("[%s] RL-Update: return=%.1f%% reward=%+.4f", ticker, return_pct, reward)
-        except Exception as _rl_exc:
-            log.debug("RL record_outcome fehlgeschlagen: %s", _rl_exc)
+        # 2. Take-profit
+        if price >= pos.take_profit:
+            return StrategyResult("SELL", ticker, f"Take-Profit erreicht @ ${price:.2f}",
+                                  price=price, shares=pos.shares)
 
-        return pnl
+        # 3. Partial take-profit
+        partial_result = self._check_partial_tp(ticker, pos, price, gain_pct, regime)
+        if partial_result:
+            return partial_result
 
-    def _run_score_update(self, ticker: str, entry_price: float, exit_price: float, reason: str,
-                          last_trade: Optional[dict] = None) -> None:
-        """Bot-Score nach Trade aktualisieren und bei Meilensteinen benachrichtigen."""
-        last_trade = last_trade or {}
-        try:
-            return_pct = (exit_price - entry_price) / entry_price * 100
-            tier = 0
-            try:
-                tier = MarginTierTracker(self.tracker).get_active_tier().active_tier.level
-            except Exception:
-                pass
+        # 4. Trailing stop update
+        self._update_trailing_stop(ticker, pos, price, gain_pct, regime)
 
-            conf_raw = last_trade.get("confidence") or "MEDIUM"
-            confidence = conf_raw.upper()
+        # 5. Hold-time expiry
+        entry_dt = datetime.fromisoformat(pos.entry_date) if isinstance(pos.entry_date, str) else pos.entry_date
+        days_held = (datetime.now(timezone.utc).replace(tzinfo=None) - entry_dt).days
+        # Mindest-Haltedauer erzwingen: Positionen mit target_hold_days=0 (z.B. aus
+        # Conditional Entries mit ungesetztem suggested_hold_days) würden sonst beim
+        # nächsten Check sofort wieder verkauft – purer Slippage-Verlust (vgl. CRM/CAT).
+        effective_hold = max(int(pos.target_hold_days or 0), _MIN_HOLD_DAYS)
+        if days_held >= effective_hold:
+            # Only sell if not profitable enough to extend
+            if gain_pct < 0.05:
+                return StrategyResult("SELL", ticker,
+                                      f"Haltedauer abgelaufen ({days_held}d)",
+                                      price=price, shares=pos.shares)
 
-            # Normalise reason string to match bot_scorer exit_reason keys
-            exit_reason_key = reason.lower()
-            if "stop" in exit_reason_key:
-                exit_reason_key = "stop_loss"
-            elif "take" in exit_reason_key or "profit" in exit_reason_key:
-                exit_reason_key = "take_profit"
-            elif "these" in exit_reason_key or "thesis" in exit_reason_key:
-                exit_reason_key = "thesis_broken"
-            elif "haltedauer" in exit_reason_key or "hold" in exit_reason_key:
-                exit_reason_key = "hold_expired"
-            elif "sentiment" in exit_reason_key:
-                exit_reason_key = "sentiment_sell"
+        return None
 
-            scorer = BotScorer()
-            delta, new_milestones, record_msgs = scorer.record_trade(
+    def _check_partial_tp(self, ticker, pos, price, gain_pct, regime) -> Optional[StrategyResult]:
+        """2-stage partial take-profit."""
+        if regime in ("BEAR", "CRISIS"):
+            return None  # Kein Partial-TP in Bären/Krisen (zu volatil)
+
+        stage = pos.partial_tp_count
+        if stage >= len(_PARTIAL_TP_STAGES):
+            return None
+
+        threshold, sell_fraction = _PARTIAL_TP_STAGES[stage]
+        if gain_pct >= threshold:
+            sell_shares = round(pos.shares * sell_fraction, 4)
+            pnl = sell_shares * (price - pos.entry_price)
+            new_shares = round(pos.shares - sell_shares, 4)
+            # Raise stop-loss to break-even after first partial TP
+            new_sl = max(pos.stop_loss, pos.entry_price * 1.01) if stage == 0 else pos.stop_loss
+
+            self.portfolio.update_partial_tp(
                 ticker=ticker,
-                return_pct=return_pct,
-                confidence=confidence,
-                exit_reason=exit_reason_key,
-                current_tier=tier,
-                tracker=self.tracker,
+                new_shares=new_shares,
+                new_stop_loss=new_sl,
+                sell_shares=sell_shares,
+                sell_price=price,
+                pnl=pnl,
+                new_count=stage + 1,
             )
-
-            score = scorer.get()
-            sign  = "+" if delta >= 0 else ""
-            log.info("Score: %s%+.1f → %.1f/100 (%s)", sign, delta, score.current, score.label)
-
-            if record_msgs:
-                self._notifier.send(scorer.to_telegram_record(record_msgs))
-
-            for milestone in new_milestones:
-                self._notifier.send(scorer.to_telegram_milestone(milestone))
-
-        except Exception as e:
-            log.warning("Score-Update fehlgeschlagen: %s", e)
-
-    def _run_post_close_learning(
-        self, ticker: str, entry_price: float, exit_price: float, reason: str, last_trade: Optional[dict] = None
-    ) -> None:
-        """SentimentMemory + ReEntryTracker nach Trade-Abschluss aktualisieren."""
-        last_trade = last_trade or {}
-        return_pct = (exit_price - entry_price) / entry_price * 100
-        confidence = (last_trade.get("confidence") or "MEDIUM").upper()
-
-        # Sentiment-Verlässlichkeit pro Ticker lernen
-        try:
-            sentiment_at_entry = last_trade.get("sentiment_score")
-            if sentiment_at_entry is not None:
-                SentimentMemory().record(ticker, sentiment_at_entry, return_pct)
-        except Exception as e:
-            log.debug("SentimentMemory.record fehlgeschlagen: %s", e)
-
-        # Verkaufte Position zur Re-Entry-Beobachtung hinzufügen
-        try:
-            ReEntryTracker().add_sold(
-                ticker=ticker,
-                sell_price=exit_price,
-                sell_reason=reason,
-                confidence=confidence,
+            return StrategyResult(
+                "SELL", ticker,
+                f"Partial-TP Stufe {stage+1}: {sell_fraction*100:.0f}% @ +{gain_pct*100:.1f}%",
+                price=price, shares=sell_shares,
             )
-        except Exception as e:
-            log.debug("ReEntryTracker.add_sold fehlgeschlagen: %s", e)
+        return None
 
-    def _run_goal_risk_check(self) -> None:
-        """Nach jedem Trade: prüfe ob das Portfolio-Ziel noch erreichbar ist."""
-        if not self.goal_risk or not self.goal_risk.active:
+    def _update_trailing_stop(self, ticker, pos, price, gain_pct, regime):
+        """Ratchet trailing stop-loss upward."""
+        steps = (
+            _TRAILING_STEPS_CRISIS if regime == "CRISIS" else
+            _TRAILING_STEPS_BEAR   if regime == "BEAR"   else
+            _TRAILING_STEPS
+        )
+        for gain_threshold, new_sl_pct in reversed(steps):
+            if gain_pct >= gain_threshold:
+                new_sl = pos.entry_price * (1 + new_sl_pct)
+                if new_sl > pos.stop_loss:
+                    new_sl = round(new_sl, 4)
+                    self.portfolio.update_position_state(ticker, stop_loss=new_sl)
+                    self._sync_broker_stop(ticker, pos.shares, new_sl)
+                break
+
+    def _sync_broker_stop(self, ticker: str, shares: float, stop_price: float) -> None:
+        """Broker-seitigen GTC-Schutz-Stop (Roadmap 1.9) auf den frisch
+        angehobenen Trailing-SL nachziehen (Roadmap 1.12) – sonst bliebe der
+        Backstop bei Bot-Ausfall auf dem alten, niedrigeren Niveau stehen statt
+        mit der Bot-eigenen Stufen-Logik mitzuwandern. Nur bei einem Broker mit
+        update_stop()-API (IBKR); PaperBroker hat keine offene Order zu pflegen."""
+        upd = getattr(self.broker, "update_stop", None)
+        if not callable(upd):
             return
         try:
-            prices = self.broker.get_prices(list(self.portfolio.all_positions().keys()))
-            portfolio_value = self.portfolio.total_value(prices)
-            stats = self.tracker.get_accuracy_report()
-            assessment = self.goal_risk.assess(portfolio_value, stats)
-            if assessment is None:
-                return
+            upd(ticker, shares, stop_price)
+        except Exception as e:
+            log.warning("[%s] Broker-Stop-Nachführung (Trailing) fehlgeschlagen: %s", ticker, e)
 
-            risk = assessment.risk_level
-            if risk == UNREACHABLE:
-                icon = "🚨"
-            elif risk == DANGER:
-                icon = "⚠️"
-            elif risk == CAUTION:
-                icon = "🟡"
-            else:
-                return  # OK – kein Alarm nötig
-
-            # Telegram-Benachrichtigung
-            msg = (
-                f"{icon} *ZIEL-RISIKOANALYSE* nach Trade-Abschluss\n\n"
-                f"{assessment.to_text()}"
-            )
-            self._notifier.send(msg)
-        except Exception:
-            pass
+    # ── Insider-Confluence ────────────────────────────────────────────────────
 
     @staticmethod
-    def _update_trailing_stop(pos: Position, current_price: float) -> bool:
-        """Zieht den Stop-Loss nach oben wenn der Kurs steigt. Gibt True zurück wenn aktualisiert."""
-        if pos.entry_price <= 0:
+    def _has_insider_confluence(ticker: str) -> bool:
+        """True, wenn Exec UND Congress denselben Ticker gekauft haben.
+
+        Ein einziger Netzaufruf pro BUY-Kandidat (nicht pro Zyklus-Ticker), da
+        nur für bereits bullishe Kaufkandidaten aufgerufen. Fail-open: jeder
+        Fehler/Datenausfall ⇒ False (kein Bonus, nie ein Block).
+        """
+        if not _CONFLUENCE_OVERLAY:
             return False
-        gain = (current_price - pos.entry_price) / pos.entry_price
-        best_stop = pos.stop_loss
-        for min_gain, trail_pct in _TRAILING_STEPS:
-            if gain >= min_gain:
-                candidate = round(current_price * (1 - trail_pct), 2)
-                best_stop = max(best_stop, candidate)
-                break
-        if best_stop > pos.stop_loss:
-            pos.stop_loss = best_stop
-            return True
-        return False
+        try:
+            from analyzers.insider_signal import get_insider_score
+            return bool(get_insider_score(ticker, lookback_days=30).confluence)
+        except Exception as _e:
+            log.debug("Insider-Confluence übersprungen [%s]: %s", ticker, _e)
+            return False
 
-    def _try_scale_in(
-        self, pos: Position, current_price: float, analysis: AnalysisResult
-    ) -> Optional[str]:
+    @staticmethod
+    def _atr_vol_multiplier(ticker: str, current_price: float, broker=None) -> float:
+        """Volatilitäts-Normierung der Positionsgröße über ATR(14).
+
+        Gleicher Dollar-Einsatz pro Trade unabhängig von der Tagesvolatilität:
+        Multiplikator = Ziel-ATR% / aktuelles ATR%, hart gedeckelt auf
+        [_ATR_SIZE_FLOOR, _ATR_SIZE_CAP]. Ein einziger yfinance-Aufruf pro
+        BUY-Kandidat. Fail-open: fehlendes/ungültiges ATR ⇒ 1.0 (kein Eingriff).
         """
-        Stockt eine bestehende Position auf wenn:
-        - Signal ist BUY mit HIGH-Konfidenz
-        - Kurs ist nicht mehr als 8% über Einstiegskurs (kein Nachjagen)
-        - Bestehende Position ist kleiner als 80% des erlaubten Maximums
-        - Genug freies Kapital
+        if not _ATR_VOL_SIZING:
+            return 1.0
+        try:
+            from analyzers.technical_indicators import TechnicalIndicators
+            kwargs = {"broker": broker} if broker is not None else {}
+            snap = TechnicalIndicators().calculate(ticker, **kwargs)
+            atr   = getattr(snap, "atr_14", None) if snap else None
+            price = (getattr(snap, "price", None) if snap else None) or current_price
+            if not atr or not price or price <= 0:
+                return 1.0
+            atr_pct = atr / price
+            if atr_pct <= 0:
+                return 1.0
+            mult = _ATR_TARGET_PCT / atr_pct
+            return max(_ATR_SIZE_FLOOR, min(_ATR_SIZE_CAP, mult))
+        except Exception as _e:
+            log.debug("ATR-Vol-Sizing übersprungen [%s]: %s", ticker, _e)
+            return 1.0
+
+    # ── Position sizing ─────────────────────────────────────────────────────
+
+    def _calc_position_size(
+        self, analysis, current_price: float, params, config, confluence: bool = False,
+        sentiment: float = 0.0, threshold: float = 0.0,
+    ) -> float:
+        """Calculate dollar position size."""
+        # Basis ist ein Anteil der GESAMT-EQUITY (Cash + Positionswert), nicht
+        # nur des Rest-Cash. Sonst schrumpfen spätere Käufe im selben Zyklus,
+        # weil das Cash mit jedem Buy sinkt. total_value({}) bewertet bestehende
+        # Positionen mangels Live-Preisen mit dem Einstandspreis – stabile,
+        # ausreichende Schätzung für das Sizing. Der Cash-Reserve-Boden weiter
+        # unten (_deployable_cash) verhindert weiterhin ein Überziehen.
+        equity = self.portfolio.total_value({})
+        base = equity * config.max_position_pct
+
+        # Regime multiplier
+        base *= params.position_size_mult
+
+        # Konviction-Multiplier: Confidence-Basis (dämpft) PLUS Sentiment-
+        # Überschuss über der Kaufschwelle (hebt an). Anders als früher kann das
+        # Ergebnis >1.0 werden → starke Signale bekommen mehr Kapital. Die harte
+        # Einzelpositions-Grenze unten deckelt die Freiheit.
+        confidence = getattr(analysis, "confidence", "MEDIUM")
+        conf_base = _CONFIDENCE_SIZING.get(confidence, 0.70)
+        margin = max(0.0, float(sentiment) - float(threshold))
+        # 0.15 Sentiment-Überschuss ≈ voller Bonus (linear gedeckelt).
+        sent_bonus = min(margin / 0.15, 1.0) * float(getattr(config, "conviction_max_bonus", 0.6))
+        base *= conf_base * (1.0 + sent_bonus)
+
+        # Kelly sizing (optional)
+        if self.kelly_sizer:
+            try:
+                kelly_mult = self.kelly_sizer.fraction
+                base = min(base, self.portfolio.cash * kelly_mult)
+            except Exception as _e:
+                log.debug("Kelly-Sizing übersprungen: %s", _e)
+
+        # Goal risk
+        if self.goal_risk_assessor:
+            try:
+                risk_mult = self.goal_risk_assessor.position_size_multiplier()
+                base *= risk_mult
+            except Exception as _e:
+                log.debug("Goal-Risk-Sizing übersprungen: %s", _e)
+
+        # Makro-Modifier (VIX × Makro-Kalender × Sektor-Rotation).
+        # Regime ist bereits über params.position_size_mult abgedeckt – hier
+        # kommen die übrigen, bislang ungenutzten Makro-Faktoren hinzu.
+        try:
+            from analyzers.macro_context import get_macro_context
+            ticker = getattr(analysis, "ticker", "") or ""
+            base *= get_macro_context().size_modifier(ticker)
+        except Exception as _e:
+            log.debug("Makro-Size-Modifier übersprungen: %s", _e)
+
+        # ATR-Volatilitäts-Normierung: gleiches Tages-Risiko pro Trade, egal ob
+        # ruhige oder wilde Aktie. Helper ist fail-open (Faktor 1.0 bei fehlendem
+        # ATR), daher ohne zusätzlichen Guard direkt multipliziert.
+        ticker = getattr(analysis, "ticker", "") or ""
+        base *= self._atr_vol_multiplier(ticker, current_price, broker=getattr(self, "broker", None))
+
+        # Congress×CEO-Confluence-Bonus (Flag aus _evaluate_new durchgereicht –
+        # kein zweiter Netzaufruf). Leichter Größen-Aufschlag; durch den Einzel-
+        # Deckel und den Cash-Reserve-Boden unten weiterhin gedeckelt.
+        if confluence and _CONFLUENCE_SIZE_MULT != 1.0:
+            base *= _CONFLUENCE_SIZE_MULT
+
+        # Min/max guardrails
+        base = max(base, 10.0)
+        # Harte Einzelpositions-Obergrenze (% der Gesamt-Equity): begrenzt die
+        # Konviction-Freiheit nach oben, egal wie stark das Signal ist.
+        base = min(base, equity * float(getattr(config, "max_single_position_pct", 0.25)))
+        # Reserve-bewusste Kaufkraft: nie so viel kaufen, dass der Cash-Boden
+        # unterschritten wird (hält den Bot handlungsfähig). Ersetzt die alte
+        # 40%-pro-Trade-Regel, die Konviction-Käufe unnötig gedeckelt hätte.
+        base = min(base, self._deployable_cash(equity, config))
+
+        return round(max(base, 0.0), 2)
+
+    # ── Liquiditäts-Steuerung ────────────────────────────────────────────────
+
+    def _deployable_cash(self, equity: float, config) -> float:
         """
-        if analysis.recommendation != "BUY" or analysis.confidence != "HIGH":
-            return None
-        if analysis.sentiment_score < config.buy_threshold + 0.15:
-            return None
+        Einsetzbares Cash unter Beachtung des Reserve-Bodens.
 
-        ticker = pos.ticker
-        price_drift = (current_price - pos.entry_price) / pos.entry_price
-        if abs(price_drift) > 0.08:
-            return None  # Kurs zu weit vom Einstieg (oben oder unten)
-
-        portfolio_value = self.portfolio.total_value(
-            self.broker.get_prices(list(self.portfolio.all_positions().keys()))
+        Normal wird der Soft-Boden (cash_reserve_pct) frei gehalten. Ist
+        Rückfluss-Timing aktiv und wird bald Kapital frei, darf sich der Bot
+        Richtung hartem Boden (cash_reserve_hard_pct) lehnen – nie darunter.
+        """
+        cash = self.portfolio.cash
+        soft = equity * float(getattr(config, "cash_reserve_pct", 0.10))
+        hard = equity * min(
+            float(getattr(config, "cash_reserve_hard_pct", 0.05)),
+            float(getattr(config, "cash_reserve_pct", 0.10)),
         )
-        max_pos_value = portfolio_value * self.focus.get_max_position_pct(portfolio_value)
-        current_pos_value = pos.shares * current_price
+        floor = soft
+        if getattr(config, "reflow_sizing_enabled", True) and soft > hard:
+            reflow = self._capital_freeing_soon(int(getattr(config, "reflow_lookahead_days", 5)))
+            # Anteil der Reserve-Lücke, den der nahe Rückfluss "abdeckt".
+            lean = max(0.0, min(reflow / soft, 1.0)) if soft > 0 else 0.0
+            floor = soft - lean * (soft - hard)
+        return max(0.0, cash - floor)
 
-        # Nur aufstocken wenn aktuelle Position < 80% des Maximums
-        if current_pos_value >= max_pos_value * 0.80:
+    def _capital_freeing_soon(self, days: int) -> float:
+        """Kostenbasis der Positionen, deren erwarteter Exit binnen `days` liegt."""
+        try:
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            cutoff = now + timedelta(days=max(0, days))
+            total = 0.0
+            for pos in self.portfolio.all_positions().values():
+                exit_dt = self._expected_exit(pos)
+                if exit_dt is not None and exit_dt <= cutoff:
+                    total += float(pos.shares) * float(pos.entry_price)
+            return total
+        except Exception as _e:  # fail-safe: kein Rückfluss angenommen → Soft-Boden bleibt
+            log.debug("Rückfluss-Schätzung übersprungen: %s", _e)
+            return 0.0
+
+    @staticmethod
+    def _expected_exit(pos):
+        """Erwartetes Freigabe-Datum = Einstieg + target_hold_days (fail-open)."""
+        raw = str(getattr(pos, "entry_date", "") or "")
+        if not raw:
             return None
-
-        add_invest = min(
-            (max_pos_value - current_pos_value) * 0.50,  # max. 50% der Lücke
-            self.portfolio.cash * 0.30,
-        )
-        if add_invest < 50:
+        dt = None
+        try:
+            dt = datetime.fromisoformat(raw[:19])
+        except ValueError:
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                try:
+                    dt = datetime.strptime(raw[:len("2026-01-01 00:00:00") if " " in raw else 10], fmt)
+                    break
+                except ValueError:
+                    continue
+        if dt is None:
             return None
+        return dt + timedelta(days=max(0, int(getattr(pos, "target_hold_days", 0) or 0)))
 
-        add_shares = math.floor(add_invest / current_price * 100) / 100
-        if add_shares <= 0:
-            return None
+    # ── Circuit breaker ─────────────────────────────────────────────────────
 
-        fill = self.broker.buy(ticker, add_shares, current_price)
-        ok, actual_add_price, warn = _check_fill(fill, ticker, "buy")
-        if not ok:
-            log.warning("[%s] Scale-In BUY fehlgeschlagen: %s", ticker, warn)
-            return None
-        if not actual_add_price:
-            actual_add_price = current_price
-        if warn:
-            self._notifier.send(warn)
-        # Durchschnittskurs berechnen
-        new_total_shares = pos.shares + add_shares
-        avg_price = (pos.shares * pos.entry_price + add_shares * actual_add_price) / new_total_shares
-        pos.shares = new_total_shares
-        pos.entry_price = round(avg_price, 4)
+    def _circuit_breaker_active(self, config) -> bool:
+        """Returns True if daily loss limit exceeded."""
+        today = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
+        if self._daily_loss_date != today:
+            self._daily_loss_usd = 0.0
+            self._daily_loss_date = today
+        limit = getattr(config, "circuit_breaker_loss_pct", 0.05) * self.portfolio.cash
+        return self._daily_loss_usd >= limit
 
-        self._notifier.send(
-            f"📈 <b>Scale-In {ticker}</b>\n"
-            f"+{add_shares} Stück @ ${actual_add_price:.2f}\n"
-            f"Ø Einstieg jetzt: ${avg_price:.2f} | Gesamt: {new_total_shares:.2f} Stück"
-        )
-        return (
-            f"[{ticker}] 📈 SCALE-IN +{add_shares} Stück @ ${actual_add_price:.2f} "
-            f"| Ø ${avg_price:.2f} | Gesamt: {new_total_shares:.2f} Stück"
-        )
-
-    def build_open_position_context(self, ticker: str) -> Optional[Dict]:
-        pos = self.portfolio.get_position(ticker)
-        if not pos:
-            return None
-        return {
-            "entry_price": pos.entry_price,
-            "entry_date": pos.entry_date,
-            "hold_days": pos.target_hold_days,
-            "thesis": pos.rationale,
-            "catalysts": pos.entry_catalysts,
-        }
+    def record_loss(self, pnl: float):
+        """Record a realized loss for circuit-breaker tracking."""
+        if pnl < 0:
+            today = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
+            if self._daily_loss_date != today:
+                self._daily_loss_usd = 0.0
+                self._daily_loss_date = today
+            self._daily_loss_usd += abs(pnl)

@@ -61,13 +61,11 @@ data/            ← portfolio.json (automatisch erstellt)
 
 ## Broker-Wechsel
 
-### Alpaca (US-Aktien, kostenlos)
-1. Konto erstellen: alpaca.markets
-2. In `.env`: `BROKER_MODE=alpaca`, Alpaca-Keys eintragen
-3. Alpaca-Integration in `broker/alpaca_broker.py` hinzufügen (Vorlage: `paper_broker.py`)
+### Interactive Brokers
+In `.env`: `BROKER_MODE=ibkr` setzen; TWS oder IB Gateway muss laufen (siehe IBKR-Abschnitt in `env.example`).
 
 ### Scalable Capital / Trade Republic
-Beide Broker bieten **keine öffentliche Trading-API** an. Paper-Trading-Modus verwenden oder Alpaca/IBKR nutzen.
+Beide Broker bieten **keine öffentliche Trading-API** an. Paper-Trading-Modus verwenden oder IBKR nutzen.
 
 ## Haftungsausschluss
 

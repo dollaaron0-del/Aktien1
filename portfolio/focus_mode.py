@@ -20,7 +20,7 @@ Skalierung (automatisch nach Portfolio-Größe):
 """
 
 from dataclasses import dataclass
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional, Dict, Tuple
 import math
 
@@ -230,7 +230,7 @@ class FocusController:
         if not self.target_amount or not self.target_date:
             return 1.0
 
-        today = datetime.utcnow().date()
+        today = datetime.now(timezone.utc).replace(tzinfo=None).date()
         if today >= self.target_date:
             return 1.5  # at or past deadline → most aggressive
 
@@ -265,7 +265,7 @@ class FocusController:
         }
         if self.mode == FocusMode.TARGET_GOAL and self.target_amount and self.target_date:
             urgency = self._goal_urgency(portfolio_value)
-            days_left = (self.target_date - datetime.utcnow().date()).days
+            days_left = (self.target_date - datetime.now(timezone.utc).replace(tzinfo=None).date()).days
             progress = (portfolio_value - self.initial_capital) / max(
                 self.target_amount - self.initial_capital, 1
             ) * 100

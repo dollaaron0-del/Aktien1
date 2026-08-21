@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Dict, List, Optional
 
 from logger import get_logger
@@ -22,6 +22,7 @@ from logger import get_logger
 log = get_logger(__name__)
 
 _SENT_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "dashboard_sent.json")
+_LOCK_FILE = _SENT_FILE + ".lock"
 
 
 def _atomic_save(path: str, data: dict) -> None:
@@ -42,7 +43,7 @@ class DailyDashboard:
 
     def should_send(self) -> bool:
         """True wenn es Zeit ist UND heute noch nicht gesendet wurde."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         if now.hour < self.SEND_HOUR_UTC:
             return False
         today = date.today().isoformat()
@@ -55,6 +56,34 @@ class DailyDashboard:
 
     def mark_sent(self) -> None:
         _atomic_save(_SENT_FILE, {"last_sent": date.today().isoformat()})
+
+    def try_claim_send(self) -> bool:
+        """Atomarer Lock: gibt True zurück wenn DIESE Instanz senden darf.
+        Verhindert Doppel-Sends bei mehreren gleichzeitig laufenden Bot-Prozessen.
+        """
+        today = date.today().isoformat()
+        try:
+            # Exklusiver Lock via O_CREAT|O_EXCL (atomar auf Linux)
+            fd = os.open(_LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, today.encode())
+            os.close(fd)
+        except FileExistsError:
+            # Anderer Prozess hat den Lock — prüfen ob er von heute ist
+            try:
+                with open(_LOCK_FILE) as f:
+                    lock_date = f.read().strip()
+                if lock_date == today:
+                    return False   # Heute bereits gesendet
+                # Lock vom Vortag → überschreiben
+                os.unlink(_LOCK_FILE)
+                fd = os.open(_LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(fd, today.encode())
+                os.close(fd)
+            except Exception:
+                return False
+        except Exception:
+            return True   # Lock fehlgeschlagen → trotzdem senden (Fallback)
+        return True
 
     def generate(
         self,
@@ -72,7 +101,7 @@ class DailyDashboard:
 
             lines = [
                 "📊 *Täglicher Portfolio-Bericht*",
-                f"_{datetime.utcnow().strftime('%d.%m.%Y, %H:%M UTC')}_",
+                f"_{datetime.now(timezone.utc).replace(tzinfo=None).strftime('%d.%m.%Y, %H:%M UTC')}_",
                 "",
             ]
 
@@ -95,7 +124,7 @@ class DailyDashboard:
                 for ticker, pos in positions.items():
                     price = prices.get(ticker, pos.entry_price)
                     ret = (price - pos.entry_price) / pos.entry_price * 100
-                    days = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
+                    days = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(pos.entry_date)).days
                     pos_data.append((ticker, ret, price, days))
 
                 pos_data.sort(key=lambda x: x[1], reverse=True)

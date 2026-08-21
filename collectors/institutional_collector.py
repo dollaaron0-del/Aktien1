@@ -9,9 +9,10 @@ Trotzdem wertvoller Kontext: "Smart Money" kauft oder verkauft diese Aktie.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 import requests
+from system.http import http_get
 
 # Bekannte institutionelle Investoren (CIK → Name)
 _KNOWN_INSTITUTIONS = {
@@ -33,12 +34,12 @@ class InstitutionalCollector:
 
     def collect(self, ticker: str, lookback_days: int = 120) -> List[Dict]:
         results = []
-        start = (datetime.utcnow() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-        end   = datetime.utcnow().strftime("%Y-%m-%d")
+        start = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+        end   = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
 
         try:
             url = _EDGAR_SEARCH.format(ticker=ticker, start=start, end=end)
-            resp = requests.get(url, headers=_HEADERS, timeout=15)
+            resp = http_get(url, headers=_HEADERS, timeout=15)
             if resp.status_code != 200:
                 return []
 

@@ -6,7 +6,7 @@ from typing import List, Dict
 import yfinance as yf
 
 
-# Curated universe (S&P 500 leaders + popular movers); extend as desired.
+# Curated universe (S&P 500 leaders + popular movers + EU); extend as desired.
 DEFAULT_UNIVERSE = [
     # Mega caps tech
     "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "ORCL", "ADBE",
@@ -20,21 +20,29 @@ DEFAULT_UNIVERSE = [
     # Consumer
     "WMT", "COST", "HD", "MCD", "NKE", "SBUX", "DIS", "NFLX",
     # Growth / momentum
-    "PLTR", "COIN", "SHOP", "UBER", "ABNB", "RIVN", "LCID", "SOFI", "HOOD",
+    "PLTR", "COIN", "MSTR", "RIOT", "MARA", "CLSK", "SHOP", "UBER", "ABNB", "RIVN", "LCID", "SOFI", "HOOD",
     # Semiconductors
     "ASML", "TSM", "AMAT", "LRCX", "MU", "MRVL", "ARM",
+    # EU – Deutschland (XETRA)
+    "RHM.DE", "SAP.DE", "SIE.DE", "IFX.DE", "BMW.DE", "MBG.DE", "ALV.DE", "MTX.DE", "ENR.DE",
+    # EU Aktien als US-ADRs (für NYSE-Handelszeiten)
+    "SAP", "ASML", "SMSN", "NVO",
+    # EU – Rüstung & Verteidigung (aktueller Megatrend)
+    "AIR.PA", "BA.L", "BAESY",
+    # EU – Energie / Industrie
+    "SHEL.L", "TTE.PA", "NOVO-B.CO",
 ]
 
 
 class WatchlistScanner:
-    """Scans a universe for unusual volume + price momentum."""
+    """Scans a universe for unusual volume + price momentum (hype detection)."""
 
     def __init__(
         self,
         universe: List[str] = None,
         min_volume_ratio: float = 2.0,
-        min_price_change_pct: float = 3.0,
-        max_picks: int = 5,
+        min_price_change_pct: float = 2.0,
+        max_picks: int = 8,
     ):
         self.universe = universe or DEFAULT_UNIVERSE
         self.min_volume_ratio = min_volume_ratio
@@ -42,6 +50,11 @@ class WatchlistScanner:
         self.max_picks = max_picks
 
     def scan(self, exclude: List[str] = None) -> List[Dict]:
+        """Returns stocks with unusual BUYING momentum (volume up AND price up).
+        Erkennt zwei Muster:
+          1. Starker Einzeltag: Volume ≥ 2× + Kurs ≥ +2% heute
+          2. Anhaltender Trend: ≥3 grüne Tage in Folge + Kurs ≥ +1% heute + Volume ≥ 1.5×
+        """
         exclude = set(exclude or [])
         candidates: List[Dict] = []
         for ticker in self.universe:
@@ -50,14 +63,21 @@ class WatchlistScanner:
             metrics = self._compute_metrics(ticker)
             if not metrics:
                 continue
-            if (
+            strong_day = (
                 metrics["volume_ratio"] >= self.min_volume_ratio
-                or abs(metrics["change_pct"]) >= self.min_price_change_pct
-            ):
+                and metrics["change_pct"] >= self.min_price_change_pct
+            )
+            sustained_trend = (
+                metrics.get("streak_days", 0) >= 3
+                and metrics["change_pct"] >= 1.0
+                and metrics["volume_ratio"] >= 1.5
+            )
+            if strong_day or sustained_trend:
                 candidates.append(metrics)
 
+        # Rank by combined momentum score: volume × price move
         candidates.sort(
-            key=lambda x: x["volume_ratio"] * (1 + abs(x["change_pct"]) / 10),
+            key=lambda x: x["volume_ratio"] * (1 + x["change_pct"] / 10),
             reverse=True,
         )
         return candidates[: self.max_picks]
@@ -72,12 +92,20 @@ class WatchlistScanner:
             if avg_volume == 0:
                 return {}
             volume_ratio = float(today["Volume"]) / float(avg_volume)
-            change_pct = (float(today["Close"]) - float(hist["Close"].iloc[-2])) / float(hist["Close"].iloc[-2]) * 100
+            prev_close = float(hist["Close"].iloc[-2])
+            change_pct = (float(today["Close"]) - prev_close) / prev_close * 100
+            # 3-day streak: how many of last 3 days were positive
+            streak = sum(
+                1 for i in range(-3, 0)
+                if len(hist) > abs(i) + 1
+                and hist["Close"].iloc[i] > hist["Close"].iloc[i - 1]
+            )
             return {
                 "ticker": ticker,
                 "price": round(float(today["Close"]), 2),
                 "change_pct": round(change_pct, 2),
                 "volume_ratio": round(volume_ratio, 2),
+                "streak_days": streak,  # consecutive up-days (0-3)
             }
         except Exception:
             return {}

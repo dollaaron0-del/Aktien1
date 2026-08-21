@@ -7,9 +7,10 @@ Quelle: EUR-Lex RSS, EU-Kommission Pressemitteilungen.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 import requests
+from system.http import http_get
 from email.utils import parsedate_to_datetime
 
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; StockBot/1.0)"}
@@ -61,13 +62,13 @@ class EURegulationCollector:
     def _collect_eu_press(self, ticker: str, lookback_days: int) -> List[Dict]:
         """EC Pressemitteilungen zu Wettbewerb und Regulierung."""
         results = []
-        cutoff = datetime.utcnow() - timedelta(days=lookback_days)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)
         keywords = _TICKER_EU_KEYWORDS.get(ticker.upper(), [ticker])
 
         try:
             # EU Competition RSS
             url = "https://ec.europa.eu/competition-policy/index/news_en"
-            resp = requests.get(url, headers=_HEADERS, timeout=12)
+            resp = http_get(url, headers=_HEADERS, timeout=12)
             # If not XML, skip
             if resp.status_code != 200:
                 return []
@@ -92,7 +93,7 @@ class EURegulationCollector:
                     if pub_dt < cutoff:
                         continue
                 except Exception:
-                    pub_dt = datetime.utcnow()
+                    pub_dt = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 is_high_impact = any(term.lower() in combined for term in _HIGH_IMPACT_TERMS)
                 priority = "HIGH" if is_high_impact else "MEDIUM"
@@ -116,7 +117,7 @@ class EURegulationCollector:
     def _collect_eurlex_rss(self, ticker: str, lookback_days: int) -> List[Dict]:
         """EUR-Lex Official Journal RSS."""
         results = []
-        cutoff  = datetime.utcnow() - timedelta(days=lookback_days)
+        cutoff  = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)
         keywords = _TICKER_EU_KEYWORDS.get(ticker.upper(), [ticker])
 
         # Tech/AI regulation feeds
@@ -127,7 +128,7 @@ class EURegulationCollector:
 
         for url in regulation_urls:
             try:
-                resp = requests.get(url, headers=_HEADERS, timeout=10)
+                resp = http_get(url, headers=_HEADERS, timeout=10)
                 if resp.status_code != 200:
                     continue
                 try:
@@ -150,7 +151,7 @@ class EURegulationCollector:
                         if pub_dt < cutoff:
                             continue
                     except Exception:
-                        pub_dt = datetime.utcnow()
+                        pub_dt = datetime.now(timezone.utc).replace(tzinfo=None)
 
                     results.append({
                         "source":       "EUR-Lex",

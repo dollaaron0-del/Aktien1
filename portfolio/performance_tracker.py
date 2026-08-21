@@ -1,416 +1,537 @@
-import sqlite3
+from __future__ import annotations
+
+import json
 import os
-from datetime import datetime
-from typing import Optional, Dict, List
+import sqlite3
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional, Tuple
+
+from logger import get_logger
+
+log = get_logger(__name__)
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "performance.db")
 
 
+def _categorize_exit(reason: str) -> str:
+    r = (reason or "").lower()
+    if "stop" in r or "sl" in r:
+        return "stop_loss"
+    if "take" in r or "tp" in r or "profit" in r:
+        return "take_profit"
+    if "thesis" in r or "these" in r:
+        return "thesis_broken"
+    if "hold" in r or "zeit" in r or "expir" in r:
+        return "time_exit"
+    if "partial" in r:
+        return "partial_tp"
+    return "manual"
+
+
 class PerformanceTracker:
+    """
+    Verfolgt Vorhersage-Genauigkeit und Portfolio-Performance.
+    Speichert in SQLite: predictions + portfolio_snapshots.
+    Berechnet: Sharpe, Sortino, Calmar, Max Drawdown, Gewinnrate.
+    """
+
     def __init__(self):
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
         self._conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA journal_mode=WAL")
         self._init_db()
 
     def _init_db(self):
         self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS predictions (
-                id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-                ticker                TEXT NOT NULL,
-                entry_date            TEXT NOT NULL,
-                entry_price           REAL NOT NULL,
-                predicted_target_price REAL,
-                predicted_hold_days   INTEGER,
-                predicted_direction   TEXT,
-                sentiment_score       REAL,
-                confidence            TEXT,
-                sources_used          INTEGER,
-                sources_breakdown     TEXT,     -- JSON: {"reddit":3,"yahoo":2,"newsapi":1}
-                sell_date             TEXT,
-                sell_price            REAL,
-                sell_reason           TEXT,
-                sell_reason_category  TEXT,     -- "stop_loss"|"take_profit"|"thesis_broken"|"hold_expired"|"sentiment_sell"
-                actual_hold_days      INTEGER,
-                actual_return_pct     REAL,
-                direction_correct     INTEGER,
-                target_hit            INTEGER,
-                mode                  TEXT DEFAULT 'normal'  -- 'normal'|'exploration'|'turbo'
-            );
-            CREATE TABLE IF NOT EXISTS portfolio_snapshots (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                snapshot_date   TEXT NOT NULL,
-                total_value     REAL NOT NULL,
-                cash            REAL NOT NULL,
-                positions_value REAL NOT NULL,
-                phase           TEXT NOT NULL
+                ticker          TEXT NOT NULL,
+                predicted_at    TEXT NOT NULL,
+                direction       TEXT NOT NULL,
+                confidence      TEXT NOT NULL,
+                sentiment_score REAL NOT NULL,
+                entry_price     REAL NOT NULL,
+                exit_price      REAL,
+                exit_reason     TEXT,
+                exit_category   TEXT,
+                pnl_pct         REAL,
+                hold_days       INTEGER,
+                outcome         TEXT,
+                debate_winner   TEXT,
+                debate_correct  INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                recorded_at TEXT NOT NULL,
+                total_value REAL NOT NULL,
+                cash        REAL NOT NULL,
+                n_positions INTEGER NOT NULL,
+                daily_pnl   REAL DEFAULT 0.0
             );
         """)
-        # Migrate existing DBs: add mode column if missing
-        try:
-            self._conn.execute("ALTER TABLE predictions ADD COLUMN mode TEXT DEFAULT 'normal'")
-            self._conn.commit()
-        except Exception:
-            pass  # column already exists
+        self._conn.commit()
+        self._migrate()
+
+    def _migrate(self):
+        """Fügt fehlende Spalten zur bestehenden DB hinzu (Schema-Migration)."""
+        existing = {row[1] for row in self._conn.execute("PRAGMA table_info(predictions)")}
+
+        # Veraltetes Schema (alte Spalte 'entry_date' mit NOT NULL) erkennen.
+        # record_prediction() schreibt diese Legacy-Spalte nicht → IntegrityError.
+        # Bei LEERER Tabelle gefahrlos sauber neu aufbauen (kein Datenverlust).
+        if "entry_date" in existing:
+            n_rows = self._conn.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
+            if n_rows == 0:
+                log.warning("predictions: veraltetes Schema erkannt – leere Tabelle wird neu aufgebaut")
+                self._conn.executescript("""
+                    DROP TABLE predictions;
+                    CREATE TABLE predictions (
+                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ticker          TEXT NOT NULL,
+                        predicted_at    TEXT NOT NULL,
+                        direction       TEXT NOT NULL,
+                        confidence      TEXT NOT NULL,
+                        sentiment_score REAL NOT NULL,
+                        entry_price     REAL NOT NULL,
+                        exit_price      REAL,
+                        exit_reason     TEXT,
+                        exit_category   TEXT,
+                        pnl_pct         REAL,
+                        hold_days       INTEGER,
+                        outcome         TEXT,
+                        debate_winner   TEXT,
+                        debate_correct  INTEGER DEFAULT 0
+                    );
+                """)
+                self._conn.commit()
+                return  # frisches Schema – keine weiteren Spalten-Migrationen nötig
+            else:
+                log.error(
+                    "predictions: veraltetes Schema mit %d Zeilen – kein automatischer "
+                    "Neuaufbau (Datenverlust-Schutz). Manuelle Migration nötig.", n_rows
+                )
+        pred_migrations = [
+            # Core-Spalten die in alten DBs fehlen können
+            ("predicted_at",   "ALTER TABLE predictions ADD COLUMN predicted_at TEXT DEFAULT '2000-01-01T00:00:00'"),
+            ("direction",      "ALTER TABLE predictions ADD COLUMN direction TEXT DEFAULT 'NEUTRAL'"),
+            ("sentiment_score","ALTER TABLE predictions ADD COLUMN sentiment_score REAL DEFAULT 0.0"),
+            ("entry_price",    "ALTER TABLE predictions ADD COLUMN entry_price REAL DEFAULT 0.0"),
+            # Später hinzugefügte Spalten
+            ("exit_price",     "ALTER TABLE predictions ADD COLUMN exit_price REAL"),
+            ("exit_reason",    "ALTER TABLE predictions ADD COLUMN exit_reason TEXT"),
+            ("exit_category",  "ALTER TABLE predictions ADD COLUMN exit_category TEXT"),
+            ("pnl_pct",        "ALTER TABLE predictions ADD COLUMN pnl_pct REAL"),
+            ("hold_days",      "ALTER TABLE predictions ADD COLUMN hold_days INTEGER"),
+            ("outcome",        "ALTER TABLE predictions ADD COLUMN outcome TEXT"),
+            ("debate_winner",  "ALTER TABLE predictions ADD COLUMN debate_winner TEXT"),
+            ("debate_correct", "ALTER TABLE predictions ADD COLUMN debate_correct INTEGER DEFAULT 0"),
+        ]
+        for col, sql in pred_migrations:
+            if col not in existing:
+                self._conn.execute(sql)
+                log.info("DB-Migration: Spalte '%s' zu predictions hinzugefügt", col)
+
+        snap_existing = {row[1] for row in self._conn.execute("PRAGMA table_info(portfolio_snapshots)")}
+        snap_migrations = [
+            ("recorded_at", "ALTER TABLE portfolio_snapshots ADD COLUMN recorded_at TEXT DEFAULT '2000-01-01T00:00:00'"),
+            ("cash",        "ALTER TABLE portfolio_snapshots ADD COLUMN cash REAL DEFAULT 0.0"),
+            ("n_positions", "ALTER TABLE portfolio_snapshots ADD COLUMN n_positions INTEGER DEFAULT 0"),
+            ("daily_pnl",   "ALTER TABLE portfolio_snapshots ADD COLUMN daily_pnl REAL DEFAULT 0.0"),
+        ]
+        for col, sql in snap_migrations:
+            if col not in snap_existing:
+                self._conn.execute(sql)
+                log.info("DB-Migration: Spalte '%s' zu portfolio_snapshots hinzugefügt", col)
+
+        self._conn.commit()
+
+        # Vorhandene Spalten merken: alte DBs haben zusätzliche NOT-NULL-Spalten
+        # (snapshot_date, positions_value, phase) ohne Default. record_snapshot()
+        # muss diese mitbefüllen, sonst → NOT NULL constraint failed.
+        self._snap_cols = {row[1] for row in self._conn.execute("PRAGMA table_info(portfolio_snapshots)")}
+
+    # ── Prediction tracking ───────────────────────────────────────────────────
 
     def record_prediction(
         self,
         ticker: str,
-        entry_price: float,
-        predicted_target_price: Optional[float],
-        predicted_hold_days: int,
-        predicted_direction: str,
-        sentiment_score: float,
+        direction: str,
         confidence: str,
-        sources_used: int,
-        sources_breakdown: Optional[Dict[str, int]] = None,
-        mode: str = "normal",
+        sentiment_score: float,
+        entry_price: float,
+        debate_winner: str = "",
     ) -> int:
-        import json as _json
-        cursor = self._conn.execute(
-            """INSERT INTO predictions
-               (ticker, entry_date, entry_price, predicted_target_price,
-                predicted_hold_days, predicted_direction, sentiment_score,
-                confidence, sources_used, sources_breakdown, mode)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                ticker,
-                datetime.utcnow().isoformat(),
-                entry_price,
-                predicted_target_price,
-                predicted_hold_days,
-                predicted_direction,
-                sentiment_score,
-                confidence,
-                sources_used,
-                _json.dumps(sources_breakdown or {}),
-                mode,
-            ),
+        cur = self._conn.execute(
+            """
+            INSERT INTO predictions
+                (ticker, predicted_at, direction, confidence, sentiment_score,
+                 entry_price, debate_winner)
+            VALUES (?,?,?,?,?,?,?)
+            """,
+            (ticker, datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), direction, confidence,
+             sentiment_score, entry_price, debate_winner),
         )
         self._conn.commit()
-        return cursor.lastrowid
+        return cur.lastrowid
 
     def record_outcome(
         self,
-        ticker: str,
-        entry_price: float,
-        entry_date: str,
-        sell_price: float,
-        sell_reason: str,
-    ):
-        actual_return_pct = (sell_price - entry_price) / entry_price * 100
-        entry_dt = datetime.fromisoformat(entry_date)
-        sell_dt = datetime.utcnow()
-        actual_hold_days = (sell_dt - entry_dt).days
-
-        cursor = self._conn.execute(
-            """SELECT id, predicted_target_price, predicted_direction
-               FROM predictions
-               WHERE ticker=? AND sell_date IS NULL
-               ORDER BY entry_date DESC LIMIT 1""",
-            (ticker,),
-        )
-        row = cursor.fetchone()
+        prediction_id: int,
+        exit_price: float,
+        exit_reason: str = "",
+        hold_days: int = 0,
+    ) -> None:
+        row = self._conn.execute(
+            "SELECT entry_price, direction, debate_winner, predicted_at FROM predictions WHERE id=?",
+            (prediction_id,),
+        ).fetchone()
         if not row:
             return
 
-        pred_id = row["id"]
-        pred_target = row["predicted_target_price"]
-        pred_direction = row["predicted_direction"]
+        entry_price   = float(row["entry_price"])
+        direction     = row["direction"]
+        debate_winner = row["debate_winner"] or ""
 
-        direction_correct = (
-            1
-            if (
-                (pred_direction == "BULLISH" and actual_return_pct > 0)
-                or (pred_direction == "BEARISH" and actual_return_pct < 0)
-            )
-            else 0
-        )
-        target_hit = 1 if (pred_target and sell_price >= pred_target) else 0
-        category = _categorize_exit(sell_reason)
-
-        self._conn.execute(
-            """UPDATE predictions SET
-               sell_date=?, sell_price=?, sell_reason=?, sell_reason_category=?,
-               actual_hold_days=?, actual_return_pct=?,
-               direction_correct=?, target_hit=?
-               WHERE id=?""",
-            (
-                sell_dt.isoformat(),
-                sell_price,
-                sell_reason,
-                category,
-                actual_hold_days,
-                actual_return_pct,
-                direction_correct,
-                target_hit,
-                pred_id,
-            ),
-        )
-        self._conn.commit()
-
-    def record_snapshot(self, total_value: float, cash: float, positions_value: float, phase: str):
-        self._conn.execute(
-            """INSERT INTO portfolio_snapshots (snapshot_date, total_value, cash, positions_value, phase)
-               VALUES (?, ?, ?, ?, ?)""",
-            (datetime.utcnow().isoformat(), total_value, cash, positions_value, phase),
-        )
-        self._conn.commit()
-
-    # ── Accuracy reports ───────────────────────────────────────────────────────
-
-    def get_accuracy_report(self) -> Dict:
-        cursor = self._conn.execute(
-            """SELECT
-                COUNT(*) as total,
-                SUM(CASE WHEN direction_correct=1 THEN 1 ELSE 0 END) as correct_direction,
-                SUM(CASE WHEN target_hit=1 THEN 1 ELSE 0 END) as target_hit,
-                AVG(actual_return_pct) as avg_return,
-                AVG(actual_hold_days) as avg_hold_days,
-                AVG(predicted_hold_days) as avg_predicted_hold,
-                SUM(CASE WHEN actual_return_pct > 0 THEN 1 ELSE 0 END) as profitable
-               FROM predictions WHERE sell_date IS NOT NULL"""
-        )
-        row = cursor.fetchone()
-        if not row or row["total"] == 0:
-            return {"total_closed": 0, "message": "Noch keine abgeschlossenen Trades für Analyse."}
-
-        total = row["total"]
-        return {
-            "total_closed": total,
-            "win_rate_pct": round((row["profitable"] or 0) / total * 100, 1),
-            "direction_accuracy_pct": round((row["correct_direction"] or 0) / total * 100, 1),
-            "target_hit_pct": round((row["target_hit"] or 0) / total * 100, 1),
-            "avg_return_pct": round(row["avg_return"] or 0, 2),
-            "avg_hold_days_actual": round(row["avg_hold_days"] or 0, 1),
-            "avg_hold_days_predicted": round(row["avg_predicted_hold"] or 0, 1),
-        }
-
-    def get_source_accuracy(self) -> List[Dict]:
-        """
-        Win rate per news source per ticker, derived from sources_breakdown JSON.
-        Returns rows: {source, ticker, trades, wins, win_rate_pct, avg_return_pct}
-        """
-        import json as _json
-        cursor = self._conn.execute(
-            """SELECT ticker, sources_breakdown, actual_return_pct
-               FROM predictions
-               WHERE sell_date IS NOT NULL AND sources_breakdown IS NOT NULL"""
-        )
-        rows = cursor.fetchall()
-
-        # Aggregate: source → ticker → [returns]
-        data: Dict[str, Dict[str, List[float]]] = {}
-        for row in rows:
+        # hold_days automatisch aus predicted_at ableiten, wenn nicht übergeben
+        if not hold_days and row["predicted_at"]:
             try:
-                breakdown = _json.loads(row["sources_breakdown"] or "{}")
+                _pa = datetime.fromisoformat(row["predicted_at"])
+                hold_days = max(0, (datetime.now(timezone.utc).replace(tzinfo=None) - _pa).days)
             except Exception:
-                continue
-            ret = row["actual_return_pct"] or 0
-            for source, count in breakdown.items():
-                if count and count > 0:
-                    data.setdefault(source, {}).setdefault(row["ticker"], []).append(ret)
+                pass
 
-        results = []
-        for source, tickers in data.items():
-            for ticker, returns in tickers.items():
-                wins = sum(1 for r in returns if r > 0)
-                results.append({
-                    "source": source,
-                    "ticker": ticker,
-                    "trades": len(returns),
-                    "wins": wins,
-                    "win_rate_pct": round(wins / len(returns) * 100, 1),
-                    "avg_return_pct": round(sum(returns) / len(returns), 2),
-                })
-        results.sort(key=lambda x: x["win_rate_pct"], reverse=True)
-        return results
+        pnl_pct = (exit_price - entry_price) / entry_price * 100 if entry_price > 0 else 0.0
+        outcome = "WIN" if pnl_pct > 0 else "LOSS"
+        exit_cat = _categorize_exit(exit_reason)
 
-    def get_sentiment_score_buckets(self) -> List[Dict]:
-        """
-        Groups closed trades by sentiment score bucket and shows win rate per bucket.
-        Helps identify which score ranges are actually predictive.
-        """
-        cursor = self._conn.execute(
-            """SELECT sentiment_score, actual_return_pct
-               FROM predictions WHERE sell_date IS NOT NULL"""
+        # Debate-Akkuratheit: BULL gewann + Position profitabel = korrekt
+        debate_correct = 0
+        if debate_winner == "BULL" and outcome == "WIN":
+            debate_correct = 1
+        elif debate_winner == "BEAR" and outcome == "LOSS":
+            debate_correct = 1
+
+        self._conn.execute(
+            """
+            UPDATE predictions SET
+                exit_price=?, exit_reason=?, exit_category=?, pnl_pct=?,
+                hold_days=?, outcome=?, debate_correct=?
+            WHERE id=?
+            """,
+            (exit_price, exit_reason, exit_cat, round(pnl_pct, 3),
+             hold_days, outcome, debate_correct, prediction_id),
         )
-        rows = cursor.fetchall()
+        self._conn.commit()
 
-        buckets: Dict[str, List[float]] = {
-            "0.65–0.70": [], "0.70–0.75": [], "0.75–0.80": [],
-            "0.80–0.85": [], "0.85–1.00": [],
+    def record_snapshot(
+        self,
+        total_value: float,
+        cash: float,
+        n_positions: int,
+        daily_pnl: Optional[float] = None,
+    ) -> None:
+        now_iso = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        # daily_pnl automatisch aus dem letzten Snapshot ableiten, wenn nicht übergeben
+        if daily_pnl is None:
+            prev = self._conn.execute(
+                "SELECT total_value FROM portfolio_snapshots ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            daily_pnl = (total_value - prev[0]) if prev and prev[0] is not None else 0.0
+        cols = {
+            "recorded_at": now_iso,
+            "total_value": total_value,
+            "cash": cash,
+            "n_positions": n_positions,
+            "daily_pnl": daily_pnl,
+        }
+        # Legacy-NOT-NULL-Spalten alter DBs mitbefüllen (ohne Default → sonst Crash)
+        legacy = getattr(self, "_snap_cols", set())
+        if "snapshot_date" in legacy:
+            cols["snapshot_date"] = now_iso[:10]
+        if "positions_value" in legacy:
+            cols["positions_value"] = total_value - cash
+        if "phase" in legacy:
+            cols["phase"] = ""
+        col_names = ", ".join(cols)
+        placeholders = ", ".join("?" for _ in cols)
+        self._conn.execute(
+            f"INSERT INTO portfolio_snapshots ({col_names}) VALUES ({placeholders})",
+            tuple(cols.values()),
+        )
+        self._conn.commit()
+
+    # ── Reporting ─────────────────────────────────────────────────────────────
+
+    def get_accuracy_report(self, days: int = 30) -> Dict:
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
+        rows = self._conn.execute(
+            """
+            SELECT outcome, confidence, pnl_pct, exit_category, debate_correct,
+                   direction, hold_days
+            FROM predictions
+            WHERE predicted_at > ? AND outcome IS NOT NULL
+            """,
+            (cutoff,),
+        ).fetchall()
+
+        if not rows:
+            return {
+                "trades": 0, "total_closed": 0, "win_rate": 0.0, "win_rate_pct": 0.0,
+                "avg_pnl": 0.0, "avg_return_pct": 0.0, "direction_accuracy_pct": 0.0,
+                "target_hit_pct": 0.0, "avg_hold_days_actual": 0.0, "avg_hold_days_predicted": 0.0,
+            }
+
+        total = len(rows)
+        wins  = sum(1 for r in rows if r["outcome"] == "WIN")
+        avg_pnl = sum(r["pnl_pct"] or 0 for r in rows) / total
+
+        # Richtungs-Genauigkeit: BULLISH/NEUTRAL→WIN bzw. BEARISH→LOSS gilt als korrekt
+        dir_correct = sum(
+            1 for r in rows
+            if ((r["direction"] in ("BULLISH", "NEUTRAL") and r["outcome"] == "WIN")
+                or (r["direction"] == "BEARISH" and r["outcome"] == "LOSS"))
+        )
+        # Zielkurs-Treffer ≈ Anteil der Trades die per Take-Profit geschlossen wurden
+        target_hits = sum(1 for r in rows if (r["exit_category"] or "") == "take_profit")
+        avg_hold = sum((r["hold_days"] or 0) for r in rows) / total
+
+        by_confidence: Dict[str, Dict] = {}
+        for r in rows:
+            c = r["confidence"] or "UNKNOWN"
+            if c not in by_confidence:
+                by_confidence[c] = {"wins": 0, "total": 0}
+            by_confidence[c]["total"] += 1
+            if r["outcome"] == "WIN":
+                by_confidence[c]["wins"] += 1
+
+        by_exit: Dict[str, int] = {}
+        for r in rows:
+            cat = r["exit_category"] or "unknown"
+            by_exit[cat] = by_exit.get(cat, 0) + 1
+
+        debate_rows = [r for r in rows if r["debate_correct"] is not None]
+        debate_acc = (
+            sum(r["debate_correct"] for r in debate_rows) / len(debate_rows)
+            if debate_rows else 0.0
+        )
+
+        return {
+            "trades": total,
+            "total_closed": total,
+            "wins": wins,
+            "losses": total - wins,
+            "win_rate": round(wins / total * 100, 1),
+            "win_rate_pct": round(wins / total * 100, 1),
+            "avg_pnl_pct": round(avg_pnl, 2),
+            "avg_return_pct": round(avg_pnl, 2),
+            "direction_accuracy_pct": round(dir_correct / total * 100, 1),
+            "target_hit_pct": round(target_hits / total * 100, 1),
+            "avg_hold_days_actual": round(avg_hold, 1),
+            "avg_hold_days_predicted": 0.0,  # im aktuellen Schema nicht gespeichert
+            "by_confidence": by_confidence,
+            "by_exit_category": by_exit,
+            "debate_accuracy": round(debate_acc * 100, 1),
+            "period_days": days,
         }
 
-        def _bucket(score: float) -> Optional[str]:
-            if score < 0.65:
-                return None
-            if score < 0.70:
-                return "0.65–0.70"
-            if score < 0.75:
-                return "0.70–0.75"
-            if score < 0.80:
-                return "0.75–0.80"
-            if score < 0.85:
-                return "0.80–0.85"
-            return "0.85–1.00"
+    def get_value_history(self, days: int = 30) -> List[Dict]:
+        """Portfolio-Wert-Verlauf aus portfolio_snapshots für die letzten N Tage."""
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
+        # snapshot_date statt recorded_at: recorded_at ist bei Alt-Snapshots ein
+        # Platzhalter (2000-01-01) → unbrauchbar für Filter/Sortierung. snapshot_date
+        # ist durchgängig befüllt und ISO-lexikografisch sortierbar (Datum wie
+        # voller Zeitstempel). Spaltenname entspricht zudem dem, was das Dashboard
+        # erwartet.
+        rows = self._conn.execute(
+            """
+            SELECT snapshot_date, total_value, cash, n_positions, daily_pnl
+            FROM portfolio_snapshots
+            WHERE snapshot_date > ?
+            ORDER BY snapshot_date ASC
+            """,
+            (cutoff,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
-        for row in rows:
-            b = _bucket(row["sentiment_score"] or 0)
-            if b:
-                buckets[b].append(row["actual_return_pct"] or 0)
+    def get_risk_metrics(self, days: int = 90) -> Dict:
+        """Sharpe, Sortino, Calmar, Max Drawdown."""
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
+        rows = self._conn.execute(
+            "SELECT total_value, recorded_at FROM portfolio_snapshots WHERE recorded_at > ? ORDER BY recorded_at",
+            (cutoff,),
+        ).fetchall()
 
-        results = []
-        for label, returns in buckets.items():
-            if not returns:
-                continue
-            wins = sum(1 for r in returns if r > 0)
-            results.append({
-                "score_range": label,
-                "trades": len(returns),
-                "win_rate_pct": round(wins / len(returns) * 100, 1),
-                "avg_return_pct": round(sum(returns) / len(returns), 2),
-            })
-        return results
+        if len(rows) < 5:
+            return {}
 
-    def get_exit_reason_stats(self) -> List[Dict]:
-        """
-        Average P&L and count per exit reason category.
-        Reveals which exit mechanisms are most reliable.
-        """
-        cursor = self._conn.execute(
-            """SELECT sell_reason_category,
-                      COUNT(*) as trades,
-                      AVG(actual_return_pct) as avg_return,
-                      SUM(CASE WHEN actual_return_pct > 0 THEN 1 ELSE 0 END) as wins
-               FROM predictions
-               WHERE sell_date IS NOT NULL AND sell_reason_category IS NOT NULL
-               GROUP BY sell_reason_category
-               ORDER BY avg_return DESC"""
-        )
-        results = []
-        for row in cursor.fetchall():
-            trades = row["trades"]
-            results.append({
-                "category": row["sell_reason_category"],
-                "trades": trades,
-                "avg_return_pct": round(row["avg_return"] or 0, 2),
-                "win_rate_pct": round((row["wins"] or 0) / trades * 100, 1),
-            })
-        return results
+        values = [float(r["total_value"]) for r in rows]
+        returns = [(values[i] - values[i-1]) / values[i-1] for i in range(1, len(values))]
 
-    def get_adaptive_threshold(self, default: float = 0.65) -> float:
-        report = self.get_accuracy_report()
-        if report.get("total_closed", 0) < 5:
-            return default
-        win_rate = report["win_rate_pct"] / 100
-        if win_rate < 0.40:
-            return min(default + 0.10, 0.85)
-        if win_rate < 0.50:
-            return min(default + 0.05, 0.80)
-        if win_rate > 0.70:
-            return max(default - 0.05, 0.55)
-        return default
-
-    def get_recent_trades(self, n: int = 10) -> List[Dict]:
-        cursor = self._conn.execute(
-            """SELECT ticker, entry_date, entry_price, sell_price,
-                      actual_return_pct, actual_hold_days, predicted_hold_days,
-                      predicted_target_price, direction_correct, target_hit,
-                      sell_reason, sell_reason_category
-               FROM predictions
-               WHERE sell_date IS NOT NULL
-               ORDER BY sell_date DESC LIMIT ?""",
-            (n,),
-        )
-        return [dict(row) for row in cursor.fetchall()]
-
-    def get_value_history(self, days: int = 90) -> List[Dict]:
-        cursor = self._conn.execute(
-            """SELECT snapshot_date, total_value, cash, positions_value, phase
-               FROM portfolio_snapshots
-               ORDER BY snapshot_date DESC LIMIT ?""",
-            (days,),
-        )
-        return [dict(row) for row in cursor.fetchall()]
-
-    def get_risk_metrics(self, risk_free_rate: float = 0.045) -> Dict:
-        """
-        Sharpe, Sortino, Calmar Ratio + Max Drawdown aus portfolio_snapshots.
-        risk_free_rate: annualisierter risikofreier Zins (Standard 4,5 %).
-        """
-        import math
-        history = list(reversed(self.get_value_history(days=365)))
-        if len(history) < 10:
-            return {"message": "Zu wenig Portfolio-Snapshots für Risikometriken (min. 10 nötig)."}
-
-        values = [h["total_value"] for h in history]
-        returns = [
-            (values[i] / values[i - 1]) - 1
-            for i in range(1, len(values))
-            if values[i - 1] > 0
-        ]
         if not returns:
-            return {"message": "Keine Renditen berechenbar."}
+            return {}
 
-        n = len(returns)
-        rf_daily = risk_free_rate / 252
-        mean_r = sum(returns) / n
-        excess = [r - rf_daily for r in returns]
-        mean_excess = sum(excess) / n
+        import math
+        avg_ret = sum(returns) / len(returns)
+        std_ret = (sum((r - avg_ret)**2 for r in returns) / len(returns)) ** 0.5
+        neg_returns = [r for r in returns if r < 0]
+        downside_std = (sum(r**2 for r in neg_returns) / len(neg_returns)) ** 0.5 if neg_returns else 0.0001
 
-        variance = sum((r - mean_r) ** 2 for r in returns) / max(n - 1, 1)
-        std = math.sqrt(variance)
-
-        downside = [r - rf_daily for r in returns if r < rf_daily]
-        downside_std = math.sqrt(sum(d ** 2 for d in downside) / max(len(downside) - 1, 1)) if len(downside) > 1 else std
-
-        sharpe = round(mean_excess / std * math.sqrt(252), 3) if std > 0 else 0.0
-        sortino = round(mean_excess / downside_std * math.sqrt(252), 3) if downside_std > 0 else 0.0
+        sharpe  = (avg_ret / std_ret * math.sqrt(252)) if std_ret > 0 else 0.0
+        sortino = (avg_ret / downside_std * math.sqrt(252)) if downside_std > 0 else 0.0
 
         # Max Drawdown
         peak = values[0]
         max_dd = 0.0
-        dd_start_idx = 0
-        max_dd_days = 0
-        for i, v in enumerate(values):
-            if v >= peak:
+        for v in values:
+            if v > peak:
                 peak = v
-                dd_start_idx = i
-            else:
-                dd = (v - peak) / peak
-                if dd < max_dd:
-                    max_dd = dd
-                    max_dd_days = i - dd_start_idx
+            dd = (peak - v) / peak
+            if dd > max_dd:
+                max_dd = dd
 
-        # Calmar: annualisierte Rendite / |Max Drawdown|
-        total_ret = (values[-1] / values[0] - 1) if values[0] > 0 else 0
-        years = n / 252
-        ann_ret = (1 + total_ret) ** (1 / years) - 1 if years > 0 else 0
-        calmar = round(ann_ret / abs(max_dd), 3) if max_dd < 0 else 0.0
+        calmar = (avg_ret * 252 / max_dd) if max_dd > 0 else 0.0
 
         return {
-            "sharpe_ratio": sharpe,
-            "sortino_ratio": sortino,
-            "calmar_ratio": calmar,
-            "max_drawdown_pct": round(max_dd * 100, 2),
-            "max_drawdown_duration_days": max_dd_days,
-            "annualized_return_pct": round(ann_ret * 100, 2),
-            "volatility_annual_pct": round(std * math.sqrt(252) * 100, 2),
-            "total_snapshots": n + 1,
+            "sharpe":       round(sharpe, 3),
+            "sortino":      round(sortino, 3),
+            "calmar":       round(calmar, 3),
+            "max_drawdown": round(max_dd * 100, 2),
+            "avg_daily_return": round(avg_ret * 100, 4),
+            "period_days":  days,
         }
 
+    def closed_trades(self, days: int = 365) -> List[Dict]:
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
+        rows = self._conn.execute(
+            """
+            SELECT ticker, predicted_at, direction, confidence, sentiment_score,
+                   entry_price, exit_price, exit_reason, exit_category,
+                   pnl_pct, hold_days, outcome, debate_winner, debate_correct
+            FROM predictions
+            WHERE predicted_at > ? AND outcome IS NOT NULL
+            ORDER BY predicted_at DESC
+            """,
+            (cutoff,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
-def _categorize_exit(reason: str) -> str:
-    r = reason.lower()
-    if "stop-loss" in r or "stop_loss" in r:
-        return "stop_loss"
-    if "take-profit" in r or "take_profit" in r:
-        return "take_profit"
-    if "these" in r or "thesis" in r or "gebrochen" in r:
-        return "thesis_broken"
-    if "haltedauer" in r or "max" in r:
-        return "hold_expired"
-    if "sentiment" in r or "sell" in r:
-        return "sentiment_sell"
-    return "other"
+    def get_recent_trades(self, n: int = 20) -> List[Dict]:
+        """Die letzten n abgeschlossenen Trades (neueste zuerst).
+        Enthält Alias-Felder (actual_return_pct, entry_sentiment, actual_hold_days),
+        die von margin_readiness, bot_scorer und reflection_engine erwartet werden."""
+        rows = self._conn.execute(
+            """
+            SELECT ticker, predicted_at, direction, confidence, sentiment_score,
+                   entry_price, exit_price, exit_reason, exit_category,
+                   pnl_pct, hold_days, outcome, debate_winner, debate_correct
+            FROM predictions
+            WHERE outcome IS NOT NULL
+            ORDER BY predicted_at DESC
+            LIMIT ?
+            """,
+            (int(n),),
+        ).fetchall()
+        out: List[Dict] = []
+        for r in rows:
+            d = dict(r)
+            d["actual_return_pct"] = d.get("pnl_pct")
+            d["entry_sentiment"]   = d.get("sentiment_score")
+            d["actual_hold_days"]  = d.get("hold_days")
+            out.append(d)
+        return out
+
+    def get_exit_reason_stats(self, days: int = 365) -> List[Dict]:
+        """Aggregierte Statistik je Exit-Kategorie: Anzahl, Win-Rate, Ø-Rendite."""
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
+        rows = self._conn.execute(
+            """
+            SELECT exit_category, outcome, pnl_pct
+            FROM predictions
+            WHERE predicted_at > ? AND outcome IS NOT NULL
+            """,
+            (cutoff,),
+        ).fetchall()
+        by_cat: Dict[str, List] = {}
+        for r in rows:
+            by_cat.setdefault(r["exit_category"] or "unknown", []).append(r)
+        stats: List[Dict] = []
+        for cat, items in by_cat.items():
+            n = len(items)
+            wins = sum(1 for i in items if i["outcome"] == "WIN")
+            avg_ret = sum((i["pnl_pct"] or 0) for i in items) / n if n else 0.0
+            stats.append({
+                "category":      cat,
+                "trades":        n,
+                "wins":          wins,
+                "win_rate_pct":  round(wins / n * 100, 1) if n else 0.0,
+                "avg_return_pct": round(avg_ret, 2),
+            })
+        stats.sort(key=lambda s: -s["trades"])
+        return stats
+
+    # Sentiment-Score-Buckets – Labels müssen mit analyzers/calibration.py übereinstimmen
+    _SENTIMENT_BUCKETS = [
+        ("0.65–0.70", 0.65, 0.70),
+        ("0.70–0.75", 0.70, 0.75),
+        ("0.75–0.80", 0.75, 0.80),
+        ("0.80–0.85", 0.80, 0.85),
+        ("0.85–1.00", 0.85, 1.01),
+    ]
+
+    def get_sentiment_score_buckets(self, days: int = 365) -> List[Dict]:
+        """Win-Rate & Ø-Rendite je Sentiment-Score-Bucket (für Threshold-Kalibrierung)."""
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat()
+        rows = self._conn.execute(
+            """
+            SELECT sentiment_score, outcome, pnl_pct
+            FROM predictions
+            WHERE predicted_at > ? AND outcome IS NOT NULL
+            """,
+            (cutoff,),
+        ).fetchall()
+        buckets: List[Dict] = []
+        for label, lo, hi in self._SENTIMENT_BUCKETS:
+            items = [
+                r for r in rows
+                if r["sentiment_score"] is not None and lo <= r["sentiment_score"] < hi
+            ]
+            n = len(items)
+            wins = sum(1 for i in items if i["outcome"] == "WIN")
+            avg_ret = sum((i["pnl_pct"] or 0) for i in items) / n if n else 0.0
+            buckets.append({
+                "score_range":   label,
+                "trades":        n,
+                "win_rate_pct":  round(wins / n * 100, 1) if n else 0.0,
+                "avg_return_pct": round(avg_ret, 2),
+            })
+        return buckets
+
+    def get_adaptive_threshold(self, base_threshold: float = 0.65) -> float:
+        """Empfiehlt einen Buy-Threshold anhand der Win-Rate je Sentiment-Bucket.
+        Rein informativ (Anzeige) – fällt bei dünner Datenlage auf base_threshold zurück."""
+        buckets = [b for b in self.get_sentiment_score_buckets() if b["trades"] >= 5]
+        if not buckets:
+            return base_threshold
+        best = max(buckets, key=lambda b: b["win_rate_pct"])
+        if best["win_rate_pct"] < 55.0:
+            return base_threshold
+        try:
+            lower = float(best["score_range"].split("–")[0])
+        except (ValueError, IndexError):
+            return base_threshold
+        return round(max(min(lower, 0.85), 0.50), 2)
+
+    def get_source_accuracy(self) -> List[Dict]:
+        """Quellen-Trefferquote je Ticker. Das aktuelle predictions-Schema speichert
+        keine Quellen-Aufschlüsselung mehr → leere Liste (Anzeige wird übersprungen)."""
+        return []
+
+    def open_prediction_id(self, ticker: str) -> Optional[int]:
+        """Gibt die ID der neuesten offenen Vorhersage für einen Ticker zurück."""
+        row = self._conn.execute(
+            "SELECT id FROM predictions WHERE ticker=? AND outcome IS NULL ORDER BY id DESC LIMIT 1",
+            (ticker,),
+        ).fetchone()
+        return row[0] if row else None

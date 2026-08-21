@@ -71,7 +71,7 @@ def _print_analysis(a: AnalysisResult):
 
 
 def _print_portfolio_summary(portfolio: Portfolio, broker, phase_ctrl: PhaseController):
-    from datetime import datetime
+    from datetime import datetime, timezone
     positions = portfolio.all_positions()
     prices = broker.get_prices(list(positions.keys())) if positions else {}
     total = portfolio.total_value(prices)
@@ -90,7 +90,7 @@ def _print_portfolio_summary(portfolio: Portfolio, broker, phase_ctrl: PhaseCont
     for ticker, pos in positions.items():
         price = prices.get(ticker, pos.entry_price)
         pnl = (price - pos.entry_price) * pos.shares
-        days = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
+        days = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(pos.entry_date)).days
         pnl_str = f"[green]+${pnl:.2f}[/green]" if pnl >= 0 else f"[red]-${abs(pnl):.2f}[/red]"
         table.add_row(
             ticker, f"{pos.shares:.2f}", f"${pos.entry_price:.2f}",

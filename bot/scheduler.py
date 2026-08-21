@@ -2,9 +2,10 @@
 bot/scheduler.py – Main bot loop, schedule setup, and all _*_job functions.
 """
 
+import os
 import schedule
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from rich.console import Console
@@ -25,9 +26,14 @@ from collectors.news_archive import NewsArchive
 from analyzers.market_schedule import MarketSchedule
 from analyzers.weekend_prep import WeekendPrep
 from analyzers.parameter_optimizer import ParameterOptimizer, _MIN_TRADES
-from analyzers.turbo_learner import TurboLearner
 from bot.pre_market_scanner import PreMarketScanner
-from bot.runner import run_analysis_cycle, _print_portfolio_summary
+from bot.runner import run_analysis_cycle, safe_run_analysis_cycle, _print_portfolio_summary
+from bot import scheduler_maintenance
+from bot import scheduler_risk
+from bot import scheduler_macro
+from bot import scheduler_scanners
+from bot import scheduler_scanners2
+from bot import scheduler_analysis
 from cli.commands import run_weekend_prep
 
 console = Console()
@@ -39,6 +45,21 @@ def _subtract_minutes(hhmm: str, minutes: int) -> str:
     h, m = map(int, hhmm.split(":"))
     total = max(0, h * 60 + m - minutes)
     return f"{total // 60:02d}:{total % 60:02d}"
+
+
+def _scanner_notify(notifier, msg: str) -> None:
+    """Routine-Scanner-Meldung. Im Quiet-Mode (config.quiet_mode, Default an) wird
+    sie NICHT per Telegram gesendet, sondern nur geloggt – das dämpft den
+    Dauer-Lärm der Hintergrund-Scanner. Essentielle Meldungen (geplante Analysen,
+    Abend-Digest, Trades/SL, Fehler) laufen weiter direkt über notifier.send()."""
+    if config.quiet_mode:
+        log.info("[quiet] Scanner-Meldung unterdrückt: %s",
+                 " ".join(msg.split())[:160])
+        return
+    try:
+        notifier.send(msg)
+    except Exception:
+        pass
 
 
 def _regime_config_pct(regime: str) -> str:
@@ -247,8 +268,15 @@ def run_bot_loop(
     goal_risk: GoalRiskAssessor,
     hedge_strategy_inst,
     mkt_schedule: MarketSchedule,
+    earnings_strategy=None,
 ) -> None:
     """Main bot event loop – sets up schedule and runs until Ctrl+C."""
+
+    # Führt StrategyResult-Entscheidungen der reinen SwingStrategy aus
+    # (SL/TP-Job, Conditional Entries). Siehe strategy/executor.py.
+    from strategy.executor import TradeExecutor
+    from strategy.swing_strategy import StrategyResult
+    _executor = TradeExecutor(portfolio, broker, getattr(strategy, "journal", None), strategy=strategy)
 
     prices = broker.get_prices(list(portfolio.all_positions().keys()))
     total = portfolio.total_value(prices)
@@ -284,74 +312,47 @@ def run_bot_loop(
     console.print(f"\n[dim]Markt-Zeitplan für heute:[/dim]")
     console.print(f"[dim]{mkt_schedule.describe()}[/dim]\n")
 
-    def _monthly_review_check():
-        if datetime.utcnow().day == 1:
-            console.print("[bold magenta]📋 Erstelle monatliche Selbsteinschätzung...[/bold magenta]")
-            content = reflection.generate_monthly_review()
-            if content:
-                console.print(Panel(content[:800] + "...", title="Monatsreview erstellt", border_style="magenta"))
+    # Startup-Benachrichtigung
+    try:
+        _wday = datetime.now(timezone.utc).replace(tzinfo=None).weekday()
+        _is_weekend = _wday >= 5
+        _next_info = f"Nächste Analyse: {next_str}" if next_str != "–" else "Wochenende – keine Analyse heute"
+        TelegramNotifier().send(
+            f"🟢 <b>Bot gestartet</b>\n\n"
+            f"💼 ${total:,.2f} · {len(portfolio.all_positions())} Positionen\n"
+            f"📋 Watchlist: {', '.join(config.watchlist[:6])}{'…' if len(config.watchlist) > 6 else ''}\n"
+            f"⏰ {_next_info}"
+        )
+    except Exception as _sn_err:
+        log.debug("Startup-Notification fehlgeschlagen: %s", _sn_err)
 
-    def _reschedule_analysis():
-        """Rebuilds analysis schedule for the new day (handles DST changes)."""
-        for job in list(schedule.jobs):
-            if getattr(job, "_is_analysis_job", False):
-                schedule.cancel_job(job)
-        _register_analysis_jobs()
+    def _monthly_review_check():
+        """Monats-Review (ausgelagert nach bot/scheduler_analysis.py,
+        Roadmap 4.4a)."""
+        scheduler_analysis.monthly_review_check(reflection)
 
     def _pre_market_job(exchange: str):
-        """Pre-Market Briefing: schneller Daten-Scan ohne Claude."""
-        console.rule(f"[bold yellow]Pre-Market Briefing – {exchange}[/bold yellow]")
-        try:
-            from bot.runner import _get_watchlist
-            watchlist = _get_watchlist(portfolio)
-            scanner = PreMarketScanner()
-            briefing = scanner.run(exchange=exchange, watchlist=watchlist)
-            if briefing:
-                for line in briefing.to_console_lines():
-                    console.print(line)
-                TelegramNotifier().send(briefing.to_telegram())
-        except Exception as e:
-            log.warning("Pre-Market-Job %s fehlgeschlagen: %s", exchange, e)
+        """Pre-Market Briefing (ausgelagert nach bot/scheduler_analysis.py,
+        Roadmap 4.4a)."""
+        scheduler_analysis.pre_market_job(exchange, portfolio, TelegramNotifier, PreMarketScanner)
 
     def _register_analysis_jobs():
-        # Use LOCAL date (not UTC) so midnight reschedule doesn't get "yesterday"
-        local_date = datetime.now().date()
-        slots = mkt_schedule.get_schedule_strings(date=local_date)
-        is_weekend = local_date.weekday() >= 5
-        if not slots or is_weekend:
-            if is_weekend:
-                console.print("[dim]Wochenende – keine Vollanalysen geplant (nur Wochenvorbereitung).[/dim]")
-            else:
-                console.print("[dim]Heute kein Handelstag.[/dim]")
-            return
-        for slot in slots:
-            # Volle Analyse 30 Min vor Open (bisherig)
-            job = schedule.every().day.at(slot["hhmm"]).do(
-                run_analysis_cycle,
-                portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
-                weekend_prep_inst, hedge_strategy_inst,
-            )
-            job._is_analysis_job = True
-            review_job = schedule.every().day.at(slot["hhmm"]).do(_monthly_review_check)
-            review_job._is_analysis_job = True
+        """Analyse-Job-Registrierung (ausgelagert nach
+        bot/scheduler_analysis.py, Roadmap 4.4a)."""
+        scheduler_analysis.register_analysis_jobs(
+            mkt_schedule, portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
+            weekend_prep_inst, hedge_strategy_inst, earnings_strategy, safe_run_analysis_cycle,
+            _pre_market_job, _monthly_review_check)
 
-            # Pre-Market Briefing 90 Min vor Open (60 Min früher als Vollanalyse)
-            pre_hhmm = _subtract_minutes(slot["hhmm"], 60)
-            exch = slot["exchange"]
-            pre_job = schedule.every().day.at(pre_hhmm).do(_pre_market_job, exch)
-            pre_job._is_analysis_job = True
-
-        times_str = ", ".join(f"{s['hhmm']} ({s['exchange']})" for s in slots)
-        console.print(f"[dim]Analyse-Jobs registriert: {times_str}[/dim]")
-        pre_times = ", ".join(
-            f"{_subtract_minutes(s['hhmm'], 60)} pre-market ({s['exchange']})" for s in slots
-        )
-        console.print(f"[dim]Pre-Market-Jobs: {pre_times}[/dim]")
+    def _reschedule_analysis():
+        """Täglicher Reschedule für DST (ausgelagert nach
+        bot/scheduler_analysis.py, Roadmap 4.4a)."""
+        scheduler_analysis.reschedule_analysis(_register_analysis_jobs)
 
     def _weekend_prep_job():
-        """Runs weekend preparation. Called Saturday 09:00 and Sunday 14:00."""
-        console.print(f"\n[bold cyan]📅 Wochenvorbereitung startet...[/bold cyan]")
-        run_weekend_prep(weekend_prep_inst)
+        """Wochenvorbereitung (ausgelagert nach bot/scheduler_macro.py,
+        Roadmap 4.4a)."""
+        scheduler_macro.weekend_prep_job(weekend_prep_inst, TelegramNotifier, run_weekend_prep)
 
     _last_regime: list = [get_last_cached_regime()]   # [0] = vorheriges Regime
 
@@ -425,94 +426,45 @@ def run_bot_loop(
             console.print(f"\n  [bold magenta]{emoji} Regime-Wechsel: {prev_regime} → {regime}[/bold magenta]")
             log.info("Regime-Wechsel: %s → %s (Score: %s)", prev_regime, regime, score)
 
-        # 4. Hedge-Aktionen senden
+        # 4. Hedge-Aktionen senden – als eigene, knappe Nachricht (früher als
+        #    volle "Tages-Zusammenfassung" verschickt → trug zur Summary-Flut bei).
+        #    Aktionen fließen zusätzlich in die abendliche Tages-Summary ein.
         if actions:
             for a in actions:
                 console.print(f"\n  [magenta]{a}[/magenta]")
-            notifier.notify_daily_summary(
-                total_value=portfolio.total_value(broker.get_prices(list(portfolio.all_positions().keys()))),
-                cash=portfolio.cash,
-                open_positions=len(portfolio.all_positions()),
-                phase=phase_ctrl.current_phase(portfolio.total_value(
-                    broker.get_prices(list(portfolio.all_positions().keys()))
-                )),
-                progress_pct=phase_ctrl.progress_pct(portfolio.total_value(
-                    broker.get_prices(list(portfolio.all_positions().keys()))
-                )),
-                actions_today=actions,
+            try:
+                from bot.runner import record_daily_actions
+                record_daily_actions(list(actions))
+            except Exception as _rda_err:
+                log.debug("record_daily_actions (Hedge) fehlgeschlagen: %s", _rda_err)
+            notifier.send(
+                "🛡️ <b>Hedge-Aktionen</b>\n"
+                + "\n".join(f"  • {a}" for a in actions)
             )
 
     def _daily_maintenance_job():
-        """
-        Läuft täglich um 02:00 UTC. Bereinigt alle Datenbanken und verhindert
-        unkontrolliertes Wachstum über Monate und Jahre hinweg.
-        """
-        import sqlite3 as _sqlite3
-        report_lines = []
-
-        # 1. News-Archiv: älter als 32 Tage löschen
-        try:
-            archive.cleanup_old(keep_days=32)
-            report_lines.append("✅ News-Archiv: alte Artikel bereinigt (>32 Tage)")
-        except Exception as e:
-            report_lines.append(f"⚠️ News-Archiv Cleanup: {e}")
-
-        # 2. Regime-Snapshots: älter als 90 Tage löschen
-        try:
-            from analyzers.recession_detector import RecessionDetector
-            n = RecessionDetector().cleanup_old_snapshots(keep_days=90)
-            if n:
-                report_lines.append(f"✅ Regime-Snapshots: {n} alte Einträge gelöscht")
-        except Exception as e:
-            report_lines.append(f"⚠️ Regime-Snapshot Cleanup: {e}")
-
-        # 4. Reflection-Engine: älteste Memos/Reviews löschen
-        try:
-            n = reflection.cleanup_old(keep_memos=30, keep_monthly=24)
-            if n:
-                report_lines.append(f"✅ Reflections: {n} alte Einträge gelöscht")
-        except Exception as e:
-            report_lines.append(f"⚠️ Reflection Cleanup: {e}")
-
-        # 5. Signal-Queue: abgelaufene Signale bereinigen (nutzt bestehende Logik)
-        try:
-            expired = signal_queue.cleanup_expired()
-            if expired:
-                report_lines.append(f"✅ Signal-Queue: {expired} abgelaufene Signale entfernt")
-        except Exception as e:
-            report_lines.append(f"⚠️ Signal-Queue Cleanup: {e}")
-
-        # 6. VACUUM auf allen SQLite-Datenbanken (gibt gelöschte Seiten frei)
-        db_paths = [
-            "data/news_archive.db",
-            "data/trade_journal.db",
-            "data/performance.db",
-            "data/reflections.db",
-            "data/signal_queue.db",
-            "data/portfolio.db",
-        ]
-        vacuumed = 0
-        for db_path in db_paths:
-            try:
-                conn = _sqlite3.connect(db_path)
-                conn.execute("VACUUM")
-                conn.close()
-                vacuumed += 1
-            except Exception:
-                pass
-        if vacuumed:
-            report_lines.append(f"✅ VACUUM: {vacuumed} Datenbanken komprimiert")
-
-        summary = "\n".join(report_lines)
-        log.info("Tägliche Wartung abgeschlossen:\n%s", summary)
-
-        if any("⚠️" in l for l in report_lines):
-            TelegramNotifier().send(
-                f"🔧 <b>Tägliche DB-Wartung</b>\n\n{summary}"
-            )
+        """Läuft täglich um 02:00 UTC (ausgelagert nach
+        bot/scheduler_maintenance.py, Roadmap 4.4a) — Name bleibt hier, weil
+        schedule den Funktionsnamen für die Job-Introspektion braucht."""
+        scheduler_maintenance.daily_maintenance_job(
+            archive, reflection, signal_queue, TelegramNotifier)
 
     # Register today's analysis jobs (weekdays only)
     _register_analysis_jobs()
+
+    # ── Catch-up: verpasstes Analyse-Fenster nachholen ─────────────────────
+    # Wenn der Bot nach dem geplanten Zeitfenster startet (z.B. nach Neustart),
+    # wird die Analyse sofort nachgeholt – bis zu 180 Minuten nach dem Fenster
+    # (_CATCHUP_MAX_MINUTES, jetzt in bot/scheduler_analysis.py).
+    def _catchup_missed_window():
+        """Catch-up bei verpasstem Analyse-Fenster (ausgelagert nach
+        bot/scheduler_analysis.py, Roadmap 4.4a)."""
+        scheduler_analysis.catchup_missed_window(
+            mkt_schedule, portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
+            weekend_prep_inst, hedge_strategy_inst, earnings_strategy, TelegramNotifier,
+            _pre_market_job, safe_run_analysis_cycle)
+
+    _catchup_missed_window()
 
     # Reschedule every day at 00:01 (picks up DST changes and weekday/weekend transitions)
     schedule.every().day.at("00:01").do(_reschedule_analysis)
@@ -522,187 +474,345 @@ def run_bot_loop(
     schedule.every().sunday.at("14:00").do(_weekend_prep_job)
 
     # If today is already weekend, run prep now if no briefing exists for next week
-    if datetime.utcnow().weekday() >= 5 and not weekend_prep_inst.get_current_briefing():
+    if datetime.now(timezone.utc).replace(tzinfo=None).weekday() >= 5 and not weekend_prep_inst.get_current_briefing():
         console.print("[bold cyan]📅 Wochenende erkannt – starte Wochenvorbereitung...[/bold cyan]")
-        _weekend_prep_job()
+        import threading as _thr_wp
+        _thr_wp.Thread(target=_weekend_prep_job, daemon=True, name="weekend-prep-startup").start()
 
     # Tägliche Datenbankwartung: 02:00 UTC (außerhalb aller Handelszeiten)
     schedule.every().day.at("02:00").do(_daily_maintenance_job)
 
     # IPO-Tracker: täglich um 06:00 UTC (vor dem Analysezyklus)
     def _ipo_check_job():
-        try:
-            from analyzers.ipo_tracker import IPOTracker
-            tracker_ipo = IPOTracker()
-            new_ipos = tracker_ipo.run_daily_check()
-            for event in new_ipos:
-                cand = event["candidate"]
-                ticker = event["live_ticker"]
-                notifier_ipo = TelegramNotifier()
-                eligible_txt = (
-                    f"✅ Ticker <b>{ticker}</b> wurde zur Analyse-Queue hinzugefügt."
-                    if cand.auto_watchlist_eligible
-                    else f"⚠️ Bewertung unter $25 Mrd. → Ticker NICHT automatisch aufgenommen."
-                )
-                notifier_ipo.send(
-                    f"🚀 <b>IPO ERKANNT: {cand.name}</b>\n\n"
-                    f"Ticker: <b>{ticker}</b>\n"
-                    f"Sektor: {cand.sector}\n"
-                    f"Bewertung: ~${cand.expected_valuation_b:.0f} Mrd.\n"
-                    f"{cand.notes}\n\n"
-                    f"{eligible_txt}\n\n"
-                    f"<i>Erster Handelstag – noch wenig Daten vorhanden.</i>"
-                )
-                tracker_ipo.mark_notified(event["slug"])
-                console.print(
-                    f"  [bold magenta]🚀 IPO erkannt: {cand.name} ({ticker})[/bold magenta]"
-                )
-        except Exception as e:
-            log.warning("IPO-Check fehlgeschlagen: %s", e)
+        """IPO-Check (ausgelagert nach bot/scheduler_macro.py, Roadmap 4.4a)."""
+        scheduler_macro.ipo_check_job(TelegramNotifier)
 
     schedule.every().day.at("06:00").do(_ipo_check_job)
 
-    # Turbo-Lernauswertung: täglich um 02:30 UTC (nur wenn Turbo-Modus aktiv)
-    if config.turbo_mode and config.broker_mode == "paper":
-        def _turbo_learn_job():
-            try:
-                learner = TurboLearner()
-                result  = learner.analyze_and_save()
-                if result:
-                    notifier = TelegramNotifier()
-                    notifier.send(learner.summary_text(result))
-                    changes = learner.apply_to_config(config)
-                    if changes:
-                        notifier.send(
-                            "⚙️ <b>Turbo-Lernwerte angewendet:</b>\n"
-                            + "\n".join(f"• {c}" for c in changes)
-                        )
-                    log.info("Turbo-Lernauswertung abgeschlossen: %d Trades", result["turbo_trades_total"])
-            except Exception as exc:
-                log.exception("Turbo-Lernauswertung fehlgeschlagen: %s", exc)
-
-        schedule.every().day.at("02:30").do(_turbo_learn_job)
+    # IPO-Check sofort beim Start ausführen wenn Daten älter als 20 Stunden
+    try:
+        import sqlite3 as _sq, os as _os
+        _ipo_db = _os.path.join(_os.path.dirname(__file__), "..", "data", "ipo_tracker.db")
+        if _os.path.exists(_ipo_db):
+            _conn = _sq.connect(_ipo_db)
+            _row = _conn.execute(
+                "SELECT MAX(checked_at) FROM ipo_sentiment"
+            ).fetchone()
+            _conn.close()
+            _last = _row[0] if _row and _row[0] else None
+            _stale = True
+            if _last:
+                from datetime import timezone as _tz
+                _age = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(_last)).total_seconds()
+                _stale = _age > 20 * 3600
+        else:
+            _stale = True
+        if _stale:
+            import threading as _thr
+            _thr.Thread(target=_ipo_check_job, daemon=True, name="ipo-startup").start()
+    except Exception as _ipo_st_err:
+        log.debug("IPO-Startup-Check fehlgeschlagen: %s", _ipo_st_err)
 
     # ── Nutzeranfragen-Job: alle 15 Minuten prüfen ──────────────────────────
     def _user_request_job():
-        """Sofort-Analyse wenn Nutzer Ticker über das Dashboard angefordert hat."""
-        from analyzers import user_request_queue as _urq
-        pending = _urq.peek()
-        if not pending:
-            return
-        log.info(
-            "Nutzeranfrage-Job: %d Ticker sofort analysieren: %s",
-            len(pending), pending,
-        )
-        console.print(
-            f"\n[bold cyan]📬 Nutzeranfrage – sofortige Analyse: {', '.join(pending)}[/bold cyan]"
-        )
-        run_analysis_cycle(
+        """Nutzeranfrage-Sofort-Analyse (ausgelagert nach bot/scheduler_macro.py,
+        Roadmap 4.4a)."""
+        scheduler_macro.user_request_job(
             portfolio, broker, strategy, tracker, phase_ctrl,
             archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+            earnings_strategy, safe_run_analysis_cycle,
         )
 
     schedule.every(15).minutes.do(_user_request_job)
 
-    # ── SL/TP-Check alle 30 Minuten ─────────────────────────────────────────
-    schedule.every(30).minutes.do(strategy.check_open_positions)
+    # ── Tages-Watchdog: stellt sicher dass täglich mindestens eine Analyse läuft ──
+    _watchdog_last_triggered: dict = {}  # date_str → datetime
+
+    def _daily_analysis_watchdog():
+        """Tages-Watchdog (ausgelagert nach bot/scheduler_analysis.py,
+        Roadmap 4.4a)."""
+        scheduler_analysis.daily_analysis_watchdog(
+            mkt_schedule, portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
+            weekend_prep_inst, hedge_strategy_inst, earnings_strategy, _watchdog_last_triggered,
+            TelegramNotifier, safe_run_analysis_cycle)
+
+    schedule.every().hour.do(_daily_analysis_watchdog)
+    _daily_analysis_watchdog()  # sofort beim Start prüfen
+
+    # ── Tages-Zusammenfassung: EINMAL täglich am Abend ──────────────────────
+    # Früher hat jeder Analyse-Zyklus eine "Tages-Zusammenfassung" gesendet
+    # (mehrere pro Tag). Jetzt gebündelt einmal nach US-Börsenschluss.
+    _DAILY_SUMMARY_AT = os.getenv("DAILY_SUMMARY_AT", "22:15")
+
+    def _daily_summary_job():
+        """Tages-Zusammenfassung (ausgelagert nach
+        bot/scheduler_maintenance.py, Roadmap 4.4a)."""
+        scheduler_maintenance.daily_summary_job(
+            broker, portfolio, phase_ctrl, TelegramNotifier)
+
+    schedule.every().day.at(_DAILY_SUMMARY_AT).do(_daily_summary_job)
+    console.print(f"[dim]Tages-Zusammenfassung geplant: {_DAILY_SUMMARY_AT} (Werktags)[/dim]")
+
+    # ── Conditional Entry Preis-Check: alle 15 Minuten ──────────────────────
+    def _conditional_entry_job():
+        """Conditional-Entry-Ausführung (ausgelagert nach bot/scheduler_risk.py,
+        Roadmap 4.4a)."""
+        scheduler_risk.conditional_entry_job(broker, strategy, _executor, TelegramNotifier)
+
+    schedule.every(15).minutes.do(_conditional_entry_job)
+
+    # ── IBKR Fill-Check: alle 5 Minuten (nur bei BROKER_MODE=ibkr) ──────────
+    if config.broker_mode == "ibkr":
+        def _ibkr_fill_check_job():
+            """IBKR-Limit-Fill-Buchung (ausgelagert nach bot/scheduler_risk.py,
+            Roadmap 4.4a)."""
+            scheduler_risk.ibkr_fill_check_job(broker, portfolio, TelegramNotifier)
+
+        schedule.every(5).minutes.do(_ibkr_fill_check_job)
+
+    def _signal_queue_job():
+        """Signal-Queue-Drain (ausgelagert nach bot/scheduler_risk.py,
+        Roadmap 4.4a)."""
+        scheduler_risk.signal_queue_job(signal_queue, strategy, _executor, broker)
+    schedule.every(60).minutes.do(_signal_queue_job)
+
+    def _sl_tp_check_job():
+        """SL/TP-Check (ausgelagert nach bot/scheduler_risk.py, Roadmap 4.4a)."""
+        scheduler_risk.sl_tp_check_job(portfolio, broker, strategy, _executor, _signal_queue_job)
+    schedule.every(30).minutes.do(_sl_tp_check_job)
+
+    # ── Broker-Abgleich + Schutz-Stop-Sync alle 30 Minuten ──────────────────
+    # Bis 27.7.2026 lief diese Heilung nur beim Bot-Start (main.py) – ein
+    # broker-seitig gefeuerter GTC-Stop blieb dem Bot sonst bis zum nächsten
+    # Neustart verborgen (META-Vorfall). Gleiche Funktion wie beim Start,
+    # siehe bot/scheduler_risk.py::broker_healing_pass.
+    def _broker_healing_job():
+        """Broker-Abgleich + Schutz-Stop-Sync (ausgelagert nach bot/scheduler_risk.py)."""
+        scheduler_risk.broker_healing_pass(portfolio, broker, TelegramNotifier, context="periodisch")
+    schedule.every(30).minutes.do(_broker_healing_job)
 
     # ── Positions-Aging-Check alle 4 Stunden ────────────────────────────────
     def _position_aging_job():
-        """Warnt per Telegram wenn eine Position zu lange ohne Gewinn gehalten wird."""
-        try:
-            positions = portfolio.all_positions()
-            if not positions:
-                return
-            prices = broker.get_prices(list(positions.keys()))
-            warnings = []
-            runners = []
-            for ticker, pos in positions.items():
-                price = prices.get(ticker, pos.entry_price)
-                days_held = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
-                pnl_pct = (price - pos.entry_price) / pos.entry_price * 100
-                ratio = days_held / max(pos.target_hold_days, 1)
-                if ratio >= 0.8 and pnl_pct < 0:
-                    warnings.append(
-                        f"  ⚠️ <b>{ticker}</b>: {days_held}/{pos.target_hold_days}d · "
-                        f"P&L {pnl_pct:+.1f}% · Kurs ${price:.2f}"
-                    )
-                elif ratio >= 1.0 and pnl_pct > 0:
-                    runners.append(
-                        f"  🏃 <b>{ticker}</b>: {days_held}d (Ziel {pos.target_hold_days}d überschritten) · "
-                        f"+{pnl_pct:.1f}% · Kurs ${price:.2f}"
-                    )
-            if warnings or runners:
-                parts = []
-                if warnings:
-                    parts.append("⚠️ <b>Aging-Warnung – Positionen ohne Gewinn nahe Halteziel:</b>\n" + "\n".join(warnings))
-                if runners:
-                    parts.append("🏃 <b>Läufer – Haltedauer überschritten, noch im Gewinn:</b>\n" + "\n".join(runners))
-                TelegramNotifier().send("\n\n".join(parts))
-                for line in warnings + runners:
-                    console.print(f"  {line}")
-        except Exception as e:
-            log.warning("Position-Aging-Job fehlgeschlagen: %s", e)
+        """Position-Aging-Warnung (ausgelagert nach bot/scheduler_risk.py,
+        Roadmap 4.4a)."""
+        scheduler_risk.position_aging_job(portfolio, broker, TelegramNotifier)
 
     schedule.every(4).hours.do(_position_aging_job)
 
-    # ── Headline-Signal-Scanner: stündlich ──────────────────────────────────
-    def _headline_scan_job():
-        """
-        Scannt allgemeine Börsennachrichten auf starke Signale (M&A, FDA,
-        Earnings-Beats, etc.) und speist entdeckte Ticker in die BenchList.
-        Sehr starke Signale (Score ≥ 0.85) werden sofort per Telegram gemeldet.
-        """
-        try:
-            from analyzers.headline_signal_detector import HeadlineSignalDetector
-            detector = HeadlineSignalDetector()
-            signals  = detector.scan()
-            if signals:
-                notifier = TelegramNotifier()
-                added = detector.process_signals(
-                    signals,
-                    notify_fn=notifier.send,
-                )
-                if added:
-                    console.print(
-                        f"  [magenta]📰 Headline-Scanner: "
-                        f"{len(added)} neue Kandidaten → BenchList: "
-                        f"{', '.join(added[:6])}[/magenta]"
-                    )
-        except Exception as e:
-            log.warning("Headline-Scan-Job fehlgeschlagen: %s", e)
+    # ── Einzel-Aktien-Eskalation ────────────────────────────────────────────
+    # Statt bei jedem Signal den GANZEN Watchlist-Zyklus zu fahren (teuer + laut),
+    # analysiert ein getriggertes Signal nur die betroffene(n) Aktie(n) als
+    # Fokus-Lauf. Das Frugal-Routing im Zyklus übernimmt die „Ollama prüft das
+    # Potenzial vor, Claude entscheidet final"-Logik automatisch: bei lebender
+    # lokaler Engine bewertet Ollama vor und nur echte Katalysatoren erreichen
+    # Claude; auf langsamer Hardware (Circuit Breaker offen) fällt es direkt auf
+    # das günstige Hauptmodell (Haiku). Nur handelbare Ergebnisse melden sich über
+    # den normalen Trade-/Digest-Pfad – kein „Analyse läuft"-Spam.
+    def _escalate_ticker(tickers, reason: str = "Signal"):
+        """Eskalations-Helfer (ausgelagert nach bot/scheduler_scanners.py,
+        Roadmap 4.4a)."""
+        scheduler_scanners.escalate_ticker(
+            tickers, portfolio, broker, strategy, tracker, phase_ctrl,
+            archive, reflection, weekend_prep_inst, hedge_strategy_inst,
+            earnings_strategy, safe_run_analysis_cycle, reason=reason)
 
-    schedule.every().hour.do(_headline_scan_job)
-    _headline_scan_job()   # Einmal sofort beim Start ausführen
+    # ── Markt-geschlossen-Queue: alle 15 Minuten ────────────────────────────
+    # BUY-Signale, die nur an geschlossener Börse gescheitert sind (Order
+    # während des vorbörslichen Zyklus, NYSE noch zu – 27.7.2026-Befund),
+    # werden bei Marktöffnung über _escalate_ticker frisch neu geprüft statt
+    # das alte Signal blind nachzukaufen.
+    def _market_closed_signal_job():
+        """Markt-geschlossen-Queue-Drain (ausgelagert nach
+        bot/scheduler_risk.py, analog zu _signal_queue_job)."""
+        scheduler_risk.market_closed_signal_job(signal_queue, _escalate_ticker)
+
+    schedule.every(15).minutes.do(_market_closed_signal_job)
+
+    # ── Headline-Signal-Scanner: stündlich ──────────────────────────────────
+    _headline_last_queued: dict = scheduler_scanners.load_headline_cooldown()
+
+    def _headline_scan_job():
+        """Headline-Signal-Scanner (ausgelagert nach bot/scheduler_scanners.py,
+        Roadmap 4.4a)."""
+        scheduler_scanners.headline_scan_job(
+            _headline_last_queued, TelegramNotifier, _scanner_notify, _escalate_ticker)
+
+    schedule.every(20).minutes.do(_headline_scan_job)
+    import threading as _thr_stagger
+    _thr_stagger.Timer(30, _headline_scan_job).start()   # 30s nach Start
+
+    # ── Momentum/Hype-Scanner: alle 45 Minuten während Handelszeiten ─────────
+    _momentum_last_queued: dict = scheduler_scanners.load_momentum_cooldown()
+
+    def _momentum_scan_job():
+        """Momentum/Hype-Scanner (ausgelagert nach bot/scheduler_scanners.py,
+        Roadmap 4.4a)."""
+        scheduler_scanners.momentum_scan_job(
+            portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
+            weekend_prep_inst, hedge_strategy_inst, earnings_strategy,
+            _momentum_last_queued, TelegramNotifier, _scanner_notify, safe_run_analysis_cycle)
+
+    schedule.every(45).minutes.do(_momentum_scan_job)
+    _thr_stagger.Timer(60, _momentum_scan_job).start()   # 60s nach Start
+
+    # ── Breakout-Watch-Scanner: alle 30 Minuten ──────────────────────────────
+    _breakout_last_queued: dict = {}   # ticker → datetime
+
+    def _breakout_watch_job():
+        """Breakout-Watch-Scanner (ausgelagert nach bot/scheduler_scanners.py,
+        Roadmap 4.4a)."""
+        scheduler_scanners.breakout_watch_job(
+            portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
+            weekend_prep_inst, hedge_strategy_inst, earnings_strategy,
+            _breakout_last_queued, TelegramNotifier, _scanner_notify, safe_run_analysis_cycle)
+
+    schedule.every(30).minutes.do(_breakout_watch_job)
+
+    # ── Reddit-Hype-Scanner: alle 3 Stunden ─────────────────────────────────
+    def _reddit_hype_job():
+        """Reddit-Hype-Scanner (ausgelagert nach bot/scheduler_scanners2.py,
+        Roadmap 4.4a)."""
+        scheduler_scanners2.reddit_hype_job(
+            portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
+            weekend_prep_inst, hedge_strategy_inst, earnings_strategy, config,
+            TelegramNotifier, _scanner_notify, safe_run_analysis_cycle)
+
+    schedule.every(3).hours.do(_reddit_hype_job)
+    _thr_stagger.Timer(90, _reddit_hype_job).start()   # 90s nach Start
+
+    # ── Kursbewegungs-Alarm: alle 5 Minuten während Handelszeiten ───────────
+    _price_move_last: dict = {}   # ticker → letzter bekannter Kurs
+
+    def _price_move_job():
+        """Kursbewegungs-Alarm (ausgelagert nach bot/scheduler_scanners2.py,
+        Roadmap 4.4a)."""
+        scheduler_scanners2.price_move_job(
+            broker, config, _price_move_last, TelegramNotifier, _scanner_notify)
+
+    schedule.every(5).minutes.do(_price_move_job)
+
+    # ── Options-Flow-Scan: stündlich für Watchlist ───────────────────────────
+    def _options_flow_job():
+        """Options-Flow-Scan (ausgelagert nach bot/scheduler_scanners2.py,
+        Roadmap 4.4a)."""
+        scheduler_scanners2.options_flow_job(config, TelegramNotifier, _scanner_notify)
+
+    schedule.every().hour.do(_options_flow_job)
 
     # ── Geopolitischer Radar: alle 2 Stunden ────────────────────────────────
     def _geopolitical_radar_job():
-        """
-        Scannt Weltpolitik-Feeds auf geopolitische Frühsignale und
-        leitet Marktauswirkungen ab (Rüstung, Öl, Safe-Haven, etc.).
-        Severity 2+ → sofortiger Telegram-Alert.
-        Severity 3  → kritischer Alert (Krieg, Nuklear, Blockade).
-        """
-        try:
-            from analyzers.geopolitical_radar import GeopoliticalRadar
-            radar  = GeopoliticalRadar()
-            events = radar.scan()
-            if events:
-                notifier = TelegramNotifier()
-                added = radar.process_events(
-                    events,
-                    notify_fn=notifier.send,
-                )
-                if added:
-                    console.print(
-                        f"  [bold red]🌍 Geo-Radar: {len(events)} Event(s) – "
-                        f"Ticker → BenchList: {', '.join(added[:8])}[/bold red]"
-                    )
-        except Exception as e:
-            log.warning("Geopolitical-Radar-Job fehlgeschlagen: %s", e)
+        """Geopolitik-Radar (ausgelagert nach bot/scheduler_macro.py,
+        Roadmap 4.4a)."""
+        scheduler_macro.geopolitical_radar_job(config, TelegramNotifier, _scanner_notify)
 
     schedule.every(2).hours.do(_geopolitical_radar_job)
-    _geopolitical_radar_job()   # Sofort beim Start
+    _thr_stagger.Timer(120, _geopolitical_radar_job).start()   # 120s nach Start
+
+    # ── Marktbreite-Check: Vorsichts-Modus bei breitem Sektor-Einbruch ───────
+    def _market_breadth_job():
+        """Marktbreite-Check (ausgelagert nach bot/scheduler_macro.py,
+        Roadmap 4.4a)."""
+        scheduler_macro.market_breadth_job(TelegramNotifier)
+
+    schedule.every(2).hours.do(_market_breadth_job)
+
+    # ── Markt-Lagebericht: täglich 08:30 UTC + Cache-Refresh alle 4h ─────────
+    def _market_overview_refresh_job():
+        """Market-Overview-Cache-Refresh (ausgelagert nach bot/scheduler_macro.py,
+        Roadmap 4.4a)."""
+        scheduler_macro.market_overview_refresh_job()
+
+    _lagebericht_sent_date: list = [""]   # [0] = ISO-Datum des letzten Sendens
+
+    def _morning_lagebericht_job():
+        """Morgen-Lagebericht (ausgelagert nach bot/scheduler_macro.py,
+        Roadmap 4.4a)."""
+        scheduler_macro.morning_lagebericht_job(_lagebericht_sent_date, TelegramNotifier)
+
+    schedule.every(4).hours.do(_market_overview_refresh_job)
+    schedule.every().day.at("08:30").do(_morning_lagebericht_job)
+    _thr_stagger.Timer(5, _market_overview_refresh_job).start()   # 5s nach Start (Cache für andere Jobs)
+
+    # ── PEAD-Scanner: täglich morgens + stündlich während Handelszeiten ──────
+    def _pead_scan_job():
+        """PEAD-Scanner (ausgelagert nach bot/scheduler_scanners2.py,
+        Roadmap 4.4a)."""
+        scheduler_scanners2.pead_scan_job(
+            portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
+            weekend_prep_inst, hedge_strategy_inst, earnings_strategy,
+            TelegramNotifier, _scanner_notify, safe_run_analysis_cycle)
+
+    schedule.every().hour.do(_pead_scan_job)
+
+    # ── Short-Squeeze-Scanner: alle 4 Stunden während Handelszeiten ──────────
+    def _short_squeeze_scan_job():
+        """Short-Squeeze-Scanner (ausgelagert nach bot/scheduler_scanners2.py,
+        Roadmap 4.4a)."""
+        scheduler_scanners2.short_squeeze_scan_job(
+            portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
+            weekend_prep_inst, hedge_strategy_inst, earnings_strategy, config,
+            TelegramNotifier, _scanner_notify, safe_run_analysis_cycle)
+
+    schedule.every(4).hours.do(_short_squeeze_scan_job)
+
+    # ── Insider-Proaktiv-Scanner: täglich + nach Marktöffnung ───────────────
+    _insider_last_queued: dict = {}   # ticker → datetime
+
+    def _insider_proactive_job():
+        """Insider-Proaktiv-Scanner (ausgelagert nach
+        bot/scheduler_scanners2.py, Roadmap 4.4a)."""
+        scheduler_scanners2.insider_proactive_job(
+            portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
+            weekend_prep_inst, hedge_strategy_inst, earnings_strategy,
+            _insider_last_queued, TelegramNotifier, _scanner_notify, safe_run_analysis_cycle)
+
+    schedule.every().day.at("08:30").do(_insider_proactive_job)
+    schedule.every().day.at("13:00").do(_insider_proactive_job)
+
+    # ── Sektor-Kaskaden-Scanner: alle 60 Minuten ─────────────────────────────
+    _cascade_last_queued: dict = {}   # ticker → datetime
+
+    def _sector_cascade_job():
+        """Sektor-Kaskaden-Scanner (ausgelagert nach
+        bot/scheduler_scanners2.py, Roadmap 4.4a)."""
+        scheduler_scanners2.sector_cascade_job(
+            portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
+            weekend_prep_inst, hedge_strategy_inst, earnings_strategy,
+            _cascade_last_queued, TelegramNotifier, _scanner_notify, safe_run_analysis_cycle)
+
+    schedule.every(60).minutes.do(_sector_cascade_job)
+
+    # ── Intraday-Scan: optionales drittes Analysefenster ────────────────────
+    if config.intraday_scan_enabled:
+        def _intraday_scan_job():
+            """Intraday-Scan (ausgelagert nach bot/scheduler_scanners2.py,
+            Roadmap 4.4a)."""
+            scheduler_scanners2.intraday_scan_job(
+                portfolio, broker, strategy, tracker, phase_ctrl, archive, reflection,
+                weekend_prep_inst, hedge_strategy_inst, earnings_strategy,
+                safe_run_analysis_cycle)
+
+        # Bereinigung: nur HH:MM behalten, Kommentare/Leerzeichen abschneiden
+        intraday_time = (config.intraday_scan_time or "17:30").split()[0].strip()
+        try:
+            schedule.every().day.at(intraday_time).do(_intraday_scan_job)
+            console.print(
+                f"[dim]Intraday-Scan aktiviert: täglich {intraday_time} UTC "
+                f"(= {intraday_time} Serverzeit)[/dim]"
+            )
+        except Exception as _idt_err:
+            log.warning(
+                "Intraday-Scan: ungültige INTRADAY_SCAN_TIME='%s' – "
+                "verwende 17:30 als Fallback. Fehler: %s",
+                intraday_time, _idt_err,
+            )
+            schedule.every().day.at("17:30").do(_intraday_scan_job)
+            console.print("[dim]Intraday-Scan aktiviert: täglich 17:30 UTC (Fallback)[/dim]")
+    else:
+        console.print(
+            "[dim]Intraday-Scan deaktiviert. Aktivieren: INTRADAY_SCAN_ENABLED=true "
+            "in .env (empfohlen: INTRADAY_SCAN_TIME=17:30)[/dim]"
+        )
 
     # Auto-Optimierung: nach je 15 abgeschlossenen Trades per Telegram benachrichtigen
     schedule.every(6).hours.do(
@@ -722,21 +832,10 @@ def run_bot_loop(
     _dashboard = DailyDashboard()
 
     def _daily_dashboard_job():
-        if not _dashboard.should_send():
-            return
-        try:
-            msg = _dashboard.generate(
-                portfolio=portfolio,
-                tracker=tracker,
-                scorer=_BotScorer(),
-                broker=broker,
-                initial_capital=config.initial_capital,
-            )
-            TelegramNotifier().send(msg)
-            _dashboard.mark_sent()
-            log.info("Tägliches Dashboard gesendet.")
-        except Exception as e:
-            log.warning("Daily Dashboard fehlgeschlagen: %s", e)
+        """Tägliches Dashboard-Digest (ausgelagert nach
+        bot/scheduler_maintenance.py, Roadmap 4.4a)."""
+        scheduler_maintenance.daily_dashboard_job(
+            _dashboard, portfolio, tracker, broker, _BotScorer, TelegramNotifier)
 
     schedule.every().day.at("20:30").do(_daily_dashboard_job)
 
@@ -749,23 +848,29 @@ def run_bot_loop(
 
     # Circuit-Breaker-Monitor: einmalige Reflexion wenn CB heute ausgelöst wird
     _cb_triggered_today: list = []
+    _cb_trigger_date: list = []   # eigenes Datum-Tracking statt _state-Zugriff
     _circuit_breaker = CircuitBreaker()
 
     def _cb_monitor_job():
-        prices = broker.get_prices(list(portfolio.all_positions().keys()))
-        current_value = portfolio.total_value(prices)
-        _circuit_breaker.register_day_open(current_value)
-        allowed, reason = _circuit_breaker.check_buy_allowed(current_value)
-        if not allowed and not _cb_triggered_today:
-            _cb_triggered_today.append(True)
-            console.print(f"\n  [bold red]⛔ CIRCUIT BREAKER: {reason}[/bold red]")
-            _run_post_cb_reflection(
-                _circuit_breaker, portfolio, broker, tracker, reflection, TelegramNotifier()
-            )
-        # Tages-Reset: neuer Tag → CB-Status zurücksetzen
-        today = __import__("datetime").date.today().isoformat()
-        if _cb_triggered_today and _circuit_breaker._state.get("day") != today:
-            _cb_triggered_today.clear()
+        try:
+            prices = broker.get_prices(list(portfolio.all_positions().keys()))
+            current_value = portfolio.total_value(prices)
+            _circuit_breaker.register_day_open(current_value)
+            allowed, reason = _circuit_breaker.check_buy_allowed(current_value)
+            today = __import__("datetime").date.today().isoformat()
+            # Tages-Reset zuerst: neuer Tag → CB-Status zurücksetzen
+            if _cb_triggered_today and (not _cb_trigger_date or _cb_trigger_date[0] != today):
+                _cb_triggered_today.clear()
+                _cb_trigger_date.clear()
+            if not allowed and not _cb_triggered_today:
+                _cb_triggered_today.append(True)
+                _cb_trigger_date.append(today)
+                console.print(f"\n  [bold red]⛔ CIRCUIT BREAKER: {reason}[/bold red]")
+                _run_post_cb_reflection(
+                    _circuit_breaker, portfolio, broker, tracker, reflection, TelegramNotifier()
+                )
+        except Exception as _cb_err:
+            log.warning("Circuit-Breaker-Monitor fehlgeschlagen: %s", _cb_err)
 
     schedule.every(15).minutes.do(_cb_monitor_job)
 
@@ -783,9 +888,152 @@ def run_bot_loop(
 
     console.print(f"[dim]SL/TP-Check alle 30 Min · Aging-Check alle 4h · Wochenvorbereitung Sa 09:00 + So 14:00 · Ctrl+C zum Beenden.[/dim]")
 
+    # ── Adaptive Resource Manager: alle 2 Minuten ────────────────────────────
+    try:
+        from system.resource_manager import get_resource_manager, ResourceTier, TIER_MODELS
+        _rm = get_resource_manager()
+        _rm_prev_tier: list = [None]   # mutable container for closure
+
+        def _resource_check_job():
+            try:
+                state = _rm.update(force=True)
+                prev  = _rm_prev_tier[0]
+                if prev == state.tier:
+                    return
+                _rm_prev_tier[0] = state.tier
+
+                tier_labels = {
+                    ResourceTier.PERFORMANCE: ("🚀", "PERFORMANCE", "green"),
+                    ResourceTier.BALANCED:    ("⚖️",  "BALANCED",    "yellow"),
+                    ResourceTier.MINIMAL:     ("🔋", "MINIMAL",     "dim"),
+                }
+                icon, label, color = tier_labels[state.tier]
+                console.print(
+                    f"\n  [{color}]{icon} Ressourcentier: {label}[/{color}]  "
+                    f"[dim]RAM frei: {state.ram_free_gb:.1f}GB / {state.ram_total_gb:.1f}GB "
+                    f"({state.ram_free_pct*100:.0f}%) | "
+                    f"Idle: {state.idle_seconds:.0f}s | "
+                    f"Ollama: {state.ollama_model}[/dim]"
+                )
+
+                # Apply model change to Ollama prescreener if loaded
+                try:
+                    from analyzers.ollama_prescreener import OllamaPrescreener as _OP
+                    import analyzers.ollama_prescreener as _op_mod
+                    if hasattr(_op_mod, "_prescreener_instance"):
+                        _rm.apply_to_ollama(_op_mod._prescreener_instance)
+                except Exception:
+                    pass
+
+                _rm.apply_to_caches()
+
+                # Telegram only on significant tier changes
+                if prev is not None:
+                    try:
+                        TelegramNotifier().send(
+                            f"{icon} <b>Ressourcentier: {label}</b>\n\n"
+                            f"RAM frei: {state.ram_free_gb:.1f}GB / {state.ram_total_gb:.1f}GB "
+                            f"({state.ram_free_pct*100:.0f}%)\n"
+                            f"Mac idle: {state.idle_seconds:.0f}s\n"
+                            f"Ollama-Modell: <code>{state.ollama_model}</code>"
+                        )
+                    except Exception:
+                        pass
+            except Exception as _re:
+                log.debug("Resource-Check fehlgeschlagen: %s", _re)
+
+        schedule.every(2).minutes.do(_resource_check_job)
+        _resource_check_job()   # Einmal beim Start
+    except ImportError:
+        log.debug("system.resource_manager nicht verfügbar – adaptives RAM-Management deaktiviert")
+
+    _CRASH_LOG = os.path.join(os.path.dirname(__file__), "..", "data", "crash_log.txt")
+
+    # Pause-Schalter (Dashboard): solange gesetzt, werden KEINE Jobs ausgeführt –
+    # kompletter Stopp inkl. SL/TP-Überwachung. _paused_state merkt sich den letzten
+    # Zustand, damit Telegram/Konsole nur beim Übergang (nicht jede Minute) meldet.
+    from system import bot_control
+    _paused_state = False
+
     try:
         while True:
-            schedule.run_pending()
+            try:
+                _now_paused = bot_control.is_paused()
+                if _now_paused:
+                    if not _paused_state:
+                        _paused_state = True
+                        log.warning("Bot pausiert (Dashboard) – alle Jobs angehalten.")
+                        console.print("[bold yellow]⏸ Bot pausiert – alle Jobs angehalten (Dashboard).[/bold yellow]")
+                        try:
+                            TelegramNotifier().send(
+                                "⏸ <b>Bot pausiert</b>\n\n"
+                                "Alle Jobs sind angehalten (inkl. SL/TP-Überwachung).\n"
+                                "Im Dashboard wieder aktivieren, um fortzufahren."
+                            )
+                        except Exception:
+                            pass
+                    time.sleep(60)
+                    continue
+                if _paused_state:
+                    _paused_state = False
+                    log.info("Bot fortgesetzt (Dashboard) – Jobs laufen wieder.")
+                    console.print("[bold green]▶️ Bot fortgesetzt – Jobs laufen wieder.[/bold green]")
+                    try:
+                        TelegramNotifier().send(
+                            "▶️ <b>Bot fortgesetzt</b>\n\nAlle Jobs sind wieder aktiv."
+                        )
+                    except Exception:
+                        pass
+                schedule.run_pending()
+                # Live-Status (Roadmap 1.5a): zwischen Jobs ist der Bot idle.
+                # Schreibt auch den nächsten geplanten Lauf und heilt einen
+                # nach Crash hängengebliebenen "cycle"-Status von selbst.
+                try:
+                    from system import live_status as _ls
+                    _nr = schedule.next_run()
+                    _ls.set_idle(next_run=_nr.isoformat(timespec="seconds")
+                                 if _nr else None)
+                except Exception:
+                    pass
+                # Externer Dead-Man-Switch (Roadmap 1.7): Lebenszeichen an einen
+                # Dienst außerhalb dieses Servers – deckt Server-/Netzausfall ab,
+                # den watchdog.sh (läuft auf demselben Host) nicht mehr melden
+                # könnte. No-Op ohne konfigurierte URL, intern gedrosselt.
+                try:
+                    from system import dead_man_switch as _dms
+                    _dms.ping()
+                except Exception:
+                    pass
+                # Telegram /status-Befehl (Roadmap 1.5g): kein Webhook (kein
+                # öffentlicher Endpunkt) – Short-Polling an derselben Stelle
+                # wie der Dead-Man-Switch-Ping, die Schleife tickt ohnehin
+                # ~1×/Minute. No-Op ohne konfigurierten Token.
+                try:
+                    from system import telegram_commands as _tgc
+                    _tgc.poll()
+                except Exception:
+                    pass
+            except KeyboardInterrupt:
+                raise
+            except Exception as _job_err:
+                import traceback as _tb_loop
+                _tb_text = _tb_loop.format_exc()
+                log.exception("Unbehandelter Fehler in schedule.run_pending – Bot läuft weiter: %s", _job_err)
+                # Crash in Datei schreiben (Telegram könnte Rate-Limited sein)
+                try:
+                    with open(_CRASH_LOG, "a", encoding="utf-8") as _cf:
+                        _cf.write(f"\n=== {datetime.now().isoformat()} ===\n{_tb_text}\n")
+                except Exception:
+                    pass
+                # Telegram-Crash-Meldung (best-effort)
+                try:
+                    TelegramNotifier().send(
+                        f"⚠️ <b>Job-Fehler</b> (Bot läuft weiter)\n\n"
+                        f"<code>{_tb_text[-800:]}</code>",
+                        level="critical",
+                    )
+                except Exception:
+                    pass
             time.sleep(60)
     except KeyboardInterrupt:
         console.print("\n[yellow]Bot gestoppt.[/yellow]")

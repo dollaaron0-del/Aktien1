@@ -7,7 +7,7 @@ Gibt je Zyklus 2 Stichproben-Ticker zurück, die nicht in der aktuellen Watchlis
 import json
 import os
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from logger import get_logger
@@ -79,7 +79,7 @@ class SectorSampler:
             "sector_index": next_sector_idx,
             "ticker_idx": next_ticker_idx,
             "last_sector": sector["name"],
-            "last_run": datetime.utcnow().isoformat(),
+            "last_run": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         }
         self._save()
         return sector["name"], sample

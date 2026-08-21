@@ -10,15 +10,19 @@ Grundprinzip:
   - Inverse ETFs sind normale Long-Käufe – kein Margin, kein Short-Squeeze
 """
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional, Tuple
 
 from portfolio.portfolio import Portfolio, Position
 from portfolio.performance_tracker import PerformanceTracker
 from portfolio.trade_journal import TradeJournal
 from broker.paper_broker import PaperBroker
+from logger import get_logger
 from notifier.telegram_notifier import TelegramNotifier
 from analyzers.recession_detector import RecessionDetector, BULL, NEUTRAL, BEAR, CRISIS
+from strategy.executor import _fail_reason, _fill_price, _fill_shares, _is_filled
+
+log = get_logger(__name__)
 
 
 class HedgeStrategy:
@@ -97,7 +101,7 @@ class HedgeStrategy:
             if not price:
                 continue
 
-            days_held = (datetime.utcnow() - datetime.fromisoformat(pos.entry_date)).days
+            days_held = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(pos.entry_date)).days
             reason = None
 
             if price >= pos.take_profit:
@@ -109,6 +113,9 @@ class HedgeStrategy:
 
             if reason:
                 pnl = self._close_hedge(ticker, pos, price, reason, days_held)
+                if pnl is None:
+                    actions.append(f"[{ticker}] ⛔ HEDGE-Verkauf fehlgeschlagen – Position bleibt offen")
+                    continue
                 sign = "+" if pnl >= 0 else ""
                 actions.append(
                     f"[{ticker}] 🛡 HEDGE GESCHLOSSEN – {reason} | P&L: {sign}{pnl:.2f} USD"
@@ -151,6 +158,21 @@ class HedgeStrategy:
             sl_pct      = hedge.get("sl_pct",  0.08)
             tp_pct      = hedge.get("tp_pct",  0.25)
             hold_days   = hedge.get("hold_days", 30)
+
+            # Broker-Order ZUERST; gebucht wird nur bei bestätigtem Fill – und
+            # zwar mit echtem Fill-Preis und tatsächlich gefüllter Stückzahl
+            # (IBKR rundet auf ganze Stück).
+            fill = self.broker.buy(ticker, shares, price)
+            if not _is_filled(fill):
+                warn = _fail_reason(fill)
+                log.error("[HEDGE] %s Kauf fehlgeschlagen: %s", ticker, warn)
+                actions.append(f"[{ticker}] ⛔ HEDGE-Kauf fehlgeschlagen: {warn}")
+                continue
+            price  = _fill_price(fill, price)
+            shares = _fill_shares(fill, shares)
+            if shares <= 0:
+                actions.append(f"[{ticker}] ⛔ HEDGE 0 Stück gefüllt – nicht gebucht")
+                continue
             stop_loss   = round(price * (1 - sl_pct), 2)
             take_profit = round(price * (1 + tp_pct), 2)
 
@@ -158,15 +180,13 @@ class HedgeStrategy:
                 ticker=ticker,
                 shares=shares,
                 entry_price=price,
-                entry_date=datetime.utcnow().isoformat(),
+                entry_date=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 stop_loss=stop_loss,
                 take_profit=take_profit,
                 target_hold_days=hold_days,
                 rationale=f"[HEDGE] {hedge['reason']}",
                 entry_catalysts=[hedge["description"], regime_result["regime"]],
             )
-
-            self.broker.buy(ticker, shares, price)
             self.portfolio.open_position(position)
             self._hedge_tickers.add(ticker)
             current_hedge_value += shares * price
@@ -216,6 +236,9 @@ class HedgeStrategy:
                 continue
             reason = f"Regime verbessert zu {reason_regime} – Hedge nicht mehr nötig"
             pnl = self._close_hedge(ticker, pos, price, reason, 0)
+            if pnl is None:
+                actions.append(f"[{ticker}] ⛔ HEDGE-Verkauf fehlgeschlagen – Position bleibt offen")
+                continue
             sign = "+" if pnl >= 0 else ""
             actions.append(
                 f"[{ticker}] 🛡 HEDGE GESCHLOSSEN – {reason} | P&L: {sign}{pnl:.2f} USD"
@@ -235,6 +258,9 @@ class HedgeStrategy:
                     continue
                 reason = f"Hedge-Thema nicht mehr relevant (Regime: {regime})"
                 pnl = self._close_hedge(ticker, pos, price, reason, 0)
+                if pnl is None:
+                    actions.append(f"[{ticker}] ⛔ HEDGE-Verkauf fehlgeschlagen – Position bleibt offen")
+                    continue
                 sign = "+" if pnl >= 0 else ""
                 actions.append(
                     f"[{ticker}] 🛡 HEDGE ROTIERT – {reason} | P&L: {sign}{pnl:.2f} USD"
@@ -243,7 +269,20 @@ class HedgeStrategy:
 
     def _close_hedge(
         self, ticker: str, pos: Position, price: float, reason: str, days_held: int
-    ) -> float:
+    ) -> Optional[float]:
+        """Verkauft den Hedge beim Broker und schließt erst bei bestätigtem Fill
+        das Buch. None = Order fehlgeschlagen, Position bleibt offen."""
+        fill = self.broker.sell(ticker, pos.shares, price)
+        if not _is_filled(fill):
+            warn = _fail_reason(fill)
+            log.error("[HEDGE] %s SELL fehlgeschlagen (%s) – Position bleibt offen", ticker, warn)
+            self._notifier.send(
+                f"🚨 <b>HEDGE {ticker} SELL-Order FEHLGESCHLAGEN</b>\n"
+                f"Position bleibt offen – bitte Broker manuell prüfen!\nFehler: {warn}",
+                level="critical",
+            )
+            return None
+        price = _fill_price(fill, price)
         self.tracker.record_outcome(
             ticker=ticker, entry_price=pos.entry_price,
             entry_date=pos.entry_date, sell_price=price, sell_reason=reason,

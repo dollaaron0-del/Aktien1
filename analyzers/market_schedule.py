@@ -16,19 +16,19 @@ Supported exchanges:
   ASX    – Sydney          10:00 AEST/AEDT (Australia/Sydney)
 """
 from zoneinfo import ZoneInfo
-from datetime import datetime, timedelta, time as dtime, date as date_type
+from datetime import datetime, timedelta, time as dtime, date as date_type, timezone
 from typing import List, Dict, Optional, Set
 
 
 EXCHANGE_DEFS: Dict[str, Dict] = {
-    "XETRA":  {"tz": "Europe/Berlin",      "open": dtime(9, 0),  "name": "Frankfurt / Tradegate", "lead": 90},
-    "NYSE":   {"tz": "America/New_York",   "open": dtime(9, 30), "name": "NYSE/NASDAQ New York"},
-    "NASDAQ": {"tz": "America/New_York",   "open": dtime(9, 30), "name": "NASDAQ New York"},
-    "TSE":    {"tz": "Asia/Tokyo",         "open": dtime(9, 0),  "name": "Tokyo TSE"},
-    "HKEX":   {"tz": "Asia/Hong_Kong",     "open": dtime(9, 30), "name": "Hong Kong HKEX"},
-    "SSE":    {"tz": "Asia/Shanghai",      "open": dtime(9, 30), "name": "Shanghai SSE"},
-    "LSE":    {"tz": "Europe/London",      "open": dtime(8, 0),  "name": "London LSE"},
-    "ASX":    {"tz": "Australia/Sydney",   "open": dtime(10, 0), "name": "Sydney ASX"},
+    "XETRA":  {"tz": "Europe/Berlin",      "open": dtime(9, 0),  "close": dtime(17, 30), "name": "Frankfurt / Tradegate", "lead": 90},
+    "NYSE":   {"tz": "America/New_York",   "open": dtime(9, 30), "close": dtime(16, 0),  "name": "NYSE/NASDAQ New York"},
+    "NASDAQ": {"tz": "America/New_York",   "open": dtime(9, 30), "close": dtime(16, 0),  "name": "NASDAQ New York"},
+    "TSE":    {"tz": "Asia/Tokyo",         "open": dtime(9, 0),  "close": dtime(15, 0),  "name": "Tokyo TSE"},
+    "HKEX":   {"tz": "Asia/Hong_Kong",     "open": dtime(9, 30), "close": dtime(16, 0),  "name": "Hong Kong HKEX"},
+    "SSE":    {"tz": "Asia/Shanghai",      "open": dtime(9, 30), "close": dtime(15, 0),  "name": "Shanghai SSE"},
+    "LSE":    {"tz": "Europe/London",      "open": dtime(8, 0),  "close": dtime(16, 30), "name": "London LSE"},
+    "ASX":    {"tz": "Australia/Sydney",   "open": dtime(10, 0), "close": dtime(16, 0),  "name": "Sydney ASX"},
 }
 
 # ISO weekday: Mon=1 … Sun=7; exchanges trade Mon–Fri
@@ -94,10 +94,76 @@ _EXCHANGE_HOLIDAYS: Dict[str, Set[str]] = {
 }
 
 
+def is_exchange_open(exchange: str = "NYSE") -> bool:
+    """Returns True if the given exchange is currently in its regular trading session."""
+    exch = EXCHANGE_DEFS.get(exchange.upper())
+    if not exch:
+        return False
+    tz = ZoneInfo(exch["tz"])
+    now_local = datetime.now(tz)
+    if now_local.weekday() >= 5:
+        return False
+    today_str = now_local.date().isoformat()
+    holidays = _EXCHANGE_HOLIDAYS.get(exchange.upper(), _ALL_HOLIDAYS)
+    if today_str in holidays:
+        return False
+    return exch["open"] <= now_local.time() <= exch["close"]
+
+
+# ── Ticker → Börsenplatz (Order-Gate) ────────────────────────────────────────
+# Spiegelt _SUFFIX_MAP aus broker/ibkr_broker.py: welcher Handelskalender gilt
+# für einen Ticker. EU-Plätze (Euronext, SIX, Wien, Mailand, Madrid, Nordics)
+# laufen bewusst über den XETRA-Kalender – gleiche Kernzeit 09:00–17:30 lokal,
+# gleiche Hauptfeiertage. Das Gate soll Wochenenden/Feiertage abfangen, nicht
+# jede Sonderauktion minutengenau abbilden.
+_TICKER_SUFFIX_EXCHANGE: Dict[str, str] = {
+    ".DE": "XETRA", ".F":  "XETRA", ".MU": "XETRA", ".BE": "XETRA",
+    ".PA": "XETRA", ".AS": "XETRA", ".MI": "XETRA", ".MC": "XETRA",
+    ".BR": "XETRA", ".VI": "XETRA", ".HE": "XETRA", ".SW": "XETRA",
+    ".CO": "XETRA", ".ST": "XETRA", ".OL": "XETRA",
+    ".L":  "LSE",
+}
+
+
+def exchange_for_ticker(ticker: str) -> str:
+    """Handelsplatz eines Tickers. Ohne bekanntes Suffix → US (NYSE-Kalender)."""
+    upper = (ticker or "").upper()
+    for suffix in sorted(_TICKER_SUFFIX_EXCHANGE, key=len, reverse=True):
+        if upper.endswith(suffix):
+            return _TICKER_SUFFIX_EXCHANGE[suffix]
+    return "NYSE"
+
+
+def market_closed_reason(ticker: str) -> Optional[str]:
+    """
+    Grund, warum für `ticker` gerade KEINE Market-Order rausgehen darf – oder
+    None, wenn die zuständige Börse offen ist.
+
+    Hintergrund (25.7.2026): Der Bot reichte am Samstag dreimal eine SELL-
+    Market-Order für SAP.DE ein. IBKR cancelte sie sofort, der Bot wertete das
+    als Fill-Timeout und meldete lautstark "SELL fehlgeschlagen" – dabei war
+    schlicht die Börse zu. Schlimmer: sell() räumt vorher den GTC-Schutz-Stop
+    weg, die Position stand danach ungeschützt da.
+    """
+    exch = exchange_for_ticker(ticker)
+    if is_exchange_open(exch):
+        return None
+    defs = EXCHANGE_DEFS.get(exch, {})
+    tz = ZoneInfo(defs.get("tz", "UTC"))
+    now_local = datetime.now(tz)
+    name = defs.get("name", exch)
+    if now_local.weekday() >= 5:
+        return f"{name} geschlossen (Wochenende)"
+    if is_market_holiday(now_local.date(), exch):
+        return f"{name} geschlossen (Feiertag)"
+    return (f"{name} außerhalb der Handelszeit "
+            f"({defs.get('open')}–{defs.get('close')} lokal, jetzt {now_local:%H:%M})")
+
+
 def is_market_holiday(d: Optional[date_type] = None, exchange: str = "") -> bool:
     """Returns True if the given date is a holiday for the specified exchange."""
     if d is None:
-        d = datetime.utcnow().date()
+        d = datetime.now(timezone.utc).replace(tzinfo=None).date()
     holidays = _EXCHANGE_HOLIDAYS.get(exchange.upper(), _ALL_HOLIDAYS)
     return d.isoformat() in holidays
 
@@ -178,7 +244,7 @@ class MarketSchedule:
 
     def next_window(self) -> Optional[Dict]:
         """Returns the next upcoming analysis window from now."""
-        now_utc = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC"))
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None).replace(tzinfo=ZoneInfo("UTC"))
         now_local = datetime.now()
         # Check today and tomorrow (use local date to avoid UTC-date mismatch at midnight)
         for delta in (0, 1):

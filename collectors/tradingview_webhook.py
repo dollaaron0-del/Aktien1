@@ -32,7 +32,7 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict
 
 _SELL_FILE  = os.path.join(os.path.dirname(__file__), "..", "data", "tv_sell_signals.json")
@@ -353,7 +353,7 @@ def _process_macro_event(data: dict, signal_queue) -> dict:
         "impact":    impact,
         "value":     value,
         "forecast":  forecast,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
     }
     _append_macro_event(entry)
     log.info("Makro-Event: %s, Surprise=%s, Impact=%s", event, surprise, impact)
@@ -443,7 +443,7 @@ def _write_sell_signal(ticker: str, data: dict) -> None:
         "ticker":    ticker,
         "price":     data.get("price"),
         "strategy":  data.get("strategy", "TradingView"),
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
     })
 
     with tempfile.NamedTemporaryFile(
@@ -480,7 +480,7 @@ def get_pending_macro_events(since_hours: int = 24) -> List[dict]:
         from datetime import timedelta
         with open(_MACRO_FILE) as f:
             events = json.load(f)
-        cutoff = datetime.utcnow() - timedelta(hours=since_hours)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=since_hours)
         return [
             e for e in events
             if datetime.fromisoformat(e["timestamp"]) >= cutoff

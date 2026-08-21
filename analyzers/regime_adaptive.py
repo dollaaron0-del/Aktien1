@@ -13,7 +13,7 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
 
 from logger import get_logger
@@ -22,6 +22,12 @@ log = get_logger(__name__)
 
 _CACHE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "current_regime.json")
 _CACHE_TTL_HOURS = 6
+
+# Vorsichts-Modus (Market-Breadth-Crash) – kein harter Kaufstopp, sondern
+# selektiveres Handeln. Wird vom Marktbreite-Job in scheduler.py gesetzt/aufgehoben.
+_CAUTION_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "market_caution.json")
+_CAUTION_BUY_THRESHOLD_ADJ = 0.08    # Kaufhürde anheben → nur hohe Conviction kauft
+_CAUTION_SIZE_MULT         = 0.60    # Positionsgröße reduzieren (erhöhte Vorsicht)
 
 # Regime-Konstanten (gleich wie in recession_detector.py)
 BULL    = "BULL"
@@ -91,7 +97,7 @@ def _load_cached_regime() -> Optional[str]:
         with open(_CACHE_FILE) as f:
             data = json.load(f)
         ts = datetime.fromisoformat(data["timestamp"])
-        if datetime.utcnow() - ts < timedelta(hours=_CACHE_TTL_HOURS):
+        if datetime.now(timezone.utc).replace(tzinfo=None) - ts < timedelta(hours=_CACHE_TTL_HOURS):
             return data["regime"]
     except Exception:
         pass
@@ -101,7 +107,7 @@ def _load_cached_regime() -> Optional[str]:
 def _save_cached_regime(regime: str) -> None:
     """Atomic write des Regime-Caches."""
     os.makedirs(os.path.dirname(_CACHE_FILE), exist_ok=True)
-    payload = {"regime": regime, "timestamp": datetime.utcnow().isoformat()}
+    payload = {"regime": regime, "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat()}
     tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(_CACHE_FILE), suffix=".tmp")
     try:
         with os.fdopen(tmp_fd, "w") as f:
@@ -112,6 +118,72 @@ def _save_cached_regime(regime: str) -> None:
         log.warning("Regime-Cache konnte nicht gespeichert werden: %s", exc)
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+
+# ── Vorsichts-Modus (Market-Breadth-Crash) ────────────────────────────────────
+
+def _atomic_write_json(path: str, payload: dict) -> None:
+    """Atomic write einer JSON-Datei (verhindert halb geschriebene Zustände)."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w") as f:
+            json.dump(payload, f)
+        os.replace(tmp_path, path)
+    except Exception as exc:
+        log.warning("JSON-Write fehlgeschlagen (%s): %s", path, exc)
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+def get_market_caution() -> Optional[Dict]:
+    """Gibt den aktiven Vorsichts-Modus-State zurück, sonst None.
+    Bei abgelaufener Sicherheits-Verfallszeit wird der State automatisch entfernt."""
+    try:
+        with open(_CAUTION_FILE) as f:
+            state = json.load(f)
+    except Exception:
+        return None
+    if not state.get("active"):
+        return None
+    exp = state.get("expires")
+    if exp:
+        try:
+            if datetime.now(timezone.utc).replace(tzinfo=None) > datetime.fromisoformat(exp):
+                clear_market_caution()
+                return None
+        except Exception:
+            pass
+    return state
+
+
+def set_market_caution(reason: str, pct_down: float, hours: int = 24) -> bool:
+    """Aktiviert (oder verlängert) den Vorsichts-Modus.
+
+    Gibt True zurück wenn NEU aktiviert (vorher inaktiv) – nützlich für die
+    Dedup der Telegram-Benachrichtigung. False, wenn bereits aktiv.
+    """
+    existing = get_market_caution()
+    payload = {
+        "active":   True,
+        "since":    (existing or {}).get("since") or datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+        "expires":  (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=hours)).isoformat(),
+        "pct_down": round(pct_down, 3),
+        "reason":   reason,
+    }
+    _atomic_write_json(_CAUTION_FILE, payload)
+    return existing is None
+
+
+def clear_market_caution() -> bool:
+    """Hebt den Vorsichts-Modus auf. Gibt True zurück wenn er vorher aktiv war."""
+    try:
+        if os.path.exists(_CAUTION_FILE):
+            os.remove(_CAUTION_FILE)
+            return True
+    except Exception:
+        pass
+    return False
 
 
 # ── Haupt-Hilfsfunktion ───────────────────────────────────────────────────────
@@ -174,6 +246,21 @@ def get_adaptive_params(
             _regime_config.summary(regime),
         )
 
+    # Vorsichts-Modus (Marktbreiten-Einbruch): selektiver, aber kein harter Stopp
+    caution = get_market_caution()
+    if caution:
+        from dataclasses import replace as _replace
+        params = _replace(
+            params,
+            position_size_mult = round(params.position_size_mult * _CAUTION_SIZE_MULT, 2),
+            buy_threshold_adj  = round(params.buy_threshold_adj + _CAUTION_BUY_THRESHOLD_ADJ, 2),
+            label              = params.label + " + Vorsicht",
+        )
+        log.info(
+            "Vorsichts-Modus: Positionsgröße ×%.2f, Kaufhürde +%.2f → %s",
+            _CAUTION_SIZE_MULT, _CAUTION_BUY_THRESHOLD_ADJ, params.label,
+        )
+
     log.info("Regime-Parameter: %s", params.label)
     return params
 
@@ -213,5 +300,5 @@ def invalidate_cache_if_crash(threshold_pct: float = 3.0) -> Tuple[bool, float]:
             return True, change_pct
         return False, change_pct
     except Exception as exc:
-        log.debug("invalidate_cache_if_crash fehlgeschlagen: %s", exc)
-        return False, 0.0
+        log.warning("invalidate_cache_if_crash fehlgeschlagen – Prüfung übersprungen: %s", exc)
+        return False, None  # None = Prüfung fehlgeschlagen (nicht: kein Crash)

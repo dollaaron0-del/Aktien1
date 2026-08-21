@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import os
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Tuple
 
 import yfinance as yf
@@ -195,7 +195,7 @@ class SectorRotation:
             with open(_CACHE_FILE) as f:
                 data = json.load(f)
             updated = datetime.fromisoformat(data["updated_at"])
-            if (datetime.utcnow() - updated).total_seconds() > _CACHE_TTL_HOURS * 3600:
+            if (datetime.now(timezone.utc).replace(tzinfo=None) - updated).total_seconds() > _CACHE_TTL_HOURS * 3600:
                 return None
             return [
                 SectorSnapshot(d["etf"], d["name"], d["perf_1w"], d["perf_1m"], d["perf_3m"])
@@ -207,7 +207,7 @@ class SectorRotation:
     def _save_cache(self, snaps: List[SectorSnapshot]):
         import tempfile, os as _os
         data = {
-            "updated_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "sectors": [s.to_dict() for s in snaps],
         }
         _os.makedirs(_os.path.dirname(_CACHE_FILE), exist_ok=True)

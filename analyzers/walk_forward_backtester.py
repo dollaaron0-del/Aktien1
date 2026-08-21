@@ -14,7 +14,9 @@ Konzept:
 from __future__ import annotations
 
 import logging
+import os
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
@@ -106,29 +108,33 @@ class WalkForwardBacktester:
 
         results: List[WindowResult] = []
 
-        for train_dates, test_dates in windows_list:
-            # --- Trainings-Fenster: Grid-Search ---
-            try:
-                best_params, train_res = self._optimize_on_window(all_data, train_dates)
-                results.append(train_res)
-            except Exception as exc:
-                log.warning("Train-Fenster %s fehlgeschlagen: %s",
-                            train_dates[0].strftime("%Y-%m"), exc)
-                continue
+        n_combos = len(self.sl_range) * len(self.tp_range) * len(self.hold_range)
+        max_workers = max(1, min(n_combos, os.cpu_count() or 4))
 
-            # --- Test-Fenster: Validierung mit besten Parametern ---
-            try:
-                test_res = self._run_window(
-                    all_data, test_dates,
-                    sl_pct=best_params["sl_pct"],
-                    tp_pct=best_params["tp_pct"],
-                    hold_days=best_params["hold_days"],
-                    phase="TEST",
-                )
-                results.append(test_res)
-            except Exception as exc:
-                log.warning("Test-Fenster %s fehlgeschlagen: %s",
-                            test_dates[0].strftime("%Y-%m"), exc)
+        with ProcessPoolExecutor(max_workers=max_workers) as pool:
+            for train_dates, test_dates in windows_list:
+                # --- Trainings-Fenster: Grid-Search (parallel über alle Kerne) ---
+                try:
+                    best_params, train_res = self._optimize_on_window(all_data, train_dates, pool)
+                    results.append(train_res)
+                except Exception as exc:
+                    log.warning("Train-Fenster %s fehlgeschlagen: %s",
+                                train_dates[0].strftime("%Y-%m"), exc)
+                    continue
+
+                # --- Test-Fenster: Validierung mit besten Parametern ---
+                try:
+                    test_res = self._run_window(
+                        all_data, test_dates,
+                        sl_pct=best_params["sl_pct"],
+                        tp_pct=best_params["tp_pct"],
+                        hold_days=best_params["hold_days"],
+                        phase="TEST",
+                    )
+                    results.append(test_res)
+                except Exception as exc:
+                    log.warning("Test-Fenster %s fehlgeschlagen: %s",
+                                test_dates[0].strftime("%Y-%m"), exc)
 
         return self._aggregate(results, dates)
 
@@ -173,9 +179,25 @@ class WalkForwardBacktester:
         return windows
 
     def _optimize_on_window(
-        self, all_data: Dict, train_dates: List
+        self, all_data: Dict, train_dates: List, pool: ProcessPoolExecutor
     ) -> Tuple[Dict, WindowResult]:
-        """Grid-Search über sl × tp × hold auf dem Trainings-Fenster."""
+        """
+        Grid-Search über sl × tp × hold auf dem Trainings-Fenster.
+        Jede Parameterkombination ist unabhängig → läuft parallel über den
+        übergebenen Prozess-Pool (nutzt alle verfügbaren CPU-Kerne).
+        """
+        combos = [
+            (sl, tp, hold)
+            for sl in self.sl_range
+            for tp in self.tp_range
+            for hold in self.hold_range
+        ]
+
+        futures = {
+            pool.submit(self._run_window, all_data, train_dates, sl, tp, hold, "TRAIN"): (sl, tp, hold)
+            for sl, tp, hold in combos
+        }
+
         best_score = float("-inf")
         best_params: Dict = {
             "sl_pct": self.sl_range[0],
@@ -184,25 +206,22 @@ class WalkForwardBacktester:
         }
         best_result: Optional[WindowResult] = None
 
-        for sl in self.sl_range:
-            for tp in self.tp_range:
-                for hold in self.hold_range:
-                    try:
-                        res = self._run_window(
-                            all_data, train_dates, sl, tp, hold, phase="TRAIN"
-                        )
-                    except Exception:
-                        continue
+        for fut in as_completed(futures):
+            sl, tp, hold = futures[fut]
+            try:
+                res = fut.result()
+            except Exception:
+                continue
 
-                    score = (
-                        res.total_return
-                        * (res.win_rate / 50)
-                        * (1 - res.max_drawdown / 50)
-                    )
-                    if score > best_score:
-                        best_score = score
-                        best_params = {"sl_pct": sl, "tp_pct": tp, "hold_days": hold}
-                        best_result = res
+            score = (
+                res.total_return
+                * (res.win_rate / 50)
+                * (1 - res.max_drawdown / 50)
+            )
+            if score > best_score:
+                best_score = score
+                best_params = {"sl_pct": sl, "tp_pct": tp, "hold_days": hold}
+                best_result = res
 
         if best_result is None:
             raise RuntimeError("Keine gültige Parameterkombination gefunden.")

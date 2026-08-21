@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 from logger import get_logger
@@ -66,7 +66,7 @@ class OnChainCollector:
         ticker: "BTC", "ETH", "SOL", … (without "-USD" suffix)
         """
         base = ticker.split("/")[0].upper().removesuffix("-USD")
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         cached = _cache.get(base)
         if cached and (now - cached[0]).total_seconds() < _CACHE_TTL_SECONDS:
             return cached[1]

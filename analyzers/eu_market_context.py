@@ -13,7 +13,7 @@ Caching: 2 Stunden (Index-Daten ändern sich nicht in Echtzeit nötig).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from logger import get_logger
@@ -134,7 +134,7 @@ class EUMarketContext:
 
     def get_snapshot(self) -> Optional[EUMarketSnapshot]:
         cache_key = "eu_market"
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         cached = _cache.get(cache_key)
         if cached and (now - cached[0]).total_seconds() < _CACHE_TTL_HOURS * 3600:
             return cached[1]

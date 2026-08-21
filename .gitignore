@@ -2,6 +2,27 @@ data/
 __pycache__/
 *.pyc
 .env
+.env.bak*
+
+# Laufzeit & Cruft (nicht committen)
+venv/
+logs/
+nohup.out
+*.bak
+*.bak_*
+*.bak.*
+dashboard.bak/
+
+# Backtest-Kurs-Cache (Parquet) & Tool-Output – Artefakte, nicht committen
+backtesting/.cache/
+graphify-out/
+
+# Backup-Archive (scripts/backup.sh) – Daten, kein Code
+backups/
+aktien_backup_*.tar.gz
+
+# Demo-Daten-Swap-Backup (echte data/ während Präsentation; 118 MB, nie committen)
+data_REAL_BACKUP_demo/
 
 # RuFlo runtime state (nicht committen)
 .claude-flow/daemon-state.json
@@ -11,3 +32,8 @@ __pycache__/
 .claude/memory.db
 .swarm/
 ruvector.db
+
+# Design-Referenzbilder (Sidebar-Upload, dashboard/tabs/sidebar.py) —
+# Arbeitsmaterial, teils wasserzeichenbehaftete Stock-Fotos, gehört nicht
+# ins Repo (Lizenz + Größe).
+dashboard/assets/reference/

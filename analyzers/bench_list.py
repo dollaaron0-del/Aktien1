@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
 _FILE = os.path.join(os.path.dirname(__file__), "..", "data", "bench_list.json")
@@ -25,16 +25,19 @@ _TTL_DAYS      = 14
 
 
 class BenchEntry:
-    def __init__(self, ticker: str, reason: str, score: float = 0.5):
+    def __init__(self, ticker: str, reason: str, score: float = 0.5,
+                 geo_context: Optional[Dict] = None):
         self.ticker     = ticker.upper()
         self.reason     = reason
         self.score      = max(0.0, min(1.0, score))
-        self.added_at   = datetime.utcnow().isoformat()
+        self.added_at   = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         self.last_seen  = self.added_at
         self.signal_count = 1
+        # Geopolitischer Kontext (optional) – wird an Claude weitergegeben
+        self.geo_context: Optional[Dict] = geo_context
 
     def to_dict(self) -> Dict:
-        return {
+        d = {
             "ticker":       self.ticker,
             "reason":       self.reason,
             "score":        self.score,
@@ -42,6 +45,9 @@ class BenchEntry:
             "last_seen":    self.last_seen,
             "signal_count": self.signal_count,
         }
+        if self.geo_context:
+            d["geo_context"] = self.geo_context
+        return d
 
     @classmethod
     def from_dict(cls, d: Dict) -> "BenchEntry":
@@ -49,20 +55,23 @@ class BenchEntry:
         e.ticker       = d["ticker"]
         e.reason       = d.get("reason", "")
         e.score        = float(d.get("score", 0.5))
-        e.added_at     = d.get("added_at", datetime.utcnow().isoformat())
+        e.added_at     = d.get("added_at", datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
         e.last_seen    = d.get("last_seen", e.added_at)
         e.signal_count = int(d.get("signal_count", 1))
+        e.geo_context  = d.get("geo_context")
         return e
 
 
 class BenchList:
     """Warteliste für vom Bot entdeckte Kandidaten."""
 
-    def add(self, ticker: str, reason: str, score: float = 0.5) -> bool:
+    def add(self, ticker: str, reason: str, score: float = 0.5,
+            geo_context: Optional[Dict] = None) -> bool:
         """
         Fügt Ticker zur Warteliste hinzu.
         Wenn er bereits vorhanden: score und signal_count aktualisieren.
         Gibt True zurück wenn neu hinzugefügt.
+        geo_context: optionaler geopolitischer Kontext der an Claude weitergegeben wird.
         """
         ticker = ticker.strip().upper()
         if not ticker:
@@ -72,14 +81,17 @@ class BenchList:
         existing = next((e for e in entries if e.ticker == ticker), None)
         if existing:
             existing.score       = max(existing.score, score)
-            existing.last_seen   = datetime.utcnow().isoformat()
+            existing.last_seen   = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
             existing.signal_count += 1
             if reason and reason not in existing.reason:
                 existing.reason = f"{existing.reason}; {reason}"[:200]
+            # Geo-Kontext aktualisieren wenn ein neuer mitgegeben wird
+            if geo_context:
+                existing.geo_context = geo_context
             self._save(entries)
             return False
 
-        entry = BenchEntry(ticker, reason, score)
+        entry = BenchEntry(ticker, reason, score, geo_context=geo_context)
         entries.append(entry)
 
         # Sortieren und auf max. _MAX_ENTRIES begrenzen
@@ -87,6 +99,18 @@ class BenchList:
         entries = entries[:_MAX_ENTRIES]
         self._save(entries)
         return True
+
+    def get_context(self, ticker: str) -> Optional[Dict]:
+        """Gibt den gespeicherten Kontext (inkl. geo_context) für einen Ticker zurück."""
+        entries = self._load()
+        entry = next((e for e in entries if e.ticker == ticker.upper()), None)
+        if not entry:
+            return None
+        return {
+            "reason":      entry.reason,
+            "score":       entry.score,
+            "geo_context": entry.geo_context,
+        }
 
     def pop_candidates(self, n: int, exclude: List[str]) -> List[str]:
         """
@@ -112,7 +136,7 @@ class BenchList:
     def cleanup(self) -> int:
         """Entfernt Einträge die älter als _TTL_DAYS sind. Gibt Anzahl zurück."""
         entries = self._load()
-        cutoff = datetime.utcnow() - timedelta(days=_TTL_DAYS)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=_TTL_DAYS)
         before = len(entries)
         entries = [
             e for e in entries
@@ -132,7 +156,7 @@ class BenchList:
 
     def _load_valid(self) -> List[BenchEntry]:
         entries = self._load()
-        cutoff = datetime.utcnow() - timedelta(days=_TTL_DAYS)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=_TTL_DAYS)
         return [e for e in entries if datetime.fromisoformat(e.last_seen) > cutoff]
 
     def _load(self) -> List[BenchEntry]:

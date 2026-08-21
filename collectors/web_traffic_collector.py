@@ -8,9 +8,10 @@ Hinweis: Echte SimilarWeb-API kostet $300+/Monat, wir nutzen
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 import requests
+from system.http import http_get
 import yfinance as yf
 
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; StockBot/1.0)"}
@@ -40,7 +41,7 @@ class WebTrafficCollector:
         """Sammelt Traffic-relevante News von Tech-Blogs und Analystenseiten."""
         results = []
         domain   = _TICKER_DOMAINS.get(ticker.upper())
-        cutoff   = datetime.utcnow() - timedelta(days=lookback_days)
+        cutoff   = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=lookback_days)
 
         if not domain:
             return []
@@ -54,7 +55,7 @@ class WebTrafficCollector:
 
         for url in rss_urls:
             try:
-                resp = requests.get(url, headers=_HEADERS, timeout=10)
+                resp = http_get(url, headers=_HEADERS, timeout=10)
                 if resp.status_code != 200:
                     continue
 
@@ -80,7 +81,7 @@ class WebTrafficCollector:
                         if pub_dt < cutoff:
                             continue
                     except Exception:
-                        pub_dt = datetime.utcnow()
+                        pub_dt = datetime.now(timezone.utc).replace(tzinfo=None)
 
                     results.append({
                         "source":       "Web Traffic Analyse",
@@ -147,7 +148,7 @@ class WebTrafficCollector:
                     f"Revenue: ${revenue/1e9:.1f}B, MarketCap: ${market_cap/1e9:.1f}B."
                 ),
                 "url":          f"https://finance.yahoo.com/quote/{ticker}/",
-                "published_at": datetime.utcnow().isoformat(),
+                "published_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 "priority":     priority,
             }]
         except Exception:
