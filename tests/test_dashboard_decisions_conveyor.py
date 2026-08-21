@@ -33,25 +33,19 @@ def _seed():
               "recommendation": "SKIP", "sentiment_score": 0.4})
 
 
-def test_conveyor_svg_appears_in_pixel_mode(monkeypatch):
+def test_conveyor_svg_removed_from_decisions_panel(monkeypatch):
+    """Design-Vorgabe (21.8.2026, User): das Förderband-Grafik-Vorzeigestück
+    wirkte unprofessionell und wurde aus dem Entscheidungen-Panel entfernt —
+    in JEDEM Theme-Modus, nicht nur im plain-Fallback. build_conveyor_svg
+    bleibt als getestete Standalone-Funktion in dashboard/conveyor.py, wird
+    aber nicht mehr eingebunden."""
     monkeypatch.delenv("DASHBOARD_THEME", raising=False)
     _seed()
     at = AppTest.from_string(_SCRIPT)
     at.run()
     assert not at.exception
     html_out = "".join(str(m.value) for m in at.get("markdown"))
-    assert "<svg" in html_out
-    assert "BUY" in html_out
-
-
-def test_conveyor_svg_absent_in_plain_mode(monkeypatch):
-    monkeypatch.setenv("DASHBOARD_THEME", "plain")
-    _seed()
-    at = AppTest.from_string(_SCRIPT)
-    at.run()
-    assert not at.exception
-    html_out = "".join(str(m.value) for m in at.get("markdown"))
-    assert "<svg" not in html_out
+    assert "px-belt-pattern" not in html_out
     # Der alte Fortschrittsbalken-Pfad bleibt der einzige Weg
     assert any("Warum wurde übersprungen" in str(m.value) for m in at.get("markdown"))
 
