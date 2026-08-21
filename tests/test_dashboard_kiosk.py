@@ -23,7 +23,12 @@ def test_kiosk_mode_shows_only_factory_scene(monkeypatch):
     assert len(at.tabs) == 0
     html_out = "".join(str(m.value) for m in at.get("markdown"))
     assert "<svg" in html_out
-    assert "fx-machine" in html_out
+    # Vision-Transfer 24.7.2026: die animierte Canvas-Szene läuft im
+    # Pixel-Theme als iframe (components.html), nicht mehr als SVG mit
+    # fx-machine-Markup — das bleibt nur der Notausstieg (Canvas-Fehler).
+    iframes = at.get("iframe")
+    assert any("id='factory'" in fr.proto.srcdoc for fr in iframes), \
+        "animierte Fabrik-Szene (Canvas) fehlt"
 
 
 def test_kiosk_mode_hides_streamlit_chrome(monkeypatch):
@@ -46,4 +51,6 @@ def test_without_kiosk_param_full_dashboard_shows_hud_and_scene(monkeypatch):
     assert "Gesamtwert" in metrics, "HUD-KPI-Leiste fehlt im Vollmodus"
     html_out = "".join(str(m.value) for m in at.get("markdown"))
     assert "<svg" in html_out
-    assert "fx-machine" in html_out
+    iframes = at.get("iframe")
+    assert any("id='factory'" in fr.proto.srcdoc for fr in iframes), \
+        "animierte Fabrik-Szene (Canvas) fehlt"

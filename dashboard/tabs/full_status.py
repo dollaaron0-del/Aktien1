@@ -10,9 +10,9 @@ import streamlit as st
 
 
 def _render_kern_zahlen(ctx) -> None:
-    st.subheader("📋 Kern-Zahlen")
+    st.subheader("Kern-Zahlen")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Bot-Zustand", "⏸ pausiert" if ctx._hdr_paused else "▶️ läuft")
+    c1.metric("Bot-Zustand", "Pausiert" if ctx._hdr_paused else "Läuft")
     try:
         c2.metric("Depotwert", f"${ctx.total_value:,.2f}")
     except Exception:
@@ -36,15 +36,15 @@ def _render_kern_zahlen(ctx) -> None:
     try:
         from portfolio.circuit_breaker import CircuitBreaker
         _cb = CircuitBreaker().status(ctx.total_value)
-        c6.metric("Circuit-Breaker", "🔴 ausgelöst" if _cb.get("triggered") else "🟢 normal")
+        c6.metric("Circuit-Breaker", "Ausgelöst" if _cb.get("triggered") else "Normal")
     except Exception:
         pass
     try:
         import socket
         with socket.create_connection((ctx.config.ibkr_host, ctx.config.ibkr_port), timeout=0.4):
-            c7.metric("IB-Gateway", "🟢 erreichbar")
+            c7.metric("IB-Gateway", "Erreichbar")
     except Exception:
-        c7.metric("IB-Gateway", "🔴 nicht erreichbar")
+        c7.metric("IB-Gateway", "Nicht erreichbar")
 
     # Effektive Kauf-Schwelle: Basis-Schwelle + Kapitalknappheits-Aufschlag
     # (strategy/swing_strategy.py _capital_scarcity_adjustment), damit man
@@ -88,7 +88,7 @@ def _render_kern_zahlen(ctx) -> None:
                 _phase_txt = _ls.get("phase") or "Zyklus"
                 if _ls.get("ticker"):
                     _phase_txt += f" · {_ls['ticker']}"
-                st.info(f"🔄 Aktuell: {_phase_txt}")
+                st.info(f"Aktuell: {_phase_txt}")
         elif _ls and _ls.get("next_run"):
             st.caption(f"Nächster Lauf: {_ls['next_run'][:16].replace('T', ' ')} Uhr")
     except Exception:
@@ -97,23 +97,35 @@ def _render_kern_zahlen(ctx) -> None:
 
 # (Titel, Modulname) — dieselben Panel-Module, die sonst nur über einen
 # Maschinen-Klick in der Fabrik erreichbar sind (siehe dashboard/tabs/
-# factory.py::_render_detail_panel). Reihenfolge = Warenfluss.
-_SECTIONS = [
-    ("💰 Portfolio", "portfolio_panel"),
-    ("🧠 Entscheidungen & Signal-Queue", "decisions_panel"),
-    ("📡 Live-Aktivität", "live_panel"),
-    ("🔍 Analyse-Log", "analysis_log_panel"),
-    ("🌦 Markt-Regime", "regime_panel"),
-    ("🧪 Trades & Lernen", "trades_panel"),
-    ("🚀 Watchlist & IPO-Pipeline", "watchlist_panel"),
-    ("🔎 Aktien-Kartei", "dossier_panel"),
-    ("🎛 Einstellungen & Kontrollraum", "settings_panel"),
+# factory.py::_render_detail_panel). Zu Tab-Gruppen gebündelt (Präsentations-
+# Vorgabe, 21.8.2026): die frühere flache Liste mit 9 Divider-Abschnitten
+# hintereinander wirkte wie eine Baustelle. Reihenfolge = Warenfluss.
+_TAB_GROUPS = [
+    ("Portfolio & Trades", [
+        ("Portfolio", "portfolio_panel"),
+        ("Trades & Lernen", "trades_panel"),
+    ]),
+    ("Entscheidungen & Live", [
+        ("Entscheidungen & Signal-Queue", "decisions_panel"),
+        ("Live-Aktivität", "live_panel"),
+        ("Analyse-Log", "analysis_log_panel"),
+    ]),
+    ("Markt & Watchlist", [
+        ("Markt-Regime", "regime_panel"),
+        ("Watchlist & IPO-Pipeline", "watchlist_panel"),
+    ]),
+    ("Aktien-Kartei", [
+        ("Aktien-Kartei", "dossier_panel"),
+    ]),
+    ("Einstellungen", [
+        ("Einstellungen & Kontrollraum", "settings_panel"),
+    ]),
 ]
 
 
 def render(ctx) -> None:
     st.markdown("[← Zurück zur Fabrik](?)")
-    st.title("📋 Kern-Status — volle Übersicht")
+    st.title("Kern-Status — volle Übersicht")
     st.caption(
         "Übergangsseite mit allen Bot-Daten auf einen Blick, solange die "
         "Fabrik-Szene noch nicht jede Maschine mit einem vollen Detailpanel "
@@ -122,13 +134,19 @@ def render(ctx) -> None:
     st.divider()
 
     _render_kern_zahlen(ctx)
+    st.divider()
 
     import importlib
-    for title, modname in _SECTIONS:
-        st.divider()
-        st.subheader(title)
-        try:
-            mod = importlib.import_module(f"dashboard.{modname}")
-            mod.render(ctx)
-        except Exception:
-            st.caption("Dieser Abschnitt ist derzeit nicht verfügbar.")
+    tabs = st.tabs([label for label, _sections in _TAB_GROUPS])
+    for tab, (_label, sections) in zip(tabs, _TAB_GROUPS):
+        with tab:
+            for i, (title, modname) in enumerate(sections):
+                if len(sections) > 1:
+                    if i > 0:
+                        st.divider()
+                    st.subheader(title)
+                try:
+                    mod = importlib.import_module(f"dashboard.{modname}")
+                    mod.render(ctx)
+                except Exception:
+                    st.caption("Dieser Abschnitt ist derzeit nicht verfügbar.")

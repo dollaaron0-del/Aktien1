@@ -813,15 +813,23 @@ def render(ctx) -> None:
         rendered = False
         if _theme.is_enabled():
             try:
-                import streamlit.components.v1 as _components
                 from dashboard.factory.canvas import (
                     SCENE_EMBED_HEIGHT as _scene_h,
                 )
                 from dashboard.factory.canvas import build_scene_html as _scene_html
-                _components.html(_scene_html(state), height=_scene_h, scrolling=False)
-                rendered = True
+                _html = _scene_html(state)
             except Exception:
-                rendered = False  # Fail-open: SVG-Fallback unten greift
+                _html = None  # Fail-open: SVG-Fallback unten greift
+            if _html is not None:
+                import streamlit.components.v1 as _components
+                # W8.1-Vollbild-Rahmen gilt seit dem Canvas-Umstieg (24.7.2026)
+                # auch für den iframe, nicht nur den SVG-Notausstieg — Div-
+                # Öffnung/Schließung um einen fremden Block herum aufgeteilt
+                # (dasselbe Muster wie px-detail-panel unten).
+                st.markdown('<div class="px-scene-wrap">', unsafe_allow_html=True)
+                _components.html(_html, height=_scene_h, scrolling=False)
+                st.markdown("</div>", unsafe_allow_html=True)
+                rendered = True
         if not rendered:
             svg = build_scene_svg(state)
             # W8.1: der Vollbild-Rahmen ist eine reine Pixel-Theme-Zutat (die

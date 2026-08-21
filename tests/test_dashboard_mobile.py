@@ -58,4 +58,9 @@ def test_without_mobile_param_full_dashboard_shows_hud_and_scene(monkeypatch):
     assert "Gesamtwert" in metrics, "HUD-KPI-Leiste fehlt im Vollmodus"
     html_out = "".join(str(m.value) for m in at.get("markdown"))
     assert "<svg" in html_out
-    assert "fx-machine" in html_out
+    # Vision-Transfer 24.7.2026: der volle (Nicht-Mobile-)Modus zeigt die
+    # animierte Canvas-Szene als iframe, nicht mehr das SVG-fx-machine-
+    # Markup — das bleibt der Mobile-Ansicht und dem Canvas-Notausstieg.
+    iframes = at.get("iframe")
+    assert any("id='factory'" in fr.proto.srcdoc for fr in iframes), \
+        "animierte Fabrik-Szene (Canvas) fehlt"
