@@ -22,7 +22,7 @@ factory.render(None)
 
 def test_factory_tab_renders_svg_scene():
     at = AppTest.from_string(_SCRIPT)
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     html_out = "".join(str(m.value) for m in at.get("markdown"))
     assert "<svg" in html_out
@@ -30,7 +30,7 @@ def test_factory_tab_renders_svg_scene():
 
 def test_factory_tab_shows_legend():
     at = AppTest.from_string(_SCRIPT)
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     caption_out = "".join(str(c.value) for c in at.get("caption"))
     assert "aktiv/gesund" in caption_out
@@ -39,7 +39,7 @@ def test_factory_tab_shows_legend():
 def test_factory_tab_shows_paused_banner_when_bot_paused(monkeypatch):
     monkeypatch.setattr("system.bot_control.is_paused", lambda: True)
     at = AppTest.from_string(_SCRIPT)
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     html_out = "".join(str(m.value) for m in at.get("markdown"))
     assert "Werk pausiert" in html_out
@@ -48,7 +48,7 @@ def test_factory_tab_shows_paused_banner_when_bot_paused(monkeypatch):
 def test_factory_tab_no_paused_banner_when_bot_active(monkeypatch):
     monkeypatch.setattr("system.bot_control.is_paused", lambda: False)
     at = AppTest.from_string(_SCRIPT)
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     html_out = "".join(str(m.value) for m in at.get("markdown"))
     assert "Werk pausiert" not in html_out
@@ -58,7 +58,7 @@ def test_factory_tab_no_paused_banner_when_bot_active(monkeypatch):
 
 def test_no_detail_panel_without_query_param():
     at = AppTest.from_string(_SCRIPT)
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     assert len(at.get("markdown")) > 0
     assert not any("Status:" in str(c.value) for c in at.get("caption"))
@@ -67,7 +67,7 @@ def test_no_detail_panel_without_query_param():
 def test_unknown_factory_id_is_ignored():
     at = AppTest.from_string(_SCRIPT)
     at.query_params["factory"] = "does-not-exist"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     assert not any("Status:" in str(c.value) for c in at.get("caption"))
 
@@ -75,7 +75,7 @@ def test_unknown_factory_id_is_ignored():
 def test_known_machine_id_shows_detail_panel():
     at = AppTest.from_string(_SCRIPT)
     at.query_params["factory"] = "gate"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     captions = "".join(str(c.value) for c in at.get("caption"))
     assert "Status:" in captions
@@ -89,7 +89,7 @@ def test_detail_panel_renders_as_overlay_with_backdrop_and_close(monkeypatch):
     monkeypatch.delenv("DASHBOARD_THEME", raising=False)
     at = AppTest.from_string(_SCRIPT)
     at.query_params["factory"] = "gate"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     html_out = "".join(str(m.value) for m in at.get("markdown"))
     assert '<a class="px-detail-backdrop" href="?" target="_self"' in html_out
@@ -104,7 +104,7 @@ def test_detail_panel_overlay_absent_in_plain_theme(monkeypatch):
     monkeypatch.setenv("DASHBOARD_THEME", "plain")
     at = AppTest.from_string(_SCRIPT)
     at.query_params["factory"] = "gate"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     html_out = "".join(str(m.value) for m in at.get("markdown"))
     assert "px-detail-backdrop" not in html_out
@@ -124,7 +124,7 @@ def test_unregistered_machine_falls_back_to_generic_panel(monkeypatch):
     monkeypatch.delitem(factory._DETAIL_RENDERERS, "gate")
     at = AppTest.from_string(_SCRIPT)
     at.query_params["factory"] = "gate"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     captions = "".join(str(c.value) for c in at.get("caption"))
     assert "Status:" in captions
@@ -138,7 +138,7 @@ def test_conveyor_detail_panel_shows_funnel_metrics():
 
     at = AppTest.from_string(_SCRIPT)
     at.query_params["factory"] = "conveyor"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     metric_labels = [m.label for m in at.get("metric")]
     assert "Analysiert heute" in metric_labels
@@ -154,7 +154,7 @@ def test_warehouse_detail_panel_shows_positions_table(fresh_portfolio):
 
     at = AppTest.from_string(_SCRIPT)
     at.query_params["factory"] = "warehouse"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     assert len(at.get("table")) == 1
 
@@ -171,7 +171,7 @@ def test_analyzer_claude_detail_panel_shows_route_breakdown(monkeypatch):
     monkeypatch.setattr("analyzers.analysis_log.AnalysisLog", _FakeLog)
     at = AppTest.from_string(_SCRIPT)
     at.query_params["factory"] = "analyzer_claude"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     tables = at.get("table")
     assert len(tables) == 1
@@ -181,7 +181,7 @@ def test_analyzer_claude_detail_panel_shows_route_breakdown(monkeypatch):
 def test_breaker_detail_panel_shows_daily_and_drawdown_metrics(fresh_portfolio):
     at = AppTest.from_string(_SCRIPT)
     at.query_params["factory"] = "breaker"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     metric_labels = [m.label for m in at.get("metric")]
     assert "Tagesverlust" in metric_labels
@@ -194,7 +194,7 @@ def test_gate_detail_panel_shows_host_and_port(monkeypatch):
     monkeypatch.setattr(config, "ibkr_port", 1)
     at = AppTest.from_string(_SCRIPT)
     at.query_params["factory"] = "gate"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     md = "".join(str(m.value) for m in at.get("markdown"))
     assert "127.0.0.1:1" in md
@@ -209,7 +209,7 @@ def test_weather_detail_panel_shows_regime(tmp_path, monkeypatch):
 
     at = AppTest.from_string(_SCRIPT)
     at.query_params["factory"] = "weather"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     md = "".join(str(m.value) for m in at.get("markdown"))
     assert "BULL" in md
@@ -253,7 +253,7 @@ def test_weather_detail_panel_includes_full_regime_panel_with_ctx(tmp_path, monk
     Regime-Block (Score-Gauge etc.), nicht nur die Kurzinfo."""
     at = AppTest.from_string(_REGIME_CTX_SCRIPT)
     at.query_params["factory"] = "weather"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     all_text = "".join(str(m.value) for m in at.get("markdown"))
     subheaders = "".join(str(s.value) for s in at.get("subheader"))
@@ -266,7 +266,7 @@ def test_weather_detail_panel_without_ctx_regime_data_stays_lean():
     die Wetter-Kurzinfo bleibt."""
     at = AppTest.from_string(_SCRIPT)
     at.query_params["factory"] = "weather"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     subheaders = "".join(str(s.value) for s in at.get("subheader"))
     assert "Rezessions-Score-Gauge" not in subheaders
@@ -289,7 +289,7 @@ def test_control_room_detail_panel_includes_full_settings_panel_with_ctx():
     Einstellungen-Formular, nicht nur die Status-Kacheln."""
     at = AppTest.from_string(_SETTINGS_CTX_SCRIPT)
     at.query_params["factory"] = "control_room"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     subheaders = "".join(str(s.value) for s in at.get("subheader"))
     assert "Bot-Einstellungen" in subheaders, \
@@ -301,7 +301,7 @@ def test_control_room_detail_panel_without_ctx_stays_lean():
     die Status-Kacheln bleiben."""
     at = AppTest.from_string(_SCRIPT)
     at.query_params["factory"] = "control_room"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     subheaders = "".join(str(s.value) for s in at.get("subheader"))
     assert "Bot-Einstellungen" not in subheaders
@@ -328,7 +328,7 @@ def test_warehouse_detail_panel_includes_stock_browser_and_watchlist_with_ctx():
     (früher eigener Tab)."""
     at = AppTest.from_string(_WAREHOUSE_CTX_SCRIPT, default_timeout=30)
     at.query_params["factory"] = "warehouse"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     md = "".join(str(m.value) for m in at.get("markdown"))
     assert "Alle Aktien durchsuchen" in md
@@ -342,7 +342,7 @@ def test_warehouse_detail_panel_without_ctx_stays_lean():
     dort komplett entfallen, nicht nur ihren inneren Fail-open zeigen."""
     at = AppTest.from_string(_KIOSK_SCRIPT)
     at.query_params["factory"] = "warehouse"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     md = "".join(str(m.value) for m in at.get("markdown"))
     assert "Alle Aktien durchsuchen" not in md
@@ -361,7 +361,7 @@ def test_backup_bot_detail_panel_shows_recent_backups_table(tmp_path, monkeypatc
 
     at = AppTest.from_string(_SCRIPT)
     at.query_params["factory"] = "backup_bot"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     tables = at.get("table")
     assert len(tables) == 1
@@ -375,7 +375,7 @@ def test_archive_shows_hint_when_no_history_for_today():
     """Ohne vorherige snapshot()-Aufrufe für heute muss der Archiv-
     Expander einen Hinweis zeigen statt zu crashen."""
     at = AppTest.from_string(_SCRIPT)
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     caption_out = "".join(str(c.value) for c in at.get("caption"))
     assert "Keine Aufzeichnung" in caption_out
@@ -398,7 +398,7 @@ def test_archive_renders_archived_scene_with_warning():
     st_mod.snapshot(state)
 
     at = AppTest.from_string(_SCRIPT)
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
 
     warnings = [str(w.value) for w in at.get("warning")]
@@ -424,7 +424,7 @@ def test_archive_reconstructed_machine_has_no_extras_but_no_crash():
     st_mod.snapshot(state)
 
     at = AppTest.from_string(_SCRIPT)
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
 
 
@@ -454,7 +454,7 @@ def test_archive_shows_replay_terminal_up_to_slider_time(tmp_path, monkeypatch):
     feed._conn.commit()
 
     at = AppTest.from_string(_SCRIPT)
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     html_out = "".join(str(m.value) for m in at.get("markdown"))
     assert "px-terminal" in html_out
@@ -464,7 +464,7 @@ def test_archive_shows_replay_terminal_up_to_slider_time(tmp_path, monkeypatch):
 
 def test_archive_replay_terminal_shows_hint_without_events():
     at = AppTest.from_string(_SCRIPT)
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     caption_out = "".join(str(c.value) for c in at.get("caption"))
     assert "Keine Aufzeichnung" in caption_out  # kein Snapshot -> Archiv zeigt gar nichts
@@ -486,7 +486,7 @@ def test_warehouse_detail_shows_saved_note_readonly(fresh_portfolio, tmp_path, m
 
     at = AppTest.from_string(_SCRIPT)
     at.query_params["factory"] = "warehouse"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     caption_out = "".join(str(c.value) for c in at.get("caption"))
     assert "Warte auf Earnings" in caption_out
@@ -505,7 +505,7 @@ def test_warehouse_detail_no_notes_section_without_saved_notes(fresh_portfolio, 
 
     at = AppTest.from_string(_SCRIPT)
     at.query_params["factory"] = "warehouse"
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     allmd = "".join(str(m.value) for m in at.get("markdown"))
     assert "Notizen:" not in allmd
@@ -518,7 +518,7 @@ def test_ticker_form_queues_new_ticker(tmp_path, monkeypatch):
     monkeypatch.setattr(urq_mod, "_FILE", str(tmp_path / "q.json"))
 
     at = AppTest.from_string(_SCRIPT)
-    at.run()
+    at.run(timeout=60)
     ti = next(t for t in at.get("text_input")
               if t.label == "Werksauftrag: Ticker zur Analyse einwerfen")
     ti.set_value("NVDA")
@@ -537,7 +537,7 @@ def test_ticker_form_shows_already_queued_message(tmp_path, monkeypatch):
     urq_mod.add_ticker("NVDA")
 
     at = AppTest.from_string(_SCRIPT)
-    at.run()
+    at.run(timeout=60)
     ti = next(t for t in at.get("text_input")
               if t.label == "Werksauftrag: Ticker zur Analyse einwerfen")
     ti.set_value("nvda")  # Kleinschreibung -> muss normalisiert werden
@@ -555,7 +555,7 @@ def test_ticker_form_ignores_empty_submission(tmp_path, monkeypatch):
     monkeypatch.setattr(urq_mod, "_FILE", str(tmp_path / "q.json"))
 
     at = AppTest.from_string(_SCRIPT)
-    at.run()
+    at.run(timeout=60)
     submit = next(b for b in at.get("button") if b.label == "📥 Einwerfen")
     submit.click().run()
 
@@ -570,7 +570,7 @@ def test_control_panel_absent_without_ctx():
     gehört nicht auf ein Dauer-Wandbild, und ohne ctx gäbe es keinen
     echten Depotwert als Reset-Referenz."""
     at = AppTest.from_string(_SCRIPT)  # _SCRIPT nutzt _Ctx ohne total_value
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     labels = [e.label for e in at.get("expander")]
     assert "🎛 Steuerpult" not in labels
@@ -585,7 +585,7 @@ from dashboard.tabs import factory
 factory.render(_Ctx())
 """
     at = AppTest.from_string(script)
-    at.run()
+    at.run(timeout=60)
     assert not at.exception
     labels = [e.label for e in at.get("expander")]
     assert "🎛 Steuerpult" in labels

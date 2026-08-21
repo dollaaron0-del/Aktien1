@@ -44,6 +44,27 @@ def _isolate_order_log(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_readonly_broker(monkeypatch):
+    """Read-only Broker-Singleton (broker/factory.py::get_readonly_broker)
+    IMMER auf PaperBroker umlenken. config.py lädt per load_dotenv() das
+    echte .env — läuft der Bot gerade live über IBKR (BROKER_MODE=ibkr),
+    würde JEDER Test, der dashboard/app.py oder tabs/factory.py end-to-end
+    rendert (Kiosk-/Handy-/HUD-/Fabrik-Tab-Tests), beim ersten Zugriff
+    versuchen, eine ECHTE IBKR-Gateway-Verbindung aufzubauen. Im AppTest-
+    ScriptRunner-Thread fehlt der asyncio-Event-Loop, den ib_insync
+    braucht — der Connect-Versuch schlägt fehl bzw. hängt bis zum Timeout
+    und lässt die betroffenen Fabrik-/HUD-Abschnitte fail-open leer
+    (beobachtet in test_dashboard_kiosk.py, test_dashboard_mobile.py,
+    test_dashboard_hud_layout.py, test_dashboard_factory_tab.py). Der
+    Prozess-Singleton (_instance) ist sonst durch nichts zwischen Tests
+    zurückgesetzt — test_broker_factory.py hat dafür seine eigene lokale
+    Reset-Fixture, die diese hier für ihre eigenen Tests überschreibt."""
+    import broker.factory as bf_mod
+    from broker.paper_broker import PaperBroker
+    monkeypatch.setattr(bf_mod, "_instance", PaperBroker())
+
+
+@pytest.fixture(autouse=True)
 def _isolate_factory_history(tmp_path, monkeypatch):
     """Fabrik-Zustands-Schnappschüsse (H2.1, dashboard/factory/state.py)
     IMMER in eine Temp-Datei umlenken: das Fabrik-Tab-Fragment
