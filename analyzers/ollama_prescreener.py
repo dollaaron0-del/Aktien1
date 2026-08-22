@@ -25,7 +25,7 @@ import statistics
 import time
 from collections import Counter
 from dataclasses import dataclass
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Set, Tuple
 
 import requests
 
@@ -61,6 +61,31 @@ def _model_capability(model_name: str) -> str:
         if size in name:
             return "MEDIUM"
     return "LOW"
+
+
+def _parse_installed_models(resp) -> Optional[Set[str]]:
+    """Modellnamen aus einer /api/tags-Antwort ziehen. Liefert None, wenn die
+    Antwort nicht auswertbar ist – der Aufrufer bleibt dann fail-open."""
+    try:
+        models = resp.json().get("models", [])
+    except Exception:
+        return None
+    if not isinstance(models, list):
+        return None
+    return {
+        str(m["name"]) for m in models
+        if isinstance(m, dict) and m.get("name")
+    }
+
+
+def _model_installed(model: str, installed: Set[str]) -> bool:
+    """Ollama-Tag-Vergleich. Ein Name ohne Doppelpunkt meint implizit ':latest'.
+    Sonst wird EXAKT verglichen: 'qwen2.5:14b' und 'qwen2.5:14b-instruct-q6_K'
+    sind verschiedene Tags – ein Präfix-Match würde ein Modell für vorhanden
+    halten, das Ollama beim Generieren nicht auflösen kann (genau der Fall,
+    der die 404-Serie vom 17.–22.8.2026 ausgelöst hat)."""
+    wanted = model if ":" in model else f"{model}:latest"
+    return wanted in installed
 
 # Komprimierungs-Prompt: News-Artikel → strukturiertes Kurzgutachten für Claude
 _COMPRESS_PROMPT = """Summarize these {count} news articles about {ticker} for a financial analyst.
@@ -220,7 +245,8 @@ class OllamaPrescreener:
     _MAX_CONSEC_TIMEOUTS = int(os.getenv("OLLAMA_MAX_CONSEC_TIMEOUTS", "5"))
 
     def is_available(self) -> bool:
-        """Prüft ob Ollama läuft. Ergebnis wird gecacht."""
+        """Prüft ob Ollama läuft UND das konfigurierte Modell dort installiert
+        ist. Ergebnis wird gecacht."""
         if self._circuit_open:
             return False
         if self._available is not None:
@@ -232,8 +258,27 @@ class OllamaPrescreener:
             self._available = False
         if not self._available:
             log.info("Ollama nicht erreichbar – Claude übernimmt alle Analysen.")
-        else:
-            log.info("Ollama verfügbar: %s @ %s", self.model, self.base_url)
+            return self._available
+
+        # Der Server läuft – aber ist DIESES Modell dort auch gepullt? Ohne die
+        # Prüfung meldet der Prescreener "verfügbar" und läuft danach bei JEDEM
+        # Aufruf in ein HTTP 404 (22.8.2026 im Bot-Log gefunden: ~700 stille
+        # 404er/Tag über 5 Tage, nachdem ein Modell-Tag auf dem Server fehlte —
+        # die lokale Analyse war faktisch tot, ohne dass es jemand sah).
+        # Fail-open: lässt sich die Antwort nicht auswerten, gilt wie bisher
+        # "verfügbar" (lieber ein 404 zu viel als eine Engine grundlos aus).
+        installed = _parse_installed_models(r)
+        if installed is not None and not _model_installed(self.model, installed):
+            self._available = False
+            log.warning(
+                "Ollama läuft, aber Modell '%s' ist dort NICHT installiert "
+                "(vorhanden: %s) – Claude übernimmt alle Analysen. "
+                "Beheben mit: ollama pull %s",
+                self.model, ", ".join(sorted(installed)) or "keine", self.model,
+            )
+            return self._available
+
+        log.info("Ollama verfügbar: %s @ %s", self.model, self.base_url)
         return self._available
 
     def reset_availability_cache(self) -> None:
@@ -507,6 +552,20 @@ class OllamaPrescreener:
             if resp.status_code == 200:
                 self._consecutive_timeouts = 0
                 return resp.json().get("response", "").strip()
+            if resp.status_code == 404:
+                # Modell existiert auf dem Server nicht – das heilt sich während
+                # dieses Laufs nicht von selbst, jeder weitere Ticker liefe in
+                # exakt dasselbe 404. Deshalb lokale Engine abschalten statt
+                # stumm weiterzurennen (17.–22.8.2026: ~700 identische 404er
+                # pro Tag im Bot-Log, während die Analyse leer zurückfiel).
+                self._available = False
+                log.warning(
+                    "Ollama-Modell '%s' nicht gefunden (HTTP 404) – lokale Analysen "
+                    "werden für diesen Lauf abgeschaltet, Claude übernimmt. "
+                    "Beheben mit: ollama pull %s",
+                    self.model, self.model,
+                )
+                return None
             log.warning("Ollama HTTP %d für Analyse", resp.status_code)
             return None
         except requests.Timeout:
