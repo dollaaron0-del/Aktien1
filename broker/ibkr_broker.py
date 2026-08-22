@@ -892,6 +892,47 @@ class IBKRBroker:
     # sein. Sekunden, die auf einen belastbaren Order-Status gewartet wird.
     _STOP_ACK_TIMEOUT = 5
 
+    def _stop_qty_cap(self, symbol: str, whole: int) -> Optional[int]:
+        """Deckelt die Stop-Menge auf die WIRKLICH bei IBKR gehaltene Stückzahl.
+
+        Rückgabe: erlaubte Menge, oder None = gar keinen Stop legen.
+
+        Hintergrund (22.8.2026): Ein Schutz-Stop wurde bisher blind über die
+        BUCH-Menge gelegt. Lief das Buch gegenüber IBKR auseinander, war die
+        ruhende GTC-Order größer als der reale Bestand — beim Auslösen drehte
+        sie das Konto short, exakt um die Differenz. Nachweisbar an acht
+        Positionen (z.B. S: IBKR 1 Stk, Buch 695 → −694; SSNC: 13 − 23 → −10).
+        Der Anti-Short-Schutz im Executor griff nur für Markt-Verkäufe; die
+        ruhende Order umging ihn und richtete den Schaden zeitversetzt an.
+
+        `positions()` liefert None, wenn der Stand nicht ermittelbar ist – dann
+        bleibt es fail-open beim alten Verhalten (lieber ein Stop mit
+        Buch-Menge als eine ungeschützte Position), aber mit Warnung.
+        """
+        held_map = self.positions()
+        if held_map is None:
+            log.warning(
+                "IBKR: Bestand für %s nicht ermittelbar – Schutz-Stop wird "
+                "ungeprüft über die Buch-Menge (%d) gelegt.", symbol, whole,
+            )
+            return whole
+        held = math.floor(held_map.get(symbol, 0.0))
+        if held <= 0:
+            log.error(
+                "IBKR: KEIN Schutz-Stop für %s – IBKR hält %g, Buch will %d "
+                "absichern. Eine Stop-Order würde das Konto shorten statt "
+                "schützen (Buch/IBKR-Desync).", symbol, held_map.get(symbol, 0.0), whole,
+            )
+            return None
+        if held < whole:
+            log.warning(
+                "IBKR: Schutz-Stop für %s auf %d Stück gedeckelt (Buch wollte "
+                "%d, IBKR hält %d) – die Differenz wäre ein Short gewesen.",
+                symbol, held, whole, held,
+            )
+            return held
+        return whole
+
     def _place_stop(self, contract, shares: float, stop_price: float) -> bool:
         """Platziert einen GTC-Stop (SELL) und verifiziert die Annahme.
 
@@ -899,12 +940,20 @@ class IBKRBroker:
         danach ab, blieb das unsichtbar: der Bot loggte "Schutz-Stop platziert"
         und meldete beim Start "N Positionen abgesichert", während real keine
         Order lag (25.7.2026: 3 von 23 Positionen ungeschützt, ohne jede
-        Warnung). Ein nicht bestätigter Stop gilt jetzt als Fehlschlag."""
+        Warnung). Ein nicht bestätigter Stop gilt jetzt als Fehlschlag.
+
+        Die Menge wird zusätzlich gegen den echten IBKR-Bestand gedeckelt
+        (siehe _stop_qty_cap) – ein zu großer Stop schützt nicht, er shortet."""
         try:
             from ib_insync import StopOrder
             whole = math.floor(float(shares))
             if whole <= 0 or not stop_price or float(stop_price) <= 0:
                 return False
+
+            capped = self._stop_qty_cap(contract.symbol, whole)
+            if capped is None:
+                return False
+            whole = capped
             stop_price = self._conform_price(contract, float(stop_price))
             if stop_price <= 0:
                 return False
@@ -965,6 +1014,7 @@ class IBKRBroker:
         Trailing-Logik des Bots). None = nicht prüfbar (offline/abgeschaltet)."""
         if not _SERVER_STOPS or not self._ensure_connected():
             return None
+        self._cancel_oversized_stops()
         result: Dict[str, bool] = {}
         for ticker, (shares, stop_price) in book.items():
             try:
@@ -980,6 +1030,60 @@ class IBKRBroker:
                 log.warning("IBKR Stop-Sync %s: %s", ticker, e)
                 result[ticker] = False
         return result
+
+    def _cancel_oversized_stops(self) -> int:
+        """Räumt ruhende Schutz-Stops ab, deren Menge den REALEN Bestand
+        übersteigt – die würden beim Auslösen shorten statt zu schützen.
+
+        Bewusst rein broker-seitig entschieden (Bestand vs. Order-Menge), nicht
+        gegen das Buch: ein Stop auf einer Position, die das Buch nicht kennt,
+        ist solange harmlos, wie er gedeckt ist – abgeräumt wird nur das, was
+        tatsächlich Schaden anrichten kann. Damit bleiben gedeckte Stops (auch
+        für unbekannte Positionen) erhalten.
+
+        Fand am 22.8.2026 vier Altlasten, die nie storniert wurden, nachdem
+        ihre Buch-Position als Phantom ausgebucht worden war (3× SAP über
+        105/276/406 Stück bei 1 real gehaltenen, 1× RHM über 35 bei 16).
+        """
+        held_map = self.positions()
+        if held_map is None:
+            return 0  # Bestand unbekannt – nichts anfassen
+        seen: Dict[int, object] = {}
+        for fn_name in ("reqAllOpenOrders", "openTrades"):
+            fn = getattr(self._ib, fn_name, None)
+            if not callable(fn):
+                continue
+            try:
+                for tr in (fn() or []):
+                    seen.setdefault(getattr(tr.order, "orderId", id(tr)), tr)
+            except Exception as e:
+                log.debug("IBKR %s: %s", fn_name, e)
+
+        n = 0
+        for tr in seen.values():
+            try:
+                o = tr.order
+                if (o.action != "SELL" or o.orderType != "STP"
+                        or tr.orderStatus.status in ("Filled", "Cancelled", "Inactive")):
+                    continue
+                sym = tr.contract.symbol
+                held = math.floor(held_map.get(sym, 0.0))
+                qty = float(o.totalQuantity or 0)
+                if qty <= max(held, 0):
+                    continue
+                log.error(
+                    "IBKR: Schutz-Stop für %s über %g Stück bei nur %d real "
+                    "gehaltenen – würde %g Stück shorten, wird storniert.",
+                    sym, qty, held, qty - max(held, 0),
+                )
+                self._ib.cancelOrder(o)
+                n += 1
+            except Exception as e:
+                log.error("IBKR: Storno eines übergroßen Schutz-Stops "
+                          "fehlgeschlagen: %s", e)
+        if n:
+            log.warning("IBKR: %d übergroße(r) Schutz-Stop(s) storniert.", n)
+        return n
 
     @log_order("BUY")
     @_synchronized

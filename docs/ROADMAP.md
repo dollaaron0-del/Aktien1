@@ -346,6 +346,43 @@ Legende: `[x]` fertig · `[~]` teilweise erledigt · `[ ]` offen
       zusammen mit dem offenen 1.9-Fill-Test Mo ab 15:30 CEST nachholen
       (steht in der 0.7-Checkliste).
 
+- [x] **1.15 Anti-Short-Schutz für broker-seitige Stops** — fertig 22.8.2026.
+      Schließt eine Lücke, die 1.9/1.12 aufgerissen hatten und die im
+      Paper-Konto real acht Short-Positionen erzeugt hat.
+      BEFUND: `_place_stop()` legte die GTC-Order blind über die BUCH-Menge.
+      Lief das Buch gegenüber IBKR auseinander, war die ruhende Order größer
+      als der reale Bestand — beim Auslösen drehte sie das Konto short, exakt
+      um die Differenz. Arithmetisch belegt an vier Fällen: S (IBKR 1, Buch
+      695 → −694), LRCX (1 / 55,25 → −54), SSNC (13 / 23,4 → −10), CLSK
+      (0 / 284 → −284). Der Anti-Short-Schutz im Executor
+      (`_broker_held()`) griff NUR für Markt-Verkäufe; die ruhende Order
+      umging ihn und richtete den Schaden zeitversetzt an — im Log sichtbar
+      als „SELL übersprungen (Anti-Short)" und ZWEI SEKUNDEN später
+      „GTC-Schutz-Stop platziert: SELL 695 S".
+      FIX: (a) `_stop_qty_cap()` deckelt jede Stop-Menge auf den tatsächlich
+      gehaltenen Bestand; kein Long-Bestand → gar kein Stop (statt einer
+      Order, die shortet). `positions()` liefert None = Stand unbekannt →
+      fail-open beim alten Verhalten, aber mit Warnung (eine ungeschützte
+      Position ist das größere Übel als ein seltener Fehl-Stop).
+      (b) `_cancel_oversized_stops()` räumt in jedem `sync_protective_stops()`
+      Altlasten ab, deren Menge den realen Bestand übersteigt. Bewusst rein
+      broker-seitig entschieden (Bestand vs. Order-Menge), NICHT gegen das
+      Buch: ein gedeckter Stop auf einer dem Buch unbekannten Position ist
+      harmlos und bleibt liegen — abgeräumt wird nur, was Schaden anrichten
+      kann. Trockenlauf gegen das echte Konto: trifft exakt die 4 gefährlichen
+      Orders (3× SAP 105/276/406 bei 1 real, 1× RHM 35 bei 16), alle 12
+      gedeckten Schutz-Stops bleiben erhalten.
+      15 Tests (test_ibkr_stop_short_guard.py, netzfrei, eigener Fake MIT
+      positions()-Unterstützung — der Fake in test_ibkr_stops.py hat bewusst
+      keine, dadurch prüfen die Alt-Tests weiterhin den Fail-open-Pfad).
+      OFFEN: die 4 Altlast-Orders liegen noch. Sie stammen von clientId 1/78/82;
+      ein Storno aus einer anderen Verbindung scheitert an IBKR-Fehler 10147
+      („OrderId … not found"), auch als clientId 0. Keine Eile: die SAP-Stops
+      liegen bei 130,32 € gegen einen Kurs von 217,68 € (−40 %). Der Sweep
+      räumt die beiden clientId-1-Orders beim nächsten Bot-Neustart selbst ab;
+      für die aus clientId 78/82 braucht es ggf. eine Master-Client-ID im
+      Gateway oder ein manuelles Storno.
+
 ## Block 2 — Kein-Kante-Befund angehen (strategy_lab Prio 1)
 
 - [x] **2.1 Exit-Lab** — fertig 12.7. Exits parametrisierbar gemacht (ATR-
