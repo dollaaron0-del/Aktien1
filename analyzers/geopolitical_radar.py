@@ -102,7 +102,7 @@ _GEO_CATEGORIES: List[Dict] = [
         "impacts": [
             MarketImpact(["TSM", "NVDA", "AMD", "AMAT", "LRCX", "KLAC"], "SELL", "TSMC-Risiko, Halbleiter-Lieferkette",  0.25),
             MarketImpact(["LMT", "RTX", "NOC", "HII", "GD"],             "BUY",  "US-Pazifik-Verteidigung",              0.85),
-            MarketImpact(["RHM.DE", "AIR.PA", "BAES.L"],                 "BUY",  "NATO-Rüstung Reaktion",                0.78),
+            MarketImpact(["RHM.DE", "AIR.PA", "BA.L"],                   "BUY",  "NATO-Rüstung Reaktion",                0.78),
             MarketImpact(["GLD"],                                          "BUY",  "Safe-Haven",                           0.72),
             MarketImpact(["AAPL", "MSFT"],                                "WATCH","Lieferketten-Exposition China",        0.45),
         ],
@@ -118,7 +118,7 @@ _GEO_CATEGORIES: List[Dict] = [
             "putin escalat", "russian troops", "russian forces ukraine",
         ],
         "impacts": [
-            MarketImpact(["RHM.DE", "AIR.PA", "BAES.L", "LMT", "RTX"],  "BUY",  "Europäische Rüstung, NATO-Aufrüstung", 0.88),
+            MarketImpact(["RHM.DE", "AIR.PA", "BA.L", "LMT", "RTX"],    "BUY",  "Europäische Rüstung, NATO-Aufrüstung", 0.88),
             MarketImpact(["ENGI.PA", "RWE.DE", "NESTE.HE"],              "BUY",  "Europäischer Energie-Umbau",           0.75),
             MarketImpact(["XOM", "CVX", "SLB"],                           "BUY",  "Gas/Öl Versorgungssorgen",             0.78),
             MarketImpact(["GLD"],                                          "BUY",  "Safe-Haven Gold",                      0.72),

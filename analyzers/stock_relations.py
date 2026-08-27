@@ -64,7 +64,7 @@ _THEMES: Dict[str, List[str]] = {
 
     # Rüstung & Verteidigung – Europa (NATO-Aufrüstung) ───────────────────────
     "DEFENSE_EU": [
-        "RHM.DE", "AIR.PA", "BAES.L", "MTX.DE", "SAAB.ST",
+        "RHM.DE", "AIR.PA", "BA.L", "MTX.DE", "SAAB.ST",
         "HO.PA", "LDO.MI",
     ],
 
@@ -204,7 +204,7 @@ CROSS_LISTINGS: Dict[str, str] = {
     "ASML.AS":   "ASML",
     "ASMI.AS":   "ASM.AS",   # ASM International – Amsterdam-Varianten
     "NOVO-B.CO": "NVO",
-    "BAES.L":    "BA",        # BAE Systems – UK vs. US
+    "BAESY":     "BA.L",      # BAE Systems US-ADR → LSE-Hauptlisting
     "SHEL.L":    "SHEL",
     "TTE.PA":    "TTE",
     "SAP.DE":    "SAP",       # SAP US-ADR
