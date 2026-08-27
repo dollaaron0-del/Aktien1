@@ -248,6 +248,10 @@ class IBKRBroker:
         self._market_rule_cache: Dict = {}
         # conId/Symbol → (Preis, monotonic-Zeit) für _historical_close.
         self._hist_close_cache: Dict = {}
+        # permIds übergroßer Schutz-Stops fremder Client-IDs, die wir per API
+        # NICHT stornieren können (IBKR erlaubt cancelOrder nur für Orders der
+        # eigenen Client-ID). Einmal pro Session warnen statt jeden Zyklus.
+        self._uncancelable_stops: set = set()
         self._connect()
 
     # ── Verbindungsmanagement ─────────────────────────────────────────────────
@@ -1071,6 +1075,26 @@ class IBKRBroker:
                 qty = float(o.totalQuantity or 0)
                 if qty <= max(held, 0):
                     continue
+
+                # cancelOrder greift nur bei Orders der EIGENEN Client-ID
+                # (bzw. clientId 0). Ein übergroßer Stop einer früheren Session
+                # (andere Client-ID) lässt sich per API nicht wegräumen – dann
+                # bringt ein Storno-Versuch jeden Zyklus nur einen Error-10147-
+                # Log. Einmal pro Session klar warnen, dann in Ruhe lassen.
+                order_cid = getattr(o, "clientId", None)
+                if order_cid not in (0, self._client_id):
+                    perm = getattr(o, "permId", None) or id(o)
+                    if perm not in self._uncancelable_stops:
+                        self._uncancelable_stops.add(perm)
+                        log.warning(
+                            "IBKR: übergroßer Schutz-Stop für %s (%g Stück, nur %d "
+                            "real) stammt aus fremder Session (clientId=%s) und ist "
+                            "per API nicht stornierbar – bitte im Gateway/TWS manuell "
+                            "canceln (permId=%s).",
+                            sym, qty, held, order_cid, perm,
+                        )
+                    continue
+
                 log.error(
                     "IBKR: Schutz-Stop für %s über %g Stück bei nur %d real "
                     "gehaltenen – würde %g Stück shorten, wird storniert.",

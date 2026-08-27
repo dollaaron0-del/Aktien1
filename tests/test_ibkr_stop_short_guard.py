@@ -222,6 +222,43 @@ def test_sweep_cancels_only_the_oversized_one(monkeypatch):
     assert verbleibend == [14]
 
 
+def test_oversized_stop_from_foreign_client_is_not_spammed(monkeypatch):
+    """Realfall 27.8.: SAP-Stop über 406 Stück (nur 315 real) stammte aus einer
+    früheren Session (clientId 78). cancelOrder greift per IBKR-API nur für die
+    eigene clientId → jeder Zyklus produzierte sonst nur einen Error-10147-Log.
+    Jetzt: nicht stornierbar erkannt, EINMAL pro Session warnen, nicht mitzählen."""
+    import logging
+    b = _broker(monkeypatch, held={"SAP": 315})
+    tr = _add_stop(b, "SAP", 406)
+    tr.order.clientId = 78
+    tr.order.permId = 1824240707
+
+    with monkeypatch.context():
+        assert b._cancel_oversized_stops() == 0          # nicht als "storniert" gezählt
+    assert len(_stops(b._ib)) == 1                        # Order unangetastet (kann nur der Mensch)
+    assert 1824240707 in b._uncancelable_stops
+
+    caplog = []
+    handler = logging.Handler()
+    handler.emit = lambda r: caplog.append(r.getMessage())
+    logging.getLogger("broker.ibkr_broker").addHandler(handler)
+    try:
+        b._cancel_oversized_stops()
+        b._cancel_oversized_stops()
+    finally:
+        logging.getLogger("broker.ibkr_broker").removeHandler(handler)
+    assert caplog == [], "zweiter/dritter Durchlauf darf nicht erneut warnen"
+
+
+def test_oversized_stop_from_own_client_still_cancelled(monkeypatch):
+    """Gegenprobe: eigene clientId → ganz normaler Storno-Pfad."""
+    b = _broker(monkeypatch, held={"SAP": 1})
+    tr = _add_stop(b, "SAP", 406)
+    tr.order.clientId = b._client_id
+    assert b._cancel_oversized_stops() == 1
+    assert _stops(b._ib) == []
+
+
 def test_sweep_does_nothing_when_positions_unknown(monkeypatch):
     """Ohne belastbaren Bestand darf nichts storniert werden – ein
     Verbindungsabriss dürfte sonst alle Schutz-Stops abräumen."""
