@@ -23,7 +23,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 
-import anthropic
+from analyzers import llm_client
 
 from config import config
 from portfolio.performance_tracker import PerformanceTracker
@@ -75,7 +75,7 @@ class ReflectionEngine:
     ):
         self.tracker = tracker
         self.journal = journal
-        self._client = anthropic.Anthropic(api_key=config.anthropic_api_key) if config.anthropic_api_key else None
+        self._client = llm_client.client_or_none()
         try:
             from analyzers.api_cost_tracker import APICostTracker
             self._cost_tracker = APICostTracker()
@@ -125,7 +125,7 @@ class ReflectionEngine:
 
         prompt = self._build_memo_prompt(recent_trades)
         try:
-            msg = self._client.messages.create(
+            msg = llm_client.create_message(
                 model=config.claude_model,
                 max_tokens=500,
                 system=_SYSTEM_PROMPT_MEMO,
@@ -199,7 +199,7 @@ class ReflectionEngine:
 
         prompt = "\n".join(lines)
         try:
-            msg = self._client.messages.create(
+            msg = llm_client.create_message(
                 model=config.claude_model,
                 max_tokens=700,
                 system=_SYSTEM_PROMPT_POST_CB,
@@ -273,7 +273,7 @@ class ReflectionEngine:
 
         prompt = self._build_review_prompt(year_month, trades_in_month)
         try:
-            msg = self._client.messages.create(
+            msg = llm_client.create_message(
                 model=config.claude_model,
                 max_tokens=2000,
                 system=_SYSTEM_PROMPT_REVIEW,

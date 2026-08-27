@@ -455,14 +455,14 @@ Antworte NUR mit diesem JSON (kein Text davor/dahinter):
   "summary": "<2–3 Sätze Gesamtbewertung>"
 }}"""
         try:
-            import anthropic
+            from analyzers import llm_client
             from config import config as _cfg
-            client = anthropic.Anthropic(api_key=self.api_key)
             model = _cfg.claude_model  # vorher hartcodiert claude-opus-4-7 (≈30× teurer)
-            resp = client.messages.create(
+            resp = llm_client.create_message(
                 model=model,
                 max_tokens=400,
                 messages=[{"role": "user", "content": prompt}],
+                api_key=self.api_key,
             )
             if self._cost_tracker is not None:
                 it, ot, cr = self._cost_tracker.usage_from_response(resp)

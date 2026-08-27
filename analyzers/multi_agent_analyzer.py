@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-import anthropic
+from analyzers import llm_client
 
 from analyzers.api_cost_tracker import APICostTracker
 from analyzers.claude_analyzer import AnalysisResult
@@ -83,7 +83,7 @@ class MultiAgentAnalyzer:
     """Drei Claude-Agenten parallel – Konsens-Analyse."""
 
     def __init__(self) -> None:
-        self._client = anthropic.Anthropic(api_key=config.anthropic_api_key)
+        self._client = llm_client.client_or_none()
         self._cost_tracker = APICostTracker()
 
     # ── Public API (gleiche Signatur wie ClaudeAnalyzer.analyze) ─────────────
@@ -196,7 +196,7 @@ class MultiAgentAnalyzer:
             n_news=n_news,
             context_block=context_block,
         )
-        message = self._client.messages.create(
+        message = llm_client.create_message(
             model=config.claude_model,
             max_tokens=600,
             system=system_blocks,

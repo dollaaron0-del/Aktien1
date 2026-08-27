@@ -4,6 +4,7 @@
 # Lockfile aktualisieren nach bewusstem Upgrade + grüner Testsuite:
 #   pip install --upgrade -r requirements.txt && pip freeze > requirements.lock
 anthropic>=0.40.0
+google-genai>=1.0.0  # LLM_PROVIDER=gemini (analyzers/llm_client.py)
 yfinance>=0.2.40
 pytrends>=4.9.2
 newsapi-python>=0.2.7

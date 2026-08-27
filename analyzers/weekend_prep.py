@@ -366,14 +366,14 @@ Erstelle ein Wochenbriefing mit diesen Abschnitten:
 Sei direkt, konkret und aktionsorientiert. Kein Marketing-Sprech."""
 
         try:
-            import anthropic
+            from analyzers import llm_client
             from config import config as _cfg
-            client = anthropic.Anthropic(api_key=self.api_key)
             model = _cfg.claude_model  # vorher hartcodiert claude-opus-4-7
-            resp = client.messages.create(
+            resp = llm_client.create_message(
                 model=model,
                 max_tokens=1500,
                 messages=[{"role": "user", "content": prompt}],
+                api_key=self.api_key,
             )
             try:
                 from analyzers.api_cost_tracker import APICostTracker

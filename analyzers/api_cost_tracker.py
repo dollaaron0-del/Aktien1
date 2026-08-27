@@ -38,6 +38,11 @@ _MODEL_PRICING_USD = {
     "opus":   (15.0, 75.0),
     "sonnet": (3.0, 15.0),
     "haiku":  (1.0, 5.0),
+    # Gemini (LLM_PROVIDER=gemini). Grobe Schätzwerte – bei Bedarf gegen die
+    # aktuelle Google-Preisliste prüfen. "flash" muss vor "gemini" stehen,
+    # da _price_for_model beim ersten Substring-Treffer stoppt.
+    "flash":  (0.30, 2.50),
+    "gemini": (2.0, 12.0),
 }
 
 

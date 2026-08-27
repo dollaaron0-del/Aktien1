@@ -133,17 +133,19 @@ def check_anthropic() -> List[CheckResult]:
     results = []
     try:
         from config import config
-        if not config.anthropic_api_key:
-            return [_fail("Anthropic API", "Kein API-Key – Test übersprungen")]
-        import anthropic
-        client = anthropic.Anthropic(api_key=config.anthropic_api_key)
-        resp = client.messages.create(
+        from analyzers import llm_client
+        if not llm_client.available():
+            _prov = getattr(config, "llm_provider", "anthropic")
+            return [_fail("LLM API", f"Kein API-Key für Provider '{_prov}' – Test übersprungen")]
+        resp = llm_client.create_message(
             model=config.claude_model,
             max_tokens=10,
             messages=[{"role": "user", "content": "Reply: OK"}],
+            api_key=config.anthropic_api_key,
         )
         reply = resp.content[0].text.strip() if resp.content else "?"
-        results.append(_ok("  Claude API", f"Antwort: '{reply}' (Modell: {config.claude_model})"))
+        _prov = getattr(config, "llm_provider", "anthropic")
+        results.append(_ok("  LLM API", f"Antwort: '{reply}' (Provider: {_prov}, Modell: {config.claude_model})"))
     except Exception as e:
         results.append(_fail("  Claude API", str(e)[:80]))
     return results

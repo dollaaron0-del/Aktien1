@@ -205,6 +205,23 @@ class Config:
     claude_cache_ttl: str = field(
         default_factory=lambda: os.getenv("CLAUDE_CACHE_TTL", "1h")
     )
+    # LLM-Provider für alle Analyse-Aufrufe (analyzers/llm_client.py).
+    #   "anthropic" (Default) → Claude wie bisher, kein Verhaltensunterschied.
+    #   "gemini"              → Google Gemini (spart Claude-API-Kosten/Wochenlimit).
+    llm_provider: str = field(
+        default_factory=lambda: os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
+    )
+    gemini_api_key: str = field(
+        default_factory=lambda: os.getenv("GEMINI_API_KEY", "")
+    )
+    # Gemini-Gegenstücke zum Sonnet/Haiku-Tiering: ein Claude-Modell mit "haiku"
+    # im Namen wird auf gemini_model_light abgebildet, alles andere auf gemini_model.
+    gemini_model: str = field(
+        default_factory=lambda: os.getenv("GEMINI_MODEL", "gemini-3.1-pro-preview")
+    )
+    gemini_model_light: str = field(
+        default_factory=lambda: os.getenv("GEMINI_MODEL_LIGHT", "gemini-3.1-flash-lite")
+    )
     # Dedup: identische News (gleicher Fingerprint) für denselben Ticker werden
     # innerhalb dieser Spanne nicht erneut an Claude geschickt – das letzte
     # Vollergebnis wird wiederverwendet. 0 = aus.

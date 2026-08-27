@@ -167,6 +167,13 @@ class ClaudeAnalyzer:
         if not model:
             from config import config as _cfg
             model = _cfg.claude_model
+        # Läuft der Bot auf Gemini (LLM_PROVIDER=gemini), ist ANTHROPIC_API_KEY
+        # oft leer – dann würde jeder `bool(self.api_key)`-Check unten fälschlich
+        # "kein LLM verfügbar → nur Ollama" ergeben. Verfügbarkeit am aktiven
+        # Provider festmachen.
+        from config import config as _cfg
+        if getattr(_cfg, "llm_provider", "anthropic") == "gemini" and not self.api_key:
+            self.api_key = getattr(_cfg, "gemini_api_key", "") or "gemini"
         self.ollama_ratio = float(os.environ.get("OLLAMA_RATIO", 0.6))
         # Lokales Ollama-Modell für die Vorfilterung. Muss ein tatsächlich
         # geladenes Modell sein (siehe `ollama list`), sonst schlägt jeder
@@ -596,16 +603,16 @@ class ClaudeAnalyzer:
         """Einziger Pfad zu client.messages.create – setzt Caching/TTL, das
         gewählte Modell und erfasst Usage+Modell für die Kostenabrechnung.
         Gibt den Antworttext zurück; wirft bei Fehler (Aufrufer behandelt)."""
-        import anthropic
-        client = anthropic.Anthropic(api_key=self.api_key)
+        from analyzers import llm_client
         extra_headers = {}
         if self._cache_control().get("ttl") == "1h":
             extra_headers["anthropic-beta"] = "extended-cache-ttl-2025-04-11"
-        resp = client.messages.create(
+        resp = llm_client.create_message(
             model=model,
             max_tokens=max_tokens,
             system=self._system_blocks(context_block),
             messages=[{"role": "user", "content": user_prompt}],
+            api_key=self.api_key,
             extra_headers=extra_headers or None,
         )
         self._call_count += 1
@@ -689,6 +696,9 @@ class ClaudeAnalyzer:
         return any(k in s for k in (
             "credit balance", "too low", "billing", "insufficient",
             "authentication", "invalid x-api-key", "401", "403", "permission",
+            # Gemini-Gegenstücke (LLM_PROVIDER=gemini)
+            "api key not valid", "api_key_invalid", "permission_denied",
+            "resource_exhausted", "quota",
         ))
 
     def _try_ollama(
