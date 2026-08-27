@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
@@ -184,8 +185,17 @@ class EarningsPredictor:
             log.warning("earnings_predictor: app rating signal failed for %s: %s", ticker, exc)
             return 0.5, {"error": str(exc), "score": 0.5}
 
+    # Google drosselt den (inoffiziellen) pytrends-Endpoint praktisch dauerhaft
+    # mit HTTP 429. Nach einem 429 den Trend-Fetch prozessweit für eine Weile
+    # ganz aussetzen – sonst pro analysiertem Ticker eine sinnlose Anfrage +
+    # WARNING, und das Signal fällt ohnehin immer auf neutral 0.5 zurück.
+    _trends_blocked_until: float = 0.0
+    _TRENDS_COOLDOWN_S = 1800  # 30 Min
+
     def _signal_google_trends(self, ticker: str) -> tuple[float, dict]:
         """Google Trends via pytrends — rising brand search = growing interest."""
+        if time.monotonic() < EarningsPredictor._trends_blocked_until:
+            return 0.5, {"note": "trends rate-limited (cooldown)", "score": 0.5}
         try:
             from pytrends.request import TrendReq  # type: ignore
 
@@ -219,8 +229,16 @@ class EarningsPredictor:
             log.debug("earnings_predictor: pytrends not installed, using neutral fallback")
             return 0.5, {"note": "pytrends not available", "score": 0.5}
         except Exception as exc:
+            msg = str(exc)
+            if "429" in msg or "TooManyRequests" in type(exc).__name__:
+                EarningsPredictor._trends_blocked_until = (
+                    time.monotonic() + EarningsPredictor._TRENDS_COOLDOWN_S
+                )
+                log.debug("earnings_predictor: google trends rate-limited (429) – "
+                          "Trend-Signal für %ds ausgesetzt", EarningsPredictor._TRENDS_COOLDOWN_S)
+                return 0.5, {"note": "trends rate-limited (429)", "score": 0.5}
             log.warning("earnings_predictor: google trends signal failed for %s: %s", ticker, exc)
-            return 0.5, {"error": str(exc), "score": 0.5}
+            return 0.5, {"error": msg, "score": 0.5}
 
     # ------------------------------------------------------------------
     # Cache helpers
