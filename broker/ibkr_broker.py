@@ -1172,8 +1172,26 @@ class IBKRBroker:
         try:
             account = getattr(self, "_active_account", _ACCOUNT) or _ACCOUNT \
                 or (self._ib.managedAccounts() or [""])[0]
+            # reqPositions() blockiert bis "positionEnd" – erzwingt einen
+            # VOLLSTÄNDIGEN Stand. Ohne das liefert self._ib.positions() direkt
+            # nach dem Connect (oder Reconnect) den noch halb gefüllten Cache;
+            # reconcile_against_broker deutete die fehlenden Positionen dann als
+            # Phantome und buchte echte Bestände mit fiktivem Verlust aus
+            # (Buch-Korruption Juli–August 2026: Buch $1,0 Mio → $0,5 Mio,
+            # während das IBKR-Konto unverändert bei ~$1,04 Mio stand).
+            try:
+                self._ib.reqPositions()
+                self._ib.sleep(0.2)
+            except Exception as e:
+                log.debug("IBKR reqPositions(): %s", e)
+            raw = self._ib.positions(account)
+            if not raw:
+                # Echt flach ist möglich – aber direkt nach Connect ist ein
+                # leeres Ergebnis verdächtig. Einmal nachfassen.
+                self._ib.sleep(0.5)
+                raw = self._ib.positions(account)
             result: Dict[str, float] = {}
-            for p in self._ib.positions(account):
+            for p in raw:
                 sym = p.contract.symbol
                 result[sym] = result.get(sym, 0.0) + float(p.position)
             return result

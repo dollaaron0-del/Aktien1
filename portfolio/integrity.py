@@ -244,20 +244,32 @@ def reconcile(
             conn.close()
 
 
+# Ausbuch-Bremse: höchstens so viele Voll-Phantome pro Lauf, bzw. dieser
+# Anteil des Buchs – wird beides überschritten, gilt der Broker-Schnappschuss
+# als unvollständig und es wird gar nichts ausgebucht.
+_MAX_PHANTOM_BOOKOUT  = 2
+_MAX_PHANTOM_FRACTION = 0.34
+
+
 @dataclass
 class BrokerReconcileReport:
     reconciled: Dict[str, float] = field(default_factory=dict)        # Buch-Position ohne IBKR-Deckung → ausgebucht
     partial_mismatch: Dict[str, tuple] = field(default_factory=dict)  # ticker -> (ibkr_held, buch_shares)
     untracked: Dict[str, float] = field(default_factory=dict)         # bei IBKR gehalten, aber nicht im Buch
+    snapshot_rejected: bool = False                                   # Schnappschuss unplausibel → nichts ausgebucht
 
     @property
     def ok(self) -> bool:
-        return not (self.reconciled or self.partial_mismatch or self.untracked)
+        return not (self.reconciled or self.partial_mismatch or self.untracked
+                    or self.snapshot_rejected)
 
     def summary(self) -> str:
         if self.ok:
             return "Broker-Abgleich: OK (Buch ↔ IBKR deckungsgleich)."
         parts = ["Broker-Abgleich: ⚠️ Buch ↔ IBKR weicht ab:"]
+        if self.snapshot_rejected:
+            parts.append("  • ⚠️ Broker-Schnappschuss unplausibel (zu viele "
+                         "Positionen fehlten) – KEINE Ausbuchung vorgenommen")
         if self.reconciled:
             parts.append("  • Phantome ausgebucht (nicht bei IBKR): "
                          + ", ".join(f"{t} ({s:g})" for t, s in self.reconciled.items()))
@@ -312,6 +324,33 @@ def reconcile_against_broker(
         ).fetchall()
         book_bases = {_norm(r[0]) for r in rows}
         now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+
+        # Plausibilitäts-Bremse gegen unvollständige Broker-Schnappschüsse:
+        # verschwindet auf einen Schlag ein großer Teil des Buchs aus dem
+        # IBKR-Stand, ist fast immer der Schnappschuss unvollständig (Cache
+        # noch nicht gefüllt), nicht das Depot leer. In dem Fall NICHTS
+        # ausbuchen – nur laut melden. (broker.positions() sollte seit dem
+        # reqPositions()-Fix nie mehr partiell liefern; das hier ist die
+        # zweite Verteidigungslinie, die die Buch-Korruption 2026 verhindert
+        # hätte.)
+        _phantoms = [r for r in rows
+                     if held_by_base.get(_norm(r[0]), 0.0) + _SHARE_EPS < float(r[1])
+                     and held_by_base.get(_norm(r[0]), 0.0) <= _SHARE_EPS]
+        _limit = max(_MAX_PHANTOM_BOOKOUT, len(rows) * _MAX_PHANTOM_FRACTION)
+        if len(rows) >= 3 and len(_phantoms) > _limit:
+            log.error(
+                "Broker-Abgleich ABGEBROCHEN: %d/%d Buch-Positionen fehlen im "
+                "IBKR-Stand (%s) – Schnappschuss unplausibel, es wird NICHTS "
+                "ausgebucht. Broker-Verbindung / reqPositions prüfen.",
+                len(_phantoms), len(rows),
+                ", ".join(r[0] for r in _phantoms[:10]),
+            )
+            rep.snapshot_rejected = True
+            for base, qty in held_by_base.items():
+                if abs(qty) > _SHARE_EPS and base not in book_bases:
+                    rep.untracked[base] = round(qty, 4)
+            return rep
+
         with conn:
             for r in rows:
                 ticker = r[0]

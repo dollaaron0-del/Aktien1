@@ -194,3 +194,39 @@ def test_broker_reconcile_skips_cooldown_after_partial_tp(tmp_path, monkeypatch)
 
     blocked, _ = StopLossCooldown().is_blocked("MSFT")
     assert not blocked
+
+
+def test_broker_reconcile_rejects_implausible_snapshot(tmp_path, monkeypatch):
+    """Buch-Korruption Juli–August 2026: broker.positions() lieferte direkt
+    nach dem Connect einen halb gefüllten Cache; reconcile buchte die
+    'fehlenden' echten Positionen mit fiktivem Verlust aus. Jetzt: fällt auf
+    einen Schlag ein großer Teil des Buchs aus dem IBKR-Stand, wird NICHTS
+    ausgebucht – nur gemeldet."""
+    p = make_portfolio(tmp_path, monkeypatch, capital=1_000_000.0)
+    for tk in ("AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META"):
+        p.open_position(make_position(tk, 10, 100.0))
+    cash_before = p.cash
+
+    # IBKR "zeigt" nur 1 von 6 – klar unvollständiger Schnappschuss
+    rep = reconcile_against_broker(p._conn, broker_positions={"AAPL": 10.0})
+
+    assert rep.snapshot_rejected is True
+    assert rep.reconciled == {}
+    assert not rep.ok
+    assert p.cash == pytest.approx(cash_before)
+    for tk in ("MSFT", "NVDA", "AMZN", "GOOGL", "META"):
+        assert p.get_position(tk) is not None, f"{tk} darf nicht ausgebucht sein"
+
+
+def test_broker_reconcile_still_books_small_number_of_phantoms(tmp_path, monkeypatch):
+    """Gegenprobe: 2 von 6 Positionen weg ist plausibel (Stop/TP gefeuert) →
+    ganz normale Ausbuchung."""
+    p = make_portfolio(tmp_path, monkeypatch, capital=1_000_000.0)
+    for tk in ("AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META"):
+        p.open_position(make_position(tk, 10, 100.0))
+
+    held = {tk: 10.0 for tk in ("AAPL", "MSFT", "NVDA", "AMZN")}
+    rep = reconcile_against_broker(p._conn, broker_positions=held)
+
+    assert rep.snapshot_rejected is False
+    assert set(rep.reconciled) == {"GOOGL", "META"}
