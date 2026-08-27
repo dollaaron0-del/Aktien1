@@ -493,6 +493,13 @@ class SignalDrivenExpander:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             return {}
+        except OSError as e:
+            # z.B. PermissionError – darf nie den ganzen Analyse-Zyklus reißen
+            from logger import get_logger
+            get_logger(__name__).warning(
+                "signal_tickers.json nicht lesbar (%s) – fahre ohne Signal-Ticker fort", e
+            )
+            return {}
 
     def _save(self, data: Dict):
         import tempfile, os

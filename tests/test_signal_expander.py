@@ -170,3 +170,18 @@ def test_promotion_is_idempotent(tmp_path, monkeypatch):
     again = e.process_news_items([_contract("WXYZ")])
     assert again == []                                       # nicht nochmal promotet
     assert "WXYZ" in e.get_ready_tickers()
+
+
+def test_unreadable_data_file_degrades_not_crashes(tmp_path, monkeypatch):
+    """Regression: signal_tickers.json mit falschen Rechten (z.B. von einem
+    fremd-user-Prozess geschrieben) darf NICHT den ganzen Analyse-Zyklus mit
+    PermissionError reißen (3 FATAL-Abbrüche am 27.8.). _load fängt OSError
+    und fährt ohne Signal-Ticker fort."""
+    e = _expander(tmp_path)
+
+    def _boom(*a, **k):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", _boom)
+    assert e._load() == {}
+    assert e.get_ready_tickers() == []
