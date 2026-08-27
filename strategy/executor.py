@@ -129,6 +129,20 @@ def _fail_reason(fill) -> str:
     return str(fill)
 
 
+def _sources_count(analysis) -> int:
+    """`analysis.sources_used` ist je nach Analyzer-Pfad int ODER Dict[str,int]
+    (Quelle→Anzahl) – ClaudeAnalyzer setzt das Feld als Dict. int() direkt
+    darauf wirft TypeError (siehe swing_strategy._passes_min_sources,
+    conditional_entry, analysis_log – überall dieselbe Normalisierung)."""
+    su = getattr(analysis, "sources_used", 0)
+    if isinstance(su, dict):
+        return sum(int(v or 0) for v in su.values())
+    try:
+        return int(su or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 class TradeExecutor:
     def __init__(self, portfolio, broker, journal=None, notifier=None, strategy=None):
         self.portfolio = portfolio
@@ -266,7 +280,7 @@ class TradeExecutor:
             entry_rationale=getattr(analysis, "entry_rationale", "") or "",
             key_catalysts=list(getattr(analysis, "key_catalysts", []) or []),
             risk_factors=list(getattr(analysis, "risk_factors", []) or []),
-            sources_used=int(getattr(analysis, "sources_used", 0) or 0),
+            sources_used=_sources_count(analysis),
             sources_breakdown=sources_breakdown or {},
             suggested_hold_days=int(result.hold_days or 0),
             reason="market_closed",

@@ -97,6 +97,30 @@ def test_market_closed_failure_enqueues_signal(tmp_path, monkeypatch):
     assert p.get_position("AMD") is None, "kein Kauf gebucht – nur vorgemerkt"
 
 
+def test_market_closed_enqueue_with_dict_sources_used(tmp_path, monkeypatch):
+    """Regression: der ClaudeAnalyzer setzt `analysis.sources_used` als
+    Dict[str,int] (Quelle→Anzahl). _enqueue_if_market_closed rief blind
+    int() darauf auf → TypeError, das BUY-Signal verpuffte statt vorgemerkt
+    zu werden (144× im Log seit 29.7., überlebte den cycle_analysis-Umbau).
+    Jetzt wird der Dict wie überall sonst zur Quellenzahl summiert."""
+    p = make_portfolio(tmp_path, monkeypatch)
+    sq = make_signal_queue(tmp_path, monkeypatch)
+    ex = _executor_with(_MarketClosedBroker(), p, sq)
+
+    import analyzers.market_schedule as ms
+    monkeypatch.setattr(ms, "market_closed_reason", lambda t: "NYSE außerhalb der Handelszeit")
+
+    analysis = _analysis()
+    analysis.sources_used = {"yahoo": 7, "newsapi": 13, "sec": 1}
+
+    out = ex.execute(_result(), analysis=analysis, sources_breakdown=analysis.sources_used)
+
+    assert "vorgemerkt" in out
+    pending = sq.get_pending()
+    assert len(pending) == 1
+    assert pending[0]["sources_used"] == 21
+
+
 def test_other_failure_does_not_enqueue(tmp_path, monkeypatch):
     """Gegenprobe: scheitert der Kauf aus einem ANDEREN Grund während die
     Börse eigentlich offen ist, darf nichts vorgemerkt werden."""
