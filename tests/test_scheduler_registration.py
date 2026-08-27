@@ -321,3 +321,47 @@ def test_total_job_count_is_stable(monkeypatch, fresh_portfolio, tmp_path):
     _run_registration_only(monkeypatch, kwargs)
     n = len(schedule.jobs)
     assert 25 <= n <= 40, f"Unerwartete Job-Anzahl nach Registrierung: {n}"
+
+
+def test_cb_monitor_job_does_not_clobber_external_reset(monkeypatch, fresh_portfolio, tmp_path):
+    """Regression 27.8.2026: _cb_monitor_job hielt VOR dem Fix eine einzige
+    CircuitBreaker()-Instanz über die gesamte Bot-Laufzeit im Closure.
+    CircuitBreaker lädt ihren State nur in __init__ von der Platte — ein
+    externer Reset (Dashboard-Button oder manuelles reset()) WÄHREND der Bot
+    läuft wurde beim nächsten 15-Min-Lauf von register_day_open()'s _save()
+    wieder mit dem beim Bot-Start geladenen, veralteten peak_value
+    überschrieben (beobachtet: Reset auf $505k um 14:48 Uhr, um 15:09 Uhr
+    stand die Datei wieder auf dem alten $1,02-Mio-Peak). Jetzt baut der Job
+    pro Lauf eine frische Instanz, liest also jedes Mal den aktuellen
+    Platten-Stand."""
+    import json
+    import portfolio.circuit_breaker as cb_mod
+
+    cache_file = str(tmp_path / "data" / "circuit_breaker.json")
+    monkeypatch.setattr(cb_mod, "_CACHE_FILE", cache_file)
+
+    kwargs = _make_args(fresh_portfolio, monkeypatch, tmp_path)
+    _run_registration_only(monkeypatch, kwargs)
+    job = {getattr(j.job_func, "__name__", ""): j for j in schedule.jobs}["_cb_monitor_job"]
+
+    # 1. Lauf: bootstrapt die Datei (fresh_portfolio hat konstant $10.000 Cash,
+    # keine Positionen → total_value bleibt über beide Läufe unverändert).
+    job.job_func()
+    with open(cache_file) as f:
+        assert json.load(f)["peak_value"] == pytest.approx(10_000.0)
+
+    # Externer Reset/Update WÄHREND der Bot liefe (z.B. Dashboard-Button, hier
+    # simuliert durch eine fremde CircuitBreaker-Instanz) auf einen höheren
+    # Peak, als das Portfolio aktuell hat.
+    cb_mod.CircuitBreaker().reset(50_000.0, by="dashboard-test")
+    with open(cache_file) as f:
+        assert json.load(f)["peak_value"] == pytest.approx(50_000.0)
+
+    # 2. Lauf: current_value (10.000) < externer Peak (50.000) → der Peak darf
+    # NICHT wieder auf 10.000 zurückfallen, wenn der Job den echten
+    # Platten-Stand liest statt eine veraltete In-Memory-Kopie zu behalten.
+    job.job_func()
+    with open(cache_file) as f:
+        assert json.load(f)["peak_value"] == pytest.approx(50_000.0), (
+            "externer Reset wurde vom Circuit-Breaker-Monitor überschrieben"
+        )

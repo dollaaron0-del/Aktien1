@@ -849,10 +849,20 @@ def run_bot_loop(
     # Circuit-Breaker-Monitor: einmalige Reflexion wenn CB heute ausgelöst wird
     _cb_triggered_today: list = []
     _cb_trigger_date: list = []   # eigenes Datum-Tracking statt _state-Zugriff
-    _circuit_breaker = CircuitBreaker()
 
     def _cb_monitor_job():
         try:
+            # Pro Lauf NEU instanziieren statt eine einzige Instanz über die
+            # gesamte Prozess-Laufzeit im Closure zu halten: CircuitBreaker
+            # lädt ihren State nur in __init__ von der Platte. Mit einer
+            # langlebigen Instanz überschrieb register_day_open()'s _save()
+            # nach 15 Min einen externen Reset (Dashboard-Button oder manuell)
+            # wieder mit dem beim Bot-Start geladenen, veralteten Stand –
+            # beobachtet 27.8.2026: Reset auf $505k um 14:48 Uhr, um 15:09 Uhr
+            # (nächster Lauf) stand die Datei wieder auf dem alten $1,02-Mio-
+            # Peak. CircuitBreaker() ist eine reine JSON-Datei-Hülle, Neubau
+            # pro Lauf ist billig.
+            _circuit_breaker = CircuitBreaker()
             prices = broker.get_prices(list(portfolio.all_positions().keys()))
             current_value = portfolio.total_value(prices)
             _circuit_breaker.register_day_open(current_value)
