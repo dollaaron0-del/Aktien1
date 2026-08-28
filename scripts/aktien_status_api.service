@@ -1,0 +1,37 @@
+# systemd Service für den read-only Status-Endpunkt (monitoring/status_api.py)
+#
+# Liefert dem Overlay-Dashboard einen JSON-Snapshot (GET /status, /health).
+# Kein Broker-Zugriff, kein Trading — reine Datei-/SQLite-Reads. Eigener
+# Prozess, damit er das Trading nie stört.
+#
+# Installation (einmalig als root):
+#   cp /opt/Aktien/scripts/aktien_status_api.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now aktien_status_api
+#
+# Lauscht NUR auf 127.0.0.1:8607. Zugriff vom Overlay-Server per
+# Server-zu-Server-Proxy (siehe program-dashboards-overlay Memo).
+[Unit]
+Description=Aktien Bot Status API (read-only)
+After=network-online.target aktien_bot.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aaron
+WorkingDirectory=/opt/Aktien
+ExecStart=/opt/Aktien/venv/bin/python -m monitoring.status_api
+Restart=always
+RestartSec=15
+Environment=PYTHONUNBUFFERED=1
+Environment=STATUS_API_PORT=8607
+Environment=STATUS_API_HOST=127.0.0.1
+
+StandardOutput=append:/opt/Aktien/logs/status_api.log
+StandardError=append:/opt/Aktien/logs/status_api.log
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
