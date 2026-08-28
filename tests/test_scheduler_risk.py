@@ -15,8 +15,10 @@ from strategy.swing_strategy import StrategyResult
 
 class _FakeNotifier:
     sent = []
-    def send(self, msg, level=None):
+    sent_with_level = []
+    def send(self, msg, level=None, link_target=None):
         _FakeNotifier.sent.append(msg)
+        _FakeNotifier.sent_with_level.append((msg, level))
 
 
 class _FakeBroker:
@@ -335,3 +337,66 @@ def test_broker_healing_pass_offline_broker_is_noop(tmp_path, monkeypatch):
     broker = _FakeBrokerRecon(positions=None)
     sr.broker_healing_pass(p, broker, _FakeNotifier, context="Test")
     assert p.get_position("AAPL") is not None
+
+
+# ── Alert-Eskalation (Regression 28.08.2026, RHM.DE-Fall) ─────────────────────
+# Eine Teil-Abweichung (Buch-Stückzahl nachweislich falsch) lief bisher mit
+# level="info" durch send() — unter dem Default TELEGRAM_MODE=important wird
+# "info" NIE zugestellt, nur geloggt. Genau das ließ RHM.DE (Buch 14,7875 vs.
+# real 2 Stück) wochenlang unbemerkt bei jedem 30-Min-Zyklus verpuffen. Jetzt:
+# alles, was die Buch-Stückzahl selbst betrifft (reconciled/partial_mismatch/
+# snapshot_rejected), geht auf level="critical" raus und kommt durch.
+
+def _reset_reconcile_throttle(tmp_path, monkeypatch):
+    import strategy.executor as ex_mod
+    monkeypatch.setattr(ex_mod, "_THROTTLE_FILE", tmp_path / "throttle.json")
+
+
+def test_partial_mismatch_escalates_to_critical(tmp_path, monkeypatch):
+    _reset_reconcile_throttle(tmp_path, monkeypatch)
+    p = _make_real_portfolio(tmp_path, monkeypatch)
+    p.open_position(_make_real_position("RHM.DE", 14.7875, 1017.0))
+    broker = _FakeBrokerRecon(positions={"RHM": 2.0})  # Teil-Deckung
+    _FakeNotifier.sent, _FakeNotifier.sent_with_level = [], []
+
+    sr.broker_healing_pass(p, broker, _FakeNotifier, context="Test")
+
+    assert any(lvl == "critical" for _, lvl in _FakeNotifier.sent_with_level), (
+        "Teil-Abweichung (falsche Buch-Stückzahl) muss level='critical' senden, "
+        "sonst wird sie unter TELEGRAM_MODE=important nie zugestellt"
+    )
+
+
+def test_untracked_only_stays_info(tmp_path, monkeypatch):
+    """Gegenprobe: eine bei IBKR gehaltene, aber im Buch unbekannte Position
+    verfälscht das Buch selbst nicht → bleibt auf info (kein Alert-Fatigue für
+    seit langem bekannte Fremd-Positionen)."""
+    _reset_reconcile_throttle(tmp_path, monkeypatch)
+    p = _make_real_portfolio(tmp_path, monkeypatch)
+    p.open_position(_make_real_position("AAPL", 10, 150.0))
+    broker = _FakeBrokerRecon(positions={"AAPL": 10.0, "MSFT": 5.0})
+    _FakeNotifier.sent, _FakeNotifier.sent_with_level = [], []
+
+    sr.broker_healing_pass(p, broker, _FakeNotifier, context="Test")
+
+    assert _FakeNotifier.sent_with_level, "untracked-Fall sollte trotzdem melden (nur eben nicht kritisch)"
+    assert all(lvl == "info" for _, lvl in _FakeNotifier.sent_with_level)
+
+
+def test_critical_alert_throttled_when_unchanged(tmp_path, monkeypatch):
+    """Dieselbe Teil-Abweichung darf nicht bei jedem 30-Min-Lauf erneut als
+    critical raus (Dauerspam) — Throttle wie bei anderen Fail-Alerts, 12h."""
+    _reset_reconcile_throttle(tmp_path, monkeypatch)
+    p = _make_real_portfolio(tmp_path, monkeypatch)
+    p.open_position(_make_real_position("RHM.DE", 14.7875, 1017.0))
+    broker = _FakeBrokerRecon(positions={"RHM": 2.0})
+    _FakeNotifier.sent, _FakeNotifier.sent_with_level = [], []
+
+    sr.broker_healing_pass(p, broker, _FakeNotifier, context="Test")
+    n_first = len(_FakeNotifier.sent_with_level)
+    assert n_first >= 1
+
+    sr.broker_healing_pass(p, broker, _FakeNotifier, context="Test")
+    assert len(_FakeNotifier.sent_with_level) == n_first, (
+        "unveränderte Teil-Abweichung darf im Cooldown-Fenster nicht erneut senden"
+    )

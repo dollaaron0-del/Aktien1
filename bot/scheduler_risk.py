@@ -269,8 +269,27 @@ def broker_healing_pass(portfolio, broker, telegram_notifier_cls, context: str =
                 log.info("Broker-Abgleich (%s): %s", context, _br.summary())
             else:
                 log.warning("Broker-Abgleich (%s): %s", context, _br.summary())
+                # reconciled/partial_mismatch/snapshot_rejected heißen: das BUCH
+                # selbst führt eine nachweislich falsche Stückzahl (RHM.DE-Fall
+                # 27.8.2026: Buch 14,7875 vs. real 2 Stück, WOCHENLANG unbemerkt,
+                # weil dieser Alert bisher mit level="info" lief und vom Default
+                # TELEGRAM_MODE=important stillschweigend verschluckt wurde – nur
+                # untracked (bei IBKR, nicht im Buch) verfälscht das Buch selbst
+                # NICHT, bleibt darum auf info). Jetzt: level="critical" kommt
+                # durch. 12h-Throttle (derselbe Mechanismus wie
+                # strategy.executor._throttle_should_send) gegen Dauerspam, falls
+                # dieselbe Abweichung unverändert bestehen bleibt.
                 try:
-                    telegram_notifier_cls().send(f"🔄 <b>Broker-Abgleich ({context})</b>\n" + _br.summary())
+                    from strategy.executor import _stable_signature, _throttle_should_send
+                    _summary = _br.summary()
+                    _book_wrong = bool(_br.reconciled or _br.partial_mismatch or _br.snapshot_rejected)
+                    _level = "critical" if _book_wrong else "info"
+                    if _level != "critical" or _throttle_should_send(
+                        "BROKER_RECONCILE_CRITICAL", _stable_signature(_summary)
+                    ):
+                        telegram_notifier_cls().send(
+                            f"🔄 <b>Broker-Abgleich ({context})</b>\n" + _summary, level=_level,
+                        )
                 except Exception:
                     pass
     except Exception as _be:
