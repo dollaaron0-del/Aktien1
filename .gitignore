@@ -37,3 +37,7 @@ ruvector.db
 # Arbeitsmaterial, teils wasserzeichenbehaftete Stock-Fotos, gehört nicht
 # ins Repo (Lizenz + Größe).
 dashboard/assets/reference/
+
+# Nightly-Research / Backtest-Logs – Laufzeit-Artefakte (scripts/nightly_research.sh
+# legt reports/ selbst per mkdir -p an), gehören nicht ins Repo.
+reports/
