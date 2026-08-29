@@ -9,7 +9,7 @@ import pytest
 
 import analyzers.analysis_log as al_mod
 from analyzers.analysis_log import AnalysisLog
-from analyzers.claude_analyzer import AnalysisResult
+from analyzers.llm_analyzer import AnalysisResult
 from analyzers.decision_log import DecisionLog
 
 

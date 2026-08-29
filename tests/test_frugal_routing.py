@@ -6,7 +6,7 @@ deterministisch ALLE normalen Neu-Analysen übernehmen. Claude nur noch bei
 echten Katalysatoren (SEC 8-K / Earnings), offenen Positionen oder force_claude.
 """
 import config as _config_mod
-from analyzers.claude_analyzer import ClaudeAnalyzer, AnalysisResult
+from analyzers.llm_analyzer import ClaudeAnalyzer, AnalysisResult
 
 
 class _FakePrescreener:
@@ -229,7 +229,7 @@ def test_no_credit_blocks_claude_and_falls_back(monkeypatch):
 
 
 def test_is_claude_unavailable_error():
-    from analyzers.claude_analyzer import ClaudeAnalyzer as CA
+    from analyzers.llm_analyzer import ClaudeAnalyzer as CA
     assert CA._is_claude_unavailable_error(Exception("Your credit balance is too low"))
     assert CA._is_claude_unavailable_error(Exception("authentication_error 401"))
     assert not CA._is_claude_unavailable_error(Exception("overloaded_error 529"))

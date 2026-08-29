@@ -160,7 +160,7 @@ def render(ctx) -> None:
         _alog_shared = AnalysisLog()
         try:
             from analyzers.prompt_archive import PromptArchive
-            from analyzers.claude_analyzer import ClaudeAnalyzer
+            from analyzers.llm_analyzer import ClaudeAnalyzer
             _parch_shared = PromptArchive()
             _analyzer_shared = ClaudeAnalyzer()
         except Exception:

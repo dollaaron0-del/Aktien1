@@ -117,7 +117,7 @@ def test_decision_log_migration_adds_columns(tmp_path):
 def test_analysis_log_auto_stamps(tmp_path, monkeypatch):
     import analyzers.analysis_log as al_mod
     from analyzers.analysis_log import AnalysisLog
-    from analyzers.claude_analyzer import AnalysisResult
+    from analyzers.llm_analyzer import AnalysisResult
 
     monkeypatch.setattr(al_mod, "DB_PATH", str(tmp_path / "analysis_log.db"))
     log = AnalysisLog()

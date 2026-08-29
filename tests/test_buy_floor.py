@@ -8,7 +8,7 @@ Risiko-Overlay (Kaufschwelle inkl. Makro-/Regime-Aufschlag) greift downstream
 in der Strategie-Schicht (swing_strategy.evaluate) separat.
 """
 import config as _config_mod
-from analyzers.claude_analyzer import ClaudeAnalyzer, AnalysisResult
+from analyzers.llm_analyzer import ClaudeAnalyzer, AnalysisResult
 
 
 def _result(**kw) -> AnalysisResult:

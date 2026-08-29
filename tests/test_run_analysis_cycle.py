@@ -183,7 +183,7 @@ def test_exit_action_flows_into_daily_actions(cycle_env, monkeypatch):
 # gefakt statt real aufgerufen – dieselbe "0 echte Netz-/Broker-/Claude-Aufrufe"-
 # Grenze wie beim No-News-Pfad.
 
-from analyzers.claude_analyzer import AnalysisResult
+from analyzers.llm_analyzer import AnalysisResult
 from strategy.swing_strategy import StrategyResult
 
 

@@ -4,7 +4,7 @@ Test: claude_analyzer._try_ollama nutzt das KONFIGURIERTE Ollama-Modell
 """
 from unittest.mock import patch, MagicMock
 
-from analyzers.claude_analyzer import ClaudeAnalyzer
+from analyzers.llm_analyzer import ClaudeAnalyzer
 
 
 def test_try_ollama_uses_configured_model(monkeypatch):

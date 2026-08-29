@@ -42,7 +42,7 @@ def replay_response(ticker: str, user_prompt: str, response_text: str,
     neu zu konstruieren – der Konstruktor liest u.a. den API-Kosten-Stand
     von der Platte)."""
     if analyzer is None:
-        from analyzers.claude_analyzer import ClaudeAnalyzer
+        from analyzers.llm_analyzer import ClaudeAnalyzer
         analyzer = ClaudeAnalyzer()
     if is_thesis_check_prompt(user_prompt):
         data = analyzer._safe_json(response_text)
@@ -144,7 +144,7 @@ def replay_recent(
     direkt durch (kein zweites get_by_analysis_id() je Zeile)."""
     prompt_archive = _resolve_prompt_archive(prompt_archive)
     analysis_log = _resolve_analysis_log(analysis_log)
-    from analyzers.claude_analyzer import ClaudeAnalyzer
+    from analyzers.llm_analyzer import ClaudeAnalyzer
     analyzer = ClaudeAnalyzer()
 
     out = []

@@ -66,7 +66,7 @@ class AnalysisLog:
         """Speichert eine Analyse; gibt die Zeilen-ID zurück (Roadmap 1.4b:
         der Runner reicht sie ans decision_log weiter → Entscheidung und
         zugehörige Analyse samt Quellen sind verkettet)."""
-        from analyzers.claude_analyzer import AnalysisResult
+        from analyzers.llm_analyzer import AnalysisResult
         if not isinstance(analysis, AnalysisResult):
             return None
         # sources_used ist je nach Analyzer-Pfad mal Dict[str,int] (Quelle→Anzahl),

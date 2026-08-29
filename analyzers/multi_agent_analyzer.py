@@ -18,7 +18,7 @@ from typing import Dict, List, Optional
 from analyzers import llm_client
 
 from analyzers.api_cost_tracker import APICostTracker
-from analyzers.claude_analyzer import AnalysisResult
+from analyzers.llm_analyzer import AnalysisResult
 from analyzers.technical_indicators import TechnicalSnapshot
 from config import config
 from logger import get_logger

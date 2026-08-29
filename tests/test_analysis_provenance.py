@@ -7,7 +7,7 @@ Reine Ergänzung zu test_frugal_routing.py (das die Routing-LOGIK prüft,
 hier geht es nur um den zusätzlichen Trace auf dem Ergebnis).
 """
 import config as _config_mod
-from analyzers.claude_analyzer import ClaudeAnalyzer, AnalysisResult
+from analyzers.llm_analyzer import ClaudeAnalyzer, AnalysisResult
 
 
 class _FakePrescreener:

@@ -173,7 +173,7 @@ def test_bias_score_positive_in_risk_on():
 # ── Template-Injektion in die Analyzer ───────────────────────────────────────
 
 def test_claude_analyzer_context_block_and_template():
-    from analyzers.claude_analyzer import ClaudeAnalyzer, _USER_TEMPLATE_STANDARD
+    from analyzers.llm_analyzer import ClaudeAnalyzer, _USER_TEMPLATE_STANDARD
     cb = ClaudeAnalyzer._build_context_block("MAKRO-LAGE\n- Regime BEAR", "Nahost-Eskalation")
     assert "MAKRO-LAGE" in cb and "GEOPOLITIK: Nahost-Eskalation" in cb
     assert ClaudeAnalyzer._build_context_block("", None) == ""

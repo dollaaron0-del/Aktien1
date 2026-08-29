@@ -28,7 +28,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from analyzers.claude_analyzer import AnalysisResult
+from analyzers.llm_analyzer import AnalysisResult
 from portfolio.portfolio import Portfolio, Position
 from portfolio.performance_tracker import PerformanceTracker
 from portfolio.trade_journal import TradeJournal
