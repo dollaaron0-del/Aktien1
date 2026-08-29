@@ -271,21 +271,46 @@ def _exec_with(p, broker, monkeypatch, tmp_path):
     return TradeExecutor(p, broker, journal=None, notifier=_NullNotifier())
 
 
-def test_short_guard_blocks_sell_when_broker_flat(tmp_path, monkeypatch):
-    """Buch hält MSFT, IBKR ist flach → SELL muss blockiert werden (kein Short)."""
-    p = make_portfolio(tmp_path, monkeypatch)
+def _msft_pos(p, stop_loss=392.0):
     p.open_position(Position(
         ticker="MSFT", shares=57.91, entry_price=417.35,
-        entry_date="2026-06-06T00:00:00", stop_loss=392.0, take_profit=475.0,
+        entry_date="2026-06-06T00:00:00", stop_loss=stop_loss, take_profit=475.0,
         target_hold_days=8,
     ))
+
+
+def test_short_guard_blocks_sell_on_genuine_desync(tmp_path, monkeypatch):
+    """Buch hält MSFT, IBKR flach, KEIN Stop-Bezug (Aging-Exit über dem Stop)
+    → echter Desync: SELL blockiert, kritischer 'Desync'-Alarm."""
+    p = make_portfolio(tmp_path, monkeypatch)
+    _msft_pos(p)
     broker = FakeBrokerWithPositions(held={})            # IBKR hält nichts
     ex = _exec_with(p, broker, monkeypatch, tmp_path)
-    out = ex.execute(StrategyResult("SELL", "MSFT", "Stop-Loss", shares=57.91, price=410.0),
-                     days_held=9)
+    out = ex.execute(
+        StrategyResult("SELL", "MSFT", "Haltedauer abgelaufen (8d)", shares=57.91, price=450.0),
+        days_held=9)
     assert "übersprungen" in out and "Desync" in out
     assert broker.sells == []                            # KEINE Order an Broker
     assert p.get_position("MSFT") is not None            # Position unangetastet
+
+
+def test_short_guard_stop_fill_is_benign_not_desync(tmp_path, monkeypatch):
+    """COIN-Fall 28.8.2026: der broker-seitige GTC-Schutz-Stop feuert, bevor der
+    Bot den Fill mitbekommt. Der Bot will dieselbe Position dann selbst per
+    SL-Exit verkaufen → Anti-Short greift korrekt, aber es ist KEIN 'Desync' –
+    ruhige Meldung statt kritischem Alarm, der Reconcile bucht danach mit
+    echtem P&L aus."""
+    p = make_portfolio(tmp_path, monkeypatch)
+    _msft_pos(p, stop_loss=392.0)
+    broker = FakeBrokerWithPositions(held={})            # Stop hat schon verkauft
+    ex = _exec_with(p, broker, monkeypatch, tmp_path)
+    out = ex.execute(
+        StrategyResult("SELL", "MSFT", "Stop-Loss unterschritten", shares=57.91, price=390.0),
+        days_held=9)
+    assert "Desync" not in out
+    assert "Schutz-Stop bei IBKR ausgelöst" in out
+    assert broker.sells == []                            # weiterhin KEINE Short-Order
+    assert p.get_position("MSFT") is not None            # Buch unangetastet (Reconcile macht das)
 
 
 class MarketClosedBroker(FakeBrokerWithPositions):

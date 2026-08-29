@@ -210,13 +210,37 @@ class TradeExecutor:
         base = ticker.split(".")[0].upper()
         return float(held.get(ticker) or held.get(base) or 0.0)
 
-    def _short_guard_blocks(self, ticker: str, sell_shares: float) -> Optional[str]:
-        """Gibt eine Fehlermeldung zurück, wenn der Broker WENIGER hält als
-        verkauft werden soll (→ Order würde einen Short eröffnen). Sonst None."""
+    def _short_guard_blocks(self, ticker: str, sell_shares: float,
+                            *, likely_stop_fill: bool = False):
+        """Gibt (warn, benign) zurück, wenn der Broker WENIGER hält als verkauft
+        werden soll (→ Order würde einen Short eröffnen); sonst None.
+
+        `benign` = True heißt: die Position wurde mit hoher Wahrscheinlichkeit
+        gerade durch einen broker-seitig gefeuerten GTC-Schutz-Stop geschlossen
+        (`likely_stop_fill` UND Broker jetzt flach) – der Normalfall, wenn der
+        Stop schneller war als die Fill-Erkennung des Bots. Dann ruhig loggen
+        statt kritischem 'Desync'-Alarm; der folgende Broker-Abgleich bucht die
+        Position mit echtem P&L aus und meldet DAS als das eigentliche Ereignis.
+        `benign` = False = echter, unerklärter Desync → kritischer Alarm."""
         held = self._broker_held(ticker)
         if held is None or held + 1e-4 >= sell_shares:
             return None
         warn = f"IBKR hält {held:g}, Buch will {sell_shares:g} verkaufen"
+
+        if likely_stop_fill and held <= 1e-4:
+            log.info("[%s] SELL übersprungen – Schutz-Stop bei IBKR bereits "
+                     "ausgelöst (Broker flach), Position wird per Reconcile "
+                     "ausgebucht: %s", ticker, warn)
+            if _throttle_should_send(f"STOPFILL:{ticker}", warn):
+                self.notifier.send(
+                    f"📉 <b>{ticker}: Schutz-Stop bei IBKR ausgelöst</b>\n"
+                    f"Der GTC-Stop hat vor der Bot-Order gefeuert (IBKR flach). "
+                    f"Die Position wird beim nächsten Broker-Abgleich mit echtem "
+                    f"P&L ausgebucht – kein Handlungsbedarf.",
+                    level="info",
+                )
+            return (warn, True)
+
         if _throttle_should_send(f"DESYNC:{ticker}", f"{held:g}/{sell_shares:g}"):
             self.notifier.send(
                 f"⚠️ <b>{ticker} SELL übersprungen – Buch/IBKR-Desync</b>\n"
@@ -225,7 +249,7 @@ class TradeExecutor:
                 level="critical",
             )
         log.error("[%s] SELL übersprungen (Anti-Short): %s", ticker, warn)
-        return warn
+        return (warn, False)
 
     # ── Public ──────────────────────────────────────────────────────────────
     def execute(
@@ -415,7 +439,7 @@ class TradeExecutor:
             sell_shares = result.shares
             blocked = self._short_guard_blocks(ticker, sell_shares)
             if blocked:
-                return f"[{ticker}] ⛔ Partial-TP übersprungen (Desync): {blocked}"
+                return f"[{ticker}] ⛔ Partial-TP übersprungen (Desync): {blocked[0]}"
             fill = self.broker.sell(ticker, sell_shares, result.price)
             if not _is_filled(fill):
                 warn = _fail_reason(fill)
@@ -439,9 +463,17 @@ class TradeExecutor:
 
         # Voll-Exit
         sell_shares = pos.shares
-        blocked = self._short_guard_blocks(ticker, sell_shares)
+        _stop_fill = (
+            (result.reason or "").startswith("Stop-Loss")
+            or bool(pos.stop_loss and result.price and result.price <= pos.stop_loss * 1.01)
+        )
+        blocked = self._short_guard_blocks(ticker, sell_shares, likely_stop_fill=_stop_fill)
         if blocked:
-            return f"[{ticker}] ⛔ SELL übersprungen (Desync): {blocked}"
+            _warn, _benign = blocked
+            if _benign:
+                return (f"[{ticker}] 📉 Schutz-Stop bei IBKR ausgelöst – "
+                        f"Position wird per Broker-Abgleich ausgebucht")
+            return f"[{ticker}] ⛔ SELL übersprungen (Desync): {_warn}"
         fill = self.broker.sell(ticker, sell_shares, result.price)
         if not _is_filled(fill):
             warn = _fail_reason(fill)
