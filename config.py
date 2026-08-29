@@ -509,9 +509,16 @@ def validate_config() -> None:
     errors:   List[str] = []
     warnings: List[str] = []
 
-    # ── Kritisch: ohne diese Keys läuft gar nichts ────────────────────────────
-    if not config.anthropic_api_key:
-        errors.append("ANTHROPIC_API_KEY fehlt – Claude-Analyse nicht möglich.")
+    # ── Kritisch: ohne einen LLM-Key läuft die Analyse nicht ──────────────────
+    # Am aktiven Provider festmachen (LLM_PROVIDER): im Gemini-Betrieb ist
+    # ANTHROPIC_API_KEY normalerweise nicht gesetzt und auch nicht nötig –
+    # sonst würde der Bot hier fälschlich gar nicht starten.
+    if config.llm_provider == "gemini":
+        if not config.gemini_api_key:
+            errors.append("LLM_PROVIDER=gemini, aber GEMINI_API_KEY fehlt – LLM-Analyse nicht möglich.")
+    else:
+        if not config.anthropic_api_key:
+            errors.append("ANTHROPIC_API_KEY fehlt – Claude-Analyse nicht möglich.")
 
     # ── Broker-spezifisch ─────────────────────────────────────────────────────
     if config.broker_mode == "ibkr":
