@@ -103,7 +103,13 @@ def check_env() -> List[CheckResult]:
         else:
             return _warn(f"  {label}", "nicht gesetzt – Feature deaktiviert")
 
-    results.append(_check_key("ANTHROPIC_API_KEY",   config.anthropic_api_key,   required=True))
+    # LLM-Key am aktiven Provider prüfen: im Gemini-Betrieb ist ANTHROPIC_API_KEY
+    # weder gesetzt noch nötig, dann zählt GEMINI_API_KEY als Pflichtschlüssel.
+    if getattr(config, "llm_provider", "anthropic") == "gemini":
+        results.append(_check_key("GEMINI_API_KEY",      config.gemini_api_key,      required=True))
+        results.append(_check_key("ANTHROPIC_API_KEY",   config.anthropic_api_key,   required=False))
+    else:
+        results.append(_check_key("ANTHROPIC_API_KEY",   config.anthropic_api_key,   required=True))
     results.append(_check_key("TELEGRAM_BOT_TOKEN",  config.telegram_bot_token,  required=True))
     results.append(_check_key("TELEGRAM_CHAT_ID",    config.telegram_chat_id,    required=True))
     results.append(_check_key("NEWSAPI_KEY",         config.newsapi_key,         required=False))

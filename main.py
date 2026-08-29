@@ -479,7 +479,14 @@ def main():
         ))
         return
 
-    if not config.anthropic_api_key:
+    # LLM-Key am aktiven Provider prüfen (LLM_PROVIDER): im Gemini-Betrieb ist
+    # ANTHROPIC_API_KEY nicht gesetzt und auch nicht nötig. validate_config()
+    # oben deckt das schon ab; dieser Guard bleibt als zweite Sicherung.
+    if config.llm_provider == "gemini":
+        if not config.gemini_api_key:
+            console.print("[bold red]Fehler: LLM_PROVIDER=gemini, aber GEMINI_API_KEY nicht gesetzt.[/bold red]")
+            sys.exit(1)
+    elif not config.anthropic_api_key:
         console.print("[bold red]Fehler: ANTHROPIC_API_KEY nicht gesetzt.[/bold red]")
         sys.exit(1)
 
