@@ -216,17 +216,17 @@ def make_claude_caller(model: str, cost_tracker) -> Callable[[str], Optional[str
     Ruft NICHT selbst check_daily_limit() — das entscheidet main() vor jedem
     Aufruf, damit ein erschöpftes Budget den Lauf sauber abbricht statt
     stumm weiterzuzählen."""
-    import anthropic
-    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+    from analyzers import llm_client
 
     def _call(prompt: str) -> Optional[str]:
         try:
-            resp = client.messages.create(
+            resp = llm_client.create_message(
                 model=model, max_tokens=150,
                 messages=[{"role": "user", "content": prompt}],
+                api_key=os.getenv("ANTHROPIC_API_KEY", ""),
             )
         except Exception as exc:  # pragma: no cover - Netzwerk/API-Fehler
-            console.print(f"  [dim]Claude-Fehler: {exc}[/dim]")
+            console.print(f"  [dim]LLM-Fehler: {exc}[/dim]")
             return None
         if cost_tracker is not None:
             in_tok, out_tok, cache_tok = cost_tracker.usage_from_response(resp)
